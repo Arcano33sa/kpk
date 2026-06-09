@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_15_0_post12_etapa3_pwa_update';
+const CACHE_VERSION = 'v0_15_3_post12_mejoras_etapa3_metodos_bancos';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

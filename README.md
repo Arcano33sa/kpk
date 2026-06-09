@@ -1,6 +1,18 @@
-# KSA PRÁCTIKA — Post 12 Etapa 3/3
+# KSA PRÁCTIKA — Post 12 Mejoras Etapa 2/3
 
-Webapp estática de control operativo. Esta etapa agrega **PWA / Actualizaciones** dentro de Configuración y endurece el Service Worker/cache sobre la base completa con Catálogos, Ventas / OC, Cobros, Proveedores / Compras, Pagos a proveedores, Gastos, Mora, Alertas, Historial, Resumen / Tablero, Importación/Exportación Excel, Cierre mensual, Roles, Respaldo JSON, condiciones de pago y modales de edición.
+Webapp estática de control operativo. Esta etapa agrega **Logística / Envío condicional** en Ventas / OC mediante checkbox **Requiere envío**, manteniendo la base completa con Catálogos, Ventas / OC, Cobros, Proveedores / Compras, Pagos a proveedores, Gastos, Mora, Alertas, Historial, Resumen / Tablero, Importación/Exportación Excel, Cierre mensual, Roles, Respaldo JSON, condiciones de pago, modales de edición, PWA / Actualizaciones y Facturas.
+
+
+## Post12 Mejoras — Etapa 2/3: Logística / Envío
+
+- Se agregó checkbox **Requiere envío** en Ventas / OC.
+- El bloque **Logística / Envío** permanece oculto cuando el checkbox está desmarcado.
+- Al marcarlo, muestra únicamente: Transportista, Fecha de embarque, Fecha estimada, Fecha real y Guía.
+- Los datos se guardan dentro de cada OC como `requiereEnvio` y `logistica`.
+- OCs anteriores sin esos campos se interpretan como `requiereEnvio: false` y logística vacía.
+- Exportación Excel de Ventas incluye columnas simples de logística sin alterar saldos, cobros ni mora.
+- Importación Excel tolera archivos sin columnas de logística.
+- Service Worker cache actualizado a `0.15.3-post12-mejoras-etapa3-metodos-bancos`.
 
 ## Incluye
 
@@ -57,6 +69,7 @@ Bloques principales:
 ## Pruebas realizadas
 
 - Sintaxis JavaScript validada con `node --check app.js`.
+- Sintaxis Service Worker validada con `node --check service-worker.js`.
 - Render básico validado en navegador Chromium.
 - Navegación a Configuración validada.
 - Exportación JSON validada.
@@ -101,6 +114,22 @@ Bloques principales:
 - Botón **Aplicar actualización** cuando existe un Service Worker en espera.
 - Aplicación de actualización mediante mensaje seguro `KSA_PRACTIKA_SKIP_WAITING` y recarga protegida contra bucles.
 - Persistencia de última búsqueda y última actualización dentro de `configuracion`, sin borrar `localStorage`.
-- Service Worker actualizado a `v0_15_0_post12_etapa3_pwa_update`.
+- Service Worker actualizado a `v0_15_1_post12_mejoras_etapa1_facturas`.
 - Cache PWA incluye `index.html`, CSS, JS, manifest, logo, íconos y `vendor/jszip.min.js`.
 - Se mantienen intactos JSON, Excel, importación, exportación, cierres y datos de negocio.
+
+
+## Post12 Mejoras — Etapa 1 Facturas
+- Se agregó bloque Facturas en Ventas / OC.
+- Cada OC guarda varias facturas con número y fecha.
+- Compatibilidad legacy: OCs sin facturas se normalizan con lista vacía.
+- Exportación Excel incluye resumen simple de facturas en la hoja Ventas sin alterar saldos.
+
+
+## Post12 Mejoras — Etapa 3/3: Métodos de pago y Bancos
+
+- Métodos de pago/cobro continúan editables desde Catálogos con agregar, editar y borrado seguro mediante inactivación.
+- Bancos queda visible como catálogo editable, reutilizando la estructura interna compatible `cuentasBancos` para no romper respaldos ni históricos.
+- Cobros, Pagos a proveedores y Gastos muestran Banco únicamente cuando el método seleccionado es Transferencia o Tarjeta.
+- Banco no es obligatorio para Efectivo u otros métodos; si Transferencia/Tarjeta no tiene bancos disponibles, la app muestra aviso claro para agregarlos en Catálogos.
+- Se conserva compatibilidad con JSON, Excel, cierre mensual, Service Worker y PWA.

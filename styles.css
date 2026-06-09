@@ -2188,3 +2188,247 @@ textarea:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+/* Post12 Mejoras — Etapa 1: Facturas en Ventas / OC */
+.is-hidden {
+  display: none !important;
+}
+
+.facturas-block,
+.facturas-card-block {
+  min-width: 0;
+  border: 1px solid rgba(185, 135, 43, 0.28);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, #fffaf0, #ffffff);
+}
+
+.facturas-block {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.facturas-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.facturas-head h3 {
+  margin: 0;
+}
+
+.facturas-entry-grid {
+  grid-template-columns: minmax(0, 1fr) 170px;
+}
+
+.facturas-actions {
+  margin-top: -2px;
+}
+
+.facturas-message {
+  min-height: 1.1rem;
+  margin: -4px 0 0;
+  color: var(--success);
+  font-weight: 850;
+}
+
+.facturas-message.is-error {
+  color: var(--danger);
+}
+
+.facturas-empty {
+  padding: 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--muted);
+  font-weight: 800;
+  text-align: center;
+}
+
+.facturas-empty.compact-view {
+  margin-top: 8px;
+  text-align: left;
+}
+
+.facturas-list {
+  display: grid;
+  gap: 8px;
+}
+
+.factura-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.factura-item strong,
+.factura-item span {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.factura-item span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.facturas-card-block {
+  padding: 11px 12px;
+  margin: 4px 0 10px;
+}
+
+.facturas-card-block > strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--accent-dark);
+}
+
+.facturas-display-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+
+.factura-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 7px 9px;
+  border: 1px solid rgba(185, 135, 43, 0.28);
+  border-radius: 999px;
+  background: #fff8ea;
+  color: #5f4520;
+  font-size: 0.8rem;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 620px) {
+  .facturas-head,
+  .factura-item {
+    grid-template-columns: 1fr;
+  }
+
+  .facturas-entry-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .factura-item .record-actions {
+    align-items: stretch;
+  }
+}
+
+/* Post12 Mejoras — Etapa 2: Logística / Envío condicional en Ventas / OC */
+.logistica-block,
+.logistica-card-block {
+  min-width: 0;
+  border: 1px solid rgba(185, 135, 43, 0.28);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, #fffaf0, #ffffff);
+}
+
+.logistica-block {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.checkbox-field.logistica-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(185, 135, 43, 0.34);
+  border-radius: 999px;
+  background: rgba(255, 248, 234, 0.88);
+  color: var(--accent-dark);
+  font-weight: 900;
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-field.logistica-toggle input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.logistica-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.logistica-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.logistica-card-block {
+  padding: 11px 12px;
+  margin: 4px 0 10px;
+}
+
+.logistica-card-block > strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--accent-dark);
+}
+
+.logistica-display-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.logistica-display-grid div {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.logistica-display-grid span,
+.logistica-display-grid b {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.logistica-display-grid span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.logistica-display-grid b {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 620px) {
+  .checkbox-field.logistica-toggle {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .logistica-grid,
+  .logistica-display-grid {
+    grid-template-columns: 1fr;
+  }
+}

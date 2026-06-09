@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.15.0-post12-etapa3-pwa-update';
+  const APP_VERSION = '0.15.3-post12-mejoras-etapa3-metodos-bancos';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
 
@@ -60,15 +60,15 @@
       icon: '–',
       title: 'Gastos',
       short: 'Gastos',
-      description: 'Control práctico de gastos por fecha, tipo, método, cuenta/banco, estado y observación.',
-      placeholder: 'Gastos ya permite crear, editar y anular registros usando tipos, métodos y cuentas/bancos desde Catálogos.'
+      description: 'Control práctico de gastos por fecha, tipo, método, banco, estado y observación.',
+      placeholder: 'Gastos ya permite crear, editar y anular registros usando tipos, métodos y bancos desde Catálogos.'
     },
     {
       id: 'catalogos',
       icon: '☷',
       title: 'Catálogos',
       short: 'Catálogos',
-      description: 'Listas maestras para clientes, sucursales, proveedores, condiciones de pago, métodos y cuentas/bancos.',
+      description: 'Listas maestras para clientes, sucursales, proveedores, condiciones de pago, métodos de pago y bancos.',
       placeholder: 'Administra las listas maestras que alimentarán ventas, cobros, compras, pagos y gastos.'
     },
     {
@@ -178,14 +178,14 @@
     },
     {
       id: 'cuentasBancos',
-      label: 'Cuentas / bancos',
-      singular: 'cuenta/banco',
-      icon: 'CB',
-      description: 'Cajas, bancos u otros bolsillos simples para movimientos de dinero.',
+      label: 'Bancos',
+      singular: 'banco',
+      icon: 'BK',
+      description: 'Bancos simples para asociar cobros, pagos y gastos cuando el método sea Transferencia o Tarjeta.',
       fields: [
-        { name: 'nombre', label: 'Nombre', type: 'text', required: true, placeholder: 'Ej. Caja' },
-        { name: 'tipo', label: 'Tipo', type: 'select', options: ['Caja', 'Banco', 'Otro'], required: true },
-        { name: 'observacion', label: 'Observación', type: 'textarea', placeholder: 'Notas internas de la cuenta o banco' }
+        { name: 'nombre', label: 'Nombre del banco', type: 'text', required: true, placeholder: 'Ej. BAC, Lafise, Banpro' },
+        { name: 'tipo', label: 'Tipo interno', type: 'select', options: ['Banco', 'Caja', 'Otro'], required: true },
+        { name: 'observacion', label: 'Observación', type: 'textarea', placeholder: 'Notas internas del banco' }
       ]
     }
   ];
@@ -194,9 +194,7 @@
     tiposGasto: ['Estacionamiento', 'Cargadores', 'Transporte', 'Combustible', 'Empaque', 'Otros'],
     metodosPago: ['Efectivo', 'Transferencia', 'Depósito', 'Cheque', 'Tarjeta', 'Otro'],
     cuentasBancos: [
-      { nombre: 'Caja', tipo: 'Caja' },
-      { nombre: 'Banco', tipo: 'Banco' },
-      { nombre: 'Otro', tipo: 'Otro' }
+      { nombre: 'Banco', tipo: 'Banco' }
     ]
   };
 
@@ -665,6 +663,93 @@
     return 'Pendiente';
   }
 
+  function normalizeFacturaVentaRecord(record) {
+    const raw = isPlainObject(record) ? record : {};
+    const numero = cleanText(raw.numero || raw.numeroFactura || raw.factura || raw.documento || raw.referencia);
+    const fecha = toDateInputValue(raw.fecha || raw.fechaFactura || raw.fechaEmision || raw.fechaDocumento || '');
+    if (!numero || !fecha) return null;
+    return {
+      id: cleanText(raw.id) || generateId('factura'),
+      numero,
+      fecha
+    };
+  }
+
+  function normalizeFacturasVentaList(value) {
+    let source = value;
+    if (typeof source === 'string') {
+      const trimmed = source.trim();
+      if (!trimmed) return [];
+      try {
+        source = JSON.parse(trimmed);
+      } catch (_) {
+        source = trimmed.split(';').map((part) => {
+          const clean = cleanText(part);
+          const match = clean.match(/^(.+?)\s*\((\d{4}-\d{2}-\d{2})\)$/);
+          return match ? { numero: match[1], fecha: match[2] } : { numero: clean, fecha: '' };
+        });
+      }
+    }
+    if (!Array.isArray(source)) return [];
+    const seen = new Set();
+    return source
+      .map((item) => normalizeFacturaVentaRecord(item))
+      .filter(Boolean)
+      .filter((item) => {
+        const key = `${normalizeNameForCompare(item.numero)}|${item.fecha}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }
+
+  function formatFacturasVentaResumen(facturas) {
+    const list = normalizeFacturasVentaList(facturas);
+    if (!list.length) return 'Sin facturas registradas';
+    return list.map((factura) => `${factura.numero} (${factura.fecha})`).join('; ');
+  }
+
+  function normalizeBooleanField(value, fallback = false) {
+    if (typeof value === 'boolean') return value;
+    const normalized = cleanText(value)
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLocaleLowerCase('es-NI');
+    if (!normalized) return Boolean(fallback);
+    if (['1', 'true', 'si', 'sí', 'yes', 'y', 'x', 'checked', 'marcado'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'n', 'unchecked', 'desmarcado'].includes(normalized)) return false;
+    return Boolean(fallback);
+  }
+
+  function normalizeLogisticaVentaRecord(value) {
+    const raw = isPlainObject(value) ? value : {};
+    return {
+      transportista: cleanText(raw.transportista || raw.transportistaNombre || raw.envioTransportista),
+      fechaEmbarque: toDateInputValue(raw.fechaEmbarque || raw.embarque || raw.fechaEnvio || raw.fechaDespacho || ''),
+      fechaEstimada: toDateInputValue(raw.fechaEstimada || raw.fechaEstimadaLlegada || raw.fechaEntregaEstimada || ''),
+      fechaReal: toDateInputValue(raw.fechaReal || raw.fechaLlegadaReal || raw.fechaEntregaReal || ''),
+      guia: cleanText(raw.guia || raw.guía || raw.numeroGuia || raw.numeroGuía || raw.tracking)
+    };
+  }
+
+  function hasLogisticaVentaData(logistica) {
+    const normalized = normalizeLogisticaVentaRecord(logistica);
+    return Boolean(normalized.transportista || normalized.fechaEmbarque || normalized.fechaEstimada || normalized.fechaReal || normalized.guia);
+  }
+
+  function formatLogisticaVentaResumen(record) {
+    const venta = isPlainObject(record) ? record : {};
+    if (!venta.requiereEnvio) return 'No requiere envío';
+    const logistica = normalizeLogisticaVentaRecord(venta.logistica);
+    const parts = [];
+    if (logistica.transportista) parts.push(`Transportista: ${logistica.transportista}`);
+    if (logistica.guia) parts.push(`Guía: ${logistica.guia}`);
+    if (logistica.fechaEmbarque) parts.push(`Embarque: ${formatDate(logistica.fechaEmbarque)}`);
+    if (logistica.fechaEstimada) parts.push(`Estimada: ${formatDate(logistica.fechaEstimada)}`);
+    if (logistica.fechaReal) parts.push(`Real: ${formatDate(logistica.fechaReal)}`);
+    return parts.join(' · ') || 'Requiere envío';
+  }
+
   function normalizeVentaRecord(record) {
     const raw = isPlainObject(record) ? record : {};
     const timestamp = nowIso();
@@ -684,6 +769,9 @@
       descuento: parseMoney(raw.descuento),
       descuentoNoVa: parseMoney(raw.descuentoNoVa),
       totalCobrado: parseMoney(raw.totalCobrado),
+      facturas: normalizeFacturasVentaList(raw.facturas || raw.facturasEmitidas || raw.facturasOc || []),
+      requiereEnvio: normalizeBooleanField(raw.requiereEnvio ?? raw.requiereEnvío ?? raw.envioRequerido ?? raw.envíoRequerido, false),
+      logistica: normalizeLogisticaVentaRecord(raw.logistica || raw.envio || raw.logisticaEnvio || {}),
       observacion: cleanText(raw.observacion),
       activo: typeof raw.activo === 'boolean' ? raw.activo : raw.estado !== 'Anulado',
       createdAt: raw.createdAt || timestamp,
@@ -697,6 +785,9 @@
       descuento: Number.isNaN(base.descuento) ? 0 : base.descuento,
       descuentoNoVa: Number.isNaN(base.descuentoNoVa) ? 0 : base.descuentoNoVa,
       totalCobrado: Number.isNaN(base.totalCobrado) ? 0 : base.totalCobrado,
+      facturas: normalizeFacturasVentaList(base.facturas),
+      requiereEnvio: Boolean(base.requiereEnvio),
+      logistica: normalizeLogisticaVentaRecord(base.logistica),
       ventaNeta: calculations.ventaNeta,
       saldoPorCobrar: calculations.saldoPorCobrar,
       estado: determineVentaEstado(base)
@@ -1016,6 +1107,101 @@
     return cleanText(value).toLocaleLowerCase('es-NI');
   }
 
+  function normalizeKeyForCompare(value) {
+    return cleanText(value)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLocaleLowerCase('es-NI');
+  }
+
+  function findPaymentMethodByValue(value) {
+    const raw = cleanText(value);
+    if (!raw) return null;
+    return getCatalogRecords('metodosPago').find((method) => (
+      method.id === raw ||
+      normalizeKeyForCompare(method.nombre) === normalizeKeyForCompare(raw)
+    )) || null;
+  }
+
+  function paymentMethodRequiresBank(value) {
+    const method = findPaymentMethodByValue(value);
+    const key = normalizeKeyForCompare(method?.nombre || value);
+    return key.includes('transferencia') || key.includes('tarjeta');
+  }
+
+  function isBankCatalogRecord(record) {
+    const typeKey = normalizeKeyForCompare(record?.tipo || 'Banco');
+    return !typeKey || typeKey === 'banco';
+  }
+
+  function getActiveBankRecords() {
+    return getCatalogRecords('cuentasBancos').filter((record) => record.activo && isBankCatalogRecord(record));
+  }
+
+  function getSelectableBankRecords(currentId = '') {
+    const selected = cleanText(currentId);
+    return getCatalogRecords('cuentasBancos').filter((record) => (
+      isBankCatalogRecord(record) && (record.activo || record.id === selected)
+    ));
+  }
+
+  function isSafeDeleteCatalog(catalogId) {
+    return catalogId === 'metodosPago' || catalogId === 'cuentasBancos';
+  }
+
+  function renderPaymentBankField(bancosActivos, record = {}, disabled = false) {
+    const selectedMethodId = cleanText(record?.metodoPagoId);
+    const selectedMethodName = cleanText(record?.metodoPagoNombre);
+    const requiresBank = paymentMethodRequiresBank(selectedMethodId || selectedMethodName);
+    const selectedBankId = cleanText(record?.cuentaBancoId);
+    const hasBanks = Array.isArray(bancosActivos) && bancosActivos.length > 0;
+    const isDisabled = Boolean(disabled || !requiresBank || !hasBanks);
+    const requiredDotClass = requiresBank && hasBanks ? '' : ' is-hidden';
+    return `
+      <label class="form-field payment-bank-field${requiresBank ? '' : ' is-hidden'}" data-bank-field>
+        <span>Banco <span class="required-dot${requiredDotClass}" data-bank-required-dot aria-label="obligatorio">*</span></span>
+        <select name="cuentaBancoId" data-bank-select data-bank-base-disabled="${disabled ? 'true' : 'false'}" ${requiresBank && hasBanks ? 'required' : ''} ${isDisabled ? 'disabled' : ''}>
+          <option value="">Seleccionar banco</option>
+          ${bancosActivos.map((banco) => `<option value="${escapeHtml(banco.id)}" ${banco.id === selectedBankId ? 'selected' : ''}>${escapeHtml(banco.nombre || 'Banco sin nombre')}${banco.activo ? '' : ' · inactivo'}</option>`).join('')}
+        </select>
+        <small class="compact-note bank-empty-message${requiresBank && !hasBanks ? '' : ' is-hidden'}" data-bank-empty-message>Agrega un banco en Catálogos para seleccionarlo.</small>
+      </label>
+    `;
+  }
+
+  function setupPaymentBankField(form) {
+    const methodSelect = form.querySelector('[data-payment-method-select]');
+    const bankField = form.querySelector('[data-bank-field]');
+    const bankSelect = form.querySelector('[data-bank-select]');
+    const bankRequiredDot = form.querySelector('[data-bank-required-dot]');
+    const emptyMessage = form.querySelector('[data-bank-empty-message]');
+    if (!methodSelect || !bankField || !bankSelect) return;
+
+    const sync = () => {
+      const requiresBank = paymentMethodRequiresBank(methodSelect.value);
+      const hasBanks = bankSelect.options.length > 1;
+      const baseDisabled = bankSelect.dataset.bankBaseDisabled === 'true';
+      bankField.classList.toggle('is-hidden', !requiresBank);
+      bankSelect.required = requiresBank && hasBanks;
+      bankSelect.disabled = baseDisabled || !requiresBank || !hasBanks;
+      bankRequiredDot?.classList.toggle('is-hidden', !(requiresBank && hasBanks));
+      emptyMessage?.classList.toggle('is-hidden', !(requiresBank && !hasBanks));
+      if (!requiresBank) bankSelect.value = '';
+    };
+
+    methodSelect.addEventListener('change', sync);
+    sync();
+  }
+
+  function validateBankForPaymentMethod(record, existingRecord = null) {
+    if (!paymentMethodRequiresBank(record.metodoPagoId || record.metodoPagoNombre)) return '';
+    const banks = getCatalogRecords('cuentasBancos').filter(isBankCatalogRecord);
+    if (!banks.length) return 'Agrega un banco en Catálogos para seleccionarlo.';
+    const valid = banks.some((bank) => bank.id === record.cuentaBancoId && (bank.activo || existingRecord?.cuentaBancoId === bank.id));
+    if (!valid) return 'Selecciona un banco válido para Transferencia o Tarjeta.';
+    return '';
+  }
+
   function getRoute() {
     const hash = window.location.hash.replace(/^#\/?/, '').trim().toLowerCase();
     return routeAliases.get(hash) || 'home';
@@ -1180,7 +1366,7 @@
       <section class="panel-grid">
         <article class="panel-card">
           <h2>Estructura preparada</h2>
-          <p class="notice">Catálogos administra las listas maestras, Ventas / OC registra documentos con saldo por cobrar, Cobros aplica abonos a OC, Proveedores / Compras registra deudas con saldo por pagar, Pagos aplica abonos a facturas/referencias y Gastos registra egresos operativos por tipo, método y cuenta/banco.</p>
+          <p class="notice">Catálogos administra las listas maestras, Ventas / OC registra documentos con saldo por cobrar, Cobros aplica abonos a OC, Proveedores / Compras registra deudas con saldo por pagar, Pagos aplica abonos a facturas/referencias y Gastos registra egresos operativos por tipo, método y banco.</p>
           <div class="data-list">
             ${DATA_KEYS.map((key) => `<div class="data-pill"><span>${escapeHtml(key)}</span><strong>${appData[key].length}</strong></div>`).join('')}
           </div>
@@ -2208,7 +2394,9 @@
           <div><span>Cliente</span><strong>${escapeHtml(cliente?.nombre || 'Cliente no encontrado')}</strong></div>
           <div><span>Sucursal</span><strong>${escapeHtml(sucursal?.nombre || 'Sucursal no encontrada')}</strong></div>
           <div><span>Saldo actual</span><strong>${escapeHtml(formatMoney(venta.saldoPorCobrar))}</strong></div>
+          <div><span>Facturas</span><strong>${normalizeFacturasVentaList(venta.facturas).length}</strong></div>
         </div>
+        ${renderFacturasVentaDisplay(venta.facturas)}
         <div class="timeline">${entries.map((entry) => renderTimelineEntry(entry)).join('')}</div>
         <div class="record-actions"><button type="button" class="secondary-action compact" data-history-venta="${escapeHtml(venta.id)}">Ampliar historial</button></div>
       </article>
@@ -2284,7 +2472,8 @@
           { label: 'Estado actual', value: venta.estado },
           { label: 'Venta neta', value: formatMoney(venta.ventaNeta) },
           { label: 'Total cobrado', value: formatMoney(venta.totalCobrado) },
-          { label: 'Saldo actual', value: formatMoney(venta.saldoPorCobrar) }
+          { label: 'Saldo actual', value: formatMoney(venta.saldoPorCobrar) },
+          { label: 'Facturas registradas', value: String(normalizeFacturasVentaList(venta.facturas).length) }
         ],
         entries: getVentaHistoryEntries(venta)
       };
@@ -2316,6 +2505,14 @@
         statusClass: 'is-info'
       }
     ];
+    normalizeFacturasVentaList(venta.facturas).forEach((factura) => {
+      entries.push({
+        date: formatDate(factura.fecha),
+        title: 'Factura registrada',
+        detail: `Factura ${factura.numero} ligada a esta OC.`,
+        statusClass: 'is-info'
+      });
+    });
     if (venta.updatedAt && venta.updatedAt !== venta.createdAt) {
       entries.push({
         date: formatDateTime(venta.updatedAt),
@@ -2330,7 +2527,7 @@
         entries.push({
           date: formatDate(cobro.fechaCobro),
           title: cobro.activo ? 'Cobro aplicado' : 'Cobro anulado',
-          detail: `${formatMoney(cobro.montoCobrado)} · ${cobro.metodoPagoNombre || 'Sin método'} · ${cobro.cuentaBancoNombre || 'Sin cuenta'}${cobro.observacion ? ` · ${cobro.observacion}` : ''}`,
+          detail: `${formatMoney(cobro.montoCobrado)} · ${cobro.metodoPagoNombre || 'Sin método'} · ${cobro.cuentaBancoNombre || 'Sin banco'}${cobro.observacion ? ` · ${cobro.observacion}` : ''}`,
           statusClass: cobro.activo ? 'is-success' : 'is-danger'
         });
       });
@@ -2366,7 +2563,7 @@
         entries.push({
           date: formatDate(pago.fechaPago),
           title: pago.activo ? 'Pago aplicado' : 'Pago anulado',
-          detail: `${formatMoney(pago.montoPagado)} · ${pago.metodoPagoNombre || 'Sin método'} · ${pago.cuentaBancoNombre || 'Sin cuenta'}${pago.observacion ? ` · ${pago.observacion}` : ''}`,
+          detail: `${formatMoney(pago.montoPagado)} · ${pago.metodoPagoNombre || 'Sin método'} · ${pago.cuentaBancoNombre || 'Sin banco'}${pago.observacion ? ` · ${pago.observacion}` : ''}`,
           statusClass: pago.activo ? 'is-success' : 'is-danger'
         });
       });
@@ -2465,7 +2662,7 @@
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Catálogos</h1>
-          <p class="lead">Administra las listas maestras de KSA PRÁCTIKA. Aquí se ordena la bodega mental: clientes, sucursales, proveedores, gastos, métodos y cuentas.</p>
+          <p class="lead">Administra las listas maestras de KSA PRÁCTIKA. Aquí se ordena la bodega mental: clientes, sucursales, proveedores, gastos, métodos y bancos.</p>
         </div>
         <aside class="hero-status" aria-label="Resumen de catálogos">
           <h3>Resumen</h3>
@@ -2636,7 +2833,7 @@
         </div>
         <div class="record-actions">
           ${canEdit ? `<button type="button" class="secondary-action compact" data-catalog-edit="${escapeHtml(record.id)}">Editar</button>` : '<span class="muted-text compact-note">Solo lectura</span>'}
-          ${canEdit ? `<button type="button" class="${record.activo ? 'danger-action' : 'card-action'} compact" data-catalog-toggle="${escapeHtml(record.id)}">${record.activo ? 'Desactivar' : 'Activar'}</button>` : ''}
+          ${canEdit ? `<button type="button" class="${record.activo ? 'danger-action' : 'card-action'} compact" data-catalog-toggle="${escapeHtml(record.id)}">${record.activo ? (isSafeDeleteCatalog(catalog.id) ? 'Borrar seguro' : 'Desactivar') : (isSafeDeleteCatalog(catalog.id) ? 'Restaurar' : 'Activar')}</button>` : ''}
         </div>
       </div>
     `;
@@ -2753,6 +2950,144 @@
     `;
   }
 
+  function renderFacturasVentaBlock(record) {
+    const facturas = normalizeFacturasVentaList(record?.facturas || []);
+    return `
+        <section class="facturas-block" data-facturas-block>
+          <input type="hidden" name="facturasJson" data-facturas-json value="${escapeHtml(JSON.stringify(facturas))}" />
+          <input type="hidden" data-factura-editing-id value="" />
+          <div class="facturas-head">
+            <div>
+              <span class="eyebrow mini">Documentos emitidos</span>
+              <h3>Facturas</h3>
+            </div>
+            <span class="count-pill" data-facturas-count>${facturas.length} factura${facturas.length === 1 ? '' : 's'}</span>
+          </div>
+          <p class="muted-text compact-note">Registra solo número y fecha. Sin montos, sin artículos, sin contabilidad: aquí venimos finos, no enciclopédicos.</p>
+          <div class="form-grid facturas-entry-grid">
+            <label class="form-field">
+              <span>Número de factura</span>
+              <input type="text" data-factura-numero placeholder="Ej. FAC-001" autocomplete="off" />
+            </label>
+            <label class="form-field">
+              <span>Fecha</span>
+              <input type="date" data-factura-fecha />
+            </label>
+          </div>
+          <div class="form-actions facturas-actions">
+            <button type="button" class="secondary-action compact" data-factura-add>Agregar factura</button>
+            <button type="button" class="secondary-action compact is-hidden" data-factura-cancel>Cancelar edición</button>
+          </div>
+          <p class="compact-note facturas-message" data-factura-message aria-live="polite"></p>
+          <div data-facturas-list>
+            ${renderFacturasVentaEditorList(facturas)}
+          </div>
+        </section>
+    `;
+  }
+
+  function renderFacturasVentaEditorList(facturas) {
+    const list = normalizeFacturasVentaList(facturas);
+    if (!list.length) {
+      return '<div class="facturas-empty">Sin facturas registradas.</div>';
+    }
+    return `
+      <div class="facturas-list">
+        ${list.map((factura) => `
+          <article class="factura-item">
+            <div>
+              <strong>${escapeHtml(factura.numero)}</strong>
+              <span>${escapeHtml(formatDate(factura.fecha))}</span>
+            </div>
+            <div class="record-actions">
+              <button type="button" class="secondary-action compact" data-factura-edit="${escapeHtml(factura.id)}">Editar</button>
+              <button type="button" class="danger-action compact" data-factura-delete="${escapeHtml(factura.id)}">Borrar</button>
+            </div>
+          </article>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  function renderFacturasVentaDisplay(facturas) {
+    const list = normalizeFacturasVentaList(facturas);
+    if (!list.length) {
+      return '<div class="facturas-empty compact-view">Sin facturas registradas.</div>';
+    }
+    return `
+      <div class="facturas-display-list">
+        ${list.map((factura) => `
+          <span class="factura-chip"><strong>${escapeHtml(factura.numero)}</strong> · ${escapeHtml(formatDate(factura.fecha))}</span>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  function renderLogisticaVentaBlock(record) {
+    const requiereEnvio = Boolean(record?.requiereEnvio);
+    const logistica = normalizeLogisticaVentaRecord(record?.logistica || {});
+    return `
+      <section class="logistica-block" data-logistica-block>
+        <label class="checkbox-field logistica-toggle">
+          <input type="checkbox" name="requiereEnvio" value="1" data-logistica-toggle ${requiereEnvio ? 'checked' : ''} />
+          <span>Requiere envío</span>
+        </label>
+        <div class="logistica-panel ${requiereEnvio ? '' : 'is-hidden'}" data-logistica-panel>
+          <div class="facturas-head">
+            <div>
+              <span class="eyebrow mini">Transporte de mercadería</span>
+              <h3>Logística / Envío</h3>
+            </div>
+          </div>
+          <p class="muted-text compact-note">Completa estos datos solo cuando la OC requiera envío por transportista.</p>
+          <div class="form-grid logistica-grid">
+            <label class="form-field">
+              <span>Transportista</span>
+              <input type="text" name="logisticaTransportista" value="${escapeHtml(logistica.transportista)}" placeholder="Ej. CARGOTRANS" autocomplete="off" />
+            </label>
+            <label class="form-field">
+              <span>Fecha de embarque</span>
+              <input type="date" name="logisticaFechaEmbarque" value="${escapeHtml(logistica.fechaEmbarque)}" />
+            </label>
+            <label class="form-field">
+              <span>Fecha estimada</span>
+              <input type="date" name="logisticaFechaEstimada" value="${escapeHtml(logistica.fechaEstimada)}" />
+            </label>
+            <label class="form-field">
+              <span>Fecha real</span>
+              <input type="date" name="logisticaFechaReal" value="${escapeHtml(logistica.fechaReal)}" />
+            </label>
+            <label class="form-field">
+              <span>Guía</span>
+              <input type="text" name="logisticaGuia" value="${escapeHtml(logistica.guia)}" placeholder="Número de guía" autocomplete="off" />
+            </label>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderLogisticaVentaDisplay(record) {
+    const venta = normalizeVentaRecord(record);
+    if (!venta.requiereEnvio) return '';
+    const logistica = normalizeLogisticaVentaRecord(venta.logistica);
+    const items = [
+      ['Transportista', logistica.transportista || '—'],
+      ['Fecha de embarque', formatDate(logistica.fechaEmbarque)],
+      ['Fecha estimada', formatDate(logistica.fechaEstimada)],
+      ['Fecha real', formatDate(logistica.fechaReal)],
+      ['Guía', logistica.guia || '—']
+    ];
+    return `
+      <div class="logistica-card-block">
+        <strong>Logística / Envío</strong>
+        <div class="logistica-display-grid">
+          ${items.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+
   function renderVentaForm(record, clientesActivos, sucursalesActivas, missingCatalogs) {
     const fechaOc = record?.fechaOc || todayInputValue();
     const diasCredito = record?.diasCredito ?? '';
@@ -2820,6 +3155,10 @@
           </div>
         </div>
 
+        ${renderFacturasVentaBlock(record)}
+
+        ${renderLogisticaVentaBlock(record)}
+
         <label class="form-field">
           <span>Observación</span>
           <textarea name="observacion" rows="3" placeholder="Notas internas de la OC">${escapeHtml(record?.observacion || '')}</textarea>
@@ -2875,7 +3214,14 @@
           <div><span>Saldo por cobrar</span><strong>${escapeHtml(formatMoney(record.saldoPorCobrar))}</strong></div>
           <div><span>Días crédito</span><strong>${Number(record.diasCredito) || 0}</strong></div>
           <div><span>Cobros ligados</span><strong>${getCobrosByVentaId(record.id).length}</strong></div>
+          <div><span>Facturas</span><strong>${normalizeFacturasVentaList(record.facturas).length}</strong></div>
+          <div><span>Requiere envío</span><strong>${record.requiereEnvio ? 'Sí' : 'No'}</strong></div>
         </div>
+        <div class="facturas-card-block">
+          <strong>Facturas</strong>
+          ${renderFacturasVentaDisplay(record.facturas)}
+        </div>
+        ${renderLogisticaVentaDisplay(record)}
         ${record.observacion ? `<p class="record-note">${escapeHtml(record.observacion)}</p>` : ''}
         <dl class="record-meta">
           <dt>ID</dt><dd>${escapeHtml(record.id)}</dd>
@@ -2940,6 +3286,15 @@
       descuento: parseMoney(formData.get('descuento')),
       descuentoNoVa: parseMoney(formData.get('descuentoNoVa')),
       totalCobrado: existingRecord?.totalCobrado || 0,
+      facturas: normalizeFacturasVentaList(formData.get('facturasJson') || existingRecord?.facturas || []),
+      requiereEnvio: formData.get('requiereEnvio') === '1',
+      logistica: normalizeLogisticaVentaRecord({
+        transportista: formData.get('logisticaTransportista') ?? existingRecord?.logistica?.transportista,
+        fechaEmbarque: formData.get('logisticaFechaEmbarque') ?? existingRecord?.logistica?.fechaEmbarque,
+        fechaEstimada: formData.get('logisticaFechaEstimada') ?? existingRecord?.logistica?.fechaEstimada,
+        fechaReal: formData.get('logisticaFechaReal') ?? existingRecord?.logistica?.fechaReal,
+        guia: formData.get('logisticaGuia') ?? existingRecord?.logistica?.guia
+      }),
       observacion: cleanText(formData.get('observacion')),
       activo: typeof existingRecord?.activo === 'boolean' ? existingRecord.activo : true,
       createdAt: existingRecord?.createdAt || timestamp,
@@ -2953,6 +3308,9 @@
       noVa: Number.isNaN(base.noVa) ? 0 : base.noVa,
       descuento: Number.isNaN(base.descuento) ? 0 : base.descuento,
       descuentoNoVa: Number.isNaN(base.descuentoNoVa) ? 0 : base.descuentoNoVa,
+      facturas: normalizeFacturasVentaList(base.facturas),
+      requiereEnvio: Boolean(base.requiereEnvio),
+      logistica: normalizeLogisticaVentaRecord(base.logistica),
       ventaNeta: calculations.ventaNeta,
       totalCobrado: calculations.totalCobrado,
       saldoPorCobrar: calculations.saldoPorCobrar,
@@ -2983,10 +3341,29 @@
     return '';
   }
 
+  function validatePendingFacturaInputs(form) {
+    const block = form.querySelector('[data-facturas-block]');
+    if (!block) return '';
+    const numero = cleanText(block.querySelector('[data-factura-numero]')?.value || '');
+    const fecha = cleanText(block.querySelector('[data-factura-fecha]')?.value || '');
+    const editingId = cleanText(block.querySelector('[data-factura-editing-id]')?.value || '');
+    if (!numero && !fecha && !editingId) return '';
+    if (!numero) return 'Hay una factura en edición sin número. Completa el número o cancela la edición.';
+    if (!fecha) return 'Hay una factura en edición sin fecha. Completa la fecha o cancela la edición.';
+    return 'Hay una factura lista pero no agregada/actualizada. Presiona Agregar/Actualizar factura antes de guardar la OC.';
+  }
+
   function saveVentaRecord(form) {
     const existingId = cleanText(new FormData(form).get('id'));
     const records = Array.isArray(appData.ventas) ? appData.ventas : [];
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
+    const pendingFacturaError = validatePendingFacturaInputs(form);
+    if (pendingFacturaError) {
+      ventasState.message = pendingFacturaError;
+      ventasState.messageType = 'error';
+      renderRoute();
+      return;
+    }
     const newRecord = buildVentaFromForm(form, existingRecord);
     const validationError = validateVentaRecord(newRecord);
 
@@ -3069,6 +3446,115 @@
     form.querySelector('[data-venta-days]')?.addEventListener('input', () => updateVentaPreviewFromForm(form, true));
   }
 
+  function setupVentaFacturasForm(form) {
+    const block = form.querySelector('[data-facturas-block]');
+    if (!block) return;
+    const hidden = block.querySelector('[data-facturas-json]');
+    const numeroInput = block.querySelector('[data-factura-numero]');
+    const fechaInput = block.querySelector('[data-factura-fecha]');
+    const editingInput = block.querySelector('[data-factura-editing-id]');
+    const addButton = block.querySelector('[data-factura-add]');
+    const cancelButton = block.querySelector('[data-factura-cancel]');
+    const listNode = block.querySelector('[data-facturas-list]');
+    const countNode = block.querySelector('[data-facturas-count]');
+    const messageNode = block.querySelector('[data-factura-message]');
+
+    const readList = () => normalizeFacturasVentaList(hidden?.value || []);
+    const writeList = (list) => {
+      if (hidden) hidden.value = JSON.stringify(normalizeFacturasVentaList(list));
+    };
+    const showMessage = (message, isError = false) => {
+      if (!messageNode) return;
+      messageNode.textContent = message || '';
+      messageNode.classList.toggle('is-error', Boolean(isError));
+    };
+    const resetInputs = () => {
+      if (numeroInput) numeroInput.value = '';
+      if (fechaInput) fechaInput.value = '';
+      if (editingInput) editingInput.value = '';
+      if (addButton) addButton.textContent = 'Agregar factura';
+      cancelButton?.classList.add('is-hidden');
+    };
+    const renderList = () => {
+      const list = readList();
+      if (listNode) listNode.innerHTML = renderFacturasVentaEditorList(list);
+      if (countNode) countNode.textContent = `${list.length} factura${list.length === 1 ? '' : 's'}`;
+      listNode?.querySelectorAll('[data-factura-edit]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const factura = readList().find((item) => item.id === button.dataset.facturaEdit);
+          if (!factura) return;
+          if (numeroInput) numeroInput.value = factura.numero;
+          if (fechaInput) fechaInput.value = factura.fecha;
+          if (editingInput) editingInput.value = factura.id;
+          if (addButton) addButton.textContent = 'Actualizar factura';
+          cancelButton?.classList.remove('is-hidden');
+          showMessage(`Editando factura ${factura.numero}.`, false);
+          numeroInput?.focus();
+        });
+      });
+      listNode?.querySelectorAll('[data-factura-delete]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const factura = readList().find((item) => item.id === button.dataset.facturaDelete);
+          const next = readList().filter((item) => item.id !== button.dataset.facturaDelete);
+          writeList(next);
+          renderList();
+          resetInputs();
+          showMessage(factura ? `Factura ${factura.numero} borrada del bloque. Guarda la OC para confirmar.` : 'Factura borrada del bloque.', false);
+        });
+      });
+    };
+
+    addButton?.addEventListener('click', () => {
+      const numero = cleanText(numeroInput?.value || '');
+      const fecha = toDateInputValue(fechaInput?.value || '');
+      const editingId = cleanText(editingInput?.value || '');
+      if (!numero) {
+        showMessage('El número de factura es obligatorio.', true);
+        numeroInput?.focus();
+        return;
+      }
+      if (!fecha) {
+        showMessage('La fecha de factura es obligatoria.', true);
+        fechaInput?.focus();
+        return;
+      }
+      const current = readList();
+      const duplicate = current.find((item) => item.id !== editingId && normalizeNameForCompare(item.numero) === normalizeNameForCompare(numero) && item.fecha === fecha);
+      if (duplicate) {
+        showMessage('Esa factura ya está registrada para esta OC.', true);
+        return;
+      }
+      const nextFactura = { id: editingId || generateId('factura'), numero, fecha };
+      const next = editingId
+        ? current.map((item) => item.id === editingId ? nextFactura : item)
+        : [...current, nextFactura];
+      writeList(next);
+      renderList();
+      resetInputs();
+      showMessage(editingId ? 'Factura actualizada. Guarda la OC para confirmar.' : 'Factura agregada. Guarda la OC para confirmar.', false);
+    });
+
+    cancelButton?.addEventListener('click', () => {
+      resetInputs();
+      showMessage('Edición de factura cancelada.', false);
+    });
+
+    writeList(readList());
+    renderList();
+  }
+
+  function setupVentaLogisticaForm(form) {
+    const block = form.querySelector('[data-logistica-block]');
+    if (!block) return;
+    const toggle = block.querySelector('[data-logistica-toggle]');
+    const panel = block.querySelector('[data-logistica-panel]');
+    const updateVisibility = () => {
+      panel?.classList.toggle('is-hidden', !toggle?.checked);
+    };
+    toggle?.addEventListener('change', updateVisibility);
+    updateVisibility();
+  }
+
   function applyVentaPaymentTermsSuggestion(form) {
     const clienteId = cleanText(form.querySelector('[data-venta-client]')?.value || '');
     const terms = getCatalogPaymentTerms('clientes', clienteId);
@@ -3106,7 +3592,7 @@
   function renderCobros() {
     const ventasDisponibles = getVentasConSaldoCobro();
     const metodosActivos = getActiveCatalogRecords('metodosPago');
-    const cuentasActivas = getActiveCatalogRecords('cuentasBancos');
+    const cuentasActivas = getActiveBankRecords();
     const cobros = getCobrosOrdenados();
     const visibleCobros = cobrosState.focusVentaId ? cobros.filter((cobro) => cobro.ventaId === cobrosState.focusVentaId) : cobros;
     const focusVenta = cobrosState.focusVentaId ? normalizeVentaRecord(appData.ventas.find((venta) => venta.id === cobrosState.focusVentaId)) : null;
@@ -3115,8 +3601,8 @@
     if (selectedVenta && cobrosState.selectedVentaId !== selectedVenta.id) cobrosState.selectedVentaId = selectedVenta.id;
     const editingRecord = cobrosState.editingId ? getCobrosOrdenados().find((record) => record.id === cobrosState.editingId) : null;
     const modalMetodos = editingRecord ? getSelectableCatalogRecords('metodosPago', editingRecord.metodoPagoId) : metodosActivos;
-    const modalCuentas = editingRecord ? getSelectableCatalogRecords('cuentasBancos', editingRecord.cuentaBancoId) : cuentasActivas;
-    const missingCatalogs = !metodosActivos.length || !cuentasActivas.length;
+    const modalCuentas = editingRecord ? getSelectableBankRecords(editingRecord.cuentaBancoId) : cuentasActivas;
+    const missingCatalogs = !metodosActivos.length;
     const cannotCreate = !selectedVenta || missingCatalogs;
 
     return `
@@ -3188,12 +3674,11 @@
     const missing = [];
     if (!ventasDisponibles.length) missing.push('OC con saldo por cobrar');
     if (!metodosActivos.length) missing.push('métodos de pago activos');
-    if (!cuentasActivas.length) missing.push('cuentas/bancos activos');
     if (!missing.length) return '';
     return `
       <article class="catalog-warning" role="status">
         <strong>Faltan ${escapeHtml(missing.join(', '))}.</strong>
-        <p>Para guardar un cobro necesitas una OC activa con saldo y catálogos activos de método y cuenta/banco.</p>
+        <p>Para guardar un cobro necesitas una OC activa con saldo y métodos de pago activos. El banco se solicita solo en Transferencia o Tarjeta.</p>
         <div class="placeholder-tools">
           <button type="button" class="secondary-action compact" data-go="ventas">Ir a Ventas / OC</button>
           <button type="button" class="secondary-action compact" data-go="catalogos">Ir a Catálogos</button>
@@ -3230,18 +3715,12 @@
           </label>
           <label class="form-field">
             <span>Método de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <select name="metodoPagoId" required ${!metodosActivos.length || cannotCreate ? 'disabled' : ''}>
+            <select name="metodoPagoId" required data-payment-method-select ${!metodosActivos.length || cannotCreate ? 'disabled' : ''}>
               <option value="">Seleccionar método</option>
               ${metodosActivos.map((metodo) => `<option value="${escapeHtml(metodo.id)}">${escapeHtml(metodo.nombre || 'Método sin nombre')}</option>`).join('')}
             </select>
           </label>
-          <label class="form-field">
-            <span>Cuenta / banco <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <select name="cuentaBancoId" required ${!cuentasActivas.length || cannotCreate ? 'disabled' : ''}>
-              <option value="">Seleccionar cuenta/banco</option>
-              ${cuentasActivas.map((cuenta) => `<option value="${escapeHtml(cuenta.id)}">${escapeHtml(cuenta.nombre || 'Cuenta sin nombre')}</option>`).join('')}
-            </select>
-          </label>
+          ${renderPaymentBankField(cuentasActivas, null, cannotCreate)}
         </div>
 
         ${selectedVenta ? renderSelectedVentaCobroSummary(selectedVenta, cliente, sucursal) : ''}
@@ -3283,18 +3762,12 @@
           </label>
           <label class="form-field">
             <span>Método de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <select name="metodoPagoId" required>
+            <select name="metodoPagoId" required data-payment-method-select>
               <option value="">Seleccionar método</option>
               ${metodosActivos.map((metodo) => `<option value="${escapeHtml(metodo.id)}" ${metodo.id === record.metodoPagoId ? 'selected' : ''}>${escapeHtml(metodo.nombre || 'Método sin nombre')}${metodo.activo ? '' : ' · inactivo'}</option>`).join('')}
             </select>
           </label>
-          <label class="form-field">
-            <span>Cuenta / banco <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <select name="cuentaBancoId" required>
-              <option value="">Seleccionar cuenta/banco</option>
-              ${cuentasActivas.map((cuenta) => `<option value="${escapeHtml(cuenta.id)}" ${cuenta.id === record.cuentaBancoId ? 'selected' : ''}>${escapeHtml(cuenta.nombre || 'Cuenta sin nombre')}${cuenta.activo ? '' : ' · inactivo'}</option>`).join('')}
-            </select>
-          </label>
+          ${renderPaymentBankField(cuentasActivas, record, false)}
         </div>
         ${venta ? renderSelectedVentaCobroSummary(venta, cliente, sucursal) : ''}
         <p class="compact-note">Máximo permitido para esta edición: ${escapeHtml(formatMoney(saldoDisponible))}. El vínculo con la OC no se cambia para proteger trazabilidad.</p>
@@ -3362,7 +3835,7 @@
           <div><span>Sucursal</span><strong>${escapeHtml(record.sucursalNombre || 'Sucursal no encontrada')}</strong></div>
           <div><span>Monto cobrado</span><strong>${escapeHtml(formatMoney(record.montoCobrado))}</strong></div>
           <div><span>Método</span><strong>${escapeHtml(record.metodoPagoNombre || '—')}</strong></div>
-          <div><span>Cuenta / banco</span><strong>${escapeHtml(record.cuentaBancoNombre || '—')}</strong></div>
+          <div><span>Banco</span><strong>${escapeHtml(record.cuentaBancoNombre || '—')}</strong></div>
           <div><span>Fecha real</span><strong>${escapeHtml(formatDate(record.fechaCobro))}</strong></div>
         </div>
         ${record.observacion ? `<p class="record-note">${escapeHtml(record.observacion)}</p>` : ''}
@@ -3431,7 +3904,8 @@
     const cliente = venta ? getCatalogRecordById('clientes', venta.clienteId) : null;
     const sucursal = venta ? getCatalogRecordById('sucursales', venta.sucursalId) : null;
     const metodo = getCatalogRecordById('metodosPago', cleanText(formData.get('metodoPagoId')));
-    const cuenta = getCatalogRecordById('cuentasBancos', cleanText(formData.get('cuentaBancoId')));
+    const requiereBanco = paymentMethodRequiresBank(metodo?.id || metodo?.nombre || formData.get('metodoPagoId'));
+    const cuenta = requiereBanco ? getCatalogRecordById('cuentasBancos', cleanText(formData.get('cuentaBancoId'))) : null;
 
     return normalizeCobroRecord({
       ...(existingRecord || {}),
@@ -3446,8 +3920,8 @@
       montoCobrado: parseMoney(formData.get('montoCobrado')),
       metodoPagoId: metodo?.id || existingRecord?.metodoPagoId || '',
       metodoPagoNombre: metodo?.nombre || existingRecord?.metodoPagoNombre || '',
-      cuentaBancoId: cuenta?.id || existingRecord?.cuentaBancoId || '',
-      cuentaBancoNombre: cuenta?.nombre || existingRecord?.cuentaBancoNombre || '',
+      cuentaBancoId: requiereBanco ? (cuenta?.id || existingRecord?.cuentaBancoId || '') : '',
+      cuentaBancoNombre: requiereBanco ? (cuenta?.nombre || existingRecord?.cuentaBancoNombre || '') : '',
       observacion: cleanText(formData.get('observacion')),
       activo: typeof existingRecord?.activo === 'boolean' ? existingRecord.activo : true,
       estado: typeof existingRecord?.activo === 'boolean' && !existingRecord.activo ? 'Anulado' : 'Registrado',
@@ -3466,7 +3940,8 @@
     if (Number.isNaN(parseMoney(record.montoCobrado)) || record.montoCobrado <= 0) return 'El monto cobrado debe ser mayor que cero.';
     if (record.montoCobrado > saldoPermitido) return `El cobro no puede superar el saldo permitido de ${formatMoney(saldoPermitido)}.`;
     if (!record.metodoPagoId || !getCatalogRecords('metodosPago').some((item) => item.id === record.metodoPagoId && (item.activo || existingRecord?.metodoPagoId === item.id))) return 'Selecciona un método de pago válido.';
-    if (!record.cuentaBancoId || !getCatalogRecords('cuentasBancos').some((item) => item.id === record.cuentaBancoId && (item.activo || existingRecord?.cuentaBancoId === item.id))) return 'Selecciona una cuenta/banco válida.';
+    const bankError = validateBankForPaymentMethod(record, existingRecord);
+    if (bankError) return bankError;
     return '';
   }
 
@@ -3985,7 +4460,7 @@
   function renderPagosProveedores() {
     const comprasDisponibles = getComprasConSaldoPago();
     const metodosActivos = getActiveCatalogRecords('metodosPago');
-    const cuentasActivas = getActiveCatalogRecords('cuentasBancos');
+    const cuentasActivas = getActiveBankRecords();
     const pagos = getPagosProveedoresOrdenados();
     const visiblePagos = pagosState.focusCompraId ? pagos.filter((pago) => pago.compraProveedorId === pagosState.focusCompraId) : pagos;
     const focusCompra = pagosState.focusCompraId ? normalizeCompraProveedorRecord(appData.comprasProveedores.find((compra) => compra.id === pagosState.focusCompraId)) : null;
@@ -3994,8 +4469,8 @@
     if (selectedCompra && pagosState.selectedCompraId !== selectedCompra.id) pagosState.selectedCompraId = selectedCompra.id;
     const editingRecord = pagosState.editingId ? getPagosProveedoresOrdenados().find((record) => record.id === pagosState.editingId) : null;
     const modalMetodos = editingRecord ? getSelectableCatalogRecords('metodosPago', editingRecord.metodoPagoId) : metodosActivos;
-    const modalCuentas = editingRecord ? getSelectableCatalogRecords('cuentasBancos', editingRecord.cuentaBancoId) : cuentasActivas;
-    const missingCatalogs = !metodosActivos.length || !cuentasActivas.length;
+    const modalCuentas = editingRecord ? getSelectableBankRecords(editingRecord.cuentaBancoId) : cuentasActivas;
+    const missingCatalogs = !metodosActivos.length;
     const cannotCreate = !selectedCompra || missingCatalogs;
 
     return `
@@ -4067,12 +4542,11 @@
     const missing = [];
     if (!comprasDisponibles.length) missing.push('facturas/referencias con saldo por pagar');
     if (!metodosActivos.length) missing.push('métodos de pago activos');
-    if (!cuentasActivas.length) missing.push('cuentas/bancos activos');
     if (!missing.length) return '';
     return `
       <article class="catalog-warning" role="status">
         <strong>Faltan ${escapeHtml(missing.join(', '))}.</strong>
-        <p>Para guardar un pago necesitas una compra/deuda activa con saldo y catálogos activos de método y cuenta/banco.</p>
+        <p>Para guardar un pago necesitas una compra/deuda activa con saldo y métodos de pago activos. El banco se solicita solo en Transferencia o Tarjeta.</p>
         <div class="placeholder-tools">
           <button type="button" class="secondary-action compact" data-go="proveedores">Ir a Proveedores / Compras</button>
           <button type="button" class="secondary-action compact" data-go="catalogos">Ir a Catálogos</button>
@@ -4108,18 +4582,12 @@
           </label>
           <label class="form-field">
             <span>Método de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <select name="metodoPagoId" required ${!metodosActivos.length || cannotCreate ? 'disabled' : ''}>
+            <select name="metodoPagoId" required data-payment-method-select ${!metodosActivos.length || cannotCreate ? 'disabled' : ''}>
               <option value="">Seleccionar método</option>
               ${metodosActivos.map((metodo) => `<option value="${escapeHtml(metodo.id)}">${escapeHtml(metodo.nombre || 'Método sin nombre')}</option>`).join('')}
             </select>
           </label>
-          <label class="form-field">
-            <span>Cuenta / banco <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <select name="cuentaBancoId" required ${!cuentasActivas.length || cannotCreate ? 'disabled' : ''}>
-              <option value="">Seleccionar cuenta/banco</option>
-              ${cuentasActivas.map((cuenta) => `<option value="${escapeHtml(cuenta.id)}">${escapeHtml(cuenta.nombre || 'Cuenta sin nombre')}</option>`).join('')}
-            </select>
-          </label>
+          ${renderPaymentBankField(cuentasActivas, null, cannotCreate)}
         </div>
 
         ${selectedCompra ? renderSelectedCompraPagoSummary(selectedCompra, proveedor) : ''}
@@ -4160,18 +4628,12 @@
           </label>
           <label class="form-field">
             <span>Método de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <select name="metodoPagoId" required>
+            <select name="metodoPagoId" required data-payment-method-select>
               <option value="">Seleccionar método</option>
               ${metodosActivos.map((metodo) => `<option value="${escapeHtml(metodo.id)}" ${metodo.id === record.metodoPagoId ? 'selected' : ''}>${escapeHtml(metodo.nombre || 'Método sin nombre')}${metodo.activo ? '' : ' · inactivo'}</option>`).join('')}
             </select>
           </label>
-          <label class="form-field">
-            <span>Cuenta / banco <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <select name="cuentaBancoId" required>
-              <option value="">Seleccionar cuenta/banco</option>
-              ${cuentasActivas.map((cuenta) => `<option value="${escapeHtml(cuenta.id)}" ${cuenta.id === record.cuentaBancoId ? 'selected' : ''}>${escapeHtml(cuenta.nombre || 'Cuenta sin nombre')}${cuenta.activo ? '' : ' · inactivo'}</option>`).join('')}
-            </select>
-          </label>
+          ${renderPaymentBankField(cuentasActivas, record, false)}
         </div>
         ${compra ? renderSelectedCompraPagoSummary(compra, proveedor) : ''}
         <p class="compact-note">Máximo permitido para esta edición: ${escapeHtml(formatMoney(saldoDisponible))}. El vínculo con la factura/referencia no se cambia para proteger trazabilidad.</p>
@@ -4239,7 +4701,7 @@
           <div><span>Factura / referencia</span><strong>${escapeHtml(record.facturaReferencia || '—')}</strong></div>
           <div><span>Monto pagado</span><strong>${escapeHtml(formatMoney(record.montoPagado))}</strong></div>
           <div><span>Método</span><strong>${escapeHtml(record.metodoPagoNombre || '—')}</strong></div>
-          <div><span>Cuenta / banco</span><strong>${escapeHtml(record.cuentaBancoNombre || '—')}</strong></div>
+          <div><span>Banco</span><strong>${escapeHtml(record.cuentaBancoNombre || '—')}</strong></div>
           <div><span>Fecha real</span><strong>${escapeHtml(formatDate(record.fechaPago))}</strong></div>
         </div>
         ${record.observacion ? `<p class="record-note">${escapeHtml(record.observacion)}</p>` : ''}
@@ -4301,7 +4763,8 @@
     const compra = appData.comprasProveedores.map((record) => normalizeCompraProveedorRecord(record)).find((record) => record.id === compraProveedorId);
     const proveedor = compra ? getCatalogRecordById('proveedores', compra.proveedorId) : null;
     const metodo = getCatalogRecordById('metodosPago', cleanText(formData.get('metodoPagoId')));
-    const cuenta = getCatalogRecordById('cuentasBancos', cleanText(formData.get('cuentaBancoId')));
+    const requiereBanco = paymentMethodRequiresBank(metodo?.id || metodo?.nombre || formData.get('metodoPagoId'));
+    const cuenta = requiereBanco ? getCatalogRecordById('cuentasBancos', cleanText(formData.get('cuentaBancoId'))) : null;
 
     return normalizePagoProveedorRecord({
       ...(existingRecord || {}),
@@ -4314,8 +4777,8 @@
       montoPagado: parseMoney(formData.get('montoPagado')),
       metodoPagoId: metodo?.id || existingRecord?.metodoPagoId || '',
       metodoPagoNombre: metodo?.nombre || existingRecord?.metodoPagoNombre || '',
-      cuentaBancoId: cuenta?.id || existingRecord?.cuentaBancoId || '',
-      cuentaBancoNombre: cuenta?.nombre || existingRecord?.cuentaBancoNombre || '',
+      cuentaBancoId: requiereBanco ? (cuenta?.id || existingRecord?.cuentaBancoId || '') : '',
+      cuentaBancoNombre: requiereBanco ? (cuenta?.nombre || existingRecord?.cuentaBancoNombre || '') : '',
       observacion: cleanText(formData.get('observacion')),
       activo: typeof existingRecord?.activo === 'boolean' ? existingRecord.activo : true,
       estado: typeof existingRecord?.activo === 'boolean' && !existingRecord.activo ? 'Anulado' : 'Registrado',
@@ -4334,7 +4797,8 @@
     if (Number.isNaN(parseMoney(record.montoPagado)) || record.montoPagado <= 0) return 'El monto pagado debe ser mayor que cero.';
     if (record.montoPagado > saldoPermitido) return `El pago no puede superar el saldo permitido de ${formatMoney(saldoPermitido)}.`;
     if (!record.metodoPagoId || !getCatalogRecords('metodosPago').some((item) => item.id === record.metodoPagoId && (item.activo || existingRecord?.metodoPagoId === item.id))) return 'Selecciona un método de pago válido.';
-    if (!record.cuentaBancoId || !getCatalogRecords('cuentasBancos').some((item) => item.id === record.cuentaBancoId && (item.activo || existingRecord?.cuentaBancoId === item.id))) return 'Selecciona una cuenta/banco válida.';
+    const bankError = validateBankForPaymentMethod(record, existingRecord);
+    if (bankError) return bankError;
     return '';
   }
 
@@ -4473,18 +4937,18 @@
   function renderGastos() {
     const tiposActivos = getActiveCatalogRecords('tiposGasto');
     const metodosActivos = getActiveCatalogRecords('metodosPago');
-    const cuentasActivas = getActiveCatalogRecords('cuentasBancos');
+    const cuentasActivas = getActiveBankRecords();
     const gastos = getGastosOrdenados();
     const editingRecord = gastosState.editingId ? gastos.find((record) => record.id === gastosState.editingId) : null;
     const totals = getGastosTotals();
-    const missingCatalogs = !tiposActivos.length || !metodosActivos.length || !cuentasActivas.length;
+    const missingCatalogs = !tiposActivos.length || !metodosActivos.length;
 
     return `
       <section class="hero gastos-hero">
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Gastos</h1>
-          <p class="lead">Registra gastos operativos por tipo, método de pago y cuenta/banco. Los anulados quedan visibles para trazabilidad, pero no suman en reportes futuros: orden sin maquillaje contable.</p>
+          <p class="lead">Registra gastos operativos por tipo, método de pago y banco cuando aplique. Los anulados quedan visibles para trazabilidad, pero no suman en reportes futuros: orden sin maquillaje contable.</p>
         </div>
         <aside class="hero-status" aria-label="Resumen de gastos">
           <h3>Totales básicos</h3>
@@ -4519,7 +4983,7 @@
                 <h2>Registrar gasto</h2>
               </div>
             </div>
-            <p class="muted-text">Los tipos, métodos y cuentas/bancos vienen de Catálogos activos.</p>
+            <p class="muted-text">Los tipos, métodos y bancos vienen de Catálogos activos. Banco aparece solo con Transferencia o Tarjeta.</p>
             ${renderGastoForm(null, tiposActivos, metodosActivos, cuentasActivas, missingCatalogs)}
           </article>
 
@@ -4547,12 +5011,11 @@
     const missing = [];
     if (!tiposActivos.length) missing.push('tipos de gasto activos');
     if (!metodosActivos.length) missing.push('métodos de pago activos');
-    if (!cuentasActivas.length) missing.push('cuentas/bancos activos');
     if (!missing.length) return '';
     return `
       <article class="catalog-warning" role="status">
         <strong>Faltan ${escapeHtml(missing.join(', '))}.</strong>
-        <p>Para guardar un gasto necesitas catálogos activos de tipo de gasto, método y cuenta/banco.</p>
+        <p>Para guardar un gasto necesitas tipos de gasto y métodos de pago activos. Banco se solicita solo en Transferencia o Tarjeta.</p>
         <button type="button" class="secondary-action compact" data-go="catalogos">Ir a Catálogos</button>
       </article>
     `;
@@ -4582,18 +5045,12 @@
           </label>
           <label class="form-field">
             <span>Método de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <select name="metodoPagoId" required ${!metodosActivos.length || cannotCreate ? 'disabled' : ''}>
+            <select name="metodoPagoId" required data-payment-method-select ${!metodosActivos.length || cannotCreate ? 'disabled' : ''}>
               <option value="">Seleccionar método</option>
               ${metodosActivos.map((metodo) => `<option value="${escapeHtml(metodo.id)}" ${metodo.id === record?.metodoPagoId ? 'selected' : ''}>${escapeHtml(metodo.nombre || 'Método sin nombre')}</option>`).join('')}
             </select>
           </label>
-          <label class="form-field full-span">
-            <span>Cuenta / banco <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <select name="cuentaBancoId" required ${!cuentasActivas.length || cannotCreate ? 'disabled' : ''}>
-              <option value="">Seleccionar cuenta/banco</option>
-              ${cuentasActivas.map((cuenta) => `<option value="${escapeHtml(cuenta.id)}" ${cuenta.id === record?.cuentaBancoId ? 'selected' : ''}>${escapeHtml(cuenta.nombre || 'Cuenta sin nombre')}</option>`).join('')}
-            </select>
-          </label>
+          ${renderPaymentBankField(cuentasActivas, record, cannotCreate)}
         </div>
 
         <label class="form-field">
@@ -4647,7 +5104,7 @@
           <div><span>Fecha</span><strong>${escapeHtml(formatDate(record.fecha))}</strong></div>
           <div><span>Monto</span><strong>${escapeHtml(formatMoney(record.monto))}</strong></div>
           <div><span>Método</span><strong>${escapeHtml(metodo?.nombre || record.metodoPagoNombre || 'Método no encontrado')}</strong></div>
-          <div><span>Cuenta / banco</span><strong>${escapeHtml(cuenta?.nombre || record.cuentaBancoNombre || 'Cuenta no encontrada')}</strong></div>
+          <div><span>Banco</span><strong>${escapeHtml(cuenta?.nombre || record.cuentaBancoNombre || '—')}</strong></div>
           <div><span>Estado</span><strong>${escapeHtml(record.estado)}</strong></div>
           <div><span>Suma futura</span><strong>${record.activo ? 'Sí' : 'No'}</strong></div>
         </div>
@@ -4693,7 +5150,8 @@
     const timestamp = nowIso();
     const tipo = getCatalogRecordById('tiposGasto', cleanText(formData.get('tipoGastoId')));
     const metodo = getCatalogRecordById('metodosPago', cleanText(formData.get('metodoPagoId')));
-    const cuenta = getCatalogRecordById('cuentasBancos', cleanText(formData.get('cuentaBancoId')));
+    const requiereBanco = paymentMethodRequiresBank(metodo?.id || metodo?.nombre || formData.get('metodoPagoId'));
+    const cuenta = requiereBanco ? getCatalogRecordById('cuentasBancos', cleanText(formData.get('cuentaBancoId'))) : null;
 
     return normalizeGastoRecord({
       ...(existingRecord || {}),
@@ -4704,8 +5162,8 @@
       monto: parseMoney(formData.get('monto')),
       metodoPagoId: metodo?.id || '',
       metodoPagoNombre: metodo?.nombre || '',
-      cuentaBancoId: cuenta?.id || '',
-      cuentaBancoNombre: cuenta?.nombre || '',
+      cuentaBancoId: requiereBanco ? (cuenta?.id || '') : '',
+      cuentaBancoNombre: requiereBanco ? (cuenta?.nombre || '') : '',
       observacion: cleanText(formData.get('observacion')),
       estado: 'Registrado',
       anulado: false,
@@ -4720,7 +5178,8 @@
     if (!record.tipoGastoId || !getActiveCatalogRecords('tiposGasto').some((item) => item.id === record.tipoGastoId)) return 'Selecciona un tipo de gasto activo.';
     if (Number.isNaN(parseMoney(record.monto)) || record.monto <= 0) return 'El monto debe ser mayor que cero.';
     if (!record.metodoPagoId || !getActiveCatalogRecords('metodosPago').some((item) => item.id === record.metodoPagoId)) return 'Selecciona un método de pago activo.';
-    if (!record.cuentaBancoId || !getActiveCatalogRecords('cuentasBancos').some((item) => item.id === record.cuentaBancoId)) return 'Selecciona una cuenta/banco activo.';
+    const bankError = validateBankForPaymentMethod(record, null);
+    if (bankError) return bankError;
     return '';
   }
 
@@ -6315,16 +6774,24 @@
       [xlsxTitle('Ventas / OC')],
       [xlsxLabel('Período'), xlsxText(summary.periodLabel)],
       [],
-      xlsxHeaderRow(['Fecha OC', 'Cliente', 'Sucursal', 'OC/documento', 'Monto OC', 'NO VA', 'Descuento', 'Descuento NO VA', 'Venta neta', 'Total cobrado', 'Saldo por cobrar', 'Fecha vencimiento', 'Días mora', 'Estado', 'Observación'])
+      xlsxHeaderRow(['Fecha OC', 'Cliente', 'Sucursal', 'OC/documento', 'Facturas', 'Requiere envío', 'Transportista', 'Fecha de embarque', 'Fecha estimada', 'Fecha real', 'Guía', 'Monto OC', 'NO VA', 'Descuento', 'Descuento NO VA', 'Venta neta', 'Total cobrado', 'Saldo por cobrar', 'Fecha vencimiento', 'Días mora', 'Estado', 'Observación'])
     ];
     getVentasForExport(summary.range, summary.filters).forEach((venta) => {
       const cliente = getCatalogRecordById('clientes', venta.clienteId);
       const sucursal = getCatalogRecordById('sucursales', venta.sucursalId);
+      const logistica = normalizeLogisticaVentaRecord(venta.logistica);
       rows.push([
         xlsxDate(venta.fechaOc),
         xlsxText(cliente?.nombre || venta.clienteNombre || 'Cliente no encontrado'),
         xlsxText(sucursal?.nombre || venta.sucursalNombre || 'Sucursal no encontrada'),
         xlsxText(venta.numeroDocumento),
+        xlsxText(formatFacturasVentaResumen(venta.facturas)),
+        xlsxText(venta.requiereEnvio ? 'Sí' : 'No'),
+        xlsxText(logistica.transportista),
+        xlsxDate(logistica.fechaEmbarque),
+        xlsxDate(logistica.fechaEstimada),
+        xlsxDate(logistica.fechaReal),
+        xlsxText(logistica.guia),
         xlsxMoney(venta.montoOc),
         xlsxMoney(venta.noVa),
         xlsxMoney(venta.descuento),
@@ -6338,7 +6805,7 @@
         xlsxText(venta.observacion)
       ]);
     });
-    return { name: 'Ventas', rows, cols: [14, 24, 24, 18, 14, 14, 14, 16, 14, 16, 16, 16, 12, 14, 32] };
+    return { name: 'Ventas', rows, cols: [14, 24, 24, 18, 30, 14, 20, 16, 16, 16, 18, 14, 14, 14, 16, 14, 16, 16, 16, 12, 14, 32] };
   }
 
   function buildProveedoresSheet(summary) {
@@ -6371,7 +6838,7 @@
       [xlsxTitle('Gastos')],
       [xlsxLabel('Período'), xlsxText(summary.periodLabel)],
       [],
-      xlsxHeaderRow(['Fecha', 'Tipo de gasto', 'Monto', 'Método', 'Cuenta/banco', 'Estado', 'Observación'])
+      xlsxHeaderRow(['Fecha', 'Tipo de gasto', 'Monto', 'Método', 'Banco', 'Estado', 'Observación'])
     ];
     getGastosForExport(summary.range, summary.filters).forEach((gasto) => {
       const tipo = getCatalogRecordById('tiposGasto', gasto.tipoGastoId);
@@ -6382,7 +6849,7 @@
         xlsxText(tipo?.nombre || gasto.tipoGastoNombre || 'Sin tipo'),
         xlsxMoney(gasto.monto),
         xlsxText(metodo?.nombre || gasto.metodoPagoNombre || 'Sin método'),
-        xlsxText(cuenta?.nombre || gasto.cuentaBancoNombre || 'Sin cuenta'),
+        xlsxText(cuenta?.nombre || gasto.cuentaBancoNombre || 'Sin banco'),
         xlsxText(gasto.estado),
         xlsxText(gasto.observacion)
       ]);
@@ -7026,7 +7493,7 @@ ${rowsXml}
       contacto: cleanText(pickCell(row, ['Contacto', 'Teléfono', 'Telefono', 'Correo'])),
       condicionPago: cleanText(pickCell(row, ['Condición de pago', 'Condicion de pago', 'Condición', 'Condicion', 'Forma de pago', 'Tipo pago'])),
       diasCredito: parsePositiveInteger(pickCell(row, ['Días de crédito', 'Dias de credito', 'Días crédito', 'Dias credito', 'Crédito', 'Credito'])),
-      tipo: cleanText(pickCell(row, ['Tipo cuenta', 'Tipo'])) || (catalogId === 'cuentasBancos' ? 'Otro' : undefined),
+      tipo: cleanText(pickCell(row, ['Tipo cuenta', 'Tipo'])) || (catalogId === 'cuentasBancos' ? 'Banco' : undefined),
       observacion: cleanText(pickCell(row, ['Observación', 'Observacion', 'Notas']))
     }, CATALOGS.find((catalog) => catalog.id === catalogId));
     payload[catalogId].push(record);
@@ -7053,6 +7520,15 @@ ${rowsXml}
         fechaOc: parseExcelDateValue(pickCell(row, ['Fecha OC', 'Fecha', 'Fecha origen', 'Fecha venta'])),
         diasCredito: parsePositiveInteger(pickCell(row, ['Días crédito', 'Dias credito', 'Crédito', 'Credito'])),
         fechaVencimiento: parseExcelDateValue(pickCell(row, ['Fecha vencimiento', 'Vencimiento', 'Fecha de vencimiento'])),
+        facturas: normalizeFacturasVentaList(pickCell(row, ['Facturas', 'Facturas emitidas', 'Factura emitida'])),
+        requiereEnvio: normalizeBooleanField(pickCell(row, ['Requiere envío', 'Requiere envio', 'Envío', 'Envio']), false),
+        logistica: normalizeLogisticaVentaRecord({
+          transportista: pickCell(row, ['Transportista']),
+          fechaEmbarque: parseExcelDateValue(pickCell(row, ['Fecha de embarque', 'Fecha embarque', 'Embarque'])),
+          fechaEstimada: parseExcelDateValue(pickCell(row, ['Fecha estimada', 'Fecha estimada envío', 'Fecha estimada envio', 'Estimada'])),
+          fechaReal: parseExcelDateValue(pickCell(row, ['Fecha real', 'Fecha real envío', 'Fecha real envio', 'Real'])),
+          guia: pickCell(row, ['Guía', 'Guia', 'Número guía', 'Numero guia'])
+        }),
         montoOc,
         noVa: parseExcelMoney(pickCell(row, ['NO VA', 'No VA', 'NOVA', 'No va'])),
         descuento: parseExcelMoney(pickCell(row, ['Descuento', 'Desc'])),
@@ -7130,7 +7606,7 @@ ${rowsXml}
     parsed.objects.forEach((row) => {
       const tipoGastoNombre = cleanText(pickCell(row, ['Tipo de gasto', 'Tipo gasto', 'Tipo', 'Categoría', 'Categoria']));
       const metodoPagoNombre = cleanText(pickCell(row, ['Método', 'Metodo', 'Método de pago', 'Metodo de pago', 'Forma de pago']));
-      const cuentaBancoNombre = cleanText(pickCell(row, ['Cuenta/banco', 'Cuenta', 'Banco', 'Cuenta banco']));
+      const cuentaBancoNombre = cleanText(pickCell(row, ['Banco', 'Cuenta', 'Banco', 'Cuenta banco']));
       const tipoGastoId = tipoGastoNombre ? addImportCatalog(payload, 'tiposGasto', tipoGastoNombre) : '';
       const metodoPagoId = metodoPagoNombre ? addImportCatalog(payload, 'metodosPago', metodoPagoNombre) : '';
       const cuentaBancoId = cuentaBancoNombre ? addImportCatalog(payload, 'cuentasBancos', cuentaBancoNombre) : '';
@@ -7576,7 +8052,7 @@ ${rowsXml}
 
   function toggleCatalogRecord(recordId) {
     if (!canCurrentRole('editCatalogs')) {
-      catalogState.message = 'Solo Administrador puede activar o desactivar Catálogos.';
+      catalogState.message = 'Solo Administrador puede activar, borrar seguro o restaurar Catálogos.';
       catalogState.messageType = 'error';
       renderRoute();
       return;
@@ -7607,7 +8083,9 @@ ${rowsXml}
       : item);
 
     catalogState.editingId = null;
-    catalogState.message = `${record.nombre} quedó ${shouldActivate ? 'activo' : 'inactivo'}.`;
+    catalogState.message = isSafeDeleteCatalog(catalog.id)
+      ? `${record.nombre} quedó ${shouldActivate ? 'restaurado' : 'borrado de forma segura (inactivo)'}.`
+      : `${record.nombre} quedó ${shouldActivate ? 'activo' : 'inactivo'}.`;
     catalogState.messageType = 'success';
     saveData(appData);
     renderRoute();
@@ -7700,6 +8178,8 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-venta-form]').forEach((form) => {
       setupVentaLiveCalculations(form);
+      setupVentaFacturasForm(form);
+      setupVentaLogisticaForm(form);
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         saveVentaRecord(form);
@@ -7726,6 +8206,7 @@ ${rowsXml}
     });
 
     viewRoot.querySelectorAll('[data-cobro-form]').forEach((form) => {
+      setupPaymentBankField(form);
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         saveCobroRecord(form);
@@ -7778,6 +8259,7 @@ ${rowsXml}
     });
 
     viewRoot.querySelectorAll('[data-pago-form]').forEach((form) => {
+      setupPaymentBankField(form);
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         savePagoProveedorRecord(form);
@@ -7807,6 +8289,7 @@ ${rowsXml}
     });
 
     viewRoot.querySelectorAll('[data-gasto-form]').forEach((form) => {
+      setupPaymentBankField(form);
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         saveGastoRecord(form);
