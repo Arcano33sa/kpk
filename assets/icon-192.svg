@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192" role="img" aria-label="KSA PRÁCTIKA">
+  <rect width="192" height="192" rx="46" fill="#111827"/>
+  <circle cx="146" cy="42" r="46" fill="#b9872b" opacity="0.28"/>
+  <path d="M42 130V50h19v32l31-32h24L82 86l38 44H96L61 89v41H42Z" fill="#fff8e8"/>
+  <path d="M127 130h-18l27-80h20l27 80h-19l-5-16h-27l-5 16Zm10-32h18l-9-29-9 29Z" fill="#f2d9a3"/>
+</svg>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="KSA PRÁCTIKA">
+  <rect width="512" height="512" rx="122" fill="#111827"/>
+  <circle cx="389" cy="112" r="122" fill="#b9872b" opacity="0.28"/>
+  <circle cx="96" cy="414" r="78" fill="#b9872b" opacity="0.16"/>
+  <path d="M111 347V133h51v85l83-85h64l-91 96 102 118h-65l-93-110v110h-51Z" fill="#fff8e8"/>
+  <path d="M339 347h-48l72-214h54l72 214h-51l-14-43h-72l-13 43Zm27-85h48l-24-77-24 77Z" fill="#f2d9a3"/>
+</svg>

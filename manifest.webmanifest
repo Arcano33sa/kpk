@@ -1,0 +1,26 @@
+{
+  "name": "KSA PRÁCTIKA",
+  "short_name": "KSA",
+  "description": "Control operativo de OC, cobros, proveedores, pagos, gastos y tablero.",
+  "start_url": "./index.html#home",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f3ed",
+  "theme_color": "#111827",
+  "orientation": "any",
+  "lang": "es-NI",
+  "icons": [
+    {
+      "src": "assets/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "assets/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
