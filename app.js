@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.12.1-etapa12-logo';
+  const APP_VERSION = '0.15.0-post12-etapa3-pwa-update';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
 
@@ -68,7 +68,7 @@
       icon: '☷',
       title: 'Catálogos',
       short: 'Catálogos',
-      description: 'Listas maestras para clientes, sucursales, proveedores, tipos de gasto, métodos y cuentas/bancos.',
+      description: 'Listas maestras para clientes, sucursales, proveedores, condiciones de pago, métodos y cuentas/bancos.',
       placeholder: 'Administra las listas maestras que alimentarán ventas, cobros, compras, pagos y gastos.'
     },
     {
@@ -123,6 +123,8 @@
       fields: [
         { name: 'nombre', label: 'Nombre', type: 'text', required: true, placeholder: 'Ej. Tiendas Azul' },
         { name: 'codigo', label: 'Código opcional', type: 'text', placeholder: 'Ej. CLI-001' },
+        { name: 'condicionPago', label: 'Condición de pago', type: 'select', options: ['Contado', 'Crédito'], required: true },
+        { name: 'diasCredito', label: 'Días de crédito', type: 'number', min: 0, step: 1, inputmode: 'numeric', placeholder: '0' },
         { name: 'observacion', label: 'Observación', type: 'textarea', placeholder: 'Notas internas del cliente' }
       ]
     },
@@ -147,6 +149,8 @@
       fields: [
         { name: 'nombre', label: 'Nombre', type: 'text', required: true, placeholder: 'Ej. Proveedor principal' },
         { name: 'contacto', label: 'Contacto opcional', type: 'text', placeholder: 'Teléfono, correo o contacto' },
+        { name: 'condicionPago', label: 'Condición de pago', type: 'select', options: ['Contado', 'Crédito'], required: true },
+        { name: 'diasCredito', label: 'Días de crédito', type: 'number', min: 0, step: 1, inputmode: 'numeric', placeholder: '0' },
         { name: 'observacion', label: 'Observación', type: 'textarea', placeholder: 'Notas internas del proveedor' }
       ]
     },
@@ -251,6 +255,7 @@
   let cobrosState = {
     selectedVentaId: '',
     focusVentaId: '',
+    editingId: null,
     message: null,
     messageType: 'success'
   };
@@ -264,6 +269,7 @@
   let pagosState = {
     selectedCompraId: '',
     focusCompraId: '',
+    editingId: null,
     message: null,
     messageType: 'success'
   };
@@ -330,6 +336,21 @@
     messageType: 'success'
   };
 
+  let pwaState = {
+    status: 'Actualizada',
+    statusType: 'success',
+    updateAvailable: false,
+    isChecking: false,
+    isApplying: false,
+    message: ''
+  };
+
+  let serviceWorkerRegistration = null;
+  let pwaReloadScheduled = false;
+
+  const PWA_RELOAD_LOCK_KEY = 'KSA_PRACTIKA_PWA_RELOAD_LOCK';
+  const PWA_APPLY_PENDING_KEY = 'KSA_PRACTIKA_PWA_APPLY_PENDING';
+
   function nowIso() {
     return new Date().toISOString();
   }
@@ -354,6 +375,7 @@
       pagosProveedores: [],
       gastos: [],
       cierresMensuales: [],
+      exportacionesExcel: [],
       configuracion: createDefaultConfiguracion(timestamp),
       metadata: {
         appName: APP_NAME,
@@ -384,6 +406,8 @@
       backupModeNote: 'JSON es respaldo y traslado manual, no sincronización automática.',
       lastBackupAt: '',
       lastImportAt: '',
+      pwaLastSearchAt: '',
+      pwaLastUpdateAt: '',
       updatedAt: timestamp
     };
   }
@@ -408,6 +432,8 @@
       diasAlertaVencimiento: Number.isNaN(alertDays) ? base.diasAlertaVencimiento : alertDays,
       lastBackupAt: cleanText(source.lastBackupAt),
       lastImportAt: cleanText(source.lastImportAt),
+      pwaLastSearchAt: cleanText(source.pwaLastSearchAt),
+      pwaLastUpdateAt: cleanText(source.pwaLastUpdateAt),
       updatedAt: source.updatedAt || nowIso()
     };
   }
@@ -469,8 +495,23 @@
         normalized.tipo = field.options.includes(raw.tipo) ? raw.tipo : field.options[0];
         return;
       }
+      if (field.name === 'condicionPago') {
+        normalized.condicionPago = normalizePaymentCondition(raw.condicionPago || raw.condicion || raw.condicionDePago || raw.formaPago || raw.tipoPago);
+        return;
+      }
+      if (field.name === 'diasCredito') {
+        normalized.diasCredito = parsePositiveInteger(raw.diasCredito ?? raw.diasDeCredito ?? raw.dias ?? raw.creditoDias ?? raw.credito);
+        if (Number.isNaN(normalized.diasCredito)) normalized.diasCredito = 0;
+        return;
+      }
       normalized[field.name] = cleanText(raw[field.name]);
     });
+
+    if (isPaymentTermsCatalog(catalog.id)) {
+      const terms = normalizePaymentTermsFields(normalized);
+      normalized.condicionPago = terms.condicionPago;
+      normalized.diasCredito = terms.diasCredito;
+    }
 
     return normalized;
   }
@@ -522,6 +563,40 @@
     if (value === null || value === undefined || value === '') return 0;
     const numeric = Number.parseInt(String(value), 10);
     return Number.isFinite(numeric) && numeric >= 0 ? numeric : Number.NaN;
+  }
+
+  function normalizePaymentCondition(value) {
+    const key = cleanText(value)
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLocaleLowerCase('es-NI');
+    return key.includes('credit') ? 'Crédito' : 'Contado';
+  }
+
+  function normalizePaymentTermsFields(source = {}) {
+    const raw = isPlainObject(source) ? source : {};
+    const condicionPago = normalizePaymentCondition(raw.condicionPago || raw.condicion || raw.condicionDePago || raw.formaPago || raw.tipoPago);
+    const rawDays = raw.diasCredito ?? raw.diasDeCredito ?? raw.dias ?? raw.creditoDias ?? raw.credito;
+    const parsedDays = parsePositiveInteger(rawDays);
+    const diasCredito = condicionPago === 'Crédito' ? (Number.isNaN(parsedDays) ? 0 : parsedDays) : 0;
+    return { condicionPago, diasCredito };
+  }
+
+  function isPaymentTermsCatalog(catalogId) {
+    return catalogId === 'clientes' || catalogId === 'proveedores';
+  }
+
+  function getCatalogPaymentTerms(catalogId, recordId) {
+    if (!isPaymentTermsCatalog(catalogId)) return { condicionPago: 'Contado', diasCredito: 0 };
+    const record = getCatalogRecordById(catalogId, recordId);
+    return normalizePaymentTermsFields(record || {});
+  }
+
+  function formatPaymentTermsLabel(record) {
+    const terms = normalizePaymentTermsFields(record || {});
+    return terms.condicionPago === 'Crédito'
+      ? `Crédito · ${terms.diasCredito || 0} días`
+      : 'Contado · 0 días';
   }
 
   function toDateInputValue(value) {
@@ -2415,13 +2490,12 @@
           <article class="panel-card catalog-form-card">
             <div class="section-title-row">
               <div>
-                <span class="eyebrow mini">${editingRecord ? 'Editando' : 'Nuevo registro'}</span>
-                <h2>${editingRecord ? `Editar ${activeCatalog.singular}` : `Agregar ${activeCatalog.singular}`}</h2>
+                <span class="eyebrow mini">Nuevo registro</span>
+                <h2>Agregar ${activeCatalog.singular}</h2>
               </div>
-              ${editingRecord ? '<button type="button" class="secondary-action compact" data-catalog-cancel>Cancelar</button>' : ''}
             </div>
             <p class="muted-text">${escapeHtml(activeCatalog.description)}</p>
-            ${renderCatalogForm(activeCatalog, editingRecord, !canEditCatalogs)}
+            ${renderCatalogForm(activeCatalog, null, !canEditCatalogs)}
           </article>
 
           <article class="panel-card catalog-list-card">
@@ -2435,6 +2509,7 @@
             ${renderCatalogList(activeCatalog, records)}
           </article>
         </div>
+        ${editingRecord ? renderEditModal(getCatalogModalId(), `Editar ${activeCatalog.singular}`, 'Modifica el registro sin usar el formulario de alta.', renderCatalogForm(activeCatalog, editingRecord, !canEditCatalogs)) : ''}
       </section>
     `;
   }
@@ -2460,7 +2535,7 @@
         ${fields}
         <div class="form-actions">
           <button type="submit" class="card-action" ${disabled ? 'disabled' : ''}>${record ? 'Guardar cambios' : 'Agregar registro'}</button>
-          <button type="button" class="secondary-action" data-catalog-clear>Limpiar</button>
+          <button type="button" class="secondary-action" data-catalog-clear>${record ? 'Cancelar' : 'Limpiar'}</button>
         </div>
       </form>
     `;
@@ -2493,12 +2568,25 @@
     }
 
     if (field.type === 'select') {
+      const paymentConditionAttr = field.name === 'condicionPago' ? 'data-catalog-payment-condition' : '';
       return `
         <label class="form-field">
           <span>${escapeHtml(field.label)} ${requiredLabel}</span>
-          <select name="${escapeHtml(field.name)}" ${field.required ? 'required' : ''} ${disabled ? 'disabled' : ''}>
+          <select name="${escapeHtml(field.name)}" ${field.required ? 'required' : ''} ${disabled ? 'disabled' : ''} ${paymentConditionAttr}>
             ${field.options.map((option) => `<option value="${escapeHtml(option)}" ${option === value ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}
           </select>
+        </label>
+      `;
+    }
+
+    if (field.type === 'number') {
+      const safeValue = value === '' || value === null || value === undefined ? '' : value;
+      const isCreditDaysField = field.name === 'diasCredito';
+      const shouldDisableDays = isCreditDaysField && normalizePaymentCondition(record?.condicionPago) !== 'Crédito';
+      return `
+        <label class="form-field">
+          <span>${escapeHtml(field.label)} ${requiredLabel}</span>
+          <input type="number" name="${escapeHtml(field.name)}" value="${escapeHtml(safeValue)}" min="${escapeHtml(field.min ?? 0)}" step="${escapeHtml(field.step || 1)}" inputmode="${escapeHtml(field.inputmode || 'numeric')}" placeholder="${escapeHtml(field.placeholder || '')}" ${field.required ? 'required' : ''} autocomplete="off" ${(disabled || shouldDisableDays) ? 'disabled' : ''} ${isCreditDaysField ? 'data-catalog-credit-days' : ''} />
         </label>
       `;
     }
@@ -2554,6 +2642,34 @@
     `;
   }
 
+  function renderEditModal(modalId, title, subtitle, bodyHtml) {
+    if (!bodyHtml) return '';
+    return `
+      <div class="modal-backdrop" data-modal-backdrop="${escapeHtml(modalId)}" role="presentation">
+        <section class="edit-modal" role="dialog" aria-modal="true" aria-labelledby="${escapeHtml(modalId)}-title">
+          <header class="edit-modal-header">
+            <div>
+              <span class="eyebrow mini">Ventana de edición</span>
+              <h2 id="${escapeHtml(modalId)}-title">${escapeHtml(title)}</h2>
+              ${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ''}
+            </div>
+            <button type="button" class="modal-close" data-modal-close="${escapeHtml(modalId)}" aria-label="Cerrar edición">×</button>
+          </header>
+          <div class="edit-modal-body">
+            ${bodyHtml}
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  function getCatalogModalId() { return 'catalog'; }
+  function getVentaModalId() { return 'venta'; }
+  function getCompraModalId() { return 'compra'; }
+  function getCobroModalId() { return 'cobro'; }
+  function getPagoModalId() { return 'pago'; }
+  function getGastoModalId() { return 'gasto'; }
+
 
   function renderVentas() {
     const ventas = getVentasOrdenadas();
@@ -2599,13 +2715,12 @@
           <article class="panel-card venta-form-card">
             <div class="section-title-row">
               <div>
-                <span class="eyebrow mini">${editingRecord ? 'Editando OC' : 'Nueva OC'}</span>
-                <h2>${editingRecord ? 'Editar venta / OC' : 'Crear venta / OC'}</h2>
+                <span class="eyebrow mini">Nueva OC</span>
+                <h2>Crear venta / OC</h2>
               </div>
-              ${editingRecord ? '<button type="button" class="secondary-action compact" data-venta-cancel>Cancelar</button>' : ''}
             </div>
             <p class="muted-text">La venta real para reportes será la venta neta, no el monto bruto de la OC.</p>
-            ${renderVentaForm(editingRecord, clientesActivos, sucursalesActivas, missingCatalogs)}
+            ${renderVentaForm(null, clientesActivos, sucursalesActivas, missingCatalogs)}
           </article>
 
           <article class="panel-card venta-list-card">
@@ -2619,6 +2734,7 @@
             ${renderVentasList(ventas)}
           </article>
         </div>
+        ${editingRecord ? renderEditModal(getVentaModalId(), 'Editar venta / OC', 'La edición se guarda sobre la OC actual y recalcula venta neta, saldo y estado.', renderVentaForm(editingRecord, clientesActivos, sucursalesActivas, missingCatalogs)) : ''}
       </section>
     `;
   }
@@ -2653,9 +2769,9 @@
           </label>
           <label class="form-field">
             <span>Cliente <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <select name="clienteId" required ${missingCatalogs ? 'disabled' : ''}>
+            <select name="clienteId" required ${missingCatalogs ? 'disabled' : ''} data-venta-client>
               <option value="">Seleccionar cliente</option>
-              ${clientesActivos.map((cliente) => `<option value="${escapeHtml(cliente.id)}" ${cliente.id === record?.clienteId ? 'selected' : ''}>${escapeHtml(cliente.nombre || 'Cliente sin nombre')}</option>`).join('')}
+              ${clientesActivos.map((cliente) => `<option value="${escapeHtml(cliente.id)}" ${cliente.id === record?.clienteId ? 'selected' : ''}>${escapeHtml(cliente.nombre || 'Cliente sin nombre')} · ${escapeHtml(formatPaymentTermsLabel(cliente))}</option>`).join('')}
             </select>
           </label>
           <label class="form-field">
@@ -2711,7 +2827,7 @@
 
         <div class="form-actions">
           <button type="submit" class="card-action" ${missingCatalogs ? 'disabled' : ''}>${record ? 'Guardar cambios' : 'Guardar OC'}</button>
-          <button type="button" class="secondary-action" data-venta-clear>Limpiar</button>
+          <button type="button" class="secondary-action" data-venta-clear>${record ? 'Cancelar' : 'Limpiar'}</button>
         </div>
       </form>
     `;
@@ -2803,14 +2919,18 @@
   function buildVentaFromForm(form, existingRecord) {
     const formData = new FormData(form);
     const timestamp = nowIso();
+    const clienteId = cleanText(formData.get('clienteId'));
     const fechaOc = toDateInputValue(formData.get('fechaOc'));
-    const diasCredito = parsePositiveInteger(formData.get('diasCredito'));
+    const diasCreditoRaw = cleanText(formData.get('diasCredito'));
+    const terms = getCatalogPaymentTerms('clientes', clienteId);
+    let diasCredito = parsePositiveInteger(diasCreditoRaw);
+    if (!diasCreditoRaw && clienteId) diasCredito = terms.diasCredito;
     const fechaVencimiento = toDateInputValue(formData.get('fechaVencimiento')) || addDaysToDate(fechaOc, Number.isNaN(diasCredito) ? 0 : diasCredito);
     const base = {
       ...(existingRecord || {}),
       id: existingRecord?.id || generateId('venta'),
       numeroDocumento: cleanText(formData.get('numeroDocumento')),
-      clienteId: cleanText(formData.get('clienteId')),
+      clienteId,
       sucursalId: cleanText(formData.get('sucursalId')),
       fechaOc,
       diasCredito,
@@ -2940,8 +3060,21 @@
       input.addEventListener('input', () => updateVentaPreviewFromForm(form, false));
     });
 
+    const dueInput = form.querySelector('[data-venta-due]');
+    dueInput?.addEventListener('input', () => { form.dataset.manualDue = '1'; });
+    dueInput?.addEventListener('change', () => { form.dataset.manualDue = '1'; });
+
+    form.querySelector('[data-venta-client]')?.addEventListener('change', () => applyVentaPaymentTermsSuggestion(form));
     form.querySelector('[data-venta-date]')?.addEventListener('change', () => updateVentaPreviewFromForm(form, true));
     form.querySelector('[data-venta-days]')?.addEventListener('input', () => updateVentaPreviewFromForm(form, true));
+  }
+
+  function applyVentaPaymentTermsSuggestion(form) {
+    const clienteId = cleanText(form.querySelector('[data-venta-client]')?.value || '');
+    const terms = getCatalogPaymentTerms('clientes', clienteId);
+    const daysInput = form.querySelector('[data-venta-days]');
+    if (daysInput) daysInput.value = String(terms.diasCredito || 0);
+    updateVentaPreviewFromForm(form, true);
   }
 
   function updateVentaPreviewFromForm(form, recalculateDue) {
@@ -2950,7 +3083,7 @@
       const daysInput = form.querySelector('[data-venta-days]');
       const dueInput = form.querySelector('[data-venta-due]');
       const due = addDaysToDate(dateInput?.value, Number.parseInt(daysInput?.value || '0', 10) || 0);
-      if (dueInput && due) dueInput.value = due;
+      if (dueInput && due && form.dataset.manualDue !== '1') dueInput.value = due;
     }
 
     const formData = new FormData(form);
@@ -2980,6 +3113,9 @@
     const totals = getCobrosTotals();
     const selectedVenta = ventasDisponibles.find((venta) => venta.id === cobrosState.selectedVentaId) || ventasDisponibles[0] || null;
     if (selectedVenta && cobrosState.selectedVentaId !== selectedVenta.id) cobrosState.selectedVentaId = selectedVenta.id;
+    const editingRecord = cobrosState.editingId ? getCobrosOrdenados().find((record) => record.id === cobrosState.editingId) : null;
+    const modalMetodos = editingRecord ? getSelectableCatalogRecords('metodosPago', editingRecord.metodoPagoId) : metodosActivos;
+    const modalCuentas = editingRecord ? getSelectableCatalogRecords('cuentasBancos', editingRecord.cuentaBancoId) : cuentasActivas;
     const missingCatalogs = !metodosActivos.length || !cuentasActivas.length;
     const cannotCreate = !selectedVenta || missingCatalogs;
 
@@ -3043,6 +3179,7 @@
             ${renderCobrosList(visibleCobros)}
           </article>
         </div>
+        ${editingRecord ? renderEditModal(getCobroModalId(), 'Editar cobro', 'Actualiza el abono sin duplicarlo y recalcula la OC ligada.', renderCobroEditForm(editingRecord, modalMetodos, modalCuentas)) : ''}
       </section>
     `;
   }
@@ -3122,6 +3259,57 @@
     `;
   }
 
+  function renderCobroEditForm(record, metodosActivos, cuentasActivas) {
+    const venta = (Array.isArray(appData.ventas) ? appData.ventas : []).map((item) => normalizeVentaRecord(item)).find((item) => item.id === record.ventaId);
+    const cliente = venta ? getCatalogRecordById('clientes', venta.clienteId) : null;
+    const sucursal = venta ? getCatalogRecordById('sucursales', venta.sucursalId) : null;
+    const saldoDisponible = venta ? roundMoney(venta.saldoPorCobrar + (record.activo ? record.montoCobrado : 0)) : record.montoCobrado;
+    return `
+      <form class="cobro-form" data-cobro-form data-cobro-edit-form novalidate>
+        <input type="hidden" name="id" value="${escapeHtml(record.id)}" />
+        <input type="hidden" name="ventaId" value="${escapeHtml(record.ventaId)}" />
+        <div class="form-grid">
+          <label class="form-field full-span">
+            <span>OC / documento ligado</span>
+            <input type="text" value="${escapeHtml(record.numeroDocumento || venta?.numeroDocumento || 'Sin OC')}" disabled />
+          </label>
+          <label class="form-field">
+            <span>Fecha real de cobro <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <input type="date" name="fechaCobro" value="${escapeHtml(record.fechaCobro || todayInputValue())}" required />
+          </label>
+          <label class="form-field">
+            <span>Monto cobrado C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <input type="number" name="montoCobrado" value="${escapeHtml(formatNumberInput(record.montoCobrado))}" min="0.01" max="${escapeHtml(saldoDisponible)}" step="0.01" inputmode="decimal" placeholder="0.00" required />
+          </label>
+          <label class="form-field">
+            <span>Método de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <select name="metodoPagoId" required>
+              <option value="">Seleccionar método</option>
+              ${metodosActivos.map((metodo) => `<option value="${escapeHtml(metodo.id)}" ${metodo.id === record.metodoPagoId ? 'selected' : ''}>${escapeHtml(metodo.nombre || 'Método sin nombre')}${metodo.activo ? '' : ' · inactivo'}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Cuenta / banco <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <select name="cuentaBancoId" required>
+              <option value="">Seleccionar cuenta/banco</option>
+              ${cuentasActivas.map((cuenta) => `<option value="${escapeHtml(cuenta.id)}" ${cuenta.id === record.cuentaBancoId ? 'selected' : ''}>${escapeHtml(cuenta.nombre || 'Cuenta sin nombre')}${cuenta.activo ? '' : ' · inactivo'}</option>`).join('')}
+            </select>
+          </label>
+        </div>
+        ${venta ? renderSelectedVentaCobroSummary(venta, cliente, sucursal) : ''}
+        <p class="compact-note">Máximo permitido para esta edición: ${escapeHtml(formatMoney(saldoDisponible))}. El vínculo con la OC no se cambia para proteger trazabilidad.</p>
+        <label class="form-field">
+          <span>Observación</span>
+          <textarea name="observacion" rows="3" placeholder="Notas internas del cobro">${escapeHtml(record.observacion || '')}</textarea>
+        </label>
+        <div class="form-actions">
+          <button type="submit" class="card-action">Guardar cambios</button>
+          <button type="button" class="secondary-action" data-cobro-cancel>Cancelar</button>
+        </div>
+      </form>
+    `;
+  }
+
   function renderSelectedVentaCobroSummary(venta, cliente, sucursal) {
     return `
       <div class="formula-card cobro-summary" aria-live="polite">
@@ -3186,6 +3374,7 @@
         </dl>
         <div class="record-actions">
           <button type="button" class="secondary-action compact" data-go="ventas">Ir a Ventas</button>
+          ${record.activo ? `<button type="button" class="secondary-action compact" data-cobro-edit="${escapeHtml(record.id)}">Editar</button>` : ''}
           ${record.activo && canCurrentRole('annulMovements') ? `<button type="button" class="danger-action compact" data-cobro-annul="${escapeHtml(record.id)}">Anular cobro</button>` : ''}
         </div>
       </div>
@@ -3234,10 +3423,10 @@
     return totals;
   }
 
-  function buildCobroFromForm(form) {
+  function buildCobroFromForm(form, existingRecord) {
     const formData = new FormData(form);
     const timestamp = nowIso();
-    const ventaId = cleanText(formData.get('ventaId'));
+    const ventaId = cleanText(formData.get('ventaId')) || existingRecord?.ventaId || '';
     const venta = appData.ventas.map((record) => normalizeVentaRecord(record)).find((record) => record.id === ventaId);
     const cliente = venta ? getCatalogRecordById('clientes', venta.clienteId) : null;
     const sucursal = venta ? getCatalogRecordById('sucursales', venta.sucursalId) : null;
@@ -3245,42 +3434,56 @@
     const cuenta = getCatalogRecordById('cuentasBancos', cleanText(formData.get('cuentaBancoId')));
 
     return normalizeCobroRecord({
-      id: generateId('cobro'),
+      ...(existingRecord || {}),
+      id: existingRecord?.id || generateId('cobro'),
       ventaId,
       fechaCobro: toDateInputValue(formData.get('fechaCobro')),
-      clienteId: venta?.clienteId || '',
-      clienteNombre: cliente?.nombre || '',
-      sucursalId: venta?.sucursalId || '',
-      sucursalNombre: sucursal?.nombre || '',
-      numeroDocumento: venta?.numeroDocumento || '',
+      clienteId: venta?.clienteId || existingRecord?.clienteId || '',
+      clienteNombre: cliente?.nombre || existingRecord?.clienteNombre || '',
+      sucursalId: venta?.sucursalId || existingRecord?.sucursalId || '',
+      sucursalNombre: sucursal?.nombre || existingRecord?.sucursalNombre || '',
+      numeroDocumento: venta?.numeroDocumento || existingRecord?.numeroDocumento || '',
       montoCobrado: parseMoney(formData.get('montoCobrado')),
-      metodoPagoId: metodo?.id || '',
-      metodoPagoNombre: metodo?.nombre || '',
-      cuentaBancoId: cuenta?.id || '',
-      cuentaBancoNombre: cuenta?.nombre || '',
+      metodoPagoId: metodo?.id || existingRecord?.metodoPagoId || '',
+      metodoPagoNombre: metodo?.nombre || existingRecord?.metodoPagoNombre || '',
+      cuentaBancoId: cuenta?.id || existingRecord?.cuentaBancoId || '',
+      cuentaBancoNombre: cuenta?.nombre || existingRecord?.cuentaBancoNombre || '',
       observacion: cleanText(formData.get('observacion')),
-      activo: true,
-      estado: 'Registrado',
-      createdAt: timestamp,
+      activo: typeof existingRecord?.activo === 'boolean' ? existingRecord.activo : true,
+      estado: typeof existingRecord?.activo === 'boolean' && !existingRecord.activo ? 'Anulado' : 'Registrado',
+      createdAt: existingRecord?.createdAt || timestamp,
       updatedAt: timestamp
     });
   }
 
-  function validateCobroRecord(record) {
+  function validateCobroRecord(record, existingRecord = null) {
     const venta = (Array.isArray(appData.ventas) ? appData.ventas : []).map((item) => normalizeVentaRecord(item)).find((item) => item.id === record.ventaId);
     if (!venta || !venta.activo) return 'Selecciona una OC activa con saldo por cobrar.';
-    if (venta.saldoPorCobrar <= 0) return 'La OC seleccionada no tiene saldo por cobrar.';
+    const currentAmount = existingRecord && existingRecord.ventaId === record.ventaId && existingRecord.activo !== false ? normalizeCobroRecord(existingRecord).montoCobrado : 0;
+    const saldoPermitido = roundMoney(venta.saldoPorCobrar + currentAmount);
+    if (saldoPermitido <= 0) return 'La OC seleccionada no tiene saldo disponible para este cobro.';
     if (!record.fechaCobro) return 'La fecha real de cobro es obligatoria.';
     if (Number.isNaN(parseMoney(record.montoCobrado)) || record.montoCobrado <= 0) return 'El monto cobrado debe ser mayor que cero.';
-    if (record.montoCobrado > venta.saldoPorCobrar) return `El cobro no puede superar el saldo pendiente de ${formatMoney(venta.saldoPorCobrar)}.`;
-    if (!record.metodoPagoId || !getActiveCatalogRecords('metodosPago').some((item) => item.id === record.metodoPagoId)) return 'Selecciona un método de pago activo.';
-    if (!record.cuentaBancoId || !getActiveCatalogRecords('cuentasBancos').some((item) => item.id === record.cuentaBancoId)) return 'Selecciona una cuenta/banco activo.';
+    if (record.montoCobrado > saldoPermitido) return `El cobro no puede superar el saldo permitido de ${formatMoney(saldoPermitido)}.`;
+    if (!record.metodoPagoId || !getCatalogRecords('metodosPago').some((item) => item.id === record.metodoPagoId && (item.activo || existingRecord?.metodoPagoId === item.id))) return 'Selecciona un método de pago válido.';
+    if (!record.cuentaBancoId || !getCatalogRecords('cuentasBancos').some((item) => item.id === record.cuentaBancoId && (item.activo || existingRecord?.cuentaBancoId === item.id))) return 'Selecciona una cuenta/banco válida.';
     return '';
   }
 
   function saveCobroRecord(form) {
-    const newRecord = buildCobroFromForm(form);
-    const validationError = validateCobroRecord(newRecord);
+    const existingId = cleanText(new FormData(form).get('id'));
+    const records = Array.isArray(appData.cobros) ? appData.cobros : [];
+    const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
+
+    if (existingRecord && normalizeCobroRecord(existingRecord).activo === false) {
+      cobrosState.message = 'No se puede editar un cobro anulado.';
+      cobrosState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+
+    const newRecord = buildCobroFromForm(form, existingRecord);
+    const validationError = validateCobroRecord(newRecord, existingRecord);
 
     if (validationError) {
       cobrosState.message = validationError;
@@ -3289,16 +3492,47 @@
       return;
     }
 
-    if (!warnIfClosedPeriod(newRecord.fechaCobro, 'Registrar este cobro')) return;
+    if (!warnIfClosedPeriod(newRecord.fechaCobro, existingRecord ? 'Actualizar este cobro' : 'Registrar este cobro')) return;
 
-    appData.cobros = [newRecord, ...(Array.isArray(appData.cobros) ? appData.cobros : [])];
-    recalculateVentaById(newRecord.ventaId);
+    if (existingRecord) {
+      appData.cobros = records.map((record) => record.id === existingId ? newRecord : record);
+      recalculateVentaById(existingRecord.ventaId);
+      recalculateVentaById(newRecord.ventaId);
+      cobrosState.message = `Cobro actualizado en OC ${newRecord.numeroDocumento}: ${formatMoney(newRecord.montoCobrado)}.`;
+    } else {
+      appData.cobros = [newRecord, ...records];
+      recalculateVentaById(newRecord.ventaId);
+      cobrosState.message = `Cobro aplicado a OC ${newRecord.numeroDocumento}: ${formatMoney(newRecord.montoCobrado)}.`;
+    }
+
     const venta = appData.ventas.find((record) => record.id === newRecord.ventaId);
     cobrosState.selectedVentaId = venta?.saldoPorCobrar > 0 ? newRecord.ventaId : '';
     cobrosState.focusVentaId = newRecord.ventaId;
-    cobrosState.message = `Cobro aplicado a OC ${newRecord.numeroDocumento}: ${formatMoney(newRecord.montoCobrado)}.`;
+    cobrosState.editingId = null;
     cobrosState.messageType = 'success';
     saveData(appData);
+    renderRoute();
+  }
+
+  function editCobroRecord(cobroId) {
+    const record = (Array.isArray(appData.cobros) ? appData.cobros : []).find((item) => item.id === cobroId);
+    if (!record) return;
+    const normalized = normalizeCobroRecord(record);
+    if (!normalized.activo) {
+      cobrosState.message = 'Los cobros anulados quedan visibles, pero no se editan.';
+      cobrosState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+    cobrosState.editingId = cobroId;
+    cobrosState.focusVentaId = normalized.ventaId;
+    cobrosState.message = null;
+    renderRoute();
+  }
+
+  function clearCobroForm() {
+    cobrosState.editingId = null;
+    cobrosState.message = null;
     renderRoute();
   }
 
@@ -3404,13 +3638,12 @@
           <article class="panel-card compra-form-card">
             <div class="section-title-row">
               <div>
-                <span class="eyebrow mini">${editingRecord ? 'Editando deuda' : 'Nueva deuda'}</span>
-                <h2>${editingRecord ? 'Editar compra / deuda' : 'Crear compra / deuda'}</h2>
+                <span class="eyebrow mini">Nueva deuda</span>
+                <h2>Crear compra / deuda</h2>
               </div>
-              ${editingRecord ? '<button type="button" class="secondary-action compact" data-compra-cancel>Cancelar</button>' : ''}
             </div>
             <p class="muted-text">Los pagos a proveedor se registran en su propio módulo; aquí queda la deuda/factura base con su saldo actualizado.</p>
-            ${renderCompraProveedorForm(editingRecord, proveedoresActivos, missingProviders)}
+            ${renderCompraProveedorForm(null, proveedoresActivos, missingProviders)}
           </article>
 
           <article class="panel-card compra-list-card">
@@ -3424,6 +3657,7 @@
             ${renderComprasProveedoresList(compras)}
           </article>
         </div>
+        ${editingRecord ? renderEditModal(getCompraModalId(), 'Editar compra / deuda', 'Actualiza la factura o referencia sin borrar pagos ligados ni historial.', renderCompraProveedorForm(editingRecord, proveedoresActivos, missingProviders)) : ''}
       </section>
     `;
   }
@@ -3450,9 +3684,9 @@
         <div class="form-grid">
           <label class="form-field">
             <span>Proveedor <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <select name="proveedorId" required ${missingProviders ? 'disabled' : ''}>
+            <select name="proveedorId" required ${missingProviders ? 'disabled' : ''} data-compra-provider>
               <option value="">Seleccionar proveedor</option>
-              ${proveedoresActivos.map((proveedor) => `<option value="${escapeHtml(proveedor.id)}" ${proveedor.id === record?.proveedorId ? 'selected' : ''}>${escapeHtml(proveedor.nombre || 'Proveedor sin nombre')}</option>`).join('')}
+              ${proveedoresActivos.map((proveedor) => `<option value="${escapeHtml(proveedor.id)}" ${proveedor.id === record?.proveedorId ? 'selected' : ''}>${escapeHtml(proveedor.nombre || 'Proveedor sin nombre')} · ${escapeHtml(formatPaymentTermsLabel(proveedor))}</option>`).join('')}
             </select>
           </label>
           <label class="form-field">
@@ -3493,7 +3727,7 @@
 
         <div class="form-actions">
           <button type="submit" class="card-action" ${missingProviders ? 'disabled' : ''}>${record ? 'Guardar cambios' : 'Guardar compra/deuda'}</button>
-          <button type="button" class="secondary-action" data-compra-clear>Limpiar</button>
+          <button type="button" class="secondary-action" data-compra-clear>${record ? 'Cancelar' : 'Limpiar'}</button>
         </div>
       </form>
     `;
@@ -3586,7 +3820,10 @@
     const proveedorId = cleanText(formData.get('proveedorId'));
     const proveedor = getCatalogRecordById('proveedores', proveedorId);
     const fechaCompra = toDateInputValue(formData.get('fechaCompra'));
-    const diasCredito = parsePositiveInteger(formData.get('diasCredito'));
+    const diasCreditoRaw = cleanText(formData.get('diasCredito'));
+    const terms = getCatalogPaymentTerms('proveedores', proveedorId);
+    let diasCredito = parsePositiveInteger(diasCreditoRaw);
+    if (!diasCreditoRaw && proveedorId) diasCredito = terms.diasCredito;
     const fechaVencimiento = toDateInputValue(formData.get('fechaVencimiento')) || addDaysToDate(fechaCompra, Number.isNaN(diasCredito) ? 0 : diasCredito);
     const base = {
       ...(existingRecord || {}),
@@ -3704,8 +3941,21 @@
       input.addEventListener('input', () => updateCompraProveedorPreviewFromForm(form, false));
     });
 
+    const dueInput = form.querySelector('[data-compra-due]');
+    dueInput?.addEventListener('input', () => { form.dataset.manualDue = '1'; });
+    dueInput?.addEventListener('change', () => { form.dataset.manualDue = '1'; });
+
+    form.querySelector('[data-compra-provider]')?.addEventListener('change', () => applyCompraPaymentTermsSuggestion(form));
     form.querySelector('[data-compra-date]')?.addEventListener('change', () => updateCompraProveedorPreviewFromForm(form, true));
     form.querySelector('[data-compra-days]')?.addEventListener('input', () => updateCompraProveedorPreviewFromForm(form, true));
+  }
+
+  function applyCompraPaymentTermsSuggestion(form) {
+    const proveedorId = cleanText(form.querySelector('[data-compra-provider]')?.value || '');
+    const terms = getCatalogPaymentTerms('proveedores', proveedorId);
+    const daysInput = form.querySelector('[data-compra-days]');
+    if (daysInput) daysInput.value = String(terms.diasCredito || 0);
+    updateCompraProveedorPreviewFromForm(form, true);
   }
 
   function updateCompraProveedorPreviewFromForm(form, recalculateDue) {
@@ -3714,7 +3964,7 @@
       const daysInput = form.querySelector('[data-compra-days]');
       const dueInput = form.querySelector('[data-compra-due]');
       const due = addDaysToDate(dateInput?.value, Number.parseInt(daysInput?.value || '0', 10) || 0);
-      if (dueInput && due) dueInput.value = due;
+      if (dueInput && due && form.dataset.manualDue !== '1') dueInput.value = due;
     }
 
     const formData = new FormData(form);
@@ -3742,6 +3992,9 @@
     const totals = getPagosProveedoresTotals();
     const selectedCompra = comprasDisponibles.find((compra) => compra.id === pagosState.selectedCompraId) || comprasDisponibles[0] || null;
     if (selectedCompra && pagosState.selectedCompraId !== selectedCompra.id) pagosState.selectedCompraId = selectedCompra.id;
+    const editingRecord = pagosState.editingId ? getPagosProveedoresOrdenados().find((record) => record.id === pagosState.editingId) : null;
+    const modalMetodos = editingRecord ? getSelectableCatalogRecords('metodosPago', editingRecord.metodoPagoId) : metodosActivos;
+    const modalCuentas = editingRecord ? getSelectableCatalogRecords('cuentasBancos', editingRecord.cuentaBancoId) : cuentasActivas;
     const missingCatalogs = !metodosActivos.length || !cuentasActivas.length;
     const cannotCreate = !selectedCompra || missingCatalogs;
 
@@ -3805,6 +4058,7 @@
             ${renderPagosProveedoresList(visiblePagos)}
           </article>
         </div>
+        ${editingRecord ? renderEditModal(getPagoModalId(), 'Editar pago a proveedor', 'Actualiza el abono sin duplicarlo y recalcula la factura ligada.', renderPagoProveedorEditForm(editingRecord, modalMetodos, modalCuentas)) : ''}
       </section>
     `;
   }
@@ -3883,6 +4137,56 @@
     `;
   }
 
+  function renderPagoProveedorEditForm(record, metodosActivos, cuentasActivas) {
+    const compra = (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : []).map((item) => normalizeCompraProveedorRecord(item)).find((item) => item.id === record.compraProveedorId);
+    const proveedor = compra ? getCatalogRecordById('proveedores', compra.proveedorId) : null;
+    const saldoDisponible = compra ? roundMoney(compra.saldoPorPagar + (record.activo ? record.montoPagado : 0)) : record.montoPagado;
+    return `
+      <form class="pago-form" data-pago-form data-pago-edit-form novalidate>
+        <input type="hidden" name="id" value="${escapeHtml(record.id)}" />
+        <input type="hidden" name="compraProveedorId" value="${escapeHtml(record.compraProveedorId)}" />
+        <div class="form-grid">
+          <label class="form-field full-span">
+            <span>Factura / referencia ligada</span>
+            <input type="text" value="${escapeHtml(record.facturaReferencia || compra?.facturaReferencia || 'Sin referencia')}" disabled />
+          </label>
+          <label class="form-field">
+            <span>Fecha real de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <input type="date" name="fechaPago" value="${escapeHtml(record.fechaPago || todayInputValue())}" required />
+          </label>
+          <label class="form-field">
+            <span>Monto pagado C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <input type="number" name="montoPagado" value="${escapeHtml(formatNumberInput(record.montoPagado))}" min="0.01" max="${escapeHtml(saldoDisponible)}" step="0.01" inputmode="decimal" placeholder="0.00" required />
+          </label>
+          <label class="form-field">
+            <span>Método de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <select name="metodoPagoId" required>
+              <option value="">Seleccionar método</option>
+              ${metodosActivos.map((metodo) => `<option value="${escapeHtml(metodo.id)}" ${metodo.id === record.metodoPagoId ? 'selected' : ''}>${escapeHtml(metodo.nombre || 'Método sin nombre')}${metodo.activo ? '' : ' · inactivo'}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Cuenta / banco <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <select name="cuentaBancoId" required>
+              <option value="">Seleccionar cuenta/banco</option>
+              ${cuentasActivas.map((cuenta) => `<option value="${escapeHtml(cuenta.id)}" ${cuenta.id === record.cuentaBancoId ? 'selected' : ''}>${escapeHtml(cuenta.nombre || 'Cuenta sin nombre')}${cuenta.activo ? '' : ' · inactivo'}</option>`).join('')}
+            </select>
+          </label>
+        </div>
+        ${compra ? renderSelectedCompraPagoSummary(compra, proveedor) : ''}
+        <p class="compact-note">Máximo permitido para esta edición: ${escapeHtml(formatMoney(saldoDisponible))}. El vínculo con la factura/referencia no se cambia para proteger trazabilidad.</p>
+        <label class="form-field">
+          <span>Observación</span>
+          <textarea name="observacion" rows="3" placeholder="Notas internas del pago">${escapeHtml(record.observacion || '')}</textarea>
+        </label>
+        <div class="form-actions">
+          <button type="submit" class="card-action">Guardar cambios</button>
+          <button type="button" class="secondary-action" data-pago-cancel>Cancelar</button>
+        </div>
+      </form>
+    `;
+  }
+
   function renderSelectedCompraPagoSummary(compra, proveedor) {
     return `
       <div class="formula-card pago-summary" aria-live="polite">
@@ -3947,6 +4251,7 @@
         </dl>
         <div class="record-actions">
           <button type="button" class="secondary-action compact" data-go="proveedores">Ir a Proveedores</button>
+          ${record.activo ? `<button type="button" class="secondary-action compact" data-pago-edit="${escapeHtml(record.id)}">Editar</button>` : ''}
           ${record.activo && canCurrentRole('annulMovements') ? `<button type="button" class="danger-action compact" data-pago-annul="${escapeHtml(record.id)}">Anular pago</button>` : ''}
         </div>
       </div>
@@ -3989,50 +4294,64 @@
     return totals;
   }
 
-  function buildPagoProveedorFromForm(form) {
+  function buildPagoProveedorFromForm(form, existingRecord) {
     const formData = new FormData(form);
     const timestamp = nowIso();
-    const compraProveedorId = cleanText(formData.get('compraProveedorId'));
+    const compraProveedorId = cleanText(formData.get('compraProveedorId')) || existingRecord?.compraProveedorId || '';
     const compra = appData.comprasProveedores.map((record) => normalizeCompraProveedorRecord(record)).find((record) => record.id === compraProveedorId);
     const proveedor = compra ? getCatalogRecordById('proveedores', compra.proveedorId) : null;
     const metodo = getCatalogRecordById('metodosPago', cleanText(formData.get('metodoPagoId')));
     const cuenta = getCatalogRecordById('cuentasBancos', cleanText(formData.get('cuentaBancoId')));
 
     return normalizePagoProveedorRecord({
-      id: generateId('pagoProveedor'),
+      ...(existingRecord || {}),
+      id: existingRecord?.id || generateId('pagoProveedor'),
       compraProveedorId,
       fechaPago: toDateInputValue(formData.get('fechaPago')),
-      proveedorId: compra?.proveedorId || '',
-      proveedorNombre: proveedor?.nombre || compra?.proveedorNombre || '',
-      facturaReferencia: compra?.facturaReferencia || '',
+      proveedorId: compra?.proveedorId || existingRecord?.proveedorId || '',
+      proveedorNombre: proveedor?.nombre || compra?.proveedorNombre || existingRecord?.proveedorNombre || '',
+      facturaReferencia: compra?.facturaReferencia || existingRecord?.facturaReferencia || '',
       montoPagado: parseMoney(formData.get('montoPagado')),
-      metodoPagoId: metodo?.id || '',
-      metodoPagoNombre: metodo?.nombre || '',
-      cuentaBancoId: cuenta?.id || '',
-      cuentaBancoNombre: cuenta?.nombre || '',
+      metodoPagoId: metodo?.id || existingRecord?.metodoPagoId || '',
+      metodoPagoNombre: metodo?.nombre || existingRecord?.metodoPagoNombre || '',
+      cuentaBancoId: cuenta?.id || existingRecord?.cuentaBancoId || '',
+      cuentaBancoNombre: cuenta?.nombre || existingRecord?.cuentaBancoNombre || '',
       observacion: cleanText(formData.get('observacion')),
-      activo: true,
-      estado: 'Registrado',
-      createdAt: timestamp,
+      activo: typeof existingRecord?.activo === 'boolean' ? existingRecord.activo : true,
+      estado: typeof existingRecord?.activo === 'boolean' && !existingRecord.activo ? 'Anulado' : 'Registrado',
+      createdAt: existingRecord?.createdAt || timestamp,
       updatedAt: timestamp
     });
   }
 
-  function validatePagoProveedorRecord(record) {
+  function validatePagoProveedorRecord(record, existingRecord = null) {
     const compra = (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : []).map((item) => normalizeCompraProveedorRecord(item)).find((item) => item.id === record.compraProveedorId);
     if (!compra || !compra.activo) return 'Selecciona una factura/referencia activa con saldo por pagar.';
-    if (compra.saldoPorPagar <= 0) return 'La factura/referencia seleccionada no tiene saldo por pagar.';
+    const currentAmount = existingRecord && existingRecord.compraProveedorId === record.compraProveedorId && existingRecord.activo !== false ? normalizePagoProveedorRecord(existingRecord).montoPagado : 0;
+    const saldoPermitido = roundMoney(compra.saldoPorPagar + currentAmount);
+    if (saldoPermitido <= 0) return 'La factura/referencia seleccionada no tiene saldo disponible para este pago.';
     if (!record.fechaPago) return 'La fecha real de pago es obligatoria.';
     if (Number.isNaN(parseMoney(record.montoPagado)) || record.montoPagado <= 0) return 'El monto pagado debe ser mayor que cero.';
-    if (record.montoPagado > compra.saldoPorPagar) return `El pago no puede superar el saldo pendiente de ${formatMoney(compra.saldoPorPagar)}.`;
-    if (!record.metodoPagoId || !getActiveCatalogRecords('metodosPago').some((item) => item.id === record.metodoPagoId)) return 'Selecciona un método de pago activo.';
-    if (!record.cuentaBancoId || !getActiveCatalogRecords('cuentasBancos').some((item) => item.id === record.cuentaBancoId)) return 'Selecciona una cuenta/banco activo.';
+    if (record.montoPagado > saldoPermitido) return `El pago no puede superar el saldo permitido de ${formatMoney(saldoPermitido)}.`;
+    if (!record.metodoPagoId || !getCatalogRecords('metodosPago').some((item) => item.id === record.metodoPagoId && (item.activo || existingRecord?.metodoPagoId === item.id))) return 'Selecciona un método de pago válido.';
+    if (!record.cuentaBancoId || !getCatalogRecords('cuentasBancos').some((item) => item.id === record.cuentaBancoId && (item.activo || existingRecord?.cuentaBancoId === item.id))) return 'Selecciona una cuenta/banco válida.';
     return '';
   }
 
   function savePagoProveedorRecord(form) {
-    const newRecord = buildPagoProveedorFromForm(form);
-    const validationError = validatePagoProveedorRecord(newRecord);
+    const existingId = cleanText(new FormData(form).get('id'));
+    const records = Array.isArray(appData.pagosProveedores) ? appData.pagosProveedores : [];
+    const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
+
+    if (existingRecord && normalizePagoProveedorRecord(existingRecord).activo === false) {
+      pagosState.message = 'No se puede editar un pago anulado.';
+      pagosState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+
+    const newRecord = buildPagoProveedorFromForm(form, existingRecord);
+    const validationError = validatePagoProveedorRecord(newRecord, existingRecord);
 
     if (validationError) {
       pagosState.message = validationError;
@@ -4041,16 +4360,47 @@
       return;
     }
 
-    if (!warnIfClosedPeriod(newRecord.fechaPago, 'Registrar este pago a proveedor')) return;
+    if (!warnIfClosedPeriod(newRecord.fechaPago, existingRecord ? 'Actualizar este pago a proveedor' : 'Registrar este pago a proveedor')) return;
 
-    appData.pagosProveedores = [newRecord, ...(Array.isArray(appData.pagosProveedores) ? appData.pagosProveedores : [])];
-    recalculateCompraProveedorById(newRecord.compraProveedorId);
+    if (existingRecord) {
+      appData.pagosProveedores = records.map((record) => record.id === existingId ? newRecord : record);
+      recalculateCompraProveedorById(existingRecord.compraProveedorId);
+      recalculateCompraProveedorById(newRecord.compraProveedorId);
+      pagosState.message = `Pago actualizado en ${newRecord.facturaReferencia}: ${formatMoney(newRecord.montoPagado)}.`;
+    } else {
+      appData.pagosProveedores = [newRecord, ...records];
+      recalculateCompraProveedorById(newRecord.compraProveedorId);
+      pagosState.message = `Pago aplicado a ${newRecord.facturaReferencia}: ${formatMoney(newRecord.montoPagado)}.`;
+    }
+
     const compra = appData.comprasProveedores.find((record) => record.id === newRecord.compraProveedorId);
     pagosState.selectedCompraId = compra?.saldoPorPagar > 0 ? newRecord.compraProveedorId : '';
     pagosState.focusCompraId = newRecord.compraProveedorId;
-    pagosState.message = `Pago aplicado a ${newRecord.facturaReferencia}: ${formatMoney(newRecord.montoPagado)}.`;
+    pagosState.editingId = null;
     pagosState.messageType = 'success';
     saveData(appData);
+    renderRoute();
+  }
+
+  function editPagoProveedorRecord(pagoId) {
+    const record = (Array.isArray(appData.pagosProveedores) ? appData.pagosProveedores : []).find((item) => item.id === pagoId);
+    if (!record) return;
+    const normalized = normalizePagoProveedorRecord(record);
+    if (!normalized.activo) {
+      pagosState.message = 'Los pagos anulados quedan visibles, pero no se editan.';
+      pagosState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+    pagosState.editingId = pagoId;
+    pagosState.focusCompraId = normalized.compraProveedorId;
+    pagosState.message = null;
+    renderRoute();
+  }
+
+  function clearPagoProveedorForm() {
+    pagosState.editingId = null;
+    pagosState.message = null;
     renderRoute();
   }
 
@@ -4165,13 +4515,12 @@
           <article class="panel-card gasto-form-card">
             <div class="section-title-row">
               <div>
-                <span class="eyebrow mini">${editingRecord ? 'Editando gasto' : 'Nuevo gasto'}</span>
-                <h2>${editingRecord ? 'Editar gasto' : 'Registrar gasto'}</h2>
+                <span class="eyebrow mini">Nuevo gasto</span>
+                <h2>Registrar gasto</h2>
               </div>
-              ${editingRecord ? '<button type="button" class="secondary-action compact" data-gasto-cancel>Cancelar</button>' : ''}
             </div>
             <p class="muted-text">Los tipos, métodos y cuentas/bancos vienen de Catálogos activos.</p>
-            ${renderGastoForm(editingRecord, tiposActivos, metodosActivos, cuentasActivas, missingCatalogs)}
+            ${renderGastoForm(null, tiposActivos, metodosActivos, cuentasActivas, missingCatalogs)}
           </article>
 
           <article class="panel-card gasto-list-card">
@@ -4189,6 +4538,7 @@
             ${renderGastosList(gastos)}
           </article>
         </div>
+        ${editingRecord ? renderEditModal(getGastoModalId(), 'Editar gasto', 'Actualiza el gasto en una ventana independiente y mantiene el tablero consistente.', renderGastoForm(editingRecord, tiposActivos, metodosActivos, cuentasActivas, missingCatalogs)) : ''}
       </section>
     `;
   }
@@ -4253,7 +4603,7 @@
 
         <div class="form-actions">
           <button type="submit" class="card-action" ${cannotCreate ? 'disabled' : ''}>${record ? 'Guardar cambios' : 'Guardar gasto'}</button>
-          <button type="button" class="secondary-action" data-gasto-clear>Limpiar</button>
+          <button type="button" class="secondary-action" data-gasto-clear>${record ? 'Cancelar' : 'Limpiar'}</button>
         </div>
       </form>
     `;
@@ -4580,6 +4930,8 @@
             </div>
           </article>
 
+          ${renderPwaUpdateCard(config)}
+
           <article class="panel-card config-card full-span">
             <div class="section-title-row">
               <div>
@@ -4644,6 +4996,47 @@
           </article>
         </div>
       </section>
+    `;
+  }
+
+  function renderPwaUpdateCard(config) {
+    const swSupported = typeof navigator !== 'undefined' && 'serviceWorker' in navigator;
+    const isStandalone = Boolean(
+      window.matchMedia?.('(display-mode: standalone)').matches || window.navigator?.standalone
+    );
+    const statusText = pwaState.status || 'Actualizada';
+    const statusClass = pwaState.statusType === 'error'
+      ? 'is-error'
+      : (pwaState.updateAvailable ? 'is-warning' : (pwaState.isChecking || pwaState.isApplying ? 'is-info' : 'is-success'));
+    const primaryAction = pwaState.updateAvailable ? 'data-pwa-apply-update' : 'data-pwa-check-update';
+    const primaryLabel = pwaState.updateAvailable ? 'Aplicar actualización' : 'Buscar actualizaciones';
+    const busy = pwaState.isChecking || pwaState.isApplying;
+
+    return `
+      <article class="panel-card config-card pwa-update-card full-span">
+        <div class="section-title-row">
+          <div>
+            <span class="eyebrow mini">PWA</span>
+            <h2>PWA / Actualizaciones</h2>
+          </div>
+          <span class="pwa-status-chip ${statusClass}">${escapeHtml(statusText)}</span>
+        </div>
+        <p class="notice">Busca y aplica actualizaciones de la app instalada.</p>
+        <div class="pwa-update-grid">
+          <div class="status-item"><strong>Estado actual</strong><span>${escapeHtml(statusText)}</span></div>
+          <div class="status-item"><strong>Última búsqueda</strong><span>${escapeHtml(formatDateTime(config.pwaLastSearchAt))}</span></div>
+          <div class="status-item"><strong>Última actualización</strong><span>${escapeHtml(formatDateTime(config.pwaLastUpdateAt))}</span></div>
+          <div class="status-item"><strong>Modo</strong><span>${isStandalone ? 'PWA instalada' : 'Navegador'}</span></div>
+          <div class="status-item"><strong>Service Worker</strong><span>${swSupported ? 'Disponible' : 'No disponible'}</span></div>
+          <div class="status-item"><strong>Cache</strong><span>Versión ${escapeHtml(APP_VERSION)}</span></div>
+        </div>
+        <div class="config-actions-row pwa-actions-row">
+          <button type="button" class="card-action" ${primaryAction} ${busy ? 'disabled' : ''}>${busy ? escapeHtml(statusText) : primaryLabel}</button>
+          ${pwaState.updateAvailable ? `<button type="button" class="secondary-action" data-pwa-check-update ${busy ? 'disabled' : ''}>Buscar otra vez</button>` : ''}
+          <span class="compact-note">No borra localStorage, JSON, Excel ni datos de negocio.</span>
+        </div>
+        ${pwaState.message ? `<div class="form-message ${pwaState.statusType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(pwaState.message)}</div>` : ''}
+      </article>
     `;
   }
 
@@ -5207,6 +5600,240 @@
   }
 
 
+  function updatePwaRuntimeState(status, options = {}) {
+    pwaState = {
+      ...pwaState,
+      status: status || pwaState.status || 'Actualizada',
+      statusType: options.statusType || pwaState.statusType || 'success',
+      updateAvailable: typeof options.updateAvailable === 'boolean' ? options.updateAvailable : pwaState.updateAvailable,
+      isChecking: Boolean(options.isChecking),
+      isApplying: Boolean(options.isApplying),
+      message: typeof options.message === 'string' ? options.message : (pwaState.message || '')
+    };
+  }
+
+  function persistPwaTimestamp(fieldName, timestamp = nowIso()) {
+    if (!['pwaLastSearchAt', 'pwaLastUpdateAt'].includes(fieldName)) return;
+    appData.configuracion = normalizeConfiguracion({
+      ...appData.configuracion,
+      [fieldName]: timestamp,
+      updatedAt: timestamp
+    });
+    saveData(appData);
+  }
+
+  function renderConfigIfVisible() {
+    const route = getRoute();
+    if (route === 'configuracion' || route === 'respaldo') {
+      renderRoute();
+    }
+  }
+
+  function wait(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  function waitForServiceWorkerInstalled(worker) {
+    if (!worker) return Promise.resolve(false);
+    if (worker.state === 'installed') return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const timeout = window.setTimeout(() => resolve(false), 1800);
+      worker.addEventListener('statechange', () => {
+        if (worker.state === 'installed') {
+          window.clearTimeout(timeout);
+          resolve(true);
+        }
+      }, { once: false });
+    });
+  }
+
+  function wireServiceWorkerRegistration(registration) {
+    if (!registration || registration.__ksaPractikaWired) return;
+    registration.__ksaPractikaWired = true;
+
+    if (registration.waiting && navigator.serviceWorker.controller) {
+      updatePwaRuntimeState('Actualización disponible', {
+        statusType: 'success',
+        updateAvailable: true,
+        message: 'Hay una actualización disponible.'
+      });
+      renderConfigIfVisible();
+    }
+
+    registration.addEventListener('updatefound', () => {
+      const worker = registration.installing;
+      if (!worker) return;
+      updatePwaRuntimeState('Buscando actualización…', {
+        statusType: 'success',
+        isChecking: true,
+        message: 'Buscando actualización…'
+      });
+      renderConfigIfVisible();
+
+      worker.addEventListener('statechange', () => {
+        if (worker.state !== 'installed') return;
+        if (navigator.serviceWorker.controller) {
+          updatePwaRuntimeState('Actualización disponible', {
+            statusType: 'success',
+            updateAvailable: true,
+            message: 'Hay una actualización disponible.'
+          });
+        } else {
+          updatePwaRuntimeState('Actualizada', {
+            statusType: 'success',
+            updateAvailable: false,
+            message: 'La app ya está actualizada.'
+          });
+        }
+        renderConfigIfVisible();
+      });
+    });
+  }
+
+  async function getOrRegisterServiceWorker() {
+    if (!('serviceWorker' in navigator)) return null;
+    const existing = await navigator.serviceWorker.getRegistration();
+    serviceWorkerRegistration = existing || serviceWorkerRegistration || await navigator.serviceWorker.register('service-worker.js');
+    wireServiceWorkerRegistration(serviceWorkerRegistration);
+    return serviceWorkerRegistration;
+  }
+
+  async function checkForPwaUpdate() {
+    const searchAt = nowIso();
+    persistPwaTimestamp('pwaLastSearchAt', searchAt);
+    updatePwaRuntimeState('Buscando actualización…', {
+      statusType: 'success',
+      updateAvailable: false,
+      isChecking: true,
+      message: 'Buscando actualización…'
+    });
+    renderConfigIfVisible();
+
+    if (!('serviceWorker' in navigator)) {
+      updatePwaRuntimeState('Error al buscar actualización', {
+        statusType: 'error',
+        updateAvailable: false,
+        message: 'No se pudo buscar actualización. Este navegador no tiene Service Worker disponible.'
+      });
+      renderConfigIfVisible();
+      return;
+    }
+
+    try {
+      const registration = await getOrRegisterServiceWorker();
+      if (!registration) throw new Error('Service Worker no disponible.');
+      await registration.update();
+      await wait(350);
+      if (registration.installing) {
+        await waitForServiceWorkerInstalled(registration.installing);
+      }
+
+      if (registration.waiting && navigator.serviceWorker.controller) {
+        updatePwaRuntimeState('Actualización disponible', {
+          statusType: 'success',
+          updateAvailable: true,
+          message: 'Hay una actualización disponible.'
+        });
+      } else {
+        updatePwaRuntimeState('No hay actualización disponible', {
+          statusType: 'success',
+          updateAvailable: false,
+          message: 'La app ya está actualizada.'
+        });
+      }
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo buscar actualización PWA.', error);
+      updatePwaRuntimeState('Error al buscar actualización', {
+        statusType: 'error',
+        updateAvailable: false,
+        message: 'No se pudo buscar actualización. Intenta nuevamente.'
+      });
+    }
+    renderConfigIfVisible();
+  }
+
+  function reloadAppAfterPwaUpdate() {
+    if (pwaReloadScheduled) return;
+    pwaReloadScheduled = true;
+    try {
+      const previousLock = sessionStorage.getItem(PWA_RELOAD_LOCK_KEY);
+      if (previousLock === APP_VERSION) return;
+      sessionStorage.setItem(PWA_RELOAD_LOCK_KEY, APP_VERSION);
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo registrar bloqueo de recarga PWA.', error);
+    }
+    try {
+      sessionStorage.removeItem(PWA_APPLY_PENDING_KEY);
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo limpiar estado de actualización PWA.', error);
+    }
+    window.location.reload();
+  }
+
+  async function applyPwaUpdate() {
+    const updateAt = nowIso();
+    persistPwaTimestamp('pwaLastUpdateAt', updateAt);
+    updatePwaRuntimeState('Actualización aplicada, recargando…', {
+      statusType: 'success',
+      updateAvailable: false,
+      isApplying: true,
+      message: 'Actualización aplicada. Recargando…'
+    });
+    renderConfigIfVisible();
+
+    if (!('serviceWorker' in navigator)) {
+      window.setTimeout(() => window.location.reload(), 250);
+      return;
+    }
+
+    try {
+      try {
+        sessionStorage.setItem(PWA_APPLY_PENDING_KEY, APP_VERSION);
+      } catch (error) {
+        console.warn('KSA PRÁCTIKA: no se pudo registrar actualización pendiente PWA.', error);
+      }
+      const registration = await getOrRegisterServiceWorker();
+      const waitingWorker = registration?.waiting;
+      if (waitingWorker) {
+        waitingWorker.postMessage({ type: 'KSA_PRACTIKA_SKIP_WAITING' });
+        window.setTimeout(reloadAppAfterPwaUpdate, 1800);
+      } else {
+        window.setTimeout(reloadAppAfterPwaUpdate, 350);
+      }
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo aplicar actualización PWA.', error);
+      window.setTimeout(reloadAppAfterPwaUpdate, 350);
+    }
+  }
+
+  function setupPwaUpdateListeners() {
+    if (!('serviceWorker' in navigator)) return;
+
+    try {
+      if (sessionStorage.getItem(PWA_RELOAD_LOCK_KEY) === APP_VERSION) {
+        sessionStorage.removeItem(PWA_APPLY_PENDING_KEY);
+      }
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo normalizar estado PWA.', error);
+    }
+
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      let shouldReload = pwaState.isApplying;
+      try {
+        shouldReload = shouldReload || sessionStorage.getItem(PWA_APPLY_PENDING_KEY) === APP_VERSION;
+      } catch (error) {
+        console.warn('KSA PRÁCTIKA: no se pudo revisar estado PWA pendiente.', error);
+      }
+      if (shouldReload) reloadAppAfterPwaUpdate();
+    });
+
+    window.addEventListener('load', () => {
+      getOrRegisterServiceWorker().catch((error) => {
+        console.warn('KSA PRÁCTIKA: service worker no registrado.', error);
+      });
+    });
+  }
+
   function renderImportarExcel() {
     const module = MODULES.find((item) => item.id === 'excel');
     const totalRecords = getOperationalRecordCount();
@@ -5768,24 +6395,30 @@
     CATALOGS.forEach((catalog) => {
       rows.push([xlsxSubtitle(catalog.label)]);
       const headers = ['Nombre', 'Estado'];
-      if (catalog.id === 'clientes') headers.splice(1, 0, 'Código');
+      if (catalog.id === 'clientes') headers.splice(1, 0, 'Código', 'Condición de pago', 'Días de crédito');
       if (catalog.id === 'sucursales') headers.splice(1, 0, 'Cliente asociado');
-      if (catalog.id === 'proveedores') headers.splice(1, 0, 'Contacto');
+      if (catalog.id === 'proveedores') headers.splice(1, 0, 'Contacto', 'Condición de pago', 'Días de crédito');
       if (catalog.id === 'cuentasBancos') headers.splice(1, 0, 'Tipo');
       headers.push('Observación');
       rows.push(xlsxHeaderRow(headers));
       getCatalogRecords(catalog.id).forEach((record) => {
         const base = [xlsxText(record.nombre)];
-        if (catalog.id === 'clientes') base.push(xlsxText(record.codigo));
+        if (catalog.id === 'clientes') {
+          const terms = normalizePaymentTermsFields(record);
+          base.push(xlsxText(record.codigo), xlsxText(terms.condicionPago), xlsxNumber(terms.diasCredito));
+        }
         if (catalog.id === 'sucursales') base.push(xlsxText(getCatalogRecordById('clientes', record.clienteId)?.nombre || ''));
-        if (catalog.id === 'proveedores') base.push(xlsxText(record.contacto));
+        if (catalog.id === 'proveedores') {
+          const terms = normalizePaymentTermsFields(record);
+          base.push(xlsxText(record.contacto), xlsxText(terms.condicionPago), xlsxNumber(terms.diasCredito));
+        }
         if (catalog.id === 'cuentasBancos') base.push(xlsxText(record.tipo));
         base.push(xlsxText(record.activo ? 'Activo' : 'Inactivo'), xlsxText(record.observacion));
         rows.push(base);
       });
       rows.push([]);
     });
-    return { name: 'Catálogos', rows, cols: [28, 24, 14, 36, 20, 20] };
+    return { name: 'Catálogos', rows, cols: [28, 24, 18, 14, 14, 36, 20, 20] };
   }
 
   function getVentasForExport(range, filters) {
@@ -6391,6 +7024,8 @@ ${rowsXml}
       nombre: safeName,
       codigo: cleanText(pickCell(row, ['Código', 'Codigo'])),
       contacto: cleanText(pickCell(row, ['Contacto', 'Teléfono', 'Telefono', 'Correo'])),
+      condicionPago: cleanText(pickCell(row, ['Condición de pago', 'Condicion de pago', 'Condición', 'Condicion', 'Forma de pago', 'Tipo pago'])),
+      diasCredito: parsePositiveInteger(pickCell(row, ['Días de crédito', 'Dias de credito', 'Días crédito', 'Dias credito', 'Crédito', 'Credito'])),
       tipo: cleanText(pickCell(row, ['Tipo cuenta', 'Tipo'])) || (catalogId === 'cuentasBancos' ? 'Otro' : undefined),
       observacion: cleanText(pickCell(row, ['Observación', 'Observacion', 'Notas']))
     }, CATALOGS.find((catalog) => catalog.id === catalogId));
@@ -6728,6 +7363,12 @@ ${rowsXml}
     return getCatalogRecords(catalogId).find((record) => record.id === recordId);
   }
 
+  function getSelectableCatalogRecords(catalogId, currentId = '') {
+    const records = getCatalogRecords(catalogId);
+    const selected = cleanText(currentId);
+    return records.filter((record) => record.activo || record.id === selected);
+  }
+
   function formatMoney(value) {
     return new Intl.NumberFormat('es-NI', {
       style: 'currency',
@@ -6761,12 +7402,16 @@ ${rowsXml}
   }
 
   function getRecordSecondaryText(catalog, record) {
-    if (catalog.id === 'clientes' && record.codigo) return `Código: ${record.codigo}`;
+    if (catalog.id === 'clientes') {
+      return [record.codigo ? `Código: ${record.codigo}` : '', formatPaymentTermsLabel(record)].filter(Boolean).join(' · ');
+    }
     if (catalog.id === 'sucursales') {
       const cliente = appData.clientes.find((item) => item.id === record.clienteId);
       return cliente ? `Cliente asociado: ${cliente.nombre}` : 'Sin cliente asociado';
     }
-    if (catalog.id === 'proveedores' && record.contacto) return `Contacto: ${record.contacto}`;
+    if (catalog.id === 'proveedores') {
+      return [record.contacto ? `Contacto: ${record.contacto}` : '', formatPaymentTermsLabel(record)].filter(Boolean).join(' · ');
+    }
     if (catalog.id === 'cuentasBancos') return `Tipo: ${record.tipo || 'Otro'}`;
     return '';
   }
@@ -6829,6 +7474,12 @@ ${rowsXml}
       record.tipo = 'Otro';
     }
 
+    if (isPaymentTermsCatalog(catalog.id)) {
+      const terms = normalizePaymentTermsFields(record);
+      record.condicionPago = terms.condicionPago;
+      record.diasCredito = terms.diasCredito;
+    }
+
     return record;
   }
 
@@ -6839,6 +7490,14 @@ ${rowsXml}
 
     if (catalog.id === 'cuentasBancos' && !['Caja', 'Banco', 'Otro'].includes(record.tipo)) {
       return 'Selecciona un tipo válido: Caja, Banco u Otro.';
+    }
+
+    if (isPaymentTermsCatalog(catalog.id)) {
+      const terms = normalizePaymentTermsFields(record);
+      if (!['Contado', 'Crédito'].includes(terms.condicionPago)) return 'Selecciona una condición de pago válida.';
+      if (terms.condicionPago === 'Crédito' && (!Number.isInteger(terms.diasCredito) || terms.diasCredito <= 0)) {
+        return 'Si la condición es Crédito, días de crédito debe ser mayor que cero.';
+      }
     }
 
     const duplicate = getCatalogRecords(catalog.id).find((item) => (
@@ -6960,9 +7619,46 @@ ${rowsXml}
     renderRoute();
   }
 
+  function setupCatalogPaymentTermsForm(form) {
+    const conditionInput = form.querySelector('[data-catalog-payment-condition]');
+    const daysInput = form.querySelector('[data-catalog-credit-days]');
+    if (!conditionInput || !daysInput) return;
+
+    const sync = () => {
+      const isCredit = normalizePaymentCondition(conditionInput.value) === 'Crédito';
+      daysInput.disabled = !isCredit;
+      daysInput.required = isCredit;
+      if (!isCredit) daysInput.value = '0';
+      if (isCredit && daysInput.value === '0') daysInput.value = '';
+    };
+
+    conditionInput.addEventListener('change', sync);
+    sync();
+  }
+
+  function closeEditModal(modalId) {
+    const id = cleanText(modalId);
+    if (id === getCatalogModalId()) clearCatalogForm();
+    else if (id === getVentaModalId()) clearVentaForm();
+    else if (id === getCompraModalId()) clearCompraProveedorForm();
+    else if (id === getCobroModalId()) clearCobroForm();
+    else if (id === getPagoModalId()) clearPagoProveedorForm();
+    else if (id === getGastoModalId()) clearGastoForm();
+  }
+
   function bindViewActions() {
     viewRoot.querySelectorAll('[data-go]').forEach((button) => {
       button.addEventListener('click', () => setRoute(button.dataset.go));
+    });
+
+    viewRoot.querySelectorAll('[data-modal-close]').forEach((button) => {
+      button.addEventListener('click', () => closeEditModal(button.dataset.modalClose));
+    });
+
+    viewRoot.querySelectorAll('[data-modal-backdrop]').forEach((backdrop) => {
+      backdrop.addEventListener('click', (event) => {
+        if (event.target === backdrop) closeEditModal(backdrop.dataset.modalBackdrop);
+      });
     });
 
 
@@ -6983,6 +7679,7 @@ ${rowsXml}
     });
 
     viewRoot.querySelectorAll('[data-catalog-form]').forEach((form) => {
+      setupCatalogPaymentTermsForm(form);
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         saveCatalogRecord(form);
@@ -7037,6 +7734,14 @@ ${rowsXml}
       form.querySelector('[data-cobro-fill-full]')?.addEventListener('click', (event) => fillCobroFullAmount(form, event.currentTarget.dataset.cobroFillFull));
     });
 
+    viewRoot.querySelectorAll('[data-cobro-edit]').forEach((button) => {
+      button.addEventListener('click', () => editCobroRecord(button.dataset.cobroEdit));
+    });
+
+    viewRoot.querySelectorAll('[data-cobro-cancel]').forEach((button) => {
+      button.addEventListener('click', clearCobroForm);
+    });
+
     viewRoot.querySelectorAll('[data-cobro-annul]').forEach((button) => {
       button.addEventListener('click', () => annulCobroRecord(button.dataset.cobroAnnul));
     });
@@ -7079,6 +7784,14 @@ ${rowsXml}
       });
       form.querySelector('[data-pago-compra]')?.addEventListener('change', (event) => selectPagoCompra(event.target.value));
       form.querySelector('[data-pago-fill-full]')?.addEventListener('click', (event) => fillPagoFullAmount(form, event.currentTarget.dataset.pagoFillFull));
+    });
+
+    viewRoot.querySelectorAll('[data-pago-edit]').forEach((button) => {
+      button.addEventListener('click', () => editPagoProveedorRecord(button.dataset.pagoEdit));
+    });
+
+    viewRoot.querySelectorAll('[data-pago-cancel]').forEach((button) => {
+      button.addEventListener('click', clearPagoProveedorForm);
     });
 
     viewRoot.querySelectorAll('[data-pago-annul]').forEach((button) => {
@@ -7171,6 +7884,14 @@ ${rowsXml}
       select.addEventListener('change', (event) => setCurrentRole(event.target.value));
     });
 
+    viewRoot.querySelectorAll('[data-pwa-check-update]').forEach((button) => {
+      button.addEventListener('click', checkForPwaUpdate);
+    });
+
+    viewRoot.querySelectorAll('[data-pwa-apply-update]').forEach((button) => {
+      button.addEventListener('click', applyPwaUpdate);
+    });
+
     viewRoot.querySelectorAll('[data-json-export]').forEach((button) => {
       button.addEventListener('click', exportJsonBackup);
     });
@@ -7211,11 +7932,5 @@ ${rowsXml}
   }
   renderRoute();
 
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('service-worker.js').catch((error) => {
-        console.warn('KSA PRÁCTIKA: service worker no registrado.', error);
-      });
-    });
-  }
+  setupPwaUpdateListeners();
 })();

@@ -1,6 +1,6 @@
-# KSA PRÁCTIKA — Etapa 12/12
+# KSA PRÁCTIKA — Post 12 Etapa 3/3
 
-Webapp estática de control operativo. Esta etapa implementa **Configuración, roles básicos locales y respaldo JSON validado** sobre la base anterior con Catálogos, Ventas / OC, Cobros, Proveedores / Compras, Pagos a proveedores, Gastos, Mora, Alertas, Historial, Resumen / Tablero operativo e Importación inicial desde Excel.
+Webapp estática de control operativo. Esta etapa agrega **PWA / Actualizaciones** dentro de Configuración y endurece el Service Worker/cache sobre la base completa con Catálogos, Ventas / OC, Cobros, Proveedores / Compras, Pagos a proveedores, Gastos, Mora, Alertas, Historial, Resumen / Tablero, Importación/Exportación Excel, Cierre mensual, Roles, Respaldo JSON, condiciones de pago y modales de edición.
 
 ## Incluye
 
@@ -78,3 +78,29 @@ Bloques principales:
 - Edición posterior de períodos cerrados bajo advertencia clara.
 - Service Worker cache actualizado a la versión 0.12.1-etapa12-logo.
 - Logotipo KSA integrado como asset local `assets/ksa-logo.png` en la barra superior, a la izquierda del nombre de la app.
+
+
+## Post 12 — Etapa 1/2: Condiciones de pago
+
+- Clientes y Proveedores ahora manejan condición de pago: Contado o Crédito.
+- Días de crédito se valida como entero mayor que 0 cuando la condición es Crédito.
+- Contado guarda días de crédito en 0.
+- Ventas / OC sugiere fecha de vencimiento según la condición del Cliente.
+- Proveedores / Compras sugiere fecha de vencimiento según la condición del Proveedor.
+- La fecha de vencimiento manual se respeta cuando el usuario la ajusta.
+- Exportación Excel agrega Condición de pago y Días de crédito en Catálogos para Clientes y Proveedores.
+- Importación Excel y respaldo JSON mantienen compatibilidad con bases anteriores, completando Contado y 0 días cuando faltan campos.
+- Service Worker cache actualizado a la versión 0.13.0-post12-etapa1-condiciones-pago.
+
+
+## Post 12 — Etapa 3/3: PWA / Actualizaciones
+
+- Se agregó en Configuración la sección **PWA / Actualizaciones**.
+- Incluye estado actual, última búsqueda, última actualización, modo de uso y disponibilidad de Service Worker.
+- Botón **Buscar actualizaciones** con `registration.update()` cuando Service Worker está disponible.
+- Botón **Aplicar actualización** cuando existe un Service Worker en espera.
+- Aplicación de actualización mediante mensaje seguro `KSA_PRACTIKA_SKIP_WAITING` y recarga protegida contra bucles.
+- Persistencia de última búsqueda y última actualización dentro de `configuracion`, sin borrar `localStorage`.
+- Service Worker actualizado a `v0_15_0_post12_etapa3_pwa_update`.
+- Cache PWA incluye `index.html`, CSS, JS, manifest, logo, íconos y `vendor/jszip.min.js`.
+- Se mantienen intactos JSON, Excel, importación, exportación, cierres y datos de negocio.

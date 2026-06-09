@@ -1,6 +1,7 @@
 'use strict';
 
-const CACHE_NAME = 'KSA_PRACTIKA_CACHE_v0_12_1_etapa12_logo';
+const CACHE_VERSION = 'v0_15_0_post12_etapa3_pwa_update';
+const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
   './index.html',
@@ -17,7 +18,6 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => cache.addAll(APP_SHELL))
-      .then(() => self.skipWaiting())
   );
 });
 
@@ -31,10 +31,20 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+self.addEventListener('message', (event) => {
+  const type = event?.data?.type;
+  if (type === 'KSA_PRACTIKA_SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
 
   if (request.method !== 'GET') return;
+
+  const url = new URL(request.url);
+  if (!['http:', 'https:'].includes(url.protocol)) return;
 
   if (request.mode === 'navigate') {
     event.respondWith(
@@ -47,10 +57,15 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith(
     caches.match(request)
-      .then((cached) => cached || fetch(request).then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-        return response;
-      }).catch(() => cached))
+      .then((cached) => {
+        if (cached) return cached;
+        return fetch(request).then((response) => {
+          if (!response || response.status !== 200 || response.type === 'error') return response;
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          return response;
+        });
+      })
+      .catch(() => caches.match('./index.html'))
   );
 });
