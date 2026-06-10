@@ -2,9 +2,10 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.15.6-post12-metodos-banco-config';
+  const APP_VERSION = '0.15.9-post12-bancos-hardening';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
+  const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
 
   const MODULES = [
     {
@@ -170,10 +171,9 @@
       label: 'Métodos de pago/cobro',
       singular: 'método',
       icon: 'MP',
-      description: 'Métodos disponibles para cobros, pagos y gastos. Define aquí si el método debe pedir banco.',
+      description: 'Métodos simples disponibles para cobros, pagos y gastos. La relación con bancos se define desde Bancos por Tipo.',
       fields: [
         { name: 'nombre', label: 'Nombre', type: 'text', required: true, placeholder: 'Ej. Transferencia' },
-        { name: 'requiereBanco', label: 'Requiere banco', type: 'checkbox', help: 'Actívalo para Transferencia, Tarjeta, POS, depósito u otro método que deba registrar banco.' },
         { name: 'observacion', label: 'Observación', type: 'textarea', placeholder: 'Notas internas del método' }
       ]
     },
@@ -182,10 +182,10 @@
       label: 'Bancos',
       singular: 'banco',
       icon: 'BK',
-      description: 'Bancos simples para asociar cobros, pagos y gastos cuando el método configurado requiera banco.',
+      description: 'Bancos por tipo para asociar cobros, pagos y gastos: Transferencia, Depósito o Tarjeta.',
       fields: [
         { name: 'nombre', label: 'Nombre del banco', type: 'text', required: true, placeholder: 'Ej. BAC, Lafise, Banpro' },
-        { name: 'tipo', label: 'Tipo interno', type: 'select', options: ['Banco', 'Caja', 'Otro'], required: true },
+        { name: 'tipo', label: 'Tipo', type: 'select', options: BANK_TYPE_OPTIONS, required: true, placeholder: 'Seleccionar tipo' },
         { name: 'observacion', label: 'Observación', type: 'textarea', placeholder: 'Notas internas del banco' }
       ]
     }
@@ -194,15 +194,13 @@
   const DEFAULT_SEEDS = {
     tiposGasto: ['Estacionamiento', 'Cargadores', 'Transporte', 'Combustible', 'Empaque', 'Otros'],
     metodosPago: [
-      { nombre: 'Efectivo', requiereBanco: false },
-      { nombre: 'Transferencia', requiereBanco: true },
-      { nombre: 'Depósito', requiereBanco: false },
-      { nombre: 'Cheque', requiereBanco: false },
-      { nombre: 'Tarjeta', requiereBanco: true },
-      { nombre: 'Otro', requiereBanco: false }
+      { nombre: 'Efectivo' },
+      { nombre: 'Transferencia' },
+      { nombre: 'Depósito' },
+      { nombre: 'Tarjeta' }
     ],
     cuentasBancos: [
-      { nombre: 'Banco', tipo: 'Banco' }
+      { nombre: 'Banco', tipo: 'Transferencia' }
     ]
   };
 
@@ -460,6 +458,7 @@
     normalized.cobros = normalized.cobros.map((record) => normalizeCobroRecord(record));
     normalized.pagosProveedores = normalized.pagosProveedores.map((record) => normalizePagoProveedorRecord(record));
     normalized.gastos = normalized.gastos.map((record) => normalizeGastoRecord(record));
+    enrichBankSnapshotsForData(normalized);
     normalized.cierresMensuales = normalized.cierresMensuales.map((record) => normalizeCierreMensualRecord(record));
     normalized.exportacionesExcel = normalized.exportacionesExcel.map((record) => normalizeExcelExportRecord(record));
     normalized.comprasProveedores = normalized.comprasProveedores.map((record) => normalizeCompraProveedorRecord(record));
@@ -498,7 +497,16 @@
     catalog.fields.forEach((field) => {
       if (['nombre', 'observacion'].includes(field.name)) return;
       if (field.name === 'tipo') {
-        normalized.tipo = field.options.includes(raw.tipo) ? raw.tipo : field.options[0];
+        if (catalog.id === 'cuentasBancos') {
+          const normalizedType = normalizeBankType(raw.tipo);
+          normalized.tipo = normalizedType;
+          const legacyType = cleanText(raw.tipo || raw.tipoAnterior);
+          if (!normalizedType && legacyType) {
+            normalized.tipoAnterior = legacyType;
+          }
+        } else {
+          normalized.tipo = field.options.includes(raw.tipo) ? raw.tipo : field.options[0];
+        }
         return;
       }
       if (field.name === 'condicionPago') {
@@ -828,6 +836,7 @@
       metodoPagoNombre: cleanText(raw.metodoPagoNombre || raw.metodoPago || raw.metodo),
       cuentaBancoId: cleanText(raw.cuentaBancoId),
       cuentaBancoNombre: cleanText(raw.cuentaBancoNombre || raw.cuentaBanco || raw.banco || raw.cuenta),
+      cuentaBancoTipo: normalizeBankType(raw.cuentaBancoTipo || raw.bancoTipo || raw.tipoBanco || raw.bankType || raw.tipoCuentaBanco),
       observacion: cleanText(raw.observacion),
       activo,
       estado: activo ? 'Registrado' : 'Anulado',
@@ -910,6 +919,7 @@
       metodoPagoNombre: cleanText(raw.metodoPagoNombre || raw.metodoPago || raw.metodo),
       cuentaBancoId: cleanText(raw.cuentaBancoId),
       cuentaBancoNombre: cleanText(raw.cuentaBancoNombre || raw.cuentaBanco || raw.banco || raw.cuenta),
+      cuentaBancoTipo: normalizeBankType(raw.cuentaBancoTipo || raw.bancoTipo || raw.tipoBanco || raw.bankType || raw.tipoCuentaBanco),
       observacion: cleanText(raw.observacion),
       activo,
       estado: activo ? 'Registrado' : 'Anulado',
@@ -937,6 +947,7 @@
       metodoPagoNombre: cleanText(raw.metodoPagoNombre || raw.metodoPago || raw.metodo),
       cuentaBancoId: cleanText(raw.cuentaBancoId),
       cuentaBancoNombre: cleanText(raw.cuentaBancoNombre || raw.cuentaBanco || raw.banco || raw.cuenta),
+      cuentaBancoTipo: normalizeBankType(raw.cuentaBancoTipo || raw.bancoTipo || raw.tipoBanco || raw.bankType || raw.tipoCuentaBanco),
       observacion: cleanText(raw.observacion),
       estado: activo ? 'Registrado' : 'Anulado',
       anulado: !activo,
@@ -1128,6 +1139,69 @@
       .toLocaleLowerCase('es-NI');
   }
 
+  function normalizeBankType(value) {
+    const raw = cleanText(value);
+    if (!raw) return '';
+    const key = normalizeKeyForCompare(raw);
+    const match = BANK_TYPE_OPTIONS.find((option) => normalizeKeyForCompare(option) === key);
+    return match || '';
+  }
+
+  function getBankTypeDisplay(record) {
+    const type = normalizeBankType(record?.tipo);
+    if (type) return type;
+    const legacy = cleanText(record?.tipoAnterior || record?.tipo);
+    return legacy ? `Sin tipo · anterior: ${legacy}` : 'Sin tipo';
+  }
+
+  function findBankInData(dataSource, bankId = '', bankName = '') {
+    const records = Array.isArray(dataSource?.cuentasBancos) ? dataSource.cuentasBancos : [];
+    const safeId = cleanText(bankId);
+    const safeName = normalizeNameForCompare(bankName);
+    return records.find((bank) => safeId && cleanText(bank.id) === safeId)
+      || records.find((bank) => safeName && normalizeNameForCompare(bank.nombre) === safeName)
+      || null;
+  }
+
+  function enrichMovementBankSnapshot(record, dataSource) {
+    const movement = isPlainObject(record) ? record : {};
+    const bank = findBankInData(dataSource, movement.cuentaBancoId, movement.cuentaBancoNombre);
+    const bankType = normalizeBankType(movement.cuentaBancoTipo || movement.bancoTipo || movement.tipoBanco || movement.bankType || movement.tipoCuentaBanco)
+      || normalizeBankType(bank?.tipo);
+    const bankName = cleanText(movement.cuentaBancoNombre) || cleanText(bank?.nombre);
+    return {
+      ...movement,
+      cuentaBancoNombre: bankName,
+      cuentaBancoTipo: bankType
+    };
+  }
+
+  function enrichBankSnapshotsForData(dataSource) {
+    if (!isPlainObject(dataSource)) return dataSource;
+    ['cobros', 'pagosProveedores', 'gastos'].forEach((key) => {
+      dataSource[key] = Array.isArray(dataSource[key])
+        ? dataSource[key].map((record) => enrichMovementBankSnapshot(record, dataSource))
+        : [];
+    });
+    return dataSource;
+  }
+
+  function catalogRecordsMatchForMerge(catalogId, left, right) {
+    if (cleanText(left?.id) && cleanText(left?.id) === cleanText(right?.id)) return true;
+    const leftName = normalizeNameForCompare(left?.nombre);
+    const rightName = normalizeNameForCompare(right?.nombre);
+    if (!leftName || !rightName || leftName !== rightName) return false;
+    if (catalogId === 'cuentasBancos') {
+      return normalizeBankType(left?.tipo) === normalizeBankType(right?.tipo);
+    }
+    return true;
+  }
+
+  function isBankTypeMethodName(value) {
+    const key = normalizeKeyForCompare(value);
+    return key.includes('transferencia') || key.includes('deposito') || key.includes('tarjeta');
+  }
+
   function findPaymentMethodByValue(value) {
     const raw = cleanText(value);
     if (!raw) return null;
@@ -1138,19 +1212,32 @@
   }
 
   function paymentMethodNameSuggestsBank(value) {
-    const key = normalizeKeyForCompare(value);
-    return key.includes('transferencia') || key.includes('tarjeta');
+    return isBankTypeMethodName(value);
+  }
+
+  function getBankTypeForPaymentMethod(value) {
+    const method = findPaymentMethodByValue(value);
+    const methodName = cleanText(method?.nombre || value);
+    if (!methodName) return '';
+    const methodKey = normalizeKeyForCompare(methodName);
+    return BANK_TYPE_OPTIONS.find((option) => methodKey.includes(normalizeKeyForCompare(option))) || '';
   }
 
   function paymentMethodRequiresBank(value) {
-    const method = findPaymentMethodByValue(value);
-    if (method && typeof method.requiereBanco === 'boolean') return method.requiereBanco;
-    return paymentMethodNameSuggestsBank(method?.nombre || value);
+    return Boolean(getBankTypeForPaymentMethod(value));
+  }
+
+  function getBankEmptyMessage(type) {
+    const safeType = cleanText(type) || 'este método';
+    return `No hay bancos configurados para ${safeType}. Agrega uno en Catálogos → Bancos.`;
   }
 
   function isBankCatalogRecord(record) {
-    const typeKey = normalizeKeyForCompare(record?.tipo || 'Banco');
-    return !typeKey || typeKey === 'banco';
+    return Boolean(record && cleanText(record.nombre || record.id));
+  }
+
+  function bankMatchesType(record, type) {
+    return normalizeBankType(record?.tipo) === cleanText(type);
   }
 
   function getActiveBankRecords() {
@@ -1164,6 +1251,28 @@
     ));
   }
 
+  function getSelectableBankRecordsByType(type, currentId = '') {
+    const selected = cleanText(currentId);
+    const requiredType = cleanText(type);
+    if (!requiredType) return [];
+    return getCatalogRecords('cuentasBancos').filter((record) => (
+      isBankCatalogRecord(record) &&
+      bankMatchesType(record, requiredType) &&
+      (record.activo || record.id === selected)
+    ));
+  }
+
+  function getValidBankForPaymentMethod(methodValue, bankId, existingRecord = null) {
+    const requiredType = getBankTypeForPaymentMethod(methodValue);
+    const selectedBankId = cleanText(bankId);
+    if (!requiredType || !selectedBankId) return null;
+    const bank = getCatalogRecordById('cuentasBancos', selectedBankId);
+    if (!bank || !isBankCatalogRecord(bank)) return null;
+    if (!bankMatchesType(bank, requiredType)) return null;
+    if (!bank.activo && existingRecord?.cuentaBancoId !== bank.id) return null;
+    return bank;
+  }
+
   function isSafeDeleteCatalog(catalogId) {
     return catalogId === 'metodosPago' || catalogId === 'cuentasBancos';
   }
@@ -1171,19 +1280,26 @@
   function renderPaymentBankField(bancosActivos, record = {}, disabled = false) {
     const selectedMethodId = cleanText(record?.metodoPagoId);
     const selectedMethodName = cleanText(record?.metodoPagoNombre);
-    const requiresBank = paymentMethodRequiresBank(selectedMethodId || selectedMethodName);
+    const requiredBankType = getBankTypeForPaymentMethod(selectedMethodId || selectedMethodName);
+    const requiresBank = Boolean(requiredBankType);
     const selectedBankId = cleanText(record?.cuentaBancoId);
-    const hasBanks = Array.isArray(bancosActivos) && bancosActivos.length > 0;
-    const isDisabled = Boolean(disabled || !requiresBank || !hasBanks);
-    const requiredDotClass = requiresBank && hasBanks ? '' : ' is-hidden';
+    const banks = Array.isArray(bancosActivos) ? bancosActivos.filter(isBankCatalogRecord) : [];
+    const hasMatchingBanks = requiresBank && banks.some((bank) => bankMatchesType(bank, requiredBankType));
+    const isDisabled = Boolean(disabled || !requiresBank || !hasMatchingBanks);
+    const requiredDotClass = requiresBank && hasMatchingBanks ? '' : ' is-hidden';
     return `
       <label class="form-field payment-bank-field${requiresBank ? '' : ' is-hidden'}" data-bank-field>
         <span>Banco <span class="required-dot${requiredDotClass}" data-bank-required-dot aria-label="obligatorio">*</span></span>
-        <select name="cuentaBancoId" data-bank-select data-bank-base-disabled="${disabled ? 'true' : 'false'}" ${requiresBank && hasBanks ? 'required' : ''} ${isDisabled ? 'disabled' : ''}>
+        <select name="cuentaBancoId" data-bank-select data-bank-base-disabled="${disabled ? 'true' : 'false'}" ${requiresBank && hasMatchingBanks ? 'required' : ''} ${isDisabled ? 'disabled' : ''}>
           <option value="">Seleccionar banco</option>
-          ${bancosActivos.map((banco) => `<option value="${escapeHtml(banco.id)}" ${banco.id === selectedBankId ? 'selected' : ''}>${escapeHtml(banco.nombre || 'Banco sin nombre')}${banco.activo ? '' : ' · inactivo'}</option>`).join('')}
+          ${banks.map((banco) => {
+            const bankType = normalizeBankType(banco.tipo);
+            const matchesType = requiresBank && bankType === requiredBankType;
+            const optionHidden = requiresBank && !matchesType ? ' hidden disabled' : '';
+            return `<option value="${escapeHtml(banco.id)}" data-bank-type="${escapeHtml(bankType)}"${optionHidden} ${banco.id === selectedBankId ? 'selected' : ''}>${escapeHtml(banco.nombre || 'Banco sin nombre')} · ${escapeHtml(getBankTypeDisplay(banco))}${banco.activo ? '' : ' · inactivo'}</option>`;
+          }).join('')}
         </select>
-        <small class="compact-note bank-empty-message${requiresBank && !hasBanks ? '' : ' is-hidden'}" data-bank-empty-message>Agrega un banco en Catálogos para seleccionarlo.</small>
+        <small class="compact-note bank-empty-message${requiresBank && !hasMatchingBanks ? '' : ' is-hidden'}" data-bank-empty-message>${escapeHtml(getBankEmptyMessage(requiredBankType))}</small>
       </label>
     `;
   }
@@ -1197,15 +1313,32 @@
     if (!methodSelect || !bankField || !bankSelect) return;
 
     const sync = () => {
-      const requiresBank = paymentMethodRequiresBank(methodSelect.value);
-      const hasBanks = bankSelect.options.length > 1;
+      const requiredBankType = getBankTypeForPaymentMethod(methodSelect.value);
+      const requiresBank = Boolean(requiredBankType);
       const baseDisabled = bankSelect.dataset.bankBaseDisabled === 'true';
+      let matchingBanks = 0;
+
+      Array.from(bankSelect.options).forEach((option) => {
+        if (!option.value) return;
+        const matchesType = requiresBank && option.dataset.bankType === requiredBankType;
+        option.hidden = !matchesType;
+        option.disabled = !matchesType;
+        if (matchesType) matchingBanks += 1;
+      });
+
+      const selectedOption = bankSelect.selectedOptions && bankSelect.selectedOptions[0];
+      if (!requiresBank || (selectedOption && selectedOption.value && (selectedOption.hidden || selectedOption.disabled))) {
+        bankSelect.value = '';
+      }
+
       bankField.classList.toggle('is-hidden', !requiresBank);
-      bankSelect.required = requiresBank && hasBanks;
-      bankSelect.disabled = baseDisabled || !requiresBank || !hasBanks;
-      bankRequiredDot?.classList.toggle('is-hidden', !(requiresBank && hasBanks));
-      emptyMessage?.classList.toggle('is-hidden', !(requiresBank && !hasBanks));
-      if (!requiresBank) bankSelect.value = '';
+      bankSelect.required = requiresBank && matchingBanks > 0;
+      bankSelect.disabled = baseDisabled || !requiresBank || matchingBanks === 0;
+      bankRequiredDot?.classList.toggle('is-hidden', !(requiresBank && matchingBanks > 0));
+      if (emptyMessage) {
+        emptyMessage.textContent = getBankEmptyMessage(requiredBankType);
+        emptyMessage.classList.toggle('is-hidden', !(requiresBank && matchingBanks === 0));
+      }
     };
 
     methodSelect.addEventListener('change', sync);
@@ -1213,11 +1346,12 @@
   }
 
   function validateBankForPaymentMethod(record, existingRecord = null) {
-    if (!paymentMethodRequiresBank(record.metodoPagoId || record.metodoPagoNombre)) return '';
-    const banks = getCatalogRecords('cuentasBancos').filter(isBankCatalogRecord);
-    if (!banks.length) return 'Agrega un banco en Catálogos para seleccionarlo.';
-    const valid = banks.some((bank) => bank.id === record.cuentaBancoId && (bank.activo || existingRecord?.cuentaBancoId === bank.id));
-    if (!valid) return 'Selecciona un banco válido para este método.';
+    const requiredBankType = getBankTypeForPaymentMethod(record.metodoPagoId || record.metodoPagoNombre);
+    if (!requiredBankType) return '';
+    const banks = getSelectableBankRecordsByType(requiredBankType, existingRecord?.cuentaBancoId);
+    if (!banks.length) return getBankEmptyMessage(requiredBankType);
+    const valid = banks.some((bank) => bank.id === record.cuentaBancoId);
+    if (!valid) return `Selecciona un banco configurado para ${requiredBankType}.`;
     return '';
   }
 
@@ -3150,11 +3284,17 @@
 
     if (field.type === 'select') {
       const paymentConditionAttr = field.name === 'condicionPago' ? 'data-catalog-payment-condition' : '';
+      const options = Array.isArray(field.options) ? field.options : [];
+      const hasValidValue = options.includes(value);
+      const placeholderOption = field.placeholder
+        ? `<option value="" ${hasValidValue ? '' : 'selected'}>${escapeHtml(field.placeholder)}</option>`
+        : '';
       return `
         <label class="form-field">
           <span>${escapeHtml(field.label)} ${requiredLabel}</span>
           <select name="${escapeHtml(field.name)}" ${field.required ? 'required' : ''} ${disabled ? 'disabled' : ''} ${paymentConditionAttr}>
-            ${field.options.map((option) => `<option value="${escapeHtml(option)}" ${option === value ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}
+            ${placeholderOption}
+            ${options.map((option) => `<option value="${escapeHtml(option)}" ${option === value ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}
           </select>
         </label>
       `;
@@ -4062,7 +4202,7 @@
     return `
       <article class="catalog-warning" role="status">
         <strong>Faltan ${escapeHtml(missing.join(', '))}.</strong>
-        <p>Para guardar un cobro necesitas una OC activa con saldo y métodos de pago activos. El banco se solicita según la configuración del método en Catálogos.</p>
+        <p>Para guardar un cobro necesitas una OC activa con saldo y métodos de pago activos. Banco se solicita cuando el método es Transferencia, Depósito o Tarjeta.</p>
         <div class="placeholder-tools">
           <button type="button" class="secondary-action compact" data-go="ventas">Ir a Ventas / OC</button>
           <button type="button" class="secondary-action compact" data-go="catalogos">Ir a Catálogos</button>
@@ -4288,8 +4428,9 @@
     const cliente = venta ? getCatalogRecordById('clientes', venta.clienteId) : null;
     const sucursal = venta ? getCatalogRecordById('sucursales', venta.sucursalId) : null;
     const metodo = getCatalogRecordById('metodosPago', cleanText(formData.get('metodoPagoId')));
-    const requiereBanco = paymentMethodRequiresBank(metodo?.id || metodo?.nombre || formData.get('metodoPagoId'));
-    const cuenta = requiereBanco ? getCatalogRecordById('cuentasBancos', cleanText(formData.get('cuentaBancoId'))) : null;
+    const methodValue = metodo?.id || metodo?.nombre || formData.get('metodoPagoId');
+    const requiredBankType = getBankTypeForPaymentMethod(methodValue);
+    const cuenta = requiredBankType ? getValidBankForPaymentMethod(methodValue, formData.get('cuentaBancoId'), existingRecord) : null;
 
     return normalizeCobroRecord({
       ...(existingRecord || {}),
@@ -4304,8 +4445,8 @@
       montoCobrado: parseMoney(formData.get('montoCobrado')),
       metodoPagoId: metodo?.id || existingRecord?.metodoPagoId || '',
       metodoPagoNombre: metodo?.nombre || existingRecord?.metodoPagoNombre || '',
-      cuentaBancoId: requiereBanco ? (cuenta?.id || existingRecord?.cuentaBancoId || '') : '',
-      cuentaBancoNombre: requiereBanco ? (cuenta?.nombre || existingRecord?.cuentaBancoNombre || '') : '',
+      cuentaBancoId: requiredBankType ? (cuenta?.id || '') : '',
+      cuentaBancoNombre: requiredBankType ? (cuenta?.nombre || '') : '',
       observacion: cleanText(formData.get('observacion')),
       activo: typeof existingRecord?.activo === 'boolean' ? existingRecord.activo : true,
       estado: typeof existingRecord?.activo === 'boolean' && !existingRecord.activo ? 'Anulado' : 'Registrado',
@@ -4930,7 +5071,7 @@
     return `
       <article class="catalog-warning" role="status">
         <strong>Faltan ${escapeHtml(missing.join(', '))}.</strong>
-        <p>Para guardar un pago necesitas una compra/deuda activa con saldo y métodos de pago activos. El banco se solicita según la configuración del método en Catálogos.</p>
+        <p>Para guardar un pago necesitas una compra/deuda activa con saldo y métodos de pago activos. Banco se solicita cuando el método es Transferencia, Depósito o Tarjeta.</p>
         <div class="placeholder-tools">
           <button type="button" class="secondary-action compact" data-go="proveedores">Ir a Proveedores / Compras</button>
           <button type="button" class="secondary-action compact" data-go="catalogos">Ir a Catálogos</button>
@@ -5147,8 +5288,9 @@
     const compra = appData.comprasProveedores.map((record) => normalizeCompraProveedorRecord(record)).find((record) => record.id === compraProveedorId);
     const proveedor = compra ? getCatalogRecordById('proveedores', compra.proveedorId) : null;
     const metodo = getCatalogRecordById('metodosPago', cleanText(formData.get('metodoPagoId')));
-    const requiereBanco = paymentMethodRequiresBank(metodo?.id || metodo?.nombre || formData.get('metodoPagoId'));
-    const cuenta = requiereBanco ? getCatalogRecordById('cuentasBancos', cleanText(formData.get('cuentaBancoId'))) : null;
+    const methodValue = metodo?.id || metodo?.nombre || formData.get('metodoPagoId');
+    const requiredBankType = getBankTypeForPaymentMethod(methodValue);
+    const cuenta = requiredBankType ? getValidBankForPaymentMethod(methodValue, formData.get('cuentaBancoId'), existingRecord) : null;
 
     return normalizePagoProveedorRecord({
       ...(existingRecord || {}),
@@ -5161,8 +5303,8 @@
       montoPagado: parseMoney(formData.get('montoPagado')),
       metodoPagoId: metodo?.id || existingRecord?.metodoPagoId || '',
       metodoPagoNombre: metodo?.nombre || existingRecord?.metodoPagoNombre || '',
-      cuentaBancoId: requiereBanco ? (cuenta?.id || existingRecord?.cuentaBancoId || '') : '',
-      cuentaBancoNombre: requiereBanco ? (cuenta?.nombre || existingRecord?.cuentaBancoNombre || '') : '',
+      cuentaBancoId: requiredBankType ? (cuenta?.id || '') : '',
+      cuentaBancoNombre: requiredBankType ? (cuenta?.nombre || '') : '',
       observacion: cleanText(formData.get('observacion')),
       activo: typeof existingRecord?.activo === 'boolean' ? existingRecord.activo : true,
       estado: typeof existingRecord?.activo === 'boolean' && !existingRecord.activo ? 'Anulado' : 'Registrado',
@@ -5367,7 +5509,7 @@
                 <h2>Registrar gasto</h2>
               </div>
             </div>
-            <p class="muted-text">Los tipos, métodos y bancos vienen de Catálogos activos. Banco aparece solo cuando el método elegido está configurado para requerir banco.</p>
+            <p class="muted-text">Los tipos, métodos y bancos vienen de Catálogos activos. Banco aparece cuando el método elegido es Transferencia, Depósito o Tarjeta.</p>
             ${renderGastoForm(null, tiposActivos, metodosActivos, cuentasActivas, missingCatalogs)}
           </article>
 
@@ -5399,7 +5541,7 @@
     return `
       <article class="catalog-warning" role="status">
         <strong>Faltan ${escapeHtml(missing.join(', '))}.</strong>
-        <p>Para guardar un gasto necesitas tipos de gasto y métodos de pago activos. Banco se solicita según la configuración del método en Catálogos.</p>
+        <p>Para guardar un gasto necesitas tipos de gasto y métodos de pago activos. Banco se solicita cuando el método es Transferencia, Depósito o Tarjeta.</p>
         <button type="button" class="secondary-action compact" data-go="catalogos">Ir a Catálogos</button>
       </article>
     `;
@@ -5534,8 +5676,9 @@
     const timestamp = nowIso();
     const tipo = getCatalogRecordById('tiposGasto', cleanText(formData.get('tipoGastoId')));
     const metodo = getCatalogRecordById('metodosPago', cleanText(formData.get('metodoPagoId')));
-    const requiereBanco = paymentMethodRequiresBank(metodo?.id || metodo?.nombre || formData.get('metodoPagoId'));
-    const cuenta = requiereBanco ? getCatalogRecordById('cuentasBancos', cleanText(formData.get('cuentaBancoId'))) : null;
+    const methodValue = metodo?.id || metodo?.nombre || formData.get('metodoPagoId');
+    const requiredBankType = getBankTypeForPaymentMethod(methodValue);
+    const cuenta = requiredBankType ? getValidBankForPaymentMethod(methodValue, formData.get('cuentaBancoId'), existingRecord) : null;
 
     return normalizeGastoRecord({
       ...(existingRecord || {}),
@@ -5546,8 +5689,8 @@
       monto: parseMoney(formData.get('monto')),
       metodoPagoId: metodo?.id || '',
       metodoPagoNombre: metodo?.nombre || '',
-      cuentaBancoId: requiereBanco ? (cuenta?.id || '') : '',
-      cuentaBancoNombre: requiereBanco ? (cuenta?.nombre || '') : '',
+      cuentaBancoId: requiredBankType ? (cuenta?.id || '') : '',
+      cuentaBancoNombre: requiredBankType ? (cuenta?.nombre || '') : '',
       observacion: cleanText(formData.get('observacion')),
       estado: 'Registrado',
       anulado: false,
@@ -5557,12 +5700,12 @@
     });
   }
 
-  function validateGastoRecord(record) {
+  function validateGastoRecord(record, existingRecord = null) {
     if (!record.fecha) return 'La fecha del gasto es obligatoria.';
     if (!record.tipoGastoId || !getActiveCatalogRecords('tiposGasto').some((item) => item.id === record.tipoGastoId)) return 'Selecciona un tipo de gasto activo.';
     if (Number.isNaN(parseMoney(record.monto)) || record.monto <= 0) return 'El monto debe ser mayor que cero.';
     if (!record.metodoPagoId || !getActiveCatalogRecords('metodosPago').some((item) => item.id === record.metodoPagoId)) return 'Selecciona un método de pago activo.';
-    const bankError = validateBankForPaymentMethod(record, null);
+    const bankError = validateBankForPaymentMethod(record, existingRecord);
     if (bankError) return bankError;
     return '';
   }
@@ -5580,7 +5723,7 @@
     }
 
     const newRecord = buildGastoFromForm(form, existingRecord);
-    const validationError = validateGastoRecord(newRecord);
+    const validationError = validateGastoRecord(newRecord, existingRecord);
 
     if (validationError) {
       gastosState.message = validationError;
@@ -6099,6 +6242,10 @@
     const counts = getJsonRecordCounts(data);
     if (counts.total <= 0) warnings.push('El respaldo no contiene registros operativos; puede ser una base vacía.');
     if (schemaVersion && schemaVersion !== SCHEMA_VERSION) warnings.push(`Schema del archivo: ${schemaVersion}. Schema actual: ${SCHEMA_VERSION}. Se intentará normalizar.`);
+    const banksWithoutType = Array.isArray(data.cuentasBancos)
+      ? data.cuentasBancos.filter((bank) => cleanText(bank?.nombre) && !normalizeBankType(bank?.tipo)).length
+      : 0;
+    if (banksWithoutType > 0) warnings.push(`${banksWithoutType} banco${banksWithoutType === 1 ? '' : 's'} sin tipo detectado${banksWithoutType === 1 ? '' : 's'}; se conservarán y podrás completar el tipo desde Catálogos → Bancos.`);
 
     const preview = {
       isValid: errors.length === 0,
@@ -6269,6 +6416,8 @@
         ventaId,
         clienteId: idMaps.clientes.get(cobro.clienteId) || cobro.clienteId,
         sucursalId: idMaps.sucursales.get(cobro.sucursalId) || cobro.sucursalId,
+        metodoPagoId: idMaps.metodosPago.get(cobro.metodoPagoId) || cobro.metodoPagoId,
+        cuentaBancoId: idMaps.cuentasBancos.get(cobro.cuentaBancoId) || cobro.cuentaBancoId,
         updatedAt: cobro.updatedAt || timestamp
       });
       const existing = target.cobros.find((item) => item.id === remapped.id || getCobroDuplicateKey(item) === getCobroDuplicateKey(remapped));
@@ -6286,6 +6435,8 @@
         ...pago,
         compraProveedorId,
         proveedorId: idMaps.proveedores.get(pago.proveedorId) || pago.proveedorId,
+        metodoPagoId: idMaps.metodosPago.get(pago.metodoPagoId) || pago.metodoPagoId,
+        cuentaBancoId: idMaps.cuentasBancos.get(pago.cuentaBancoId) || pago.cuentaBancoId,
         updatedAt: pago.updatedAt || timestamp
       });
       const existing = target.pagosProveedores.find((item) => item.id === remapped.id || getPagoDuplicateKey(item) === getPagoDuplicateKey(remapped));
@@ -6364,7 +6515,7 @@
       idMaps.__added[catalog.id] = 0;
       incoming[catalog.id].forEach((record) => {
         const normalized = normalizeCatalogRecord(record, catalog);
-        const existing = target[catalog.id].find((item) => item.id === normalized.id || normalizeNameForCompare(item.nombre) === normalizeNameForCompare(normalized.nombre));
+        const existing = target[catalog.id].find((item) => catalogRecordsMatchForMerge(catalog.id, item, normalized));
         if (existing) {
           idMaps[catalog.id].set(normalized.id, existing.id);
           return;
@@ -7262,7 +7413,6 @@
       if (catalog.id === 'clientes') headers.splice(1, 0, 'Código', 'Condición de pago', 'Días de crédito');
       if (catalog.id === 'sucursales') headers.splice(1, 0, 'Cliente asociado');
       if (catalog.id === 'proveedores') headers.splice(1, 0, 'Contacto', 'Condición de pago', 'Días de crédito');
-      if (catalog.id === 'metodosPago') headers.splice(1, 0, 'Requiere banco');
       if (catalog.id === 'cuentasBancos') headers.splice(1, 0, 'Tipo');
       headers.push('Observación');
       rows.push(xlsxHeaderRow(headers));
@@ -7277,8 +7427,7 @@
           const terms = normalizePaymentTermsFields(record);
           base.push(xlsxText(record.contacto), xlsxText(terms.condicionPago), xlsxNumber(terms.diasCredito));
         }
-        if (catalog.id === 'metodosPago') base.push(xlsxText(record.requiereBanco ? 'Sí' : 'No'));
-        if (catalog.id === 'cuentasBancos') base.push(xlsxText(record.tipo));
+        if (catalog.id === 'cuentasBancos') base.push(xlsxText(getBankTypeDisplay(record)));
         base.push(xlsxText(record.activo ? 'Activo' : 'Inactivo'), xlsxText(record.observacion));
         rows.push(base);
       });
@@ -7883,7 +8032,14 @@ ${rowsXml}
   function addImportCatalog(payload, catalogId, nombre, row = {}) {
     const safeName = cleanText(nombre);
     if (!safeName || !payload[catalogId]) return '';
-    const existing = payload[catalogId].find((item) => normalizeNameForCompare(item.nombre) === normalizeNameForCompare(safeName));
+    const rawType = cleanText(pickCell(row, ['Tipo banco', 'Tipo Banco', 'Tipo cuenta', 'Tipo']));
+    const bankType = catalogId === 'cuentasBancos' ? normalizeBankType(rawType) : '';
+    const existing = payload[catalogId].find((item) => {
+      const sameName = normalizeNameForCompare(item.nombre) === normalizeNameForCompare(safeName);
+      if (!sameName) return false;
+      if (catalogId === 'cuentasBancos') return normalizeBankType(item.tipo) === bankType;
+      return true;
+    });
     if (existing) return existing.id;
     const record = normalizeCatalogRecord({
       id: generateId(catalogId),
@@ -7892,8 +8048,7 @@ ${rowsXml}
       contacto: cleanText(pickCell(row, ['Contacto', 'Teléfono', 'Telefono', 'Correo'])),
       condicionPago: cleanText(pickCell(row, ['Condición de pago', 'Condicion de pago', 'Condición', 'Condicion', 'Forma de pago', 'Tipo pago'])),
       diasCredito: parsePositiveInteger(pickCell(row, ['Días de crédito', 'Dias de credito', 'Días crédito', 'Dias credito', 'Crédito', 'Credito'])),
-      tipo: cleanText(pickCell(row, ['Tipo cuenta', 'Tipo'])) || (catalogId === 'cuentasBancos' ? 'Banco' : undefined),
-      requiereBanco: pickCell(row, ['Requiere banco', 'Requiere Banco', 'Banco requerido', 'Requiere cuenta banco']),
+      tipo: catalogId === 'cuentasBancos' ? bankType : cleanText(pickCell(row, ['Tipo cuenta', 'Tipo'])),
       observacion: cleanText(pickCell(row, ['Observación', 'Observacion', 'Notas']))
     }, CATALOGS.find((catalog) => catalog.id === catalogId));
     payload[catalogId].push(record);
@@ -8099,7 +8254,7 @@ ${rowsXml}
     CATALOGS.forEach((catalog) => {
       idMaps[catalog.id] = new Map();
       payload[catalog.id].forEach((record) => {
-        const existing = (target[catalog.id] || []).find((item) => normalizeNameForCompare(item.nombre) === normalizeNameForCompare(record.nombre));
+        const existing = (target[catalog.id] || []).find((item) => catalogRecordsMatchForMerge(catalog.id, item, record));
         if (existing) {
           idMaps[catalog.id].set(record.id, existing.id);
           return;
@@ -8180,6 +8335,8 @@ ${rowsXml}
         ventaId,
         clienteId: idMaps.clientes.get(cobro.clienteId) || cobro.clienteId,
         sucursalId: idMaps.sucursales.get(cobro.sucursalId) || cobro.sucursalId,
+        metodoPagoId: idMaps.metodosPago.get(cobro.metodoPagoId) || cobro.metodoPagoId,
+        cuentaBancoId: idMaps.cuentasBancos.get(cobro.cuentaBancoId) || cobro.cuentaBancoId,
         createdAt: timestamp,
         updatedAt: timestamp
       }), ...(target.cobros || [])];
@@ -8193,6 +8350,8 @@ ${rowsXml}
         id: generateId('pagoProveedor'),
         compraProveedorId,
         proveedorId: idMaps.proveedores.get(pago.proveedorId) || pago.proveedorId,
+        metodoPagoId: idMaps.metodosPago.get(pago.metodoPagoId) || pago.metodoPagoId,
+        cuentaBancoId: idMaps.cuentasBancos.get(pago.cuentaBancoId) || pago.cuentaBancoId,
         createdAt: timestamp,
         updatedAt: timestamp
       }), ...(target.pagosProveedores || [])];
@@ -8288,8 +8447,8 @@ ${rowsXml}
     if (catalog.id === 'proveedores') {
       return [record.contacto ? `Contacto: ${record.contacto}` : '', formatPaymentTermsLabel(record)].filter(Boolean).join(' · ');
     }
-    if (catalog.id === 'metodosPago') return record.requiereBanco ? 'Requiere banco' : 'No requiere banco';
-    if (catalog.id === 'cuentasBancos') return `Tipo: ${record.tipo || 'Otro'}`;
+    if (catalog.id === 'metodosPago') return 'Método simple';
+    if (catalog.id === 'cuentasBancos') return `Tipo: ${getBankTypeDisplay(record)}`;
     return '';
   }
 
@@ -8351,8 +8510,13 @@ ${rowsXml}
       record[field.name] = cleanText(formData.get(field.name));
     });
 
-    if (catalog.id === 'cuentasBancos' && !record.tipo) {
-      record.tipo = 'Otro';
+    if (catalog.id === 'metodosPago') {
+      delete record.requiereBanco;
+    }
+
+    if (catalog.id === 'cuentasBancos') {
+      record.tipo = normalizeBankType(record.tipo);
+      if (record.tipo) delete record.tipoAnterior;
     }
 
     if (isPaymentTermsCatalog(catalog.id)) {
@@ -8364,13 +8528,26 @@ ${rowsXml}
     return record;
   }
 
+  function hasCatalogDuplicate(catalog, record, existingId, includeInactive = false) {
+    return getCatalogRecords(catalog.id).find((item) => {
+      if (item.id === existingId) return false;
+      if (!includeInactive && !item.activo) return false;
+      const sameName = normalizeNameForCompare(item.nombre) === normalizeNameForCompare(record.nombre);
+      if (!sameName) return false;
+      if (catalog.id === 'cuentasBancos') {
+        return normalizeBankType(item.tipo) === normalizeBankType(record.tipo);
+      }
+      return true;
+    }) || null;
+  }
+
   function validateCatalogRecord(catalog, record, existingId) {
     if (!record.nombre) {
       return `El nombre del ${catalog.singular} es obligatorio.`;
     }
 
-    if (catalog.id === 'cuentasBancos' && !['Caja', 'Banco', 'Otro'].includes(record.tipo)) {
-      return 'Selecciona un tipo válido: Caja, Banco u Otro.';
+    if (catalog.id === 'cuentasBancos' && !BANK_TYPE_OPTIONS.includes(record.tipo)) {
+      return 'Selecciona un tipo válido para el banco: Transferencia, Depósito o Tarjeta.';
     }
 
     if (isPaymentTermsCatalog(catalog.id)) {
@@ -8381,13 +8558,12 @@ ${rowsXml}
       }
     }
 
-    const duplicate = getCatalogRecords(catalog.id).find((item) => (
-      item.id !== existingId &&
-      item.activo &&
-      normalizeNameForCompare(item.nombre) === normalizeNameForCompare(record.nombre)
-    ));
+    const duplicate = hasCatalogDuplicate(catalog, record, existingId, catalog.id === 'cuentasBancos');
 
     if (duplicate) {
+      if (catalog.id === 'cuentasBancos') {
+        return `Ya existe el banco “${record.nombre}” con tipo “${record.tipo}”.`;
+      }
       return `Ya existe un registro activo con el nombre “${record.nombre}”.`;
     }
 
@@ -8469,14 +8645,12 @@ ${rowsXml}
 
     const shouldActivate = !record.activo;
     if (shouldActivate) {
-      const duplicate = records.find((item) => (
-        item.id !== recordId &&
-        item.activo &&
-        normalizeNameForCompare(item.nombre) === normalizeNameForCompare(record.nombre)
-      ));
+      const duplicate = hasCatalogDuplicate(catalog, record, recordId, false);
 
       if (duplicate) {
-        catalogState.message = `No se puede activar: ya existe un registro activo con el nombre “${record.nombre}”.`;
+        catalogState.message = catalog.id === 'cuentasBancos'
+          ? `No se puede restaurar: ya existe activo el banco “${record.nombre}” con tipo “${getBankTypeDisplay(record)}”.`
+          : `No se puede activar: ya existe un registro activo con el nombre “${record.nombre}”.`;
         catalogState.messageType = 'error';
         renderRoute();
         return;

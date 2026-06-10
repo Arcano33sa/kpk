@@ -1,3 +1,35 @@
+# KSA PRÁCTIKA — Post12 Métodos/Bancos Etapa 3/3
+
+Blindaje final de Bancos por Tipo contra JSON, Excel, cierre mensual, Resumen / Tablero, Historial, Mora, Alertas y PWA.
+
+- Respaldo JSON conserva `cuentasBancos` con `tipo` y agrega snapshot compatible `cuentaBancoTipo` en cobros, pagos y gastos cuando puede resolverse desde Catálogos.
+- Importación JSON conserva bancos antiguos sin tipo; no los destruye ni fuerza limpieza. Se avisa para completar el tipo desde Catálogos → Bancos.
+- Fusión JSON ahora respeta bancos duplicados por combinación **Nombre + Tipo** y remapea bancos/métodos en cobros y pagos.
+- Importación Excel tolera bancos sin tipo y conserva el formato operativo sin exigir columnas nuevas.
+- Exportación Excel se mantiene fiel: no se agregaron columnas nuevas que alteren el formato actual.
+- Cierre mensual, tarjeta Períodos Pendientes de Cierre, Resumen, Historial, Mora y Alertas quedan compatibles con la nueva estructura.
+- PWA actualizada a `0.15.9-post12-bancos-hardening` y cache `v0_15_9_post12_bancos_hardening`.
+
+---
+
+- Etapa 2/3: Cobros, Pagos a proveedores y Gastos filtran bancos por Tipo según método seleccionado.
+# KSA PRÁCTIKA — Post12 Métodos/Bancos Etapa 1/3
+
+Webapp estática de control operativo. Esta etapa actualiza **Catálogos → Bancos** para manejar **Nombre del banco + Tipo**, manteniendo intactos módulos, datos de negocio, JSON, Excel, cierre mensual y PWA.
+
+## Post12 Métodos/Bancos — Etapa 1/3: Catálogo de Bancos con Tipo
+
+- Bancos ahora maneja **Nombre del banco** y **Tipo**.
+- Tipos disponibles: **Transferencia**, **Depósito** y **Tarjeta**.
+- Se permite registrar el mismo banco en tipos diferentes, por ejemplo BAC — Transferencia y BAC — Tarjeta.
+- Se bloquea duplicado exacto de Nombre del banco + Tipo.
+- Métodos de pago/cobro queda como catálogo simple.
+- La lógica visual anterior de **Requiere banco** ya no controla el modelo final.
+- Bancos anteriores sin tipo se conservan y se muestran como **Sin tipo** hasta que el usuario los edite.
+- Service Worker cache actualizado a `0.15.8-post12-bancos-movimientos`.
+
+---
+
 # KSA PRÁCTIKA — Post 12 Mejoras Etapa 2/3
 
 Webapp estática de control operativo. Esta etapa agrega **Logística / Envío condicional** en Ventas / OC mediante checkbox **Requiere envío**, manteniendo la base completa con Catálogos, Ventas / OC, Cobros, Proveedores / Compras, Pagos a proveedores, Gastos, Mora, Alertas, Historial, Resumen / Tablero, Importación/Exportación Excel, Cierre mensual, Roles, Respaldo JSON, condiciones de pago, modales de edición, PWA / Actualizaciones y Facturas.

@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_15_6_post12_metodos_banco_config';
+const CACHE_VERSION = 'v0_15_9_post12_bancos_hardening';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
