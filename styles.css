@@ -2701,3 +2701,151 @@ textarea:disabled {
     justify-content: center;
   }
 }
+
+/* Post12 Listados Compactos — Etapa 1/2: tablas operativas */
+.operational-table-wrap {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 12px 28px rgba(17, 24, 39, 0.05);
+  -webkit-overflow-scrolling: touch;
+}
+
+.operational-table-wrap:focus {
+  outline: 3px solid rgba(185, 135, 43, 0.18);
+  outline-offset: 2px;
+}
+
+.operational-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.86rem;
+}
+
+.operational-table-compras {
+  min-width: 980px;
+}
+
+.operational-table th,
+.operational-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: middle;
+  min-width: 0;
+}
+
+.operational-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: linear-gradient(180deg, #fffaf0, #fff5de);
+  color: var(--accent-dark);
+  font-size: 0.72rem;
+  font-weight: 950;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.operational-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.compact-record-row {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.compact-record-row:nth-child(even) {
+  background: #fffdf8;
+}
+
+.compact-record-row.is-inactive {
+  background: #f8fafc;
+  opacity: 0.84;
+}
+
+.operational-table td > span,
+.operational-table td small {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operational-table td small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.compact-primary {
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.amount-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.actions-cell {
+  width: 190px;
+}
+
+.compact-row-actions {
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.operational-table .compact {
+  min-height: 32px;
+  padding: 6px 9px;
+  font-size: 0.76rem;
+}
+
+.operational-table .state-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.operational-table .record-actions > *,
+.operational-table .form-actions > * {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 620px) {
+  .operational-table {
+    min-width: 720px;
+    font-size: 0.8rem;
+  }
+
+  .operational-table-compras {
+    min-width: 920px;
+  }
+
+  .operational-table th,
+  .operational-table td {
+    padding: 7px 8px;
+  }
+
+  .actions-cell {
+    width: 168px;
+  }
+
+  .compact-row-actions {
+    justify-content: flex-start;
+  }
+}

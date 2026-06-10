@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.15.9-post12-bancos-hardening';
+  const APP_VERSION = '0.16.1-post12-listados-compactos-e2';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -266,6 +266,7 @@
 
   let proveedoresState = {
     editingId: null,
+    quickCapture: null,
     message: null,
     messageType: 'success'
   };
@@ -324,6 +325,8 @@
     message: null,
     messageType: 'success'
   };
+
+  let lastRenderedRoute = null;
 
 
   let jsonBackupState = {
@@ -1380,6 +1383,10 @@
 
   function renderRoute() {
     const route = getRoute();
+    if (lastRenderedRoute === 'proveedores' && route !== 'proveedores') {
+      resetProveedoresTransientState();
+    }
+    lastRenderedRoute = route;
     setActiveNav(route);
 
     if (route === 'home') {
@@ -4335,8 +4342,24 @@
     }
 
     return `
-      <div class="cobros-list">
-        ${cobros.map((cobro) => renderCobroCard(cobro)).join('')}
+      <div class="operational-table-wrap cobros-list" role="region" aria-label="Cobros de clientes registrados" tabindex="0">
+        <table class="operational-table operational-table-cobros">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Cliente</th>
+              <th>OC / documento</th>
+              <th class="amount-cell">Monto</th>
+              <th>Método</th>
+              <th>Banco</th>
+              <th>Estado</th>
+              <th class="actions-cell">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${cobros.map((cobro) => renderCobroCard(cobro)).join('')}
+          </tbody>
+        </table>
       </div>
     `;
   }
@@ -4346,35 +4369,22 @@
     const estadoClass = record.activo ? 'is-active' : 'is-inactive';
     const searchable = normalizeNameForCompare(`${record.clienteNombre} ${record.sucursalNombre} ${record.numeroDocumento} ${record.metodoPagoNombre} ${record.cuentaBancoNombre}`);
     return `
-      <div class="cobro-card ${record.activo ? 'is-active' : 'is-inactive'}" data-cobro-card data-search-text="${escapeHtml(searchable)}">
-        <div class="venta-card-head">
-          <div>
-            <span class="eyebrow mini">Cobro / ${escapeHtml(formatDate(record.fechaCobro))}</span>
-            <h3>${escapeHtml(record.numeroDocumento || 'Sin OC')}</h3>
+      <tr class="compact-record-row cobro-row ${record.activo ? 'is-active' : 'is-inactive'}" data-cobro-card data-search-text="${escapeHtml(searchable)}">
+        <td data-label="Fecha"><span class="compact-primary">${escapeHtml(formatDate(record.fechaCobro))}</span></td>
+        <td data-label="Cliente"><span class="compact-primary">${escapeHtml(record.clienteNombre || 'Cliente no encontrado')}</span>${record.sucursalNombre ? `<small>${escapeHtml(record.sucursalNombre)}</small>` : ''}</td>
+        <td data-label="OC / documento"><span class="compact-primary">${escapeHtml(record.numeroDocumento || 'Sin OC')}</span></td>
+        <td data-label="Monto" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.montoCobrado))}</span></td>
+        <td data-label="Método"><span>${escapeHtml(record.metodoPagoNombre || '—')}</span></td>
+        <td data-label="Banco"><span>${escapeHtml(record.cuentaBancoNombre || '—')}</span></td>
+        <td data-label="Estado"><span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span></td>
+        <td data-label="Acciones" class="actions-cell">
+          <div class="record-actions compact-row-actions">
+            <button type="button" class="secondary-action compact" data-go="ventas">Ventas</button>
+            ${record.activo ? `<button type="button" class="secondary-action compact" data-cobro-edit="${escapeHtml(record.id)}">Editar</button>` : ''}
+            ${record.activo && canCurrentRole('annulMovements') ? `<button type="button" class="danger-action compact" data-cobro-annul="${escapeHtml(record.id)}">Anular</button>` : ''}
           </div>
-          <span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span>
-        </div>
-        <div class="cobro-detail-grid">
-          <div><span>Cliente</span><strong>${escapeHtml(record.clienteNombre || 'Cliente no encontrado')}</strong></div>
-          <div><span>Sucursal</span><strong>${escapeHtml(record.sucursalNombre || 'Sucursal no encontrada')}</strong></div>
-          <div><span>Monto cobrado</span><strong>${escapeHtml(formatMoney(record.montoCobrado))}</strong></div>
-          <div><span>Método</span><strong>${escapeHtml(record.metodoPagoNombre || '—')}</strong></div>
-          <div><span>Banco</span><strong>${escapeHtml(record.cuentaBancoNombre || '—')}</strong></div>
-          <div><span>Fecha real</span><strong>${escapeHtml(formatDate(record.fechaCobro))}</strong></div>
-        </div>
-        ${record.observacion ? `<p class="record-note">${escapeHtml(record.observacion)}</p>` : ''}
-        <dl class="record-meta">
-          <dt>ID</dt><dd>${escapeHtml(record.id)}</dd>
-          <dt>OC ID</dt><dd>${escapeHtml(record.ventaId)}</dd>
-          <dt>Creado</dt><dd>${escapeHtml(formatDateTime(record.createdAt))}</dd>
-          <dt>Actualizado</dt><dd>${escapeHtml(formatDateTime(record.updatedAt))}</dd>
-        </dl>
-        <div class="record-actions">
-          <button type="button" class="secondary-action compact" data-go="ventas">Ir a Ventas</button>
-          ${record.activo ? `<button type="button" class="secondary-action compact" data-cobro-edit="${escapeHtml(record.id)}">Editar</button>` : ''}
-          ${record.activo && canCurrentRole('annulMovements') ? `<button type="button" class="danger-action compact" data-cobro-annul="${escapeHtml(record.id)}">Anular cobro</button>` : ''}
-        </div>
-      </div>
+        </td>
+      </tr>
     `;
   }
 
@@ -4643,7 +4653,7 @@
               </div>
             </div>
             <p class="muted-text">Los pagos a proveedor se registran en su propio módulo; aquí queda la deuda/factura base con su saldo actualizado.</p>
-            ${renderCompraProveedorForm(null, proveedoresActivos, missingProviders)}
+            ${renderCompraProveedorForm(null, proveedoresActivos, missingProviders, proveedoresState.quickCapture)}
           </article>
 
           <article class="panel-card compra-list-card">
@@ -4672,10 +4682,12 @@
     `;
   }
 
-  function renderCompraProveedorForm(record, proveedoresActivos, missingProviders) {
-    const fechaCompra = record?.fechaCompra || todayInputValue();
-    const diasCredito = record?.diasCredito ?? '';
-    const fechaVencimiento = record?.fechaVencimiento || addDaysToDate(fechaCompra, Number(diasCredito) || 0) || fechaCompra;
+  function renderCompraProveedorForm(record, proveedoresActivos, missingProviders, quickCapture = null) {
+    const draft = !record && isPlainObject(quickCapture) ? quickCapture : {};
+    const selectedProveedorId = record?.proveedorId || cleanText(draft.proveedorId);
+    const fechaCompra = record?.fechaCompra || toDateInputValue(draft.fechaCompra) || todayInputValue();
+    const diasCredito = record ? (record.diasCredito ?? '') : (draft.diasCredito ?? '');
+    const fechaVencimiento = record?.fechaVencimiento || toDateInputValue(draft.fechaVencimiento) || addDaysToDate(fechaCompra, Number(diasCredito) || 0) || fechaCompra;
     const calculations = getCompraProveedorCalculations(record || {});
 
     return `
@@ -4686,7 +4698,7 @@
             <span>Proveedor <span class="required-dot" aria-label="obligatorio">*</span></span>
             <select name="proveedorId" required ${missingProviders ? 'disabled' : ''} data-compra-provider>
               <option value="">Seleccionar proveedor</option>
-              ${proveedoresActivos.map((proveedor) => `<option value="${escapeHtml(proveedor.id)}" ${proveedor.id === record?.proveedorId ? 'selected' : ''}>${escapeHtml(proveedor.nombre || 'Proveedor sin nombre')} · ${escapeHtml(formatPaymentTermsLabel(proveedor))}</option>`).join('')}
+              ${proveedoresActivos.map((proveedor) => `<option value="${escapeHtml(proveedor.id)}" ${proveedor.id === selectedProveedorId ? 'selected' : ''}>${escapeHtml(proveedor.nombre || 'Proveedor sin nombre')} · ${escapeHtml(formatPaymentTermsLabel(proveedor))}</option>`).join('')}
             </select>
           </label>
           <label class="form-field">
@@ -4744,8 +4756,25 @@
     }
 
     return `
-      <div class="compras-list">
-        ${compras.map((compra) => renderCompraProveedorCard(compra)).join('')}
+      <div class="operational-table-wrap compras-list" role="region" aria-label="Compras y deudas registradas" tabindex="0">
+        <table class="operational-table operational-table-compras">
+          <thead>
+            <tr>
+              <th>Factura / referencia</th>
+              <th>Proveedor</th>
+              <th>Fecha compra</th>
+              <th>Vencimiento</th>
+              <th class="amount-cell">Total</th>
+              <th class="amount-cell">Pagado</th>
+              <th class="amount-cell">Saldo</th>
+              <th>Estado</th>
+              <th class="actions-cell">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${compras.map((compra) => renderCompraProveedorCard(compra)).join('')}
+          </tbody>
+        </table>
       </div>
     `;
   }
@@ -4754,39 +4783,27 @@
     const record = normalizeCompraProveedorRecord(compra);
     const proveedor = getCatalogRecordById('proveedores', record.proveedorId);
     const estadoClass = getEstadoClass(record.estado);
+    const proveedorNombre = proveedor?.nombre || record.proveedorNombre || 'Proveedor no encontrado';
 
     return `
-      <div class="compra-card ${record.activo ? 'is-active' : 'is-inactive'}">
-        <div class="venta-card-head">
-          <div>
-            <span class="eyebrow mini">Factura / referencia</span>
-            <h3>${escapeHtml(record.facturaReferencia || 'Sin referencia')}</h3>
+      <tr class="compact-record-row compra-row ${record.activo ? 'is-active' : 'is-inactive'}">
+        <td data-label="Factura / referencia"><span class="compact-primary">${escapeHtml(record.facturaReferencia || 'Sin referencia')}</span></td>
+        <td data-label="Proveedor"><span class="compact-primary">${escapeHtml(proveedorNombre)}</span></td>
+        <td data-label="Fecha compra"><span>${escapeHtml(formatDate(record.fechaCompra))}</span></td>
+        <td data-label="Vencimiento"><span>${escapeHtml(formatDate(record.fechaVencimiento))}</span></td>
+        <td data-label="Total" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.totalCompra))}</span></td>
+        <td data-label="Pagado" class="amount-cell"><span>${escapeHtml(formatMoney(record.totalPagado))}</span></td>
+        <td data-label="Saldo" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.saldoPorPagar))}</span></td>
+        <td data-label="Estado"><span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span></td>
+        <td data-label="Acciones" class="actions-cell">
+          <div class="record-actions compact-row-actions">
+            ${record.activo && record.saldoPorPagar > 0 ? `<button type="button" class="card-action compact" data-pago-start="${escapeHtml(record.id)}">Pagar</button>` : ''}
+            <button type="button" class="secondary-action compact" data-compra-edit="${escapeHtml(record.id)}">Editar</button>
+            <button type="button" class="secondary-action compact" data-history-compra="${escapeHtml(record.id)}">Historial</button>
+            ${canCurrentRole('annulMovements') ? `<button type="button" class="${record.activo ? 'danger-action' : 'card-action'} compact" data-compra-toggle="${escapeHtml(record.id)}">${record.activo ? 'Anular' : 'Reactivar'}</button>` : ''}
           </div>
-          <span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span>
-        </div>
-        <div class="compra-detail-grid">
-          <div><span>Proveedor</span><strong>${escapeHtml(proveedor?.nombre || record.proveedorNombre || 'Proveedor no encontrado')}</strong></div>
-          <div><span>Fecha compra</span><strong>${escapeHtml(formatDate(record.fechaCompra))}</strong></div>
-          <div><span>Vencimiento</span><strong>${escapeHtml(formatDate(record.fechaVencimiento))}</strong></div>
-          <div><span>Total compra/deuda</span><strong>${escapeHtml(formatMoney(record.totalCompra))}</strong></div>
-          <div><span>Total pagado</span><strong>${escapeHtml(formatMoney(record.totalPagado))}</strong></div>
-          <div><span>Saldo por pagar</span><strong>${escapeHtml(formatMoney(record.saldoPorPagar))}</strong></div>
-          <div><span>Días crédito</span><strong>${Number(record.diasCredito) || 0}</strong></div>
-          <div><span>Activo</span><strong>${record.activo ? 'Sí' : 'No / anulado'}</strong></div>
-        </div>
-        ${record.observacion ? `<p class="record-note">${escapeHtml(record.observacion)}</p>` : ''}
-        <dl class="record-meta">
-          <dt>ID</dt><dd>${escapeHtml(record.id)}</dd>
-          <dt>Creado</dt><dd>${escapeHtml(formatDateTime(record.createdAt))}</dd>
-          <dt>Actualizado</dt><dd>${escapeHtml(formatDateTime(record.updatedAt))}</dd>
-        </dl>
-        <div class="record-actions">
-          ${record.activo && record.saldoPorPagar > 0 ? `<button type="button" class="card-action compact" data-pago-start="${escapeHtml(record.id)}">Pagar</button>` : ''}
-          <button type="button" class="secondary-action compact" data-compra-edit="${escapeHtml(record.id)}">Editar</button>
-          <button type="button" class="secondary-action compact" data-history-compra="${escapeHtml(record.id)}">Historial</button>
-          ${canCurrentRole('annulMovements') ? `<button type="button" class="${record.activo ? 'danger-action' : 'card-action'} compact" data-compra-toggle="${escapeHtml(record.id)}">${record.activo ? 'Anular' : 'Reactivar'}</button>` : ''}
-        </div>
-      </div>
+        </td>
+      </tr>
     `;
   }
 
@@ -4883,10 +4900,12 @@
 
     if (existingRecord) {
       appData.comprasProveedores = records.map((record) => record.id === existingId ? newRecord : record);
+      proveedoresState.quickCapture = null;
       proveedoresState.message = `Compra/deuda ${newRecord.facturaReferencia} actualizada.`;
     } else {
       appData.comprasProveedores = [newRecord, ...records];
-      proveedoresState.message = `Compra/deuda ${newRecord.facturaReferencia} guardada.`;
+      proveedoresState.quickCapture = buildCompraQuickCaptureFromSavedRecord(newRecord);
+      proveedoresState.message = `Compra/deuda ${newRecord.facturaReferencia} guardada. Lista la siguiente factura del mismo proveedor y fecha.`;
     }
 
     proveedoresState.editingId = null;
@@ -4899,6 +4918,7 @@
     const record = appData.comprasProveedores.find((item) => item.id === recordId);
     if (!record) return;
     proveedoresState.editingId = recordId;
+    proveedoresState.quickCapture = null;
     proveedoresState.message = null;
     renderRoute();
   }
@@ -4922,14 +4942,31 @@
     });
 
     proveedoresState.editingId = null;
+    proveedoresState.quickCapture = null;
     proveedoresState.message = `Compra/deuda ${record.facturaReferencia || ''} quedó ${shouldActivate ? 'reactivada' : 'anulada'}.`;
     proveedoresState.messageType = 'success';
     saveData(appData);
     renderRoute();
   }
 
+  function buildCompraQuickCaptureFromSavedRecord(record) {
+    const saved = normalizeCompraProveedorRecord(record);
+    return {
+      proveedorId: saved.proveedorId,
+      fechaCompra: saved.fechaCompra || todayInputValue(),
+      diasCredito: Number.isFinite(Number(saved.diasCredito)) ? Number(saved.diasCredito) : 0,
+      fechaVencimiento: saved.fechaVencimiento || addDaysToDate(saved.fechaCompra, Number(saved.diasCredito) || 0) || saved.fechaCompra || todayInputValue()
+    };
+  }
+
+  function resetProveedoresTransientState() {
+    proveedoresState.editingId = null;
+    proveedoresState.quickCapture = null;
+  }
+
   function clearCompraProveedorForm() {
     proveedoresState.editingId = null;
+    proveedoresState.quickCapture = null;
     proveedoresState.message = null;
     renderRoute();
   }
@@ -5202,8 +5239,24 @@
     }
 
     return `
-      <div class="pagos-list">
-        ${pagos.map((pago) => renderPagoProveedorCard(pago)).join('')}
+      <div class="operational-table-wrap pagos-list" role="region" aria-label="Pagos a proveedores registrados" tabindex="0">
+        <table class="operational-table operational-table-pagos">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Proveedor</th>
+              <th>Factura / referencia</th>
+              <th class="amount-cell">Monto</th>
+              <th>Método</th>
+              <th>Banco</th>
+              <th>Estado</th>
+              <th class="actions-cell">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${pagos.map((pago) => renderPagoProveedorCard(pago)).join('')}
+          </tbody>
+        </table>
       </div>
     `;
   }
@@ -5213,35 +5266,22 @@
     const estadoClass = record.activo ? 'is-active' : 'is-inactive';
     const searchable = normalizeNameForCompare(`${record.proveedorNombre} ${record.facturaReferencia} ${record.metodoPagoNombre} ${record.cuentaBancoNombre}`);
     return `
-      <div class="pago-card ${record.activo ? 'is-active' : 'is-inactive'}" data-pago-card data-search-text="${escapeHtml(searchable)}">
-        <div class="venta-card-head">
-          <div>
-            <span class="eyebrow mini">Pago / ${escapeHtml(formatDate(record.fechaPago))}</span>
-            <h3>${escapeHtml(record.facturaReferencia || 'Sin referencia')}</h3>
+      <tr class="compact-record-row pago-row ${record.activo ? 'is-active' : 'is-inactive'}" data-pago-card data-search-text="${escapeHtml(searchable)}">
+        <td data-label="Fecha"><span class="compact-primary">${escapeHtml(formatDate(record.fechaPago))}</span></td>
+        <td data-label="Proveedor"><span class="compact-primary">${escapeHtml(record.proveedorNombre || 'Proveedor no encontrado')}</span></td>
+        <td data-label="Factura / referencia"><span>${escapeHtml(record.facturaReferencia || '—')}</span></td>
+        <td data-label="Monto" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.montoPagado))}</span></td>
+        <td data-label="Método"><span>${escapeHtml(record.metodoPagoNombre || '—')}</span></td>
+        <td data-label="Banco"><span>${escapeHtml(record.cuentaBancoNombre || '—')}</span></td>
+        <td data-label="Estado"><span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span></td>
+        <td data-label="Acciones" class="actions-cell">
+          <div class="record-actions compact-row-actions">
+            <button type="button" class="secondary-action compact" data-go="proveedores">Proveedores</button>
+            ${record.activo ? `<button type="button" class="secondary-action compact" data-pago-edit="${escapeHtml(record.id)}">Editar</button>` : ''}
+            ${record.activo && canCurrentRole('annulMovements') ? `<button type="button" class="danger-action compact" data-pago-annul="${escapeHtml(record.id)}">Anular</button>` : ''}
           </div>
-          <span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span>
-        </div>
-        <div class="pago-detail-grid">
-          <div><span>Proveedor</span><strong>${escapeHtml(record.proveedorNombre || 'Proveedor no encontrado')}</strong></div>
-          <div><span>Factura / referencia</span><strong>${escapeHtml(record.facturaReferencia || '—')}</strong></div>
-          <div><span>Monto pagado</span><strong>${escapeHtml(formatMoney(record.montoPagado))}</strong></div>
-          <div><span>Método</span><strong>${escapeHtml(record.metodoPagoNombre || '—')}</strong></div>
-          <div><span>Banco</span><strong>${escapeHtml(record.cuentaBancoNombre || '—')}</strong></div>
-          <div><span>Fecha real</span><strong>${escapeHtml(formatDate(record.fechaPago))}</strong></div>
-        </div>
-        ${record.observacion ? `<p class="record-note">${escapeHtml(record.observacion)}</p>` : ''}
-        <dl class="record-meta">
-          <dt>ID</dt><dd>${escapeHtml(record.id)}</dd>
-          <dt>Compra ID</dt><dd>${escapeHtml(record.compraProveedorId)}</dd>
-          <dt>Creado</dt><dd>${escapeHtml(formatDateTime(record.createdAt))}</dd>
-          <dt>Actualizado</dt><dd>${escapeHtml(formatDateTime(record.updatedAt))}</dd>
-        </dl>
-        <div class="record-actions">
-          <button type="button" class="secondary-action compact" data-go="proveedores">Ir a Proveedores</button>
-          ${record.activo ? `<button type="button" class="secondary-action compact" data-pago-edit="${escapeHtml(record.id)}">Editar</button>` : ''}
-          ${record.activo && canCurrentRole('annulMovements') ? `<button type="button" class="danger-action compact" data-pago-annul="${escapeHtml(record.id)}">Anular pago</button>` : ''}
-        </div>
-      </div>
+        </td>
+      </tr>
     `;
   }
 
@@ -5603,8 +5643,23 @@
     }
 
     return `
-      <div class="gastos-list">
-        ${gastos.map((gasto) => renderGastoCard(gasto)).join('')}
+      <div class="operational-table-wrap gastos-list" role="region" aria-label="Gastos registrados" tabindex="0">
+        <table class="operational-table operational-table-gastos">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Tipo</th>
+              <th class="amount-cell">Monto</th>
+              <th>Método</th>
+              <th>Banco</th>
+              <th>Estado</th>
+              <th class="actions-cell">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${gastos.map((gasto) => renderGastoCard(gasto)).join('')}
+          </tbody>
+        </table>
       </div>
     `;
   }
@@ -5615,37 +5670,24 @@
     const metodo = getCatalogRecordById('metodosPago', record.metodoPagoId);
     const cuenta = getCatalogRecordById('cuentasBancos', record.cuentaBancoId);
     const estadoClass = getEstadoClass(record.estado);
+    const tipoNombre = tipo?.nombre || record.tipoGastoNombre || 'Tipo no encontrado';
     const searchText = normalizeNameForCompare([record.tipoGastoNombre, tipo?.nombre, record.metodoPagoNombre, metodo?.nombre, record.cuentaBancoNombre, cuenta?.nombre, record.observacion].join(' '));
 
     return `
-      <div class="gasto-card ${record.activo ? 'is-active' : 'is-inactive'}" data-gasto-card data-search-text="${escapeHtml(searchText)}">
-        <div class="venta-card-head">
-          <div>
-            <span class="eyebrow mini">Gasto</span>
-            <h3>${escapeHtml(tipo?.nombre || record.tipoGastoNombre || 'Tipo no encontrado')}</h3>
+      <tr class="compact-record-row gasto-row ${record.activo ? 'is-active' : 'is-inactive'}" data-gasto-card data-search-text="${escapeHtml(searchText)}">
+        <td data-label="Fecha"><span class="compact-primary">${escapeHtml(formatDate(record.fecha))}</span></td>
+        <td data-label="Tipo"><span class="compact-primary">${escapeHtml(tipoNombre)}</span></td>
+        <td data-label="Monto" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.monto))}</span></td>
+        <td data-label="Método"><span>${escapeHtml(metodo?.nombre || record.metodoPagoNombre || 'Método no encontrado')}</span></td>
+        <td data-label="Banco"><span>${escapeHtml(cuenta?.nombre || record.cuentaBancoNombre || '—')}</span></td>
+        <td data-label="Estado"><span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span></td>
+        <td data-label="Acciones" class="actions-cell">
+          <div class="record-actions compact-row-actions">
+            ${record.activo ? `<button type="button" class="secondary-action compact" data-gasto-edit="${escapeHtml(record.id)}">Editar</button>` : ''}
+            ${record.activo && canCurrentRole('annulMovements') ? `<button type="button" class="danger-action compact" data-gasto-annul="${escapeHtml(record.id)}">Anular</button>` : ''}
           </div>
-          <span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span>
-        </div>
-        <div class="gasto-detail-grid">
-          <div><span>Fecha</span><strong>${escapeHtml(formatDate(record.fecha))}</strong></div>
-          <div><span>Monto</span><strong>${escapeHtml(formatMoney(record.monto))}</strong></div>
-          <div><span>Método</span><strong>${escapeHtml(metodo?.nombre || record.metodoPagoNombre || 'Método no encontrado')}</strong></div>
-          <div><span>Banco</span><strong>${escapeHtml(cuenta?.nombre || record.cuentaBancoNombre || '—')}</strong></div>
-          <div><span>Estado</span><strong>${escapeHtml(record.estado)}</strong></div>
-          <div><span>Suma futura</span><strong>${record.activo ? 'Sí' : 'No'}</strong></div>
-        </div>
-        ${record.observacion ? `<p class="record-note">${escapeHtml(record.observacion)}</p>` : ''}
-        <dl class="record-meta">
-          <dt>ID</dt><dd>${escapeHtml(record.id)}</dd>
-          <dt>Anulado</dt><dd>${record.anulado ? 'Sí' : 'No'}</dd>
-          <dt>Creado</dt><dd>${escapeHtml(formatDateTime(record.createdAt))}</dd>
-          <dt>Actualizado</dt><dd>${escapeHtml(formatDateTime(record.updatedAt))}</dd>
-        </dl>
-        <div class="record-actions">
-          ${record.activo ? `<button type="button" class="secondary-action compact" data-gasto-edit="${escapeHtml(record.id)}">Editar</button>` : ''}
-          ${record.activo && canCurrentRole('annulMovements') ? `<button type="button" class="danger-action compact" data-gasto-annul="${escapeHtml(record.id)}">Anular gasto</button>` : ''}
-        </div>
-      </div>
+        </td>
+      </tr>
     `;
   }
 

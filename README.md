@@ -1,3 +1,33 @@
+# KSA PRÁCTIKA — Post12 Listados Compactos Etapa 2/2
+
+## Captura rápida en Proveedores / Compras y hardening final
+
+- Después de guardar una compra/deuda nueva, el formulario mantiene proveedor y fecha de compra dentro del mismo flujo de captura.
+- Se conservan días de crédito y vencimiento sugerido/recalculado según proveedor y fecha.
+- Se limpian factura/referencia, total compra/deuda y observación para evitar arrastrar datos de la factura anterior.
+- Al salir de Proveedores / Compras hacia cualquier otro módulo, el formulario vuelve a modo nuevo limpio al regresar.
+- La memoria de captura rápida es temporal en RAM; no se guarda como preferencia permanente en localStorage.
+- La edición de compras existentes sigue separada del flujo rápido para evitar duplicados.
+- Se mantienen los listados compactos por columnas en Compras, Pagos, Cobros y Gastos.
+- No se modifican cálculos, saldos, estados, mora, cierre mensual, JSON ni Excel.
+- Se actualiza versión/cache PWA a `0.16.1-post12-listados-compactos-e2`.
+
+---
+
+# KSA PRÁCTIKA — Post12 Listados Compactos Etapa 1/2
+
+## Listados compactos por columnas
+
+- Proveedores / Compras ahora muestra compras/deudas en tabla compacta por columnas.
+- Pagos a proveedores ahora muestra pagos en tabla compacta por columnas.
+- Cobros de clientes ahora muestra cobros en tabla compacta por columnas.
+- Gastos ahora muestra gastos en tabla compacta por columnas.
+- Se conservan acciones existentes: editar, anular/reactivar, pagar, historial e ir al módulo relacionado.
+- No se alteran cálculos, saldos, estados, mora, cierre mensual, JSON ni Excel.
+- Se actualiza versión/cache PWA a `0.16.0-post12-listados-compactos-e1`.
+
+---
+
 # KSA PRÁCTIKA — Post12 Métodos/Bancos Etapa 3/3
 
 Blindaje final de Bancos por Tipo contra JSON, Excel, cierre mensual, Resumen / Tablero, Historial, Mora, Alertas y PWA.
