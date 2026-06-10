@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.16.4-post12-acordeones-por-entidad';
+  const APP_VERSION = '0.16.5-post12-acordeones-columnas-esenciales';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -4510,12 +4510,13 @@
     `;
   }
 
-  function renderOperationalTableShell({ shellClass, wrapClass, ariaLabel, tableClass, headers, rows }) {
+  function renderOperationalTableShell({ shellClass, wrapClass, ariaLabel, tableClass, headers, rows, colgroup = '' }) {
     return `
       <div class="operational-scroll-shell ${escapeHtml(shellClass)}" data-operational-scroll-shell>
         <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
         <div class="operational-table-wrap ${escapeHtml(wrapClass)}" role="region" aria-label="${escapeHtml(ariaLabel)}" tabindex="0" data-operational-table-scroll>
           <table class="operational-table ${escapeHtml(tableClass)}">
+            ${colgroup || ''}
             <thead>
               <tr>${headers}</tr>
             </thead>
@@ -4640,7 +4641,6 @@
       tableClass: 'operational-table-cobros',
       headers: `
         <th>Fecha</th>
-        <th>Cliente</th>
         <th>OC / documento</th>
         <th class="amount-cell">Monto</th>
         <th>Método</th>
@@ -4648,7 +4648,16 @@
         <th>Estado</th>
         <th class="actions-cell">Acciones</th>
       `,
-      rows: cobros.map((cobro) => renderCobroCard(cobro)).join('')
+      rows: cobros.map((cobro) => renderCobroCard(cobro)).join(''),
+      colgroup: `
+        <col style="width: 92px;">
+        <col style="width: 168px;">
+        <col style="width: 118px;">
+        <col style="width: 116px;">
+        <col style="width: 136px;">
+        <col style="width: 92px;">
+        <col style="width: 190px;">
+      `
     });
   }
 
@@ -4659,8 +4668,7 @@
     return `
       <tr class="compact-record-row cobro-row ${record.activo ? 'is-active' : 'is-inactive'}" data-cobro-card data-search-text="${escapeHtml(searchable)}">
         <td data-label="Fecha"><span class="compact-primary">${escapeHtml(formatDate(record.fechaCobro))}</span></td>
-        <td data-label="Cliente"><span class="compact-primary">${escapeHtml(record.clienteNombre || 'Cliente no encontrado')}</span>${record.sucursalNombre ? `<small>${escapeHtml(record.sucursalNombre)}</small>` : ''}</td>
-        <td data-label="OC / documento"><span class="compact-primary">${escapeHtml(record.numeroDocumento || 'Sin OC')}</span></td>
+        <td data-label="OC / documento"><span class="compact-primary">${escapeHtml(record.numeroDocumento || 'Sin OC')}</span>${record.sucursalNombre ? `<small>${escapeHtml(record.sucursalNombre)}</small>` : ''}</td>
         <td data-label="Monto" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.montoCobrado))}</span></td>
         <td data-label="Método"><span>${escapeHtml(record.metodoPagoNombre || '—')}</span></td>
         <td data-label="Banco"><span>${escapeHtml(record.cuentaBancoNombre || '—')}</span></td>
@@ -5074,17 +5082,26 @@
       ariaLabel: groupLabel ? `Compras y deudas registradas de ${groupLabel}` : 'Compras y deudas registradas',
       tableClass: 'operational-table-compras',
       headers: `
-        <th>Factura / referencia</th>
-        <th>Proveedor</th>
-        <th>Fecha compra</th>
-        <th>Vencimiento</th>
+        <th>Factura / ref.</th>
+        <th>Compra</th>
+        <th>Vence</th>
         <th class="amount-cell">Total</th>
         <th class="amount-cell">Pagado</th>
         <th class="amount-cell">Saldo</th>
         <th>Estado</th>
         <th class="actions-cell">Acciones</th>
       `,
-      rows: compras.map((compra) => renderCompraProveedorCard(compra)).join('')
+      rows: compras.map((compra) => renderCompraProveedorCard(compra)).join(''),
+      colgroup: `
+        <col style="width: 164px;">
+        <col style="width: 90px;">
+        <col style="width: 90px;">
+        <col style="width: 118px;">
+        <col style="width: 118px;">
+        <col style="width: 118px;">
+        <col style="width: 92px;">
+        <col style="width: 210px;">
+      `
     });
   }
 
@@ -5096,10 +5113,9 @@
 
     return `
       <tr class="compact-record-row compra-row ${record.activo ? 'is-active' : 'is-inactive'}">
-        <td data-label="Factura / referencia"><span class="compact-primary">${escapeHtml(record.facturaReferencia || 'Sin referencia')}</span></td>
-        <td data-label="Proveedor"><span class="compact-primary">${escapeHtml(proveedorNombre)}</span></td>
-        <td data-label="Fecha compra"><span>${escapeHtml(formatDate(record.fechaCompra))}</span></td>
-        <td data-label="Vencimiento"><span>${escapeHtml(formatDate(record.fechaVencimiento))}</span></td>
+        <td data-label="Factura / ref."><span class="compact-primary">${escapeHtml(record.facturaReferencia || 'Sin referencia')}</span></td>
+        <td data-label="Compra"><span>${escapeHtml(formatDate(record.fechaCompra))}</span></td>
+        <td data-label="Vence"><span>${escapeHtml(formatDate(record.fechaVencimiento))}</span></td>
         <td data-label="Total" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.totalCompra))}</span></td>
         <td data-label="Pagado" class="amount-cell"><span>${escapeHtml(formatMoney(record.totalPagado))}</span></td>
         <td data-label="Saldo" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.saldoPorPagar))}</span></td>
@@ -5568,15 +5584,23 @@
       tableClass: 'operational-table-pagos',
       headers: `
         <th>Fecha</th>
-        <th>Proveedor</th>
-        <th>Factura / referencia</th>
+        <th>Factura / ref.</th>
         <th class="amount-cell">Monto</th>
         <th>Método</th>
         <th>Banco</th>
         <th>Estado</th>
         <th class="actions-cell">Acciones</th>
       `,
-      rows: pagos.map((pago) => renderPagoProveedorCard(pago)).join('')
+      rows: pagos.map((pago) => renderPagoProveedorCard(pago)).join(''),
+      colgroup: `
+        <col style="width: 92px;">
+        <col style="width: 170px;">
+        <col style="width: 118px;">
+        <col style="width: 116px;">
+        <col style="width: 136px;">
+        <col style="width: 92px;">
+        <col style="width: 190px;">
+      `
     });
   }
 
@@ -5587,8 +5611,7 @@
     return `
       <tr class="compact-record-row pago-row ${record.activo ? 'is-active' : 'is-inactive'}" data-pago-card data-search-text="${escapeHtml(searchable)}">
         <td data-label="Fecha"><span class="compact-primary">${escapeHtml(formatDate(record.fechaPago))}</span></td>
-        <td data-label="Proveedor"><span class="compact-primary">${escapeHtml(record.proveedorNombre || 'Proveedor no encontrado')}</span></td>
-        <td data-label="Factura / referencia"><span>${escapeHtml(record.facturaReferencia || '—')}</span></td>
+        <td data-label="Factura / ref."><span class="compact-primary">${escapeHtml(record.facturaReferencia || '—')}</span></td>
         <td data-label="Monto" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.montoPagado))}</span></td>
         <td data-label="Método"><span>${escapeHtml(record.metodoPagoNombre || '—')}</span></td>
         <td data-label="Banco"><span>${escapeHtml(record.cuentaBancoNombre || '—')}</span></td>
@@ -5980,14 +6003,23 @@
       tableClass: 'operational-table-gastos',
       headers: `
         <th>Fecha</th>
-        <th>Tipo</th>
         <th class="amount-cell">Monto</th>
         <th>Método</th>
         <th>Banco</th>
+        <th>Obs.</th>
         <th>Estado</th>
         <th class="actions-cell">Acciones</th>
       `,
-      rows: gastos.map((gasto) => renderGastoCard(gasto)).join('')
+      rows: gastos.map((gasto) => renderGastoCard(gasto)).join(''),
+      colgroup: `
+        <col style="width: 92px;">
+        <col style="width: 118px;">
+        <col style="width: 116px;">
+        <col style="width: 136px;">
+        <col style="width: 150px;">
+        <col style="width: 92px;">
+        <col style="width: 160px;">
+      `
     });
   }
 
@@ -6003,10 +6035,10 @@
     return `
       <tr class="compact-record-row gasto-row ${record.activo ? 'is-active' : 'is-inactive'}" data-gasto-card data-search-text="${escapeHtml(searchText)}">
         <td data-label="Fecha"><span class="compact-primary">${escapeHtml(formatDate(record.fecha))}</span></td>
-        <td data-label="Tipo"><span class="compact-primary">${escapeHtml(tipoNombre)}</span></td>
         <td data-label="Monto" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.monto))}</span></td>
         <td data-label="Método"><span>${escapeHtml(metodo?.nombre || record.metodoPagoNombre || 'Método no encontrado')}</span></td>
         <td data-label="Banco"><span>${escapeHtml(cuenta?.nombre || record.cuentaBancoNombre || '—')}</span></td>
+        <td data-label="Obs."><span>${escapeHtml(record.observacion || '—')}</span></td>
         <td data-label="Estado"><span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span></td>
         <td data-label="Acciones" class="actions-cell">
           <div class="record-actions compact-row-actions">

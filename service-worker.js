@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_16_4_post12_acordeones_por_entidad';
+const CACHE_VERSION = 'v0_16_5_post12_acordeones_columnas_esenciales';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

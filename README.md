@@ -1,3 +1,17 @@
+# KSA PRÁCTIKA — Post12 Listados Compactos: columnas esenciales visibles en acordeones
+
+- En Compras se oculta la columna Proveedor dentro del grupo porque el acordeón ya identifica al proveedor.
+- En Pagos se oculta la columna Proveedor dentro del grupo.
+- En Cobros se oculta la columna Cliente dentro del grupo y se conserva la sucursal bajo el documento cuando aplica.
+- En Gastos se oculta la columna Tipo dentro del grupo y se muestra observación breve como columna compacta.
+- Las columnas monetarias quedan priorizadas y sin truncado visual por puntos suspensivos.
+- Se acortan encabezados para iPad horizontal: Factura / ref., Compra, Vence, Total, Pagado, Saldo.
+- Se mantiene el scrollbar horizontal superior sticky y la sincronización con la tabla.
+- No se modifican cálculos, saldos, mora, alertas, cierre mensual, JSON ni Excel.
+- Se actualiza versión/cache PWA a `0.16.5-post12-acordeones-columnas-esenciales`.
+
+---
+
 # KSA PRÁCTIKA — Post12 Listados Compactos Etapa 2/2
 
 ## Captura rápida en Proveedores / Compras y hardening final

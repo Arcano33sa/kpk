@@ -2773,7 +2773,16 @@ textarea:disabled {
 }
 
 .operational-table-compras {
-  min-width: 980px;
+  min-width: 1000px;
+}
+
+.operational-table-pagos,
+.operational-table-cobros {
+  min-width: 914px;
+}
+
+.operational-table-gastos {
+  min-width: 864px;
 }
 
 .operational-table th,
@@ -2839,6 +2848,14 @@ textarea:disabled {
 .amount-cell {
   text-align: right;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.operational-table td.amount-cell > span,
+.operational-table td.amount-cell .compact-primary {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
 }
 
 .actions-cell {
@@ -2877,7 +2894,16 @@ textarea:disabled {
   }
 
   .operational-table-compras {
-    min-width: 920px;
+    min-width: 960px;
+  }
+
+  .operational-table-pagos,
+  .operational-table-cobros {
+    min-width: 880px;
+  }
+
+  .operational-table-gastos {
+    min-width: 820px;
   }
 
   .operational-table th,
