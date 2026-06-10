@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.16.1-post12-listados-compactos-e2';
+  const APP_VERSION = '0.16.2-post12-scroll-json-pwa';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -357,6 +357,7 @@
 
   const PWA_RELOAD_LOCK_KEY = 'KSA_PRACTIKA_PWA_RELOAD_LOCK';
   const PWA_APPLY_PENDING_KEY = 'KSA_PRACTIKA_PWA_APPLY_PENDING';
+  const CONFIG_SCROLL_RESTORE_KEY = 'KSA_PRACTIKA_CONFIG_SCROLL_RESTORE';
 
   function nowIso() {
     return new Date().toISOString();
@@ -1381,8 +1382,52 @@
     });
   }
 
-  function renderRoute() {
+  function isConfigRoute(route) {
+    return route === 'configuracion' || route === 'respaldo';
+  }
+
+  function getViewportScrollTop() {
+    return window.scrollY || document.documentElement?.scrollTop || document.body?.scrollTop || 0;
+  }
+
+  function restoreViewportScrollTop(scrollTop) {
+    const rawTop = Number(scrollTop);
+    if (!Number.isFinite(rawTop)) return;
+    const maxTop = Math.max(0, (document.documentElement?.scrollHeight || document.body?.scrollHeight || 0) - window.innerHeight);
+    const targetTop = Math.max(0, Math.min(rawTop, maxTop));
+    window.scrollTo({ top: targetTop, left: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
+  }
+
+  function readConfigScrollRestore() {
+    try {
+      const stored = sessionStorage.getItem(CONFIG_SCROLL_RESTORE_KEY);
+      if (!stored) return null;
+      sessionStorage.removeItem(CONFIG_SCROLL_RESTORE_KEY);
+      const parsed = Number(stored);
+      return Number.isFinite(parsed) ? parsed : null;
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo leer la posición de Configuración.', error);
+      return null;
+    }
+  }
+
+  function rememberConfigScrollForReload() {
+    if (!isConfigRoute(getRoute())) return;
+    try {
+      sessionStorage.setItem(CONFIG_SCROLL_RESTORE_KEY, String(getViewportScrollTop()));
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo guardar la posición de Configuración.', error);
+    }
+  }
+
+  function renderRoute(options = {}) {
     const route = getRoute();
+    const isConfigScreen = isConfigRoute(route);
+    const wasConfigScreen = isConfigRoute(lastRenderedRoute);
+    const storedConfigScroll = isConfigScreen ? readConfigScrollRestore() : null;
+    const preserveScroll = isConfigScreen && (storedConfigScroll !== null || options?.preserveScroll === true || (wasConfigScreen && options?.preserveScroll !== false));
+    const scrollTopBeforeRender = storedConfigScroll !== null ? storedConfigScroll : getViewportScrollTop();
+
     if (lastRenderedRoute === 'proveedores' && route !== 'proveedores') {
       resetProveedoresTransientState();
     }
@@ -1484,7 +1529,12 @@
 
     bindViewActions();
     document.querySelector('#mainContent')?.focus({ preventScroll: true });
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
+    if (preserveScroll) {
+      const scheduleScrollRestore = window.requestAnimationFrame || ((callback) => window.setTimeout(callback, 0));
+      scheduleScrollRestore(() => restoreViewportScrollTop(scrollTopBeforeRender));
+    } else {
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
+    }
   }
 
   function renderHome() {
@@ -6660,8 +6710,8 @@
 
   function renderConfigIfVisible() {
     const route = getRoute();
-    if (route === 'configuracion' || route === 'respaldo') {
-      renderRoute();
+    if (isConfigRoute(route)) {
+      renderRoute({ preserveScroll: true });
     }
   }
 
@@ -6791,6 +6841,7 @@
   function reloadAppAfterPwaUpdate() {
     if (pwaReloadScheduled) return;
     pwaReloadScheduled = true;
+    rememberConfigScrollForReload();
     try {
       const previousLock = sessionStorage.getItem(PWA_RELOAD_LOCK_KEY);
       if (previousLock === APP_VERSION) return;
@@ -6818,6 +6869,7 @@
     renderConfigIfVisible();
 
     if (!('serviceWorker' in navigator)) {
+      rememberConfigScrollForReload();
       window.setTimeout(() => window.location.reload(), 250);
       return;
     }

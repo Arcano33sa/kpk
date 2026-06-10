@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_16_1_post12_listados_compactos_e2';
+const CACHE_VERSION = 'v0_16_2_post12_scroll_json_pwa';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
