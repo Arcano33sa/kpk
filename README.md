@@ -197,6 +197,14 @@ Bloques principales:
 - Se conserva compatibilidad con JSON, Excel, cierre mensual, Service Worker y PWA.
 
 
+
+## 0.16.4 — Acordeones por entidad
+
+- Agrupa Compras por proveedor, Pagos por proveedor, Cobros por cliente y Gastos por tipo de gasto.
+- Mantiene listados compactos por columnas dentro del grupo abierto.
+- Conserva scrollbar horizontal superior sticky dentro de cada tabla desplegada.
+- No altera cálculos, saldos, mora, alertas, cierre mensual, Excel ni JSON.
+
 ## 0.16.3 — Scrollbar superior sticky
 
 - Se agregó scrollbar horizontal superior sticky sincronizado para Compras, Pagos, Cobros y Gastos.

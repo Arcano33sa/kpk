@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.16.3-post12-scrollbar-superior-sticky';
+  const APP_VERSION = '0.16.4-post12-acordeones-por-entidad';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -259,6 +259,7 @@
   let cobrosState = {
     selectedVentaId: '',
     focusVentaId: '',
+    openGroupKey: '',
     editingId: null,
     message: null,
     messageType: 'success'
@@ -267,6 +268,7 @@
   let proveedoresState = {
     editingId: null,
     quickCapture: null,
+    openGroupKey: '',
     message: null,
     messageType: 'success'
   };
@@ -274,6 +276,7 @@
   let pagosState = {
     selectedCompraId: '',
     focusCompraId: '',
+    openGroupKey: '',
     editingId: null,
     message: null,
     messageType: 'success'
@@ -281,6 +284,7 @@
 
   let gastosState = {
     editingId: null,
+    openGroupKey: '',
     message: null,
     messageType: 'success'
   };
@@ -1426,7 +1430,7 @@
     const isConfigScreen = isConfigRoute(route);
     const wasConfigScreen = isConfigRoute(lastRenderedRoute);
     const storedConfigScroll = isConfigScreen ? readConfigScrollRestore() : null;
-    const preserveScroll = isConfigScreen && (storedConfigScroll !== null || options?.preserveScroll === true || (wasConfigScreen && options?.preserveScroll !== false));
+    const preserveScroll = options?.preserveScroll === true || (isConfigScreen && (storedConfigScroll !== null || (wasConfigScreen && options?.preserveScroll !== false)));
     const scrollTopBeforeRender = storedConfigScroll !== null ? storedConfigScroll : getViewportScrollTop();
 
     if (lastRenderedRoute === 'proveedores' && route !== 'proveedores') {
@@ -4445,6 +4449,168 @@
     `;
   }
 
+  function makeAccordionGroupKey(prefix, id, label) {
+    const safePrefix = cleanText(prefix) || 'grupo';
+    const safeId = cleanText(id);
+    if (safeId) return `${safePrefix}:id:${safeId}`;
+    const normalizedLabel = normalizeNameForCompare(label || '') || 'sin-nombre';
+    return `${safePrefix}:name:${normalizedLabel}`;
+  }
+
+  function buildAccordionGroups(records, resolver) {
+    const source = Array.isArray(records) ? records : [];
+    const groupsMap = new Map();
+
+    source.forEach((record) => {
+      const resolved = resolver(record) || {};
+      const label = cleanText(resolved.label) || cleanText(resolved.fallbackLabel) || 'Sin clasificar';
+      const key = cleanText(resolved.key) || makeAccordionGroupKey('grupo', '', label);
+      if (!groupsMap.has(key)) {
+        groupsMap.set(key, {
+          key,
+          label,
+          records: [],
+          searchText: normalizeNameForCompare(label)
+        });
+      }
+      const group = groupsMap.get(key);
+      group.records.push(record);
+      group.searchText = normalizeNameForCompare(`${group.searchText} ${resolved.searchText || ''}`);
+    });
+
+    return Array.from(groupsMap.values())
+      .filter((group) => group.records.length > 0)
+      .sort((a, b) => a.label.localeCompare(b.label, 'es', { sensitivity: 'base' }));
+  }
+
+  function ensureOpenAccordionGroup(state, groups) {
+    if (!state || !state.openGroupKey) return;
+    const exists = groups.some((group) => group.key === state.openGroupKey);
+    if (!exists) state.openGroupKey = '';
+  }
+
+  function renderAccordionGroups({ module, groups, openGroupKey, renderOpenGroup }) {
+    if (!groups.length) return '';
+    return `
+      <div class="entity-accordion-list" data-accordion-list="${escapeHtml(module)}">
+        ${groups.map((group) => {
+          const isOpen = group.key === openGroupKey;
+          return `
+            <section class="entity-accordion-item ${isOpen ? 'is-open' : ''}" data-accordion-item="${escapeHtml(module)}" data-accordion-search="${escapeHtml(group.searchText)}">
+              <button type="button" class="entity-accordion-toggle" data-accordion-toggle data-accordion-module="${escapeHtml(module)}" data-accordion-key="${escapeHtml(group.key)}" aria-expanded="${isOpen ? 'true' : 'false'}">
+                <span class="entity-accordion-chevron" aria-hidden="true">${isOpen ? '▾' : '▸'}</span>
+                <span class="entity-accordion-name">${escapeHtml(group.label)}</span>
+                <span class="entity-accordion-count">${group.records.length} ${group.records.length === 1 ? 'registro' : 'registros'}</span>
+              </button>
+              ${isOpen ? `<div class="entity-accordion-panel">${renderOpenGroup(group)}</div>` : ''}
+            </section>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  function renderOperationalTableShell({ shellClass, wrapClass, ariaLabel, tableClass, headers, rows }) {
+    return `
+      <div class="operational-scroll-shell ${escapeHtml(shellClass)}" data-operational-scroll-shell>
+        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
+        <div class="operational-table-wrap ${escapeHtml(wrapClass)}" role="region" aria-label="${escapeHtml(ariaLabel)}" tabindex="0" data-operational-table-scroll>
+          <table class="operational-table ${escapeHtml(tableClass)}">
+            <thead>
+              <tr>${headers}</tr>
+            </thead>
+            <tbody>
+              ${rows}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  function getCompraProveedorAccordionInfo(compra) {
+    const record = normalizeCompraProveedorRecord(compra);
+    const proveedor = getCatalogRecordById('proveedores', record.proveedorId);
+    const label = cleanText(proveedor?.nombre || record.proveedorNombre) || 'Sin proveedor';
+    return {
+      key: makeAccordionGroupKey('compras-proveedor', record.proveedorId, label),
+      label,
+      searchText: `${label} ${record.facturaReferencia} ${record.estado} ${record.observacion}`
+    };
+  }
+
+  function getPagoProveedorAccordionInfo(pago) {
+    const record = normalizePagoProveedorRecord(pago);
+    const compra = (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [])
+      .map((item) => normalizeCompraProveedorRecord(item))
+      .find((item) => item.id === record.compraProveedorId);
+    const proveedorId = record.proveedorId || compra?.proveedorId || '';
+    const proveedor = getCatalogRecordById('proveedores', proveedorId);
+    const label = cleanText(proveedor?.nombre || record.proveedorNombre || compra?.proveedorNombre) || 'Sin proveedor';
+    return {
+      key: makeAccordionGroupKey('pagos-proveedor', proveedorId, label),
+      label,
+      searchText: `${label} ${record.facturaReferencia || compra?.facturaReferencia || ''} ${record.metodoPagoNombre} ${record.cuentaBancoNombre} ${record.estado} ${record.observacion}`
+    };
+  }
+
+  function getCobroAccordionInfo(cobro) {
+    const record = normalizeCobroRecord(cobro);
+    const venta = (Array.isArray(appData.ventas) ? appData.ventas : [])
+      .map((item) => normalizeVentaRecord(item))
+      .find((item) => item.id === record.ventaId);
+    const clienteId = record.clienteId || venta?.clienteId || '';
+    const cliente = getCatalogRecordById('clientes', clienteId);
+    const label = cleanText(cliente?.nombre || record.clienteNombre || venta?.clienteNombre) || 'Sin cliente';
+    return {
+      key: makeAccordionGroupKey('cobros-cliente', clienteId, label),
+      label,
+      searchText: `${label} ${record.sucursalNombre || venta?.sucursalNombre || ''} ${record.numeroDocumento || venta?.numeroDocumento || ''} ${record.metodoPagoNombre} ${record.cuentaBancoNombre} ${record.estado} ${record.observacion}`
+    };
+  }
+
+  function getGastoAccordionInfo(gasto) {
+    const record = normalizeGastoRecord(gasto);
+    const tipo = getCatalogRecordById('tiposGasto', record.tipoGastoId);
+    const label = cleanText(tipo?.nombre || record.tipoGastoNombre) || 'Sin tipo de gasto';
+    return {
+      key: makeAccordionGroupKey('gastos-tipo', record.tipoGastoId, label),
+      label,
+      searchText: `${label} ${record.metodoPagoNombre} ${record.cuentaBancoNombre} ${record.estado} ${record.observacion}`
+    };
+  }
+
+  function getAccordionStateByModule(module) {
+    return {
+      compras: proveedoresState,
+      pagos: pagosState,
+      cobros: cobrosState,
+      gastos: gastosState
+    }[module] || null;
+  }
+
+  function getAccordionInfoByModule(module, record) {
+    if (module === 'compras') return getCompraProveedorAccordionInfo(record);
+    if (module === 'pagos') return getPagoProveedorAccordionInfo(record);
+    if (module === 'cobros') return getCobroAccordionInfo(record);
+    if (module === 'gastos') return getGastoAccordionInfo(record);
+    return null;
+  }
+
+  function openAccordionGroupForRecord(module, record) {
+    const state = getAccordionStateByModule(module);
+    const info = record ? getAccordionInfoByModule(module, record) : null;
+    if (state && info?.key) state.openGroupKey = info.key;
+  }
+
+  function toggleAccordionGroup(module, key) {
+    const state = getAccordionStateByModule(module);
+    if (!state) return;
+    const cleanKey = cleanText(key);
+    state.openGroupKey = state.openGroupKey === cleanKey ? '' : cleanKey;
+    renderRoute({ preserveScroll: true });
+  }
+
   function renderCobrosList(cobros) {
     if (!cobros.length) {
       return `
@@ -4455,30 +4621,35 @@
       `;
     }
 
-    return `
-      <div class="operational-scroll-shell cobros-scroll-shell" data-operational-scroll-shell>
-        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
-        <div class="operational-table-wrap cobros-list" role="region" aria-label="Cobros de clientes registrados" tabindex="0" data-operational-table-scroll>
-          <table class="operational-table operational-table-cobros">
-          <thead>
-            <tr>
-              <th>Fecha</th>
-              <th>Cliente</th>
-              <th>OC / documento</th>
-              <th class="amount-cell">Monto</th>
-              <th>Método</th>
-              <th>Banco</th>
-              <th>Estado</th>
-              <th class="actions-cell">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${cobros.map((cobro) => renderCobroCard(cobro)).join('')}
-          </tbody>
-          </table>
-        </div>
-      </div>
-    `;
+    const groups = buildAccordionGroups(cobros, getCobroAccordionInfo);
+    ensureOpenAccordionGroup(cobrosState, groups);
+
+    return renderAccordionGroups({
+      module: 'cobros',
+      groups,
+      openGroupKey: cobrosState.openGroupKey,
+      renderOpenGroup: (group) => renderCobrosTable(group.records, group.label)
+    });
+  }
+
+  function renderCobrosTable(cobros, groupLabel = '') {
+    return renderOperationalTableShell({
+      shellClass: 'cobros-scroll-shell',
+      wrapClass: 'cobros-list',
+      ariaLabel: groupLabel ? `Cobros de ${groupLabel}` : 'Cobros de clientes registrados',
+      tableClass: 'operational-table-cobros',
+      headers: `
+        <th>Fecha</th>
+        <th>Cliente</th>
+        <th>OC / documento</th>
+        <th class="amount-cell">Monto</th>
+        <th>Método</th>
+        <th>Banco</th>
+        <th>Estado</th>
+        <th class="actions-cell">Acciones</th>
+      `,
+      rows: cobros.map((cobro) => renderCobroCard(cobro)).join('')
+    });
   }
 
   function renderCobroCard(cobro) {
@@ -4635,6 +4806,7 @@
     const venta = appData.ventas.find((record) => record.id === newRecord.ventaId);
     cobrosState.selectedVentaId = venta?.saldoPorCobrar > 0 ? newRecord.ventaId : '';
     cobrosState.focusVentaId = newRecord.ventaId;
+    openAccordionGroupForRecord('cobros', newRecord);
     cobrosState.editingId = null;
     cobrosState.messageType = 'success';
     saveData(appData);
@@ -4653,6 +4825,7 @@
     }
     cobrosState.editingId = cobroId;
     cobrosState.focusVentaId = normalized.ventaId;
+    openAccordionGroupForRecord('cobros', normalized);
     cobrosState.message = null;
     renderRoute();
   }
@@ -4697,8 +4870,11 @@
   }
 
   function selectCobroVenta(ventaId) {
-    cobrosState.selectedVentaId = cleanText(ventaId);
-    cobrosState.focusVentaId = cleanText(ventaId);
+    const cleanVentaId = cleanText(ventaId);
+    cobrosState.selectedVentaId = cleanVentaId;
+    cobrosState.focusVentaId = cleanVentaId;
+    const existingCobro = getCobrosOrdenados().find((record) => record.ventaId === cleanVentaId);
+    if (existingCobro) openAccordionGroupForRecord('cobros', existingCobro);
     cobrosState.message = null;
     renderRoute();
   }
@@ -4709,16 +4885,24 @@
     if (venta && amountInput) amountInput.value = String(venta.saldoPorCobrar);
   }
 
-  function setupCobrosSearch() {
-    const search = viewRoot.querySelector('[data-cobro-search]');
+  function setupAccordionSearch(searchSelector, module, rowSelector) {
+    const search = viewRoot.querySelector(searchSelector);
     if (!search) return;
     search.addEventListener('input', () => {
       const query = normalizeNameForCompare(search.value);
-      viewRoot.querySelectorAll('[data-cobro-card]').forEach((card) => {
-        const text = card.getAttribute('data-search-text') || '';
-        card.hidden = Boolean(query) && !text.includes(query);
+      viewRoot.querySelectorAll(`[data-accordion-item="${module}"]`).forEach((item) => {
+        const text = item.getAttribute('data-accordion-search') || '';
+        item.hidden = Boolean(query) && !text.includes(query);
+      });
+      viewRoot.querySelectorAll(rowSelector).forEach((row) => {
+        const text = row.getAttribute('data-search-text') || '';
+        row.hidden = Boolean(query) && !text.includes(query);
       });
     });
+  }
+
+  function setupCobrosSearch() {
+    setupAccordionSearch('[data-cobro-search]', 'cobros', '[data-cobro-card]');
   }
 
 
@@ -4872,31 +5056,36 @@
       `;
     }
 
-    return `
-      <div class="operational-scroll-shell compras-scroll-shell" data-operational-scroll-shell>
-        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
-        <div class="operational-table-wrap compras-list" role="region" aria-label="Compras y deudas registradas" tabindex="0" data-operational-table-scroll>
-          <table class="operational-table operational-table-compras">
-          <thead>
-            <tr>
-              <th>Factura / referencia</th>
-              <th>Proveedor</th>
-              <th>Fecha compra</th>
-              <th>Vencimiento</th>
-              <th class="amount-cell">Total</th>
-              <th class="amount-cell">Pagado</th>
-              <th class="amount-cell">Saldo</th>
-              <th>Estado</th>
-              <th class="actions-cell">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${compras.map((compra) => renderCompraProveedorCard(compra)).join('')}
-          </tbody>
-          </table>
-        </div>
-      </div>
-    `;
+    const groups = buildAccordionGroups(compras, getCompraProveedorAccordionInfo);
+    ensureOpenAccordionGroup(proveedoresState, groups);
+
+    return renderAccordionGroups({
+      module: 'compras',
+      groups,
+      openGroupKey: proveedoresState.openGroupKey,
+      renderOpenGroup: (group) => renderComprasProveedoresTable(group.records, group.label)
+    });
+  }
+
+  function renderComprasProveedoresTable(compras, groupLabel = '') {
+    return renderOperationalTableShell({
+      shellClass: 'compras-scroll-shell',
+      wrapClass: 'compras-list',
+      ariaLabel: groupLabel ? `Compras y deudas registradas de ${groupLabel}` : 'Compras y deudas registradas',
+      tableClass: 'operational-table-compras',
+      headers: `
+        <th>Factura / referencia</th>
+        <th>Proveedor</th>
+        <th>Fecha compra</th>
+        <th>Vencimiento</th>
+        <th class="amount-cell">Total</th>
+        <th class="amount-cell">Pagado</th>
+        <th class="amount-cell">Saldo</th>
+        <th>Estado</th>
+        <th class="actions-cell">Acciones</th>
+      `,
+      rows: compras.map((compra) => renderCompraProveedorCard(compra)).join('')
+    });
   }
 
   function renderCompraProveedorCard(compra) {
@@ -5029,6 +5218,7 @@
     }
 
     proveedoresState.editingId = null;
+    openAccordionGroupForRecord('compras', newRecord);
     proveedoresState.messageType = 'success';
     saveData(appData);
     renderRoute();
@@ -5039,6 +5229,7 @@
     if (!record) return;
     proveedoresState.editingId = recordId;
     proveedoresState.quickCapture = null;
+    openAccordionGroupForRecord('compras', record);
     proveedoresState.message = null;
     renderRoute();
   }
@@ -5358,30 +5549,35 @@
       `;
     }
 
-    return `
-      <div class="operational-scroll-shell pagos-scroll-shell" data-operational-scroll-shell>
-        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
-        <div class="operational-table-wrap pagos-list" role="region" aria-label="Pagos a proveedores registrados" tabindex="0" data-operational-table-scroll>
-          <table class="operational-table operational-table-pagos">
-          <thead>
-            <tr>
-              <th>Fecha</th>
-              <th>Proveedor</th>
-              <th>Factura / referencia</th>
-              <th class="amount-cell">Monto</th>
-              <th>Método</th>
-              <th>Banco</th>
-              <th>Estado</th>
-              <th class="actions-cell">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${pagos.map((pago) => renderPagoProveedorCard(pago)).join('')}
-          </tbody>
-          </table>
-        </div>
-      </div>
-    `;
+    const groups = buildAccordionGroups(pagos, getPagoProveedorAccordionInfo);
+    ensureOpenAccordionGroup(pagosState, groups);
+
+    return renderAccordionGroups({
+      module: 'pagos',
+      groups,
+      openGroupKey: pagosState.openGroupKey,
+      renderOpenGroup: (group) => renderPagosProveedoresTable(group.records, group.label)
+    });
+  }
+
+  function renderPagosProveedoresTable(pagos, groupLabel = '') {
+    return renderOperationalTableShell({
+      shellClass: 'pagos-scroll-shell',
+      wrapClass: 'pagos-list',
+      ariaLabel: groupLabel ? `Pagos a ${groupLabel}` : 'Pagos a proveedores registrados',
+      tableClass: 'operational-table-pagos',
+      headers: `
+        <th>Fecha</th>
+        <th>Proveedor</th>
+        <th>Factura / referencia</th>
+        <th class="amount-cell">Monto</th>
+        <th>Método</th>
+        <th>Banco</th>
+        <th>Estado</th>
+        <th class="actions-cell">Acciones</th>
+      `,
+      rows: pagos.map((pago) => renderPagoProveedorCard(pago)).join('')
+    });
   }
 
   function renderPagoProveedorCard(pago) {
@@ -5529,6 +5725,7 @@
     const compra = appData.comprasProveedores.find((record) => record.id === newRecord.compraProveedorId);
     pagosState.selectedCompraId = compra?.saldoPorPagar > 0 ? newRecord.compraProveedorId : '';
     pagosState.focusCompraId = newRecord.compraProveedorId;
+    openAccordionGroupForRecord('pagos', newRecord);
     pagosState.editingId = null;
     pagosState.messageType = 'success';
     saveData(appData);
@@ -5547,6 +5744,7 @@
     }
     pagosState.editingId = pagoId;
     pagosState.focusCompraId = normalized.compraProveedorId;
+    openAccordionGroupForRecord('pagos', normalized);
     pagosState.message = null;
     renderRoute();
   }
@@ -5591,15 +5789,21 @@
   }
 
   function selectPagoCompra(compraProveedorId) {
-    pagosState.selectedCompraId = cleanText(compraProveedorId);
-    pagosState.focusCompraId = cleanText(compraProveedorId);
+    const cleanCompraId = cleanText(compraProveedorId);
+    pagosState.selectedCompraId = cleanCompraId;
+    pagosState.focusCompraId = cleanCompraId;
+    const existingPago = getPagosProveedoresOrdenados().find((record) => record.compraProveedorId === cleanCompraId);
+    if (existingPago) openAccordionGroupForRecord('pagos', existingPago);
     pagosState.message = null;
     renderRoute();
   }
 
   function startPagoForCompra(compraProveedorId) {
-    pagosState.selectedCompraId = cleanText(compraProveedorId);
-    pagosState.focusCompraId = cleanText(compraProveedorId);
+    const cleanCompraId = cleanText(compraProveedorId);
+    pagosState.selectedCompraId = cleanCompraId;
+    pagosState.focusCompraId = cleanCompraId;
+    const existingPago = getPagosProveedoresOrdenados().find((record) => record.compraProveedorId === cleanCompraId);
+    if (existingPago) openAccordionGroupForRecord('pagos', existingPago);
     pagosState.message = null;
     setRoute('pagos');
   }
@@ -5611,15 +5815,7 @@
   }
 
   function setupPagosSearch() {
-    const search = viewRoot.querySelector('[data-pago-search]');
-    if (!search) return;
-    search.addEventListener('input', () => {
-      const query = normalizeNameForCompare(search.value);
-      viewRoot.querySelectorAll('[data-pago-card]').forEach((card) => {
-        const text = card.getAttribute('data-search-text') || '';
-        card.hidden = Boolean(query) && !text.includes(query);
-      });
-    });
+    setupAccordionSearch('[data-pago-search]', 'pagos', '[data-pago-card]');
   }
 
 
@@ -5765,29 +5961,34 @@
       `;
     }
 
-    return `
-      <div class="operational-scroll-shell gastos-scroll-shell" data-operational-scroll-shell>
-        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
-        <div class="operational-table-wrap gastos-list" role="region" aria-label="Gastos registrados" tabindex="0" data-operational-table-scroll>
-          <table class="operational-table operational-table-gastos">
-          <thead>
-            <tr>
-              <th>Fecha</th>
-              <th>Tipo</th>
-              <th class="amount-cell">Monto</th>
-              <th>Método</th>
-              <th>Banco</th>
-              <th>Estado</th>
-              <th class="actions-cell">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${gastos.map((gasto) => renderGastoCard(gasto)).join('')}
-          </tbody>
-          </table>
-        </div>
-      </div>
-    `;
+    const groups = buildAccordionGroups(gastos, getGastoAccordionInfo);
+    ensureOpenAccordionGroup(gastosState, groups);
+
+    return renderAccordionGroups({
+      module: 'gastos',
+      groups,
+      openGroupKey: gastosState.openGroupKey,
+      renderOpenGroup: (group) => renderGastosTable(group.records, group.label)
+    });
+  }
+
+  function renderGastosTable(gastos, groupLabel = '') {
+    return renderOperationalTableShell({
+      shellClass: 'gastos-scroll-shell',
+      wrapClass: 'gastos-list',
+      ariaLabel: groupLabel ? `Gastos de ${groupLabel}` : 'Gastos registrados',
+      tableClass: 'operational-table-gastos',
+      headers: `
+        <th>Fecha</th>
+        <th>Tipo</th>
+        <th class="amount-cell">Monto</th>
+        <th>Método</th>
+        <th>Banco</th>
+        <th>Estado</th>
+        <th class="actions-cell">Acciones</th>
+      `,
+      rows: gastos.map((gasto) => renderGastoCard(gasto)).join('')
+    });
   }
 
   function renderGastoCard(gasto) {
@@ -5911,6 +6112,7 @@
     }
 
     gastosState.editingId = null;
+    openAccordionGroupForRecord('gastos', newRecord);
     gastosState.messageType = 'success';
     saveData(appData);
     renderRoute();
@@ -5927,6 +6129,7 @@
       return;
     }
     gastosState.editingId = recordId;
+    openAccordionGroupForRecord('gastos', normalized);
     gastosState.message = null;
     renderRoute();
   }
@@ -5961,15 +6164,7 @@
   }
 
   function setupGastosSearch() {
-    const search = viewRoot.querySelector('[data-gasto-search]');
-    if (!search) return;
-    search.addEventListener('input', () => {
-      const query = normalizeNameForCompare(search.value);
-      viewRoot.querySelectorAll('[data-gasto-card]').forEach((card) => {
-        const text = card.getAttribute('data-search-text') || '';
-        card.hidden = Boolean(query) && !text.includes(query);
-      });
-    });
+    setupAccordionSearch('[data-gasto-search]', 'gastos', '[data-gasto-card]');
   }
 
 
@@ -8888,6 +9083,10 @@ ${rowsXml}
       });
     });
 
+
+    viewRoot.querySelectorAll('[data-accordion-toggle]').forEach((button) => {
+      button.addEventListener('click', () => toggleAccordionGroup(button.dataset.accordionModule, button.dataset.accordionKey));
+    });
 
     viewRoot.querySelectorAll('[data-resumen-filters]').forEach((form) => {
       form.addEventListener('submit', (event) => {
