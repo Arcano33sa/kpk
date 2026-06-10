@@ -1,3 +1,15 @@
+# KSA PRÁCTIKA — Post12 Ventas / OC: facturas múltiples y captura rápida
+
+- Ventas / OC permite varias facturas dentro de una misma OC, cada una con número y fecha.
+- El bloque Facturas funciona como mini-lista compacta: agregar, editar y borrar antes de guardar.
+- La fecha de factura se precarga con Fecha OC y reutiliza la última fecha capturada dentro del bloque.
+- Después de guardar una OC nueva, el formulario retiene cliente, sucursal y fecha OC para captura rápida.
+- Al salir de Ventas / OC se limpia la captura rápida para evitar arrastres entre módulos.
+- Edición de OC carga, modifica y guarda facturas sin duplicarlas.
+- Se mantiene compatibilidad defensiva con facturas antiguas simples.
+- No se cambian cobros, proveedores/compras, pagos, compras de contado, mora, cierre, cálculos, Excel ni JSON salvo compatibilidad documental.
+- Versión/cache PWA actualizado a 0.16.8-post12-ventas-oc-facturas-multiples-captura-rapida.
+
 # KSA PRÁCTIKA — Post12 Compras de contado Etapa 2/2
 
 - Las compras de contado crean automáticamente su pago en Pagos a proveedores.
