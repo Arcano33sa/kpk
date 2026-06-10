@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.15.5-post12-cierre-periodos-etapa2';
+  const APP_VERSION = '0.15.6-post12-metodos-banco-config';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
 
@@ -170,9 +170,10 @@
       label: 'Métodos de pago/cobro',
       singular: 'método',
       icon: 'MP',
-      description: 'Métodos disponibles para cobros, pagos y gastos.',
+      description: 'Métodos disponibles para cobros, pagos y gastos. Define aquí si el método debe pedir banco.',
       fields: [
         { name: 'nombre', label: 'Nombre', type: 'text', required: true, placeholder: 'Ej. Transferencia' },
+        { name: 'requiereBanco', label: 'Requiere banco', type: 'checkbox', help: 'Actívalo para Transferencia, Tarjeta, POS, depósito u otro método que deba registrar banco.' },
         { name: 'observacion', label: 'Observación', type: 'textarea', placeholder: 'Notas internas del método' }
       ]
     },
@@ -181,7 +182,7 @@
       label: 'Bancos',
       singular: 'banco',
       icon: 'BK',
-      description: 'Bancos simples para asociar cobros, pagos y gastos cuando el método sea Transferencia o Tarjeta.',
+      description: 'Bancos simples para asociar cobros, pagos y gastos cuando el método configurado requiera banco.',
       fields: [
         { name: 'nombre', label: 'Nombre del banco', type: 'text', required: true, placeholder: 'Ej. BAC, Lafise, Banpro' },
         { name: 'tipo', label: 'Tipo interno', type: 'select', options: ['Banco', 'Caja', 'Otro'], required: true },
@@ -192,7 +193,14 @@
 
   const DEFAULT_SEEDS = {
     tiposGasto: ['Estacionamiento', 'Cargadores', 'Transporte', 'Combustible', 'Empaque', 'Otros'],
-    metodosPago: ['Efectivo', 'Transferencia', 'Depósito', 'Cheque', 'Tarjeta', 'Otro'],
+    metodosPago: [
+      { nombre: 'Efectivo', requiereBanco: false },
+      { nombre: 'Transferencia', requiereBanco: true },
+      { nombre: 'Depósito', requiereBanco: false },
+      { nombre: 'Cheque', requiereBanco: false },
+      { nombre: 'Tarjeta', requiereBanco: true },
+      { nombre: 'Otro', requiereBanco: false }
+    ],
     cuentasBancos: [
       { nombre: 'Banco', tipo: 'Banco' }
     ]
@@ -502,6 +510,13 @@
         if (Number.isNaN(normalized.diasCredito)) normalized.diasCredito = 0;
         return;
       }
+      if (field.type === 'checkbox') {
+        const rawValue = raw[field.name] ?? raw.requiere_banco ?? raw.requiereBancoCuenta ?? raw.bancoRequerido ?? raw.requiereCuentaBanco;
+        normalized[field.name] = rawValue === undefined || rawValue === null || rawValue === ''
+          ? paymentMethodNameSuggestsBank(raw.nombre)
+          : normalizeBooleanField(rawValue, false);
+        return;
+      }
       normalized[field.name] = cleanText(raw[field.name]);
     });
 
@@ -523,15 +538,14 @@
       data[key] = values.map((value) => {
         const payload = typeof value === 'string' ? { nombre: value } : value;
         const timestamp = nowIso();
-        return {
+        return normalizeCatalogRecord({
           id: generateId(key),
-          nombre: payload.nombre,
-          tipo: payload.tipo || undefined,
+          ...payload,
           activo: true,
-          observacion: '',
+          observacion: payload.observacion || '',
           createdAt: timestamp,
           updatedAt: timestamp
-        };
+        }, CATALOGS.find((catalog) => catalog.id === key));
       });
     });
   }
@@ -1123,10 +1137,15 @@
     )) || null;
   }
 
+  function paymentMethodNameSuggestsBank(value) {
+    const key = normalizeKeyForCompare(value);
+    return key.includes('transferencia') || key.includes('tarjeta');
+  }
+
   function paymentMethodRequiresBank(value) {
     const method = findPaymentMethodByValue(value);
-    const key = normalizeKeyForCompare(method?.nombre || value);
-    return key.includes('transferencia') || key.includes('tarjeta');
+    if (method && typeof method.requiereBanco === 'boolean') return method.requiereBanco;
+    return paymentMethodNameSuggestsBank(method?.nombre || value);
   }
 
   function isBankCatalogRecord(record) {
@@ -1198,7 +1217,7 @@
     const banks = getCatalogRecords('cuentasBancos').filter(isBankCatalogRecord);
     if (!banks.length) return 'Agrega un banco en Catálogos para seleccionarlo.';
     const valid = banks.some((bank) => bank.id === record.cuentaBancoId && (bank.activo || existingRecord?.cuentaBancoId === bank.id));
-    if (!valid) return 'Selecciona un banco válido para Transferencia o Tarjeta.';
+    if (!valid) return 'Selecciona un banco válido para este método.';
     return '';
   }
 
@@ -3096,6 +3115,17 @@
     const value = record?.[field.name] ?? '';
     const requiredLabel = field.required ? '<span class="required-dot" aria-label="obligatorio">*</span>' : '';
 
+    if (field.type === 'checkbox') {
+      const checked = normalizeBooleanField(value, false);
+      return `
+        <label class="checkbox-field catalog-checkbox">
+          <input type="checkbox" name="${escapeHtml(field.name)}" value="1" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} />
+          <span>${escapeHtml(field.label)} ${requiredLabel}</span>
+          ${field.help ? `<small>${escapeHtml(field.help)}</small>` : ''}
+        </label>
+      `;
+    }
+
     if (field.type === 'textarea') {
       return `
         <label class="form-field">
@@ -4032,7 +4062,7 @@
     return `
       <article class="catalog-warning" role="status">
         <strong>Faltan ${escapeHtml(missing.join(', '))}.</strong>
-        <p>Para guardar un cobro necesitas una OC activa con saldo y métodos de pago activos. El banco se solicita solo en Transferencia o Tarjeta.</p>
+        <p>Para guardar un cobro necesitas una OC activa con saldo y métodos de pago activos. El banco se solicita según la configuración del método en Catálogos.</p>
         <div class="placeholder-tools">
           <button type="button" class="secondary-action compact" data-go="ventas">Ir a Ventas / OC</button>
           <button type="button" class="secondary-action compact" data-go="catalogos">Ir a Catálogos</button>
@@ -4900,7 +4930,7 @@
     return `
       <article class="catalog-warning" role="status">
         <strong>Faltan ${escapeHtml(missing.join(', '))}.</strong>
-        <p>Para guardar un pago necesitas una compra/deuda activa con saldo y métodos de pago activos. El banco se solicita solo en Transferencia o Tarjeta.</p>
+        <p>Para guardar un pago necesitas una compra/deuda activa con saldo y métodos de pago activos. El banco se solicita según la configuración del método en Catálogos.</p>
         <div class="placeholder-tools">
           <button type="button" class="secondary-action compact" data-go="proveedores">Ir a Proveedores / Compras</button>
           <button type="button" class="secondary-action compact" data-go="catalogos">Ir a Catálogos</button>
@@ -5337,7 +5367,7 @@
                 <h2>Registrar gasto</h2>
               </div>
             </div>
-            <p class="muted-text">Los tipos, métodos y bancos vienen de Catálogos activos. Banco aparece solo con Transferencia o Tarjeta.</p>
+            <p class="muted-text">Los tipos, métodos y bancos vienen de Catálogos activos. Banco aparece solo cuando el método elegido está configurado para requerir banco.</p>
             ${renderGastoForm(null, tiposActivos, metodosActivos, cuentasActivas, missingCatalogs)}
           </article>
 
@@ -5369,7 +5399,7 @@
     return `
       <article class="catalog-warning" role="status">
         <strong>Faltan ${escapeHtml(missing.join(', '))}.</strong>
-        <p>Para guardar un gasto necesitas tipos de gasto y métodos de pago activos. Banco se solicita solo en Transferencia o Tarjeta.</p>
+        <p>Para guardar un gasto necesitas tipos de gasto y métodos de pago activos. Banco se solicita según la configuración del método en Catálogos.</p>
         <button type="button" class="secondary-action compact" data-go="catalogos">Ir a Catálogos</button>
       </article>
     `;
@@ -7232,6 +7262,7 @@
       if (catalog.id === 'clientes') headers.splice(1, 0, 'Código', 'Condición de pago', 'Días de crédito');
       if (catalog.id === 'sucursales') headers.splice(1, 0, 'Cliente asociado');
       if (catalog.id === 'proveedores') headers.splice(1, 0, 'Contacto', 'Condición de pago', 'Días de crédito');
+      if (catalog.id === 'metodosPago') headers.splice(1, 0, 'Requiere banco');
       if (catalog.id === 'cuentasBancos') headers.splice(1, 0, 'Tipo');
       headers.push('Observación');
       rows.push(xlsxHeaderRow(headers));
@@ -7246,6 +7277,7 @@
           const terms = normalizePaymentTermsFields(record);
           base.push(xlsxText(record.contacto), xlsxText(terms.condicionPago), xlsxNumber(terms.diasCredito));
         }
+        if (catalog.id === 'metodosPago') base.push(xlsxText(record.requiereBanco ? 'Sí' : 'No'));
         if (catalog.id === 'cuentasBancos') base.push(xlsxText(record.tipo));
         base.push(xlsxText(record.activo ? 'Activo' : 'Inactivo'), xlsxText(record.observacion));
         rows.push(base);
@@ -7861,6 +7893,7 @@ ${rowsXml}
       condicionPago: cleanText(pickCell(row, ['Condición de pago', 'Condicion de pago', 'Condición', 'Condicion', 'Forma de pago', 'Tipo pago'])),
       diasCredito: parsePositiveInteger(pickCell(row, ['Días de crédito', 'Dias de credito', 'Días crédito', 'Dias credito', 'Crédito', 'Credito'])),
       tipo: cleanText(pickCell(row, ['Tipo cuenta', 'Tipo'])) || (catalogId === 'cuentasBancos' ? 'Banco' : undefined),
+      requiereBanco: pickCell(row, ['Requiere banco', 'Requiere Banco', 'Banco requerido', 'Requiere cuenta banco']),
       observacion: cleanText(pickCell(row, ['Observación', 'Observacion', 'Notas']))
     }, CATALOGS.find((catalog) => catalog.id === catalogId));
     payload[catalogId].push(record);
@@ -8255,6 +8288,7 @@ ${rowsXml}
     if (catalog.id === 'proveedores') {
       return [record.contacto ? `Contacto: ${record.contacto}` : '', formatPaymentTermsLabel(record)].filter(Boolean).join(' · ');
     }
+    if (catalog.id === 'metodosPago') return record.requiereBanco ? 'Requiere banco' : 'No requiere banco';
     if (catalog.id === 'cuentasBancos') return `Tipo: ${record.tipo || 'Otro'}`;
     return '';
   }
@@ -8310,6 +8344,10 @@ ${rowsXml}
     };
 
     catalog.fields.forEach((field) => {
+      if (field.type === 'checkbox') {
+        record[field.name] = formData.has(field.name);
+        return;
+      }
       record[field.name] = cleanText(formData.get(field.name));
     });
 
