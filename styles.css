@@ -3025,3 +3025,37 @@ textarea:disabled {
     padding: 10px;
   }
 }
+
+/* Post12 Compras de contado — Etapa 1: preparación de pago automático */
+.contado-payment-block {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(185, 135, 43, 0.30);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, #fffaf0, #ffffff);
+}
+
+.compact-title-row {
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.compact-title-row h3 {
+  margin: 2px 0 0;
+  font-size: 1rem;
+}
+
+.contado-payment-grid {
+  align-items: start;
+}
+
+.contado-bank-field {
+  transition: opacity 0.16s ease;
+}
+
+@media (max-width: 720px) {
+  .contado-payment-grid {
+    grid-template-columns: 1fr;
+  }
+}

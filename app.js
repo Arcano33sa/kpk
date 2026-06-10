@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.16.5-post12-acordeones-columnas-esenciales';
+  const APP_VERSION = '0.16.7-post12-compras-contado-pago-automatico';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -896,6 +896,13 @@
       fechaVencimiento,
       totalCompra: parseMoney(raw.totalCompra ?? raw.totalDeuda ?? raw.monto ?? raw.total),
       totalPagado: parseMoney(raw.totalPagado),
+      condicionPagoSnapshot: cleanText(raw.condicionPagoSnapshot || raw.condicionPagoCompra || raw.condicionPago || raw.condicion) ? normalizePaymentCondition(raw.condicionPagoSnapshot || raw.condicionPagoCompra || raw.condicionPago || raw.condicion) : '',
+      metodoPagoContadoId: cleanText(raw.metodoPagoContadoId || raw.metodoPagoContado || raw.metodoPagoContadoCodigo),
+      metodoPagoContadoNombre: cleanText(raw.metodoPagoContadoNombre || raw.metodoPagoContadoTexto || raw.metodoPagoContadoName),
+      bancoPagoContadoId: cleanText(raw.bancoPagoContadoId || raw.cuentaBancoPagoContadoId || raw.bancoPagoContado),
+      bancoPagoContadoNombre: cleanText(raw.bancoPagoContadoNombre || raw.cuentaBancoPagoContadoNombre || raw.bancoPagoContadoTexto),
+      bancoPagoContadoTipo: normalizeBankType(raw.bancoPagoContadoTipo || raw.cuentaBancoPagoContadoTipo || raw.tipoBancoPagoContado),
+      observacionPagoContado: cleanText(raw.observacionPagoContado || raw.notaPagoContado),
       observacion: cleanText(raw.observacion),
       activo,
       createdAt: raw.createdAt || timestamp,
@@ -916,9 +923,13 @@
     const timestamp = nowIso();
     const activo = typeof raw.activo === 'boolean' ? raw.activo : raw.estado !== 'Anulado';
     const montoPagado = parseMoney(raw.montoPagado || raw.monto || raw.importe);
+    const compraProveedorId = cleanText(raw.compraProveedorId || raw.compraId || raw.facturaId || raw.documentoId);
+    const origen = cleanText(raw.origen || raw.source || raw.tipoOrigen);
+    const autoGenerado = raw.autoGenerado === true || raw.esAutomatico === true || raw.automatico === true || origen === 'compra_contado';
+    const compraIdOrigen = cleanText(raw.compraIdOrigen || raw.compraProveedorIdOrigen || raw.compraOrigenId) || (autoGenerado ? compraProveedorId : '');
     return {
       id: raw.id || generateId('pagoProveedor'),
-      compraProveedorId: cleanText(raw.compraProveedorId || raw.compraId || raw.facturaId || raw.documentoId),
+      compraProveedorId,
       proveedorId: cleanText(raw.proveedorId),
       proveedorNombre: cleanText(raw.proveedorNombre || raw.proveedor),
       facturaReferencia: cleanText(raw.facturaReferencia || raw.factura || raw.referencia || raw.documento),
@@ -930,6 +941,9 @@
       cuentaBancoNombre: cleanText(raw.cuentaBancoNombre || raw.cuentaBanco || raw.banco || raw.cuenta),
       cuentaBancoTipo: normalizeBankType(raw.cuentaBancoTipo || raw.bancoTipo || raw.tipoBanco || raw.bankType || raw.tipoCuentaBanco),
       observacion: cleanText(raw.observacion),
+      origen,
+      compraIdOrigen,
+      autoGenerado,
       activo,
       estado: activo ? 'Registrado' : 'Anulado',
       createdAt: raw.createdAt || timestamp,
@@ -1054,6 +1068,121 @@
   function recalculateComprasProveedoresWithPagos(comprasSource, pagosSource) {
     const compras = Array.isArray(comprasSource) ? comprasSource : [];
     return compras.map((compra) => recalculateCompraProveedorWithPagos(compra, pagosSource));
+  }
+
+  function isAutoPagoCompraContadoRecord(record, compraProveedorId = '') {
+    const pago = normalizePagoProveedorRecord(record);
+    if (!pago.autoGenerado || pago.origen !== 'compra_contado') return false;
+    const cleanCompraId = cleanText(compraProveedorId);
+    if (!cleanCompraId) return true;
+    return pago.compraProveedorId === cleanCompraId || pago.compraIdOrigen === cleanCompraId;
+  }
+
+  function findAutoPagoCompraContado(compraProveedorId, pagosSource = appData.pagosProveedores, includeInactive = false) {
+    const cleanCompraId = cleanText(compraProveedorId);
+    if (!cleanCompraId) return null;
+    const source = Array.isArray(pagosSource) ? pagosSource : [];
+    return source
+      .map((record) => normalizePagoProveedorRecord(record))
+      .find((pago) => (includeInactive || pago.activo) && isAutoPagoCompraContadoRecord(pago, cleanCompraId)) || null;
+  }
+
+  function getActiveManualPagosForCompra(compraProveedorId, pagosSource = appData.pagosProveedores) {
+    const cleanCompraId = cleanText(compraProveedorId);
+    const source = Array.isArray(pagosSource) ? pagosSource : [];
+    return source
+      .map((record) => normalizePagoProveedorRecord(record))
+      .filter((pago) => pago.activo && pago.compraProveedorId === cleanCompraId && !isAutoPagoCompraContadoRecord(pago, cleanCompraId));
+  }
+
+  function calculateManualPagadoForCompra(compraProveedorId, pagosSource = appData.pagosProveedores) {
+    return getActiveManualPagosForCompra(compraProveedorId, pagosSource)
+      .reduce((sum, pago) => roundMoney(sum + pago.montoPagado), 0);
+  }
+
+  function buildAutoPagoCompraContado(compraRecord, existingPago = null) {
+    const compra = normalizeCompraProveedorRecord(compraRecord);
+    const timestamp = nowIso();
+    const proveedor = getCatalogRecordById('proveedores', compra.proveedorId);
+    const metodo = findPaymentMethodByValue(compra.metodoPagoContadoId || compra.metodoPagoContadoNombre);
+    const methodValue = metodo?.id || compra.metodoPagoContadoId || compra.metodoPagoContadoNombre;
+    const requiredBankType = getBankTypeForPaymentMethod(methodValue);
+    const banco = requiredBankType ? getCatalogRecordById('cuentasBancos', compra.bancoPagoContadoId) : null;
+    const manualPagado = calculateManualPagadoForCompra(compra.id, appData.pagosProveedores);
+    const montoAuto = roundMoney(Math.max(compra.totalCompra - manualPagado, 0));
+    const activeAuto = Boolean(compra.activo && montoAuto > 0);
+
+    return normalizePagoProveedorRecord({
+      ...(existingPago || {}),
+      id: existingPago?.id || generateId('pagoProveedor'),
+      compraProveedorId: compra.id,
+      compraIdOrigen: compra.id,
+      origen: 'compra_contado',
+      autoGenerado: true,
+      proveedorId: compra.proveedorId,
+      proveedorNombre: proveedor?.nombre || compra.proveedorNombre || existingPago?.proveedorNombre || '',
+      facturaReferencia: compra.facturaReferencia,
+      fechaPago: compra.fechaCompra || todayInputValue(),
+      montoPagado: montoAuto,
+      metodoPagoId: metodo?.id || compra.metodoPagoContadoId || existingPago?.metodoPagoId || '',
+      metodoPagoNombre: metodo?.nombre || compra.metodoPagoContadoNombre || existingPago?.metodoPagoNombre || '',
+      cuentaBancoId: requiredBankType ? (banco?.id || compra.bancoPagoContadoId || '') : '',
+      cuentaBancoNombre: requiredBankType ? (banco?.nombre || compra.bancoPagoContadoNombre || '') : '',
+      cuentaBancoTipo: requiredBankType ? normalizeBankType(banco?.tipo || compra.bancoPagoContadoTipo) : '',
+      observacion: compra.observacionPagoContado || `Pago automático por compra de contado${compra.facturaReferencia ? ` · ${compra.facturaReferencia}` : ''}.`,
+      activo: activeAuto,
+      estado: activeAuto ? 'Registrado' : 'Anulado',
+      createdAt: existingPago?.createdAt || timestamp,
+      updatedAt: timestamp
+    });
+  }
+
+  function annulAutoPagoCompraContado(compraProveedorId, motivo = 'Pago automático anulado por cambio en la compra de contado.') {
+    const existingAuto = findAutoPagoCompraContado(compraProveedorId, appData.pagosProveedores, true);
+    if (!existingAuto || !existingAuto.activo) return { action: 'none', pago: existingAuto };
+    appData.pagosProveedores = (Array.isArray(appData.pagosProveedores) ? appData.pagosProveedores : []).map((record) => {
+      if (record.id !== existingAuto.id) return record;
+      return normalizePagoProveedorRecord({
+        ...record,
+        origen: 'compra_contado',
+        compraIdOrigen: cleanText(record.compraIdOrigen) || compraProveedorId,
+        autoGenerado: true,
+        activo: false,
+        estado: 'Anulado',
+        observacion: cleanText(record.observacion) ? `${cleanText(record.observacion)} ${motivo}` : motivo,
+        updatedAt: nowIso()
+      });
+    });
+    return { action: 'annulled', pago: normalizePagoProveedorRecord({ ...existingAuto, activo: false, estado: 'Anulado' }) };
+  }
+
+  function syncAutoPagoCompraContado(compraRecord) {
+    if (!Array.isArray(appData.pagosProveedores)) appData.pagosProveedores = [];
+    const compra = normalizeCompraProveedorRecord(compraRecord);
+    const existingAuto = findAutoPagoCompraContado(compra.id, appData.pagosProveedores, true);
+    const shouldHaveAuto = compra.activo && compra.condicionPagoSnapshot === 'Contado';
+
+    if (!shouldHaveAuto) {
+      const result = annulAutoPagoCompraContado(compra.id);
+      recalculateCompraProveedorById(compra.id);
+      return result;
+    }
+
+    const autoPago = buildAutoPagoCompraContado(compra, existingAuto);
+    if (existingAuto) {
+      appData.pagosProveedores = appData.pagosProveedores.map((record) => record.id === existingAuto.id ? autoPago : record);
+      recalculateCompraProveedorById(compra.id);
+      return { action: autoPago.activo ? 'updated' : 'annulled', pago: autoPago };
+    }
+
+    if (autoPago.activo) {
+      appData.pagosProveedores = [autoPago, ...appData.pagosProveedores];
+      recalculateCompraProveedorById(compra.id);
+      return { action: 'created', pago: autoPago };
+    }
+
+    recalculateCompraProveedorById(compra.id);
+    return { action: 'none', pago: autoPago };
   }
 
   function loadData() {
@@ -4753,6 +4882,7 @@
       metodoPagoNombre: metodo?.nombre || existingRecord?.metodoPagoNombre || '',
       cuentaBancoId: requiredBankType ? (cuenta?.id || '') : '',
       cuentaBancoNombre: requiredBankType ? (cuenta?.nombre || '') : '',
+      cuentaBancoTipo: requiredBankType ? normalizeBankType(cuenta?.tipo) : '',
       observacion: cleanText(formData.get('observacion')),
       activo: typeof existingRecord?.activo === 'boolean' ? existingRecord.activo : true,
       estado: typeof existingRecord?.activo === 'boolean' && !existingRecord.activo ? 'Anulado' : 'Registrado',
@@ -4994,10 +5124,22 @@
   function renderCompraProveedorForm(record, proveedoresActivos, missingProviders, quickCapture = null) {
     const draft = !record && isPlainObject(quickCapture) ? quickCapture : {};
     const selectedProveedorId = record?.proveedorId || cleanText(draft.proveedorId);
+    const selectedTerms = selectedProveedorId ? getCatalogPaymentTerms('proveedores', selectedProveedorId) : { condicionPago: '', diasCredito: 0 };
+    const condicionPagoSnapshot = selectedProveedorId
+      ? selectedTerms.condicionPago
+      : normalizePaymentCondition(record?.condicionPagoSnapshot || draft.condicionPagoSnapshot || '');
+    const isContado = Boolean(selectedProveedorId) && condicionPagoSnapshot === 'Contado';
     const fechaCompra = record?.fechaCompra || toDateInputValue(draft.fechaCompra) || todayInputValue();
-    const diasCredito = record ? (record.diasCredito ?? '') : (draft.diasCredito ?? '');
-    const fechaVencimiento = record?.fechaVencimiento || toDateInputValue(draft.fechaVencimiento) || addDaysToDate(fechaCompra, Number(diasCredito) || 0) || fechaCompra;
-    const calculations = getCompraProveedorCalculations(record || {});
+    const draftDias = draft.diasCredito ?? '';
+    const diasCredito = isContado ? 0 : (record ? (record.diasCredito ?? '') : (draftDias !== '' ? draftDias : (selectedTerms.diasCredito || '')));
+    const fechaVencimiento = isContado
+      ? fechaCompra
+      : (record?.fechaVencimiento || toDateInputValue(draft.fechaVencimiento) || addDaysToDate(fechaCompra, Number(diasCredito) || 0) || fechaCompra);
+    const previewSource = record || { totalCompra: draft.totalCompra || 0, totalPagado: 0 };
+    const calculations = getCompraProveedorCalculations(previewSource);
+    const facturaReferencia = record?.facturaReferencia || cleanText(draft.facturaReferencia);
+    const totalCompraValue = record ? record.totalCompra : draft.totalCompra;
+    const observacion = record?.observacion || cleanText(draft.observacion);
 
     return `
       <form class="compra-form" data-compra-form data-current-pagado="${escapeHtml(record?.totalPagado || 0)}" novalidate>
@@ -5012,7 +5154,7 @@
           </label>
           <label class="form-field">
             <span>Factura / referencia <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="text" name="facturaReferencia" value="${escapeHtml(record?.facturaReferencia || '')}" placeholder="Ej. FAC-001 / REF-001" required autocomplete="off" />
+            <input type="text" name="facturaReferencia" value="${escapeHtml(facturaReferencia)}" placeholder="Ej. FAC-001 / REF-001" required autocomplete="off" />
           </label>
           <label class="form-field">
             <span>Fecha compra <span class="required-dot" aria-label="obligatorio">*</span></span>
@@ -5020,30 +5162,32 @@
           </label>
           <label class="form-field">
             <span>Días de crédito</span>
-            <input type="number" name="diasCredito" value="${escapeHtml(diasCredito)}" min="0" step="1" inputmode="numeric" data-compra-days />
+            <input type="number" name="diasCredito" value="${escapeHtml(diasCredito)}" min="0" step="1" inputmode="numeric" data-compra-days ${isContado ? 'readonly' : ''} />
           </label>
           <label class="form-field">
             <span>Fecha vencimiento <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="date" name="fechaVencimiento" value="${escapeHtml(fechaVencimiento)}" required data-compra-due />
+            <input type="date" name="fechaVencimiento" value="${escapeHtml(fechaVencimiento)}" required data-compra-due ${isContado ? 'readonly' : ''} />
           </label>
           <label class="form-field">
             <span>Total compra/deuda C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="totalCompra" value="${escapeHtml(formatNumberInput(record?.totalCompra))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-compra-calc />
+            <input type="number" name="totalCompra" value="${escapeHtml(formatNumberInput(totalCompraValue))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-compra-calc />
           </label>
         </div>
 
         <div class="formula-card" aria-live="polite">
           <strong>Saldo por pagar = Total compra/deuda - Total pagado</strong>
           <div class="formula-grid">
-            <span>Total compra/deuda</span><b data-compra-preview-total>${escapeHtml(formatMoney(record ? calculations.totalCompra : 0))}</b>
+            <span>Total compra/deuda</span><b data-compra-preview-total>${escapeHtml(formatMoney(calculations.totalCompra))}</b>
             <span>Total pagado</span><b data-compra-preview-pagado>${escapeHtml(formatMoney(record?.totalPagado || 0))}</b>
-            <span>Saldo por pagar</span><b data-compra-preview-saldo>${escapeHtml(formatMoney(record ? calculations.saldoPorPagar : 0))}</b>
+            <span>Saldo por pagar</span><b data-compra-preview-saldo>${escapeHtml(formatMoney(calculations.saldoPorPagar))}</b>
           </div>
         </div>
 
+        ${renderCompraContadoPaymentBlock(record || draft, selectedProveedorId, isContado)}
+
         <label class="form-field">
           <span>Observación</span>
-          <textarea name="observacion" rows="3" placeholder="Notas internas de la compra, factura o deuda">${escapeHtml(record?.observacion || '')}</textarea>
+          <textarea name="observacion" rows="3" placeholder="Notas internas de la compra, factura o deuda">${escapeHtml(observacion)}</textarea>
         </label>
 
         <div class="form-actions">
@@ -5051,6 +5195,60 @@
           <button type="button" class="secondary-action" data-compra-clear>${record ? 'Cancelar' : 'Limpiar'}</button>
         </div>
       </form>
+    `;
+  }
+
+  function renderCompraContadoPaymentBlock(source, selectedProveedorId, isContado) {
+    const metodosActivos = getActiveCatalogRecords('metodosPago');
+    const selectedMethodId = cleanText(source?.metodoPagoContadoId || source?.metodoPagoContado);
+    const selectedBankId = cleanText(source?.bancoPagoContadoId || source?.bancoPagoContado);
+    const selectedObservation = cleanText(source?.observacionPagoContado || source?.notaPagoContado);
+    const requiredBankType = getBankTypeForPaymentMethod(selectedMethodId);
+    const cuentas = getSelectableBankRecords(selectedBankId);
+    const hasMatchingBanks = Boolean(requiredBankType) && cuentas.some((banco) => bankMatchesType(banco, requiredBankType));
+    const bankDisabled = !requiredBankType || !hasMatchingBanks;
+    const statusText = selectedProveedorId
+      ? (isContado ? 'Contado · vencimiento igual a fecha de compra' : 'Crédito · sin pago inmediato')
+      : 'Selecciona proveedor para detectar condición de pago';
+
+    return `
+      <section class="contado-payment-block${isContado ? '' : ' is-hidden'}" data-contado-payment-block data-cash-status="${isContado ? 'contado' : 'credito'}">
+        <div class="section-title-row compact-title-row">
+          <div>
+            <span class="eyebrow mini">${escapeHtml(statusText)}</span>
+            <h3>Pago de contado</h3>
+          </div>
+          <span class="state-pill is-pending" data-contado-payment-pill>${isContado ? 'Preparación' : 'No aplica'}</span>
+        </div>
+        <p class="muted-text">Estos datos quedan guardados para la etapa de pago automático. En esta etapa todavía no se crea ningún pago.</p>
+        <div class="form-grid contado-payment-grid">
+          <label class="form-field">
+            <span>Método de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <select name="metodoPagoContadoId" data-contado-payment-method ${isContado ? 'required' : ''} ${!metodosActivos.length ? 'disabled' : ''}>
+              <option value="">Seleccionar método</option>
+              ${metodosActivos.map((metodo) => `<option value="${escapeHtml(metodo.id)}" ${metodo.id === selectedMethodId ? 'selected' : ''}>${escapeHtml(metodo.nombre || 'Método sin nombre')}</option>`).join('')}
+            </select>
+            ${!metodosActivos.length ? '<small class="compact-note">Configura métodos de pago activos en Catálogos.</small>' : ''}
+          </label>
+          <label class="form-field contado-bank-field${requiredBankType ? '' : ' is-hidden'}" data-contado-bank-field>
+            <span>Banco / cuenta <span class="required-dot${requiredBankType && hasMatchingBanks ? '' : ' is-hidden'}" data-contado-bank-required-dot aria-label="obligatorio">*</span></span>
+            <select name="bancoPagoContadoId" data-contado-bank-select ${requiredBankType && hasMatchingBanks && isContado ? 'required' : ''} ${bankDisabled ? 'disabled' : ''}>
+              <option value="">Seleccionar banco / cuenta</option>
+              ${cuentas.map((banco) => {
+                const bankType = normalizeBankType(banco.tipo);
+                const matchesType = requiredBankType && bankType === requiredBankType;
+                const optionHidden = requiredBankType && !matchesType ? ' hidden disabled' : '';
+                return `<option value="${escapeHtml(banco.id)}" data-bank-type="${escapeHtml(bankType)}"${optionHidden} ${banco.id === selectedBankId ? 'selected' : ''}>${escapeHtml(banco.nombre || 'Banco sin nombre')} · ${escapeHtml(getBankTypeDisplay(banco))}${banco.activo ? '' : ' · inactivo'}</option>`;
+              }).join('')}
+            </select>
+            <small class="compact-note bank-empty-message${requiredBankType && !hasMatchingBanks ? '' : ' is-hidden'}" data-contado-bank-empty-message>${escapeHtml(getBankEmptyMessage(requiredBankType))}</small>
+          </label>
+        </div>
+        <label class="form-field">
+          <span>Nota de pago de contado</span>
+          <textarea name="observacionPagoContado" rows="2" placeholder="Observación opcional para el futuro pago automático">${escapeHtml(selectedObservation)}</textarea>
+        </label>
+      </section>
     `;
   }
 
@@ -5162,11 +5360,21 @@
     const proveedorId = cleanText(formData.get('proveedorId'));
     const proveedor = getCatalogRecordById('proveedores', proveedorId);
     const fechaCompra = toDateInputValue(formData.get('fechaCompra'));
-    const diasCreditoRaw = cleanText(formData.get('diasCredito'));
     const terms = getCatalogPaymentTerms('proveedores', proveedorId);
-    let diasCredito = parsePositiveInteger(diasCreditoRaw);
-    if (!diasCreditoRaw && proveedorId) diasCredito = terms.diasCredito;
-    const fechaVencimiento = toDateInputValue(formData.get('fechaVencimiento')) || addDaysToDate(fechaCompra, Number.isNaN(diasCredito) ? 0 : diasCredito);
+    const isContado = proveedorId && terms.condicionPago === 'Contado';
+    const diasCreditoRaw = cleanText(formData.get('diasCredito'));
+    let diasCredito = isContado ? 0 : parsePositiveInteger(diasCreditoRaw);
+    if (!isContado && !diasCreditoRaw && proveedorId) diasCredito = terms.diasCredito;
+    const fechaVencimiento = isContado
+      ? fechaCompra
+      : (toDateInputValue(formData.get('fechaVencimiento')) || addDaysToDate(fechaCompra, Number.isNaN(diasCredito) ? 0 : diasCredito));
+    const metodoPagoContadoId = isContado ? cleanText(formData.get('metodoPagoContadoId')) : '';
+    const metodoPagoContado = metodoPagoContadoId ? findPaymentMethodByValue(metodoPagoContadoId) : null;
+    const bancoPagoContadoId = isContado ? cleanText(formData.get('bancoPagoContadoId')) : '';
+    const bancoPagoContado = bancoPagoContadoId ? getCatalogRecordById('cuentasBancos', bancoPagoContadoId) : null;
+    const totalCompra = parseMoney(formData.get('totalCompra'));
+    const manualPagado = existingRecord?.id ? calculateManualPagadoForCompra(existingRecord.id, appData.pagosProveedores) : 0;
+    const expectedPagado = isContado ? (Number.isNaN(totalCompra) ? 0 : totalCompra) : manualPagado;
     const base = {
       ...(existingRecord || {}),
       id: existingRecord?.id || generateId('compraProveedor'),
@@ -5176,8 +5384,15 @@
       fechaCompra,
       diasCredito,
       fechaVencimiento,
-      totalCompra: parseMoney(formData.get('totalCompra')),
-      totalPagado: existingRecord?.totalPagado || 0,
+      totalCompra,
+      totalPagado: expectedPagado,
+      condicionPagoSnapshot: terms.condicionPago,
+      metodoPagoContadoId,
+      metodoPagoContadoNombre: metodoPagoContado?.nombre || '',
+      bancoPagoContadoId,
+      bancoPagoContadoNombre: bancoPagoContado?.nombre || '',
+      bancoPagoContadoTipo: bancoPagoContado ? normalizeBankType(bancoPagoContado.tipo) : '',
+      observacionPagoContado: isContado ? cleanText(formData.get('observacionPagoContado')) : '',
       observacion: cleanText(formData.get('observacion')),
       activo: typeof existingRecord?.activo === 'boolean' ? existingRecord.activo : true,
       createdAt: existingRecord?.createdAt || timestamp,
@@ -5194,17 +5409,59 @@
     };
   }
 
-  function validateCompraProveedorRecord(record) {
+  function validateCompraContadoPayment(record, existingRecord = null) {
+    if (record.condicionPagoSnapshot !== 'Contado') return '';
+    const activeMethods = getActiveCatalogRecords('metodosPago');
+    if (!activeMethods.length) return 'Configura al menos un método de pago activo para compras de contado.';
+    if (!record.metodoPagoContadoId) return 'Selecciona método de pago para la compra de contado.';
+    const selectedMethod = activeMethods.find((method) => method.id === record.metodoPagoContadoId);
+    if (!selectedMethod) return 'Selecciona un método de pago activo para la compra de contado.';
+    const requiredBankType = getBankTypeForPaymentMethod(record.metodoPagoContadoId || record.metodoPagoContadoNombre);
+    if (!requiredBankType) return '';
+    const banks = getSelectableBankRecordsByType(requiredBankType, existingRecord?.bancoPagoContadoId);
+    if (!banks.length) return getBankEmptyMessage(requiredBankType);
+    const validBank = banks.some((bank) => bank.id === record.bancoPagoContadoId);
+    if (!validBank) return `Selecciona banco / cuenta para ${requiredBankType}.`;
+    return '';
+  }
+
+  function validateCompraProveedorRecord(record, existingRecord = null) {
     if (!record.proveedorId || !getActiveCatalogRecords('proveedores').some((proveedor) => proveedor.id === record.proveedorId)) return 'Selecciona un proveedor activo desde Catálogos.';
     if (!record.facturaReferencia) return 'La factura / referencia es obligatoria.';
     if (!record.fechaCompra) return 'La fecha de compra es obligatoria.';
     if (!record.fechaVencimiento) return 'La fecha de vencimiento es obligatoria.';
     if (Number.isNaN(parsePositiveInteger(record.diasCredito))) return 'Días de crédito debe ser cero o un número entero positivo.';
+    if (record.condicionPagoSnapshot === 'Contado' && Number(record.diasCredito) !== 0) return 'En compras de contado, días de crédito debe ser 0.';
+    if (record.condicionPagoSnapshot === 'Contado' && record.fechaVencimiento !== record.fechaCompra) return 'En compras de contado, el vencimiento debe ser igual a la fecha de compra.';
     if (Number.isNaN(parseMoney(record.totalCompra)) || record.totalCompra <= 0) return 'Total compra/deuda debe ser un número mayor que cero.';
     if (Number.isNaN(parseMoney(record.totalPagado)) || record.totalPagado < 0) return 'Total pagado no puede ser negativo.';
     if (record.totalPagado > record.totalCompra) return 'El total compra/deuda no puede quedar menor que el total ya pagado.';
     if (record.saldoPorPagar < 0) return 'El saldo por pagar no puede ser negativo.';
+    const contadoError = validateCompraContadoPayment(record, existingRecord);
+    if (contadoError) return contadoError;
     return '';
+  }
+
+  function buildCompraDraftFromForm(form) {
+    const formData = new FormData(form);
+    const proveedorId = cleanText(formData.get('proveedorId'));
+    const terms = getCatalogPaymentTerms('proveedores', proveedorId);
+    const isContado = proveedorId && terms.condicionPago === 'Contado';
+    const fechaCompra = toDateInputValue(formData.get('fechaCompra')) || todayInputValue();
+    const diasCredito = isContado ? 0 : parsePositiveInteger(formData.get('diasCredito'));
+    return {
+      proveedorId,
+      facturaReferencia: cleanText(formData.get('facturaReferencia')),
+      fechaCompra,
+      diasCredito: Number.isNaN(diasCredito) ? 0 : diasCredito,
+      fechaVencimiento: isContado ? fechaCompra : (toDateInputValue(formData.get('fechaVencimiento')) || addDaysToDate(fechaCompra, Number.isNaN(diasCredito) ? 0 : diasCredito) || fechaCompra),
+      totalCompra: cleanText(formData.get('totalCompra')),
+      condicionPagoSnapshot: terms.condicionPago,
+      metodoPagoContadoId: isContado ? cleanText(formData.get('metodoPagoContadoId')) : '',
+      bancoPagoContadoId: isContado ? cleanText(formData.get('bancoPagoContadoId')) : '',
+      observacionPagoContado: isContado ? cleanText(formData.get('observacionPagoContado')) : '',
+      observacion: cleanText(formData.get('observacion'))
+    };
   }
 
   function saveCompraProveedorRecord(form) {
@@ -5212,29 +5469,42 @@
     const records = Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [];
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
     const newRecord = buildCompraProveedorFromForm(form, existingRecord);
-    const validationError = validateCompraProveedorRecord(newRecord);
+    const validationError = validateCompraProveedorRecord(newRecord, existingRecord);
 
     if (validationError) {
+      proveedoresState.quickCapture = buildCompraDraftFromForm(form);
       proveedoresState.message = validationError;
       proveedoresState.messageType = 'error';
-      renderRoute();
+      renderRoute({ preserveScroll: true });
       return;
     }
 
     if (!warnIfClosedPeriod(newRecord.fechaCompra, existingRecord ? 'Actualizar esta compra/deuda' : 'Crear esta compra/deuda')) return;
 
+    let syncResult = { action: 'none', pago: null };
     if (existingRecord) {
       appData.comprasProveedores = records.map((record) => record.id === existingId ? newRecord : record);
+      syncResult = syncAutoPagoCompraContado(newRecord);
       proveedoresState.quickCapture = null;
       proveedoresState.message = `Compra/deuda ${newRecord.facturaReferencia} actualizada.`;
     } else {
       appData.comprasProveedores = [newRecord, ...records];
+      syncResult = syncAutoPagoCompraContado(newRecord);
       proveedoresState.quickCapture = buildCompraQuickCaptureFromSavedRecord(newRecord);
       proveedoresState.message = `Compra/deuda ${newRecord.facturaReferencia} guardada. Lista la siguiente factura del mismo proveedor y fecha.`;
     }
 
+    if (newRecord.condicionPagoSnapshot === 'Contado') {
+      if (syncResult.action === 'created') proveedoresState.message = `Compra de contado ${newRecord.facturaReferencia} guardada y pago automático aplicado.`;
+      if (syncResult.action === 'updated') proveedoresState.message = `Compra de contado ${newRecord.facturaReferencia} actualizada y pago automático sincronizado.`;
+    } else if (syncResult.action === 'annulled') {
+      proveedoresState.message = `Compra/deuda ${newRecord.facturaReferencia} actualizada; pago automático anterior quedó anulado.`;
+    }
+
     proveedoresState.editingId = null;
-    openAccordionGroupForRecord('compras', newRecord);
+    const savedRecord = appData.comprasProveedores.find((record) => record.id === newRecord.id) || newRecord;
+    openAccordionGroupForRecord('compras', savedRecord);
+    if (syncResult.pago) openAccordionGroupForRecord('pagos', syncResult.pago);
     proveedoresState.messageType = 'success';
     saveData(appData);
     renderRoute();
@@ -5263,14 +5533,19 @@
     const shouldActivate = !record.activo;
     if (!warnIfClosedPeriod(record.fechaCompra, shouldActivate ? 'Reactivar esta compra/deuda' : 'Anular esta compra/deuda')) return;
 
+    let toggledRecord = null;
     appData.comprasProveedores = records.map((item) => {
       if (item.id !== recordId) return item;
-      return normalizeCompraProveedorRecord({ ...item, activo: shouldActivate, updatedAt: nowIso() });
+      toggledRecord = normalizeCompraProveedorRecord({ ...item, activo: shouldActivate, updatedAt: nowIso() });
+      return toggledRecord;
     });
+    const syncResult = toggledRecord ? syncAutoPagoCompraContado(toggledRecord) : { action: 'none', pago: null };
 
     proveedoresState.editingId = null;
     proveedoresState.quickCapture = null;
     proveedoresState.message = `Compra/deuda ${record.facturaReferencia || ''} quedó ${shouldActivate ? 'reactivada' : 'anulada'}.`;
+    if (syncResult.action === 'annulled') proveedoresState.message += ' Pago automático relacionado anulado.';
+    if (syncResult.action === 'created' || syncResult.action === 'updated') proveedoresState.message += ' Pago automático relacionado sincronizado.';
     proveedoresState.messageType = 'success';
     saveData(appData);
     renderRoute();
@@ -5282,7 +5557,11 @@
       proveedorId: saved.proveedorId,
       fechaCompra: saved.fechaCompra || todayInputValue(),
       diasCredito: Number.isFinite(Number(saved.diasCredito)) ? Number(saved.diasCredito) : 0,
-      fechaVencimiento: saved.fechaVencimiento || addDaysToDate(saved.fechaCompra, Number(saved.diasCredito) || 0) || saved.fechaCompra || todayInputValue()
+      fechaVencimiento: saved.fechaVencimiento || addDaysToDate(saved.fechaCompra, Number(saved.diasCredito) || 0) || saved.fechaCompra || todayInputValue(),
+      condicionPagoSnapshot: saved.condicionPagoSnapshot,
+      metodoPagoContadoId: saved.condicionPagoSnapshot === 'Contado' ? saved.metodoPagoContadoId : '',
+      bancoPagoContadoId: saved.condicionPagoSnapshot === 'Contado' ? saved.bancoPagoContadoId : '',
+      observacionPagoContado: saved.condicionPagoSnapshot === 'Contado' ? saved.observacionPagoContado : ''
     };
   }
 
@@ -5300,6 +5579,7 @@
 
   function setupCompraProveedorLiveCalculations(form) {
     updateCompraProveedorPreviewFromForm(form, false);
+    setupCompraContadoPaymentBlock(form);
 
     form.querySelectorAll('[data-compra-calc]').forEach((input) => {
       input.addEventListener('input', () => updateCompraProveedorPreviewFromForm(form, false));
@@ -5318,18 +5598,52 @@
     const proveedorId = cleanText(form.querySelector('[data-compra-provider]')?.value || '');
     const terms = getCatalogPaymentTerms('proveedores', proveedorId);
     const daysInput = form.querySelector('[data-compra-days]');
-    if (daysInput) daysInput.value = String(terms.diasCredito || 0);
+    const dueInput = form.querySelector('[data-compra-due]');
+    const dateInput = form.querySelector('[data-compra-date]');
+    const isContado = proveedorId && terms.condicionPago === 'Contado';
+    if (daysInput) {
+      daysInput.value = String(isContado ? 0 : (terms.diasCredito || 0));
+      daysInput.readOnly = Boolean(isContado);
+    }
+    if (dueInput) {
+      dueInput.readOnly = Boolean(isContado);
+      if (isContado) {
+        form.dataset.manualDue = '0';
+        dueInput.value = dateInput?.value || todayInputValue();
+      }
+    }
+    syncCompraContadoPaymentBlock(form);
     updateCompraProveedorPreviewFromForm(form, true);
   }
 
   function updateCompraProveedorPreviewFromForm(form, recalculateDue) {
+    const proveedorId = cleanText(form.querySelector('[data-compra-provider]')?.value || '');
+    const terms = getCatalogPaymentTerms('proveedores', proveedorId);
+    const isContado = proveedorId && terms.condicionPago === 'Contado';
+
     if (recalculateDue) {
       const dateInput = form.querySelector('[data-compra-date]');
       const daysInput = form.querySelector('[data-compra-days]');
       const dueInput = form.querySelector('[data-compra-due]');
-      const due = addDaysToDate(dateInput?.value, Number.parseInt(daysInput?.value || '0', 10) || 0);
-      if (dueInput && due && form.dataset.manualDue !== '1') dueInput.value = due;
+      if (isContado) {
+        if (daysInput) {
+          daysInput.value = '0';
+          daysInput.readOnly = true;
+        }
+        if (dueInput) {
+          dueInput.value = dateInput?.value || todayInputValue();
+          dueInput.readOnly = true;
+        }
+        form.dataset.manualDue = '0';
+      } else {
+        if (daysInput) daysInput.readOnly = false;
+        if (dueInput) dueInput.readOnly = false;
+        const due = addDaysToDate(dateInput?.value, Number.parseInt(daysInput?.value || '0', 10) || 0);
+        if (dueInput && due && form.dataset.manualDue !== '1') dueInput.value = due;
+      }
     }
+
+    syncCompraContadoPaymentBlock(form);
 
     const formData = new FormData(form);
     const calculations = getCompraProveedorCalculations({
@@ -5343,6 +5657,66 @@
     if (totalNode) totalNode.textContent = formatMoney(calculations.totalCompra);
     if (pagadoNode) pagadoNode.textContent = formatMoney(calculations.totalPagado);
     if (saldoNode) saldoNode.textContent = formatMoney(calculations.saldoPorPagar);
+  }
+
+  function setupCompraContadoPaymentBlock(form) {
+    const methodSelect = form.querySelector('[data-contado-payment-method]');
+    methodSelect?.addEventListener('change', () => syncCompraContadoPaymentBank(form));
+    syncCompraContadoPaymentBlock(form);
+    syncCompraContadoPaymentBank(form);
+  }
+
+  function syncCompraContadoPaymentBlock(form) {
+    const proveedorId = cleanText(form.querySelector('[data-compra-provider]')?.value || '');
+    const terms = getCatalogPaymentTerms('proveedores', proveedorId);
+    const isContado = proveedorId && terms.condicionPago === 'Contado';
+    const block = form.querySelector('[data-contado-payment-block]');
+    const methodSelect = form.querySelector('[data-contado-payment-method]');
+    const pill = form.querySelector('[data-contado-payment-pill]');
+    if (!block) return;
+    block.classList.toggle('is-hidden', !isContado);
+    block.dataset.cashStatus = isContado ? 'contado' : 'credito';
+    if (methodSelect) methodSelect.required = Boolean(isContado);
+    if (pill) pill.textContent = isContado ? 'Preparación' : 'No aplica';
+    syncCompraContadoPaymentBank(form);
+  }
+
+  function syncCompraContadoPaymentBank(form) {
+    const proveedorId = cleanText(form.querySelector('[data-compra-provider]')?.value || '');
+    const terms = getCatalogPaymentTerms('proveedores', proveedorId);
+    const isContado = proveedorId && terms.condicionPago === 'Contado';
+    const methodSelect = form.querySelector('[data-contado-payment-method]');
+    const bankField = form.querySelector('[data-contado-bank-field]');
+    const bankSelect = form.querySelector('[data-contado-bank-select]');
+    const requiredDot = form.querySelector('[data-contado-bank-required-dot]');
+    const emptyMessage = form.querySelector('[data-contado-bank-empty-message]');
+    if (!methodSelect || !bankField || !bankSelect) return;
+
+    const requiredBankType = isContado ? getBankTypeForPaymentMethod(methodSelect.value) : '';
+    const requiresBank = Boolean(requiredBankType);
+    let matchingBanks = 0;
+
+    Array.from(bankSelect.options).forEach((option) => {
+      if (!option.value) return;
+      const matchesType = requiresBank && option.dataset.bankType === requiredBankType;
+      option.hidden = !matchesType;
+      option.disabled = !matchesType;
+      if (matchesType) matchingBanks += 1;
+    });
+
+    const selectedOption = bankSelect.selectedOptions && bankSelect.selectedOptions[0];
+    if (!requiresBank || (selectedOption && selectedOption.value && (selectedOption.hidden || selectedOption.disabled))) {
+      bankSelect.value = '';
+    }
+
+    bankField.classList.toggle('is-hidden', !requiresBank);
+    bankSelect.required = Boolean(isContado && requiresBank && matchingBanks > 0);
+    bankSelect.disabled = !isContado || !requiresBank || matchingBanks === 0;
+    requiredDot?.classList.toggle('is-hidden', !(isContado && requiresBank && matchingBanks > 0));
+    if (emptyMessage) {
+      emptyMessage.textContent = getBankEmptyMessage(requiredBankType);
+      emptyMessage.classList.toggle('is-hidden', !(isContado && requiresBank && matchingBanks === 0));
+    }
   }
 
 
@@ -5687,6 +6061,7 @@
       metodoPagoNombre: metodo?.nombre || existingRecord?.metodoPagoNombre || '',
       cuentaBancoId: requiredBankType ? (cuenta?.id || '') : '',
       cuentaBancoNombre: requiredBankType ? (cuenta?.nombre || '') : '',
+      cuentaBancoTipo: requiredBankType ? normalizeBankType(cuenta?.tipo) : '',
       observacion: cleanText(formData.get('observacion')),
       activo: typeof existingRecord?.activo === 'boolean' ? existingRecord.activo : true,
       estado: typeof existingRecord?.activo === 'boolean' && !existingRecord.activo ? 'Anulado' : 'Registrado',
@@ -6092,6 +6467,7 @@
       metodoPagoNombre: metodo?.nombre || '',
       cuentaBancoId: requiredBankType ? (cuenta?.id || '') : '',
       cuentaBancoNombre: requiredBankType ? (cuenta?.nombre || '') : '',
+      cuentaBancoTipo: requiredBankType ? normalizeBankType(cuenta?.tipo) : '',
       observacion: cleanText(formData.get('observacion')),
       estado: 'Registrado',
       anulado: false,
@@ -6829,6 +7205,7 @@
       const remapped = normalizePagoProveedorRecord({
         ...pago,
         compraProveedorId,
+        compraIdOrigen: compraIdMap.get(pago.compraIdOrigen) || compraProveedorId,
         proveedorId: idMaps.proveedores.get(pago.proveedorId) || pago.proveedorId,
         metodoPagoId: idMaps.metodosPago.get(pago.metodoPagoId) || pago.metodoPagoId,
         cuentaBancoId: idMaps.cuentasBancos.get(pago.cuentaBancoId) || pago.cuentaBancoId,
@@ -8746,6 +9123,7 @@ ${rowsXml}
         ...pago,
         id: generateId('pagoProveedor'),
         compraProveedorId,
+        compraIdOrigen: compraIdMap.get(pago.compraIdOrigen) || compraProveedorId,
         proveedorId: idMaps.proveedores.get(pago.proveedorId) || pago.proveedorId,
         metodoPagoId: idMaps.metodosPago.get(pago.metodoPagoId) || pago.metodoPagoId,
         cuentaBancoId: idMaps.cuentasBancos.get(pago.cuentaBancoId) || pago.cuentaBancoId,

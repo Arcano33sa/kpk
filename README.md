@@ -1,3 +1,22 @@
+# KSA PRÁCTIKA — Post12 Compras de contado Etapa 2/2
+
+- Las compras de contado crean automáticamente su pago en Pagos a proveedores.
+- El pago automático queda ligado a proveedor, factura/referencia y compra origen con `origen: "compra_contado"`, `compraIdOrigen` y `autoGenerado: true`.
+- Al editar una compra de contado, el pago automático existente se sincroniza sin duplicarse.
+- Si la compra pasa a crédito o se anula, el pago automático relacionado se anula de forma controlada.
+- Compras de contado quedan pagadas, con saldo C$0.00, sin mora falsa y sin bloquear cierre mensual.
+- Pagos manuales de compras de crédito se conservan sin cambios.
+- JSON, Excel, acordeones, columnas esenciales y scrollbar superior sticky se mantienen.
+- Versión/cache PWA actualizado a 0.16.7-post12-compras-contado-pago-automatico.
+
+# KSA PRÁCTIKA — Post12 Compras de contado Etapa 1/2
+
+- Preparación de Proveedores / Compras para detectar proveedor Contado o Crédito.
+- Bloque compacto “Pago de contado” visible solo para compras de contado.
+- Validación de método de pago y banco/cuenta cuando el método lo requiere.
+- No se crean pagos automáticos todavía; saldos, mora, alertas, cierre, Excel y JSON se mantienen sin cambios de lógica.
+- Versión/cache PWA actualizado a 0.16.6-post12-compras-contado-preparacion.
+
 # KSA PRÁCTIKA — Post12 Listados Compactos: columnas esenciales visibles en acordeones
 
 - En Compras se oculta la columna Proveedor dentro del grupo porque el acordeón ya identifica al proveedor.
