@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.15.3-post12-mejoras-etapa3-metodos-bancos';
+  const APP_VERSION = '0.15.5-post12-cierre-periodos-etapa2';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
 
@@ -1556,6 +1556,8 @@
           <article class="metric-card"><span>Flujo del período</span><strong>${escapeHtml(formatMoney(summary.flujoPeriodo))}</strong><small>Cobros - pagos - gastos</small></article>
         </section>
 
+        ${renderPeriodosPendientesCierreCard(summary.periodosCierre)}
+
         <section class="panel-grid resumen-two-columns">
           <article class="panel-card resumen-panel">
             <div class="section-title-row">
@@ -1698,6 +1700,7 @@
       saldosAltosProveedores,
       parciales,
       alertas,
+      periodosCierre: buildPeriodosCierreSummary(ventas, compras),
       gastosPorTipo: buildGastosPorTipo(gastosPeriodo),
       ventaPorSucursal: buildVentaPorSucursal(ventasPeriodo, cobrosPeriodo, ventasCartera, ventasById),
       saldosPorProveedor: buildSaldosPorProveedor(comprasGeneral)
@@ -1861,6 +1864,357 @@
 
   function countUnique(records, getter) {
     return new Set(records.map((record) => cleanText(getter(record))).filter(Boolean)).size;
+  }
+
+  function getPeriodFromOriginDate(dateInput) {
+    const safeDate = toDateInputValue(dateInput);
+    if (!safeDate) return null;
+    const year = safeDate.slice(0, 4);
+    const month = safeDate.slice(5, 7);
+    return {
+      periodo: `${year}-${month}`,
+      month,
+      year,
+      label: `${getMonthLabel(month)} ${year}`
+    };
+  }
+
+  function getCierreMensualForPeriodKey(periodo) {
+    const safe = cleanText(periodo);
+    const match = safe.match(/^(\d{4})-(\d{2})$/);
+    if (!match) return null;
+    return getCierreMensualForPeriod(match[2], match[1]);
+  }
+
+  function createPeriodoCierreBase(month, year) {
+    const safeMonth = /^\d{2}$/.test(String(month || '')) ? String(month) : String(new Date().getMonth() + 1).padStart(2, '0');
+    const safeYear = /^\d{4}$/.test(String(year || '')) ? String(year) : String(new Date().getFullYear());
+    const periodo = getPeriodKey(safeMonth, safeYear);
+    const cierre = getCierreMensualForPeriod(safeMonth, safeYear);
+    return {
+      periodo,
+      month: safeMonth,
+      year: safeYear,
+      label: `${getMonthLabel(safeMonth)} ${safeYear}`,
+      saldoClientes: 0,
+      saldoProveedores: 0,
+      documentosClientes: 0,
+      documentosProveedores: 0,
+      clientesDetalle: [],
+      proveedoresDetalle: [],
+      cierre,
+      estado: cierre ? 'Cerrado' : 'Listo para cierre',
+      bloqueo: 'Sin bloqueo'
+    };
+  }
+
+  function buildPeriodClosingStatus(month, year) {
+    const periodo = getPeriodKey(month, year);
+    const summary = buildPeriodosCierreSummary(appData.ventas, appData.comprasProveedores);
+    return summary.items.find((item) => item.periodo === periodo) || createPeriodoCierreBase(month, year);
+  }
+
+  function hasPeriodClosingBlock(status) {
+    if (!status) return false;
+    return roundMoney(status.saldoClientes) > 0 || roundMoney(status.saldoProveedores) > 0;
+  }
+
+  function getPeriodBlockingOrigin(status) {
+    const hasClientes = roundMoney(status?.saldoClientes) > 0;
+    const hasProveedores = roundMoney(status?.saldoProveedores) > 0;
+    if (hasClientes && hasProveedores) return 'Clientes y Proveedores';
+    if (hasClientes) return 'Clientes';
+    if (hasProveedores) return 'Proveedores';
+    return 'Sin bloqueo';
+  }
+
+  function buildPeriodBlockingSummaryText(status) {
+    const lines = [];
+    const clientes = Array.isArray(status?.clientesDetalle) ? status.clientesDetalle : [];
+    const proveedores = Array.isArray(status?.proveedoresDetalle) ? status.proveedoresDetalle : [];
+
+    clientes.slice(0, 4).forEach((record) => {
+      lines.push(`Cliente: ${record.cliente} · OC/documento: ${record.documento} · saldo: ${formatMoney(record.saldoPendiente)}`);
+    });
+    if (clientes.length > 4) lines.push(`Clientes: ${clientes.length - 4} documento(s) adicional(es) con saldo pendiente.`);
+
+    proveedores.slice(0, 4).forEach((record) => {
+      lines.push(`Proveedor: ${record.proveedor} · Factura/referencia: ${record.documento} · saldo: ${formatMoney(record.saldoPendiente)}`);
+    });
+    if (proveedores.length > 4) lines.push(`Proveedores: ${proveedores.length - 4} documento(s) adicional(es) con saldo pendiente.`);
+
+    return lines.join('\n');
+  }
+
+  function renderCierrePeriodStatusBox(status, lastExport) {
+    const safe = status || createPeriodoCierreBase(cierreMensualState.month, cierreMensualState.year);
+    const blocked = hasPeriodClosingBlock(safe);
+    const ready = !blocked && !safe.cierre;
+    const note = safe.cierre
+      ? `Período cerrado el ${formatDateTime(safe.cierre.fechaHoraCierre)}.`
+      : blocked
+        ? `No se puede cerrar ${safe.label} porque aún existen saldos pendientes vinculados a este período.`
+        : lastExport
+          ? `${safe.label} ya está listo para cierre. El Excel previo está registrado y puedes cerrar el período.`
+          : `${safe.label} ya está listo para cierre. Exporta el Excel del período para poder cerrarlo.`;
+    const statusClass = safe.cierre ? 'is-closed' : blocked ? 'is-pending' : 'is-ready';
+    return `
+      <article class="periodo-cierre-card cierre-status-card ${statusClass}">
+        <div class="resumen-row-head periodo-cierre-head">
+          <strong>${escapeHtml(safe.label)}</strong>
+          <span class="periodo-cierre-status">${escapeHtml(safe.estado)}</span>
+        </div>
+        <p class="notice ${ready ? 'success-note' : ''}">${escapeHtml(note)}</p>
+        <div class="resumen-mini-grid periodo-cierre-grid">
+          <div><span>Clientes pendientes</span><strong>${escapeHtml(formatMoney(safe.saldoClientes))}</strong></div>
+          <div><span>Proveedores pendientes</span><strong>${escapeHtml(formatMoney(safe.saldoProveedores))}</strong></div>
+          <div><span>Bloqueo</span><strong>${escapeHtml(getPeriodBlockingOrigin(safe))}</strong></div>
+          <div><span>Excel previo</span><strong>${lastExport ? 'Sí' : 'No'}</strong></div>
+        </div>
+        ${blocked ? `
+          <details class="periodo-cierre-detail" open>
+            <summary>Ver detalle del bloqueo</summary>
+            ${renderPeriodoCierreDetail(safe)}
+          </details>
+        ` : ''}
+      </article>
+    `;
+  }
+
+  function buildPeriodoClienteDetalle(venta) {
+    const cliente = getCatalogRecordById('clientes', venta.clienteId);
+    const sucursal = getCatalogRecordById('sucursales', venta.sucursalId);
+    const diasMora = getDaysOverdue(venta.fechaVencimiento);
+    return {
+      id: venta.id,
+      cliente: cliente?.nombre || 'Cliente no encontrado',
+      sucursal: sucursal?.nombre || 'Sucursal no encontrada',
+      documento: venta.numeroDocumento || 'Sin número',
+      fechaOrigen: venta.fechaOc,
+      fechaVencimiento: venta.fechaVencimiento,
+      diasMora,
+      saldoPendiente: venta.saldoPorCobrar,
+      estado: venta.estado
+    };
+  }
+
+  function buildPeriodoProveedorDetalle(compra) {
+    const proveedor = getCatalogRecordById('proveedores', compra.proveedorId);
+    const diasMora = getDaysOverdue(compra.fechaVencimiento);
+    return {
+      id: compra.id,
+      proveedor: proveedor?.nombre || compra.proveedorNombre || 'Proveedor no encontrado',
+      documento: compra.facturaReferencia || 'Sin referencia',
+      fechaOrigen: compra.fechaCompra,
+      fechaVencimiento: compra.fechaVencimiento,
+      diasMora,
+      saldoPendiente: compra.saldoPorPagar,
+      estado: compra.estado
+    };
+  }
+
+  function buildPeriodosCierreSummary(ventas, compras) {
+    const groups = new Map();
+    const ensureGroup = (periodInfo) => {
+      const current = groups.get(periodInfo.periodo) || {
+        periodo: periodInfo.periodo,
+        month: periodInfo.month,
+        year: periodInfo.year,
+        label: periodInfo.label,
+        saldoClientes: 0,
+        saldoProveedores: 0,
+        documentosClientes: 0,
+        documentosProveedores: 0,
+        clientesDetalle: [],
+        proveedoresDetalle: [],
+        cierre: null,
+        estado: 'Listo para cierre',
+        bloqueo: 'Sin bloqueo'
+      };
+      groups.set(periodInfo.periodo, current);
+      return current;
+    };
+
+    (Array.isArray(ventas) ? ventas : [])
+      .filter((venta) => venta.activo)
+      .forEach((venta) => {
+        const periodInfo = getPeriodFromOriginDate(venta.fechaOc);
+        if (!periodInfo) return;
+        const group = ensureGroup(periodInfo);
+        group.documentosClientes += 1;
+        if (roundMoney(venta.saldoPorCobrar) > 0) {
+          group.saldoClientes = roundMoney(group.saldoClientes + venta.saldoPorCobrar);
+          group.clientesDetalle.push(buildPeriodoClienteDetalle(venta));
+        }
+      });
+
+    (Array.isArray(compras) ? compras : [])
+      .filter((compra) => compra.activo)
+      .forEach((compra) => {
+        const periodInfo = getPeriodFromOriginDate(compra.fechaCompra);
+        if (!periodInfo) return;
+        const group = ensureGroup(periodInfo);
+        group.documentosProveedores += 1;
+        if (roundMoney(compra.saldoPorPagar) > 0) {
+          group.saldoProveedores = roundMoney(group.saldoProveedores + compra.saldoPorPagar);
+          group.proveedoresDetalle.push(buildPeriodoProveedorDetalle(compra));
+        }
+      });
+
+    const items = Array.from(groups.values()).map((item) => {
+      const cierre = getCierreMensualForPeriodKey(item.periodo);
+      const hasClientes = roundMoney(item.saldoClientes) > 0;
+      const hasProveedores = roundMoney(item.saldoProveedores) > 0;
+      let bloqueo = 'Sin bloqueo';
+      if (hasClientes && hasProveedores) bloqueo = 'Ambos';
+      else if (hasClientes) bloqueo = 'Clientes';
+      else if (hasProveedores) bloqueo = 'Proveedores';
+      const estado = cierre ? 'Cerrado' : (hasClientes || hasProveedores ? 'Pendiente de cierre' : 'Listo para cierre');
+      return {
+        ...item,
+        cierre,
+        bloqueo,
+        estado,
+        clientesDetalle: item.clientesDetalle.sort((a, b) => b.saldoPendiente - a.saldoPendiente || String(a.fechaVencimiento).localeCompare(String(b.fechaVencimiento))),
+        proveedoresDetalle: item.proveedoresDetalle.sort((a, b) => b.saldoPendiente - a.saldoPendiente || String(a.fechaVencimiento).localeCompare(String(b.fechaVencimiento)))
+      };
+    }).sort((a, b) => {
+      const order = { 'Pendiente de cierre': 0, 'Listo para cierre': 1, 'Cerrado': 2 };
+      return (order[a.estado] ?? 9) - (order[b.estado] ?? 9) || String(b.periodo).localeCompare(String(a.periodo));
+    });
+
+    return {
+      items,
+      pendientes: items.filter((item) => item.estado === 'Pendiente de cierre'),
+      listos: items.filter((item) => item.estado === 'Listo para cierre'),
+      cerrados: items.filter((item) => item.estado === 'Cerrado')
+    };
+  }
+
+  function renderPeriodosPendientesCierreCard(summary) {
+    const data = summary || { items: [], pendientes: [], listos: [], cerrados: [] };
+    const totalItems = Array.isArray(data.items) ? data.items.length : 0;
+    const pendingCount = Array.isArray(data.pendientes) ? data.pendientes.length : 0;
+    const readyCount = Array.isArray(data.listos) ? data.listos.length : 0;
+    const closedCount = Array.isArray(data.cerrados) ? data.cerrados.length : 0;
+    const message = !totalItems
+      ? 'No hay períodos pendientes de cierre.'
+      : pendingCount
+        ? `${pendingCount} período${pendingCount === 1 ? '' : 's'} pendiente${pendingCount === 1 ? '' : 's'} de cierre por saldos de Clientes, Proveedores o ambos.`
+        : readyCount
+          ? `${readyCount} período${readyCount === 1 ? '' : 's'} listo${readyCount === 1 ? '' : 's'} para cierre.`
+          : 'No hay períodos pendientes de cierre.';
+
+    return `
+      <section class="panel-card resumen-panel periodos-cierre-panel">
+        <div class="section-title-row">
+          <div><span class="eyebrow mini">Cierre mensual</span><h2>Períodos Pendientes de Cierre</h2></div>
+          <div class="count-pill">${pendingCount} pendiente${pendingCount === 1 ? '' : 's'}</div>
+        </div>
+        <p class="notice periodos-cierre-notice">${escapeHtml(message)} El período se calcula por fecha de origen del documento; cobros o pagos posteriores no mueven ese bloqueo.</p>
+        ${readyCount ? `
+          <article class="period-ready-alert" role="status">
+            <strong>${escapeHtml(data.listos[0].label)} ya está listo para cierre.</strong>
+            <span>Exporta el Excel del período y luego ciérralo desde Excel / Cierre.</span>
+            <button type="button" class="secondary-action compact" data-go="excel">Ir a Excel / Cierre</button>
+          </article>
+        ` : ''}
+        ${totalItems ? `
+          <div class="periodos-cierre-summary" aria-label="Resumen de períodos por estado">
+            <div><span>Pendientes</span><strong>${pendingCount}</strong></div>
+            <div><span>Listos</span><strong>${readyCount}</strong></div>
+            <div><span>Cerrados</span><strong>${closedCount}</strong></div>
+          </div>
+          <div class="resumen-list periodos-cierre-list">
+            ${data.items.map((item) => renderPeriodoCierreItem(item)).join('')}
+          </div>
+        ` : renderMoraEmptyState('No hay períodos pendientes de cierre.', 'Cuando existan OC o compras con saldo pendiente, aparecerán aquí por período de origen.')}
+      </section>
+    `;
+  }
+
+  function renderPeriodoCierreItem(item) {
+    const statusClass = item.estado === 'Pendiente de cierre' ? 'is-pending' : item.estado === 'Listo para cierre' ? 'is-ready' : 'is-closed';
+    const detailCount = item.clientesDetalle.length + item.proveedoresDetalle.length;
+    const detailLabel = detailCount ? `Ver detalle (${detailCount})` : 'Ver detalle';
+    return `
+      <article class="resumen-row-card stacked periodo-cierre-card ${statusClass}">
+        <div class="resumen-row-head periodo-cierre-head">
+          <strong>${escapeHtml(item.label)}</strong>
+          <span class="periodo-cierre-status">${escapeHtml(item.estado)}</span>
+        </div>
+        <div class="resumen-mini-grid periodo-cierre-grid">
+          <div><span>Clientes</span><strong>${escapeHtml(formatMoney(item.saldoClientes))}</strong></div>
+          <div><span>Proveedores</span><strong>${escapeHtml(formatMoney(item.saldoProveedores))}</strong></div>
+          <div><span>Bloqueo</span><strong>${escapeHtml(item.bloqueo)}</strong></div>
+          <div><span>Documentos</span><strong>${item.documentosClientes + item.documentosProveedores}</strong></div>
+        </div>
+        ${item.estado === 'Listo para cierre' ? `
+          <div class="period-card-action">
+            <span>${escapeHtml(item.label)} ya está listo para cierre. Exporta el Excel del período y ciérralo cuando corresponda.</span>
+            <button type="button" class="secondary-action compact" data-go="excel">Ir a cierre</button>
+          </div>
+        ` : ''}
+        <details class="periodo-cierre-detail">
+          <summary>${escapeHtml(detailLabel)}</summary>
+          ${renderPeriodoCierreDetail(item)}
+        </details>
+      </article>
+    `;
+  }
+
+  function renderPeriodoCierreDetail(item) {
+    if (!item.clientesDetalle.length && !item.proveedoresDetalle.length) {
+      const cierreInfo = item.cierre ? ` Cerrado el ${formatDateTime(item.cierre.fechaHoraCierre)}.` : '';
+      return `<div class="empty-state mora-empty"><strong>Sin documentos pendientes.</strong><p>Este período tiene movimientos/documentos, pero no tiene saldo pendiente por Clientes ni Proveedores.${escapeHtml(cierreInfo)}</p></div>`;
+    }
+
+    return `
+      <div class="periodo-detail-wrap">
+        <section>
+          <h3>Clientes</h3>
+          ${item.clientesDetalle.length ? item.clientesDetalle.map((record) => renderPeriodoClienteDetailRow(record)).join('') : '<p class="periodo-detail-empty">Sin saldos pendientes de clientes.</p>'}
+        </section>
+        <section>
+          <h3>Proveedores</h3>
+          ${item.proveedoresDetalle.length ? item.proveedoresDetalle.map((record) => renderPeriodoProveedorDetailRow(record)).join('') : '<p class="periodo-detail-empty">Sin saldos pendientes de proveedores.</p>'}
+        </section>
+      </div>
+    `;
+  }
+
+  function renderPeriodoClienteDetailRow(record) {
+    return `
+      <article class="periodo-detail-row">
+        <div class="resumen-row-head"><strong>${escapeHtml(record.cliente)}</strong><span>${escapeHtml(record.estado)}</span></div>
+        <div class="resumen-mini-grid periodo-detail-grid">
+          <div><span>Sucursal</span><strong>${escapeHtml(record.sucursal)}</strong></div>
+          <div><span>OC / documento</span><strong>${escapeHtml(record.documento)}</strong></div>
+          <div><span>Fecha origen</span><strong>${escapeHtml(formatDate(record.fechaOrigen))}</strong></div>
+          <div><span>Vencimiento</span><strong>${escapeHtml(formatDate(record.fechaVencimiento))}</strong></div>
+          <div><span>Días de mora</span><strong>${record.diasMora > 0 ? `${record.diasMora} días` : 'No aplica'}</strong></div>
+          <div><span>Saldo pendiente</span><strong>${escapeHtml(formatMoney(record.saldoPendiente))}</strong></div>
+        </div>
+        <div class="record-actions"><button type="button" class="secondary-action compact" data-history-venta="${escapeHtml(record.id)}">Ver historial</button></div>
+      </article>
+    `;
+  }
+
+  function renderPeriodoProveedorDetailRow(record) {
+    return `
+      <article class="periodo-detail-row">
+        <div class="resumen-row-head"><strong>${escapeHtml(record.proveedor)}</strong><span>${escapeHtml(record.estado)}</span></div>
+        <div class="resumen-mini-grid periodo-detail-grid">
+          <div><span>Factura / referencia</span><strong>${escapeHtml(record.documento)}</strong></div>
+          <div><span>Fecha origen</span><strong>${escapeHtml(formatDate(record.fechaOrigen))}</strong></div>
+          <div><span>Vencimiento</span><strong>${escapeHtml(formatDate(record.fechaVencimiento))}</strong></div>
+          <div><span>Días de mora</span><strong>${record.diasMora > 0 ? `${record.diasMora} días` : 'No aplica'}</strong></div>
+          <div><span>Saldo pendiente</span><strong>${escapeHtml(formatMoney(record.saldoPendiente))}</strong></div>
+          <div><span>Estado</span><strong>${escapeHtml(record.estado)}</strong></div>
+        </div>
+        <div class="record-actions"><button type="button" class="secondary-action compact" data-history-compra="${escapeHtml(record.id)}">Ver historial</button></div>
+      </article>
+    `;
   }
 
   function buildGastosPorTipo(gastos) {
@@ -6425,6 +6779,8 @@
     const closeYear = /^\d{4}$/.test(cierreMensualState.year) ? cierreMensualState.year : exportYear;
     const lastExport = getLastExcelExportForPeriod(closeMonth, closeYear);
     const cierre = getCierreMensualForPeriod(closeMonth, closeYear);
+    const cierreStatus = buildPeriodClosingStatus(closeMonth, closeYear);
+    const hasClosingBlock = hasPeriodClosingBlock(cierreStatus);
     const canExportExcel = canCurrentRole('exportExcel');
     const canClose = canCurrentRole('closeMonth');
     const cierres = getCierresMensuales().slice(0, 8);
@@ -6479,7 +6835,8 @@
           </div>
           ${cierreMensualState.message ? `<div class="form-message ${cierreMensualState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(cierreMensualState.message)}</div>` : ''}
           ${renderRolePermissionNotice('closeMonth', 'Cerrar mes queda reservado para Administrador.')}
-          <p class="notice ${cierre ? 'success-note' : ''}">${cierre ? `Período cerrado el ${escapeHtml(formatDateTime(cierre.fechaHoraCierre))}. Las ediciones posteriores quedan con advertencia clara.` : 'Para cerrar, primero debe existir una exportación Excel guardada para el mismo mes/año. Sin Excel previo, no hay cierre: aquí la caja no firma recibos invisibles.'}</p>
+          <p class="notice ${cierre ? 'success-note' : ''}">${cierre ? `Período cerrado el ${escapeHtml(formatDateTime(cierre.fechaHoraCierre))}. Las ediciones posteriores quedan con advertencia clara.` : 'Para cerrar, primero se valida que no existan saldos pendientes de Clientes ni Proveedores del período de origen. Luego debe existir una exportación Excel guardada para el mismo mes/año.'}</p>
+          ${renderCierrePeriodStatusBox(cierreStatus, lastExport)}
           <form class="period-form" data-cierre-form novalidate>
             <div class="form-grid compact-period-grid">
               <label class="form-field">
@@ -6498,8 +6855,8 @@
             <div class="import-summary-grid compact-summary">
               <div class="status-item"><strong>Excel previo</strong><span>${lastExport ? 'Sí' : 'No'}</span></div>
               <div class="status-item"><strong>Archivo</strong><span>${escapeHtml(lastExport?.nombreArchivo || '—')}</span></div>
-              <div class="status-item"><strong>Exportado</strong><span>${escapeHtml(formatDateTime(lastExport?.exportadoAt))}</span></div>
-              <div class="status-item"><strong>Estado cierre</strong><span>${cierre ? 'Cerrado' : 'Abierto'}</span></div>
+              <div class="status-item"><strong>Bloqueo</strong><span>${escapeHtml(getPeriodBlockingOrigin(cierreStatus))}</span></div>
+              <div class="status-item"><strong>Estado cierre</strong><span>${escapeHtml(cierreStatus.estado)}</span></div>
             </div>
             <div class="form-actions">
               <button type="submit" class="card-action" ${canClose && !cierre ? '' : 'disabled'}>Cerrar mes</button>
@@ -6632,9 +6989,19 @@
       return;
     }
 
+    const cierreStatus = buildPeriodClosingStatus(month, year);
+    if (hasPeriodClosingBlock(cierreStatus)) {
+      const origin = getPeriodBlockingOrigin(cierreStatus);
+      const detail = buildPeriodBlockingSummaryText(cierreStatus);
+      cierreMensualState.message = `No se puede cerrar ${getMonthLabel(month)} ${year} porque aún existen saldos pendientes vinculados a este período. Bloqueo: ${origin}.${detail ? `\n${detail}` : ''}`;
+      cierreMensualState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+
     const lastExport = getLastExcelExportForPeriod(month, year);
     if (!lastExport) {
-      cierreMensualState.message = `No se puede cerrar ${getMonthLabel(month)} ${year}: primero exporta Excel para ese mismo mes/año.`;
+      cierreMensualState.message = `${getMonthLabel(month)} ${year} ya está listo para cierre. Primero exporta Excel para ese mismo mes/año.`;
       cierreMensualState.messageType = 'error';
       renderRoute();
       return;
@@ -8353,6 +8720,15 @@ ${rowsXml}
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         handleCierreMensualSubmit(form);
+      });
+      form.querySelectorAll('select').forEach((select) => {
+        select.addEventListener('change', () => {
+          const { month, year } = getPeriodFromForm(form);
+          cierreMensualState.month = month;
+          cierreMensualState.year = year;
+          cierreMensualState.message = null;
+          renderRoute();
+        });
       });
     });
 
