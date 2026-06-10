@@ -2703,6 +2703,50 @@ textarea:disabled {
 }
 
 /* Post12 Listados Compactos — Etapa 1/2: tablas operativas */
+
+.operational-scroll-shell {
+  display: grid;
+  gap: 0;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.operational-top-scroll {
+  position: sticky;
+  top: calc(var(--topbar-height) + var(--safe-top) + 8px);
+  z-index: 8;
+  width: 100%;
+  max-width: 100%;
+  height: 18px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 18px 18px 0 0;
+  background: linear-gradient(180deg, #fffdf8, #fff5de);
+  box-shadow: 0 8px 18px rgba(17, 24, 39, 0.05);
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+}
+
+.operational-top-scroll-spacer {
+  height: 1px;
+  min-width: 100%;
+}
+
+.operational-scroll-shell .operational-table-wrap {
+  border-radius: 0 0 18px 18px;
+}
+
+.operational-scroll-shell.is-not-scrollable .operational-top-scroll {
+  display: none;
+}
+
+.operational-scroll-shell.is-not-scrollable .operational-table-wrap {
+  border-radius: 18px;
+}
+
 .operational-table-wrap {
   display: block;
   width: 100%;

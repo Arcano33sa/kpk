@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_16_2_post12_scroll_json_pwa';
+const CACHE_VERSION = 'v0_16_3_post12_scrollbar_superior_sticky';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

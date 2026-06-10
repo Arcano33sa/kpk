@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.16.2-post12-scroll-json-pwa';
+  const APP_VERSION = '0.16.3-post12-scrollbar-superior-sticky';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -327,6 +327,7 @@
   };
 
   let lastRenderedRoute = null;
+  let operationalScrollbarResizeHandler = null;
 
 
   let jsonBackupState = {
@@ -1528,6 +1529,7 @@
     }
 
     bindViewActions();
+    setupOperationalTopScrollbars();
     document.querySelector('#mainContent')?.focus({ preventScroll: true });
     if (preserveScroll) {
       const scheduleScrollRestore = window.requestAnimationFrame || ((callback) => window.setTimeout(callback, 0));
@@ -1535,6 +1537,68 @@
     } else {
       window.scrollTo({ top: 0, left: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
     }
+  }
+
+
+  function setupOperationalTopScrollbars() {
+    const shells = Array.from(viewRoot.querySelectorAll('[data-operational-scroll-shell]'));
+
+    if (operationalScrollbarResizeHandler) {
+      window.removeEventListener('resize', operationalScrollbarResizeHandler);
+      operationalScrollbarResizeHandler = null;
+    }
+
+    if (!shells.length) return;
+
+    const schedule = window.requestAnimationFrame || ((callback) => window.setTimeout(callback, 0));
+    const refreshers = shells.map((shell) => {
+      const topScroll = shell.querySelector('[data-operational-top-scroll]');
+      const spacer = shell.querySelector('[data-operational-top-spacer]');
+      const tableScroll = shell.querySelector('[data-operational-table-scroll]');
+      const table = tableScroll?.querySelector('table');
+
+      if (!topScroll || !spacer || !tableScroll || !table) return null;
+
+      let isSyncing = false;
+
+      const refresh = () => {
+        const width = Math.max(table.scrollWidth, table.offsetWidth, tableScroll.scrollWidth, tableScroll.clientWidth);
+        spacer.style.width = `${width}px`;
+        const canScroll = width > tableScroll.clientWidth + 2;
+        shell.classList.toggle('is-not-scrollable', !canScroll);
+
+        if (!canScroll) {
+          topScroll.scrollLeft = 0;
+          tableScroll.scrollLeft = 0;
+          return;
+        }
+
+        topScroll.scrollLeft = tableScroll.scrollLeft;
+      };
+
+      const syncFromTop = () => {
+        if (isSyncing) return;
+        isSyncing = true;
+        tableScroll.scrollLeft = topScroll.scrollLeft;
+        schedule(() => { isSyncing = false; });
+      };
+
+      const syncFromTable = () => {
+        if (isSyncing) return;
+        isSyncing = true;
+        topScroll.scrollLeft = tableScroll.scrollLeft;
+        schedule(() => { isSyncing = false; });
+      };
+
+      topScroll.addEventListener('scroll', syncFromTop, { passive: true });
+      tableScroll.addEventListener('scroll', syncFromTable, { passive: true });
+      refresh();
+      schedule(refresh);
+      return refresh;
+    }).filter(Boolean);
+
+    operationalScrollbarResizeHandler = () => refreshers.forEach((refresh) => refresh());
+    window.addEventListener('resize', operationalScrollbarResizeHandler, { passive: true });
   }
 
   function renderHome() {
@@ -4392,8 +4456,10 @@
     }
 
     return `
-      <div class="operational-table-wrap cobros-list" role="region" aria-label="Cobros de clientes registrados" tabindex="0">
-        <table class="operational-table operational-table-cobros">
+      <div class="operational-scroll-shell cobros-scroll-shell" data-operational-scroll-shell>
+        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
+        <div class="operational-table-wrap cobros-list" role="region" aria-label="Cobros de clientes registrados" tabindex="0" data-operational-table-scroll>
+          <table class="operational-table operational-table-cobros">
           <thead>
             <tr>
               <th>Fecha</th>
@@ -4409,7 +4475,8 @@
           <tbody>
             ${cobros.map((cobro) => renderCobroCard(cobro)).join('')}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     `;
   }
@@ -4806,8 +4873,10 @@
     }
 
     return `
-      <div class="operational-table-wrap compras-list" role="region" aria-label="Compras y deudas registradas" tabindex="0">
-        <table class="operational-table operational-table-compras">
+      <div class="operational-scroll-shell compras-scroll-shell" data-operational-scroll-shell>
+        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
+        <div class="operational-table-wrap compras-list" role="region" aria-label="Compras y deudas registradas" tabindex="0" data-operational-table-scroll>
+          <table class="operational-table operational-table-compras">
           <thead>
             <tr>
               <th>Factura / referencia</th>
@@ -4824,7 +4893,8 @@
           <tbody>
             ${compras.map((compra) => renderCompraProveedorCard(compra)).join('')}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     `;
   }
@@ -5289,8 +5359,10 @@
     }
 
     return `
-      <div class="operational-table-wrap pagos-list" role="region" aria-label="Pagos a proveedores registrados" tabindex="0">
-        <table class="operational-table operational-table-pagos">
+      <div class="operational-scroll-shell pagos-scroll-shell" data-operational-scroll-shell>
+        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
+        <div class="operational-table-wrap pagos-list" role="region" aria-label="Pagos a proveedores registrados" tabindex="0" data-operational-table-scroll>
+          <table class="operational-table operational-table-pagos">
           <thead>
             <tr>
               <th>Fecha</th>
@@ -5306,7 +5378,8 @@
           <tbody>
             ${pagos.map((pago) => renderPagoProveedorCard(pago)).join('')}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     `;
   }
@@ -5693,8 +5766,10 @@
     }
 
     return `
-      <div class="operational-table-wrap gastos-list" role="region" aria-label="Gastos registrados" tabindex="0">
-        <table class="operational-table operational-table-gastos">
+      <div class="operational-scroll-shell gastos-scroll-shell" data-operational-scroll-shell>
+        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
+        <div class="operational-table-wrap gastos-list" role="region" aria-label="Gastos registrados" tabindex="0" data-operational-table-scroll>
+          <table class="operational-table operational-table-gastos">
           <thead>
             <tr>
               <th>Fecha</th>
@@ -5709,7 +5784,8 @@
           <tbody>
             ${gastos.map((gasto) => renderGastoCard(gasto)).join('')}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     `;
   }

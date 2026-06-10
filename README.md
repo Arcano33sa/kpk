@@ -195,3 +195,9 @@ Bloques principales:
 - Cobros, Pagos a proveedores y Gastos muestran Banco únicamente cuando el método seleccionado es Transferencia o Tarjeta.
 - Banco no es obligatorio para Efectivo u otros métodos; si Transferencia/Tarjeta no tiene bancos disponibles, la app muestra aviso claro para agregarlos en Catálogos.
 - Se conserva compatibilidad con JSON, Excel, cierre mensual, Service Worker y PWA.
+
+
+## 0.16.3 — Scrollbar superior sticky
+
+- Se agregó scrollbar horizontal superior sticky sincronizado para Compras, Pagos, Cobros y Gastos.
+- Se actualizó Service Worker/cache para detección PWA de nueva versión.
