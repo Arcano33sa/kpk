@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.8-post12-compactos-resumen-catalogos-cierres';
+  const APP_VERSION = '0.17.10-post12-ventasoc-subtotal-descuento-total';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -16,7 +16,7 @@
       title: 'Resumen / Tablero',
       short: 'Resumen',
       description: 'Tablero operativo con indicadores, filtros, cartera, mora, alertas y listados útiles para controlar el período.',
-      placeholder: 'Resumen / Tablero ya está activo con filtros, venta neta, cobros, proveedores, gastos, mora y alertas.'
+      placeholder: 'Resumen / Tablero ya está activo con filtros, total de ventas, cobros, proveedores, gastos, mora y alertas.'
     },
     {
       id: 'mora',
@@ -31,8 +31,8 @@
       icon: 'OC',
       title: 'Ventas / OC',
       short: 'Ventas',
-      description: 'Registro de órdenes de compra con venta neta, vencimiento, saldo por cobrar y estado automático consistente.',
-      placeholder: 'Ventas / OC permite crear, editar, anular, calcular venta neta y mantener saldo/estado conectado con Cobros y Mora.'
+      description: 'Registro de órdenes de compra con subtotal, descuento, total, vencimiento, saldo por cobrar y estado automático consistente.',
+      placeholder: 'Ventas / OC permite crear, editar, anular, calcular total y mantener saldo/estado conectado con Cobros y Mora.'
     },
     {
       id: 'cobros',
@@ -671,31 +671,46 @@
     return safeDate < todayInputValue();
   }
 
-  function getVentaCalculations(record) {
-    const montoOc = parseMoney(record.montoOc);
-    const noVa = parseMoney(record.noVa);
-    const descuento = parseMoney(record.descuento);
-    const descuentoNoVa = parseMoney(record.descuentoNoVa);
-    const totalCobrado = parseMoney(record.totalCobrado);
+  function getVentaSubtotalBase(record) {
+    const raw = isPlainObject(record) ? record : {};
+    const hasExplicitSubtotal = raw.subtotal !== undefined && raw.subtotal !== null && raw.subtotal !== '';
+    const explicitSubtotal = parseMoney(raw.subtotal);
+    if (hasExplicitSubtotal && !Number.isNaN(explicitSubtotal)) return explicitSubtotal;
+
+    const montoOc = parseMoney(raw.montoOc);
+    const noVaLegacy = parseMoney(raw.noVa);
+    const descuentoNoVaLegacy = parseMoney(raw.descuentoNoVa);
     const safeMontoOc = Number.isNaN(montoOc) ? 0 : montoOc;
-    const safeNoVa = Number.isNaN(noVa) ? 0 : noVa;
+    const safeNoVaLegacy = Number.isNaN(noVaLegacy) ? 0 : noVaLegacy;
+    const safeDescuentoNoVaLegacy = Number.isNaN(descuentoNoVaLegacy) ? 0 : descuentoNoVaLegacy;
+    const hasLegacyReductions = safeNoVaLegacy > 0 || safeDescuentoNoVaLegacy > 0;
+    return hasLegacyReductions ? roundMoney(Math.max(safeMontoOc - safeNoVaLegacy - safeDescuentoNoVaLegacy, 0)) : safeMontoOc;
+  }
+
+  function getVentaCalculations(record) {
+    const subtotal = getVentaSubtotalBase(record);
+    const descuento = parseMoney(record.descuento);
+    const totalCobrado = parseMoney(record.totalCobrado);
+    const safeSubtotal = Number.isNaN(subtotal) ? 0 : subtotal;
     const safeDescuento = Number.isNaN(descuento) ? 0 : descuento;
-    const safeDescuentoNoVa = Number.isNaN(descuentoNoVa) ? 0 : descuentoNoVa;
     const safeTotalCobrado = Number.isNaN(totalCobrado) ? 0 : totalCobrado;
-    const ventaNetaOriginal = roundMoney(safeMontoOc - safeNoVa - safeDescuento - safeDescuentoNoVa);
+    const ventaNetaOriginal = roundMoney(safeSubtotal - safeDescuento);
     const totalAjustes = Math.min(calculateTotalAjustesForVenta(record), Math.max(ventaNetaOriginal, 0));
     const ventaNetaAjustada = roundMoney(Math.max(ventaNetaOriginal - totalAjustes, 0));
     const saldoPorCobrar = roundMoney(Math.max(ventaNetaAjustada - safeTotalCobrado, 0));
 
     return {
-      montoOc: safeMontoOc,
-      noVa: safeNoVa,
+      subtotal: safeSubtotal,
+      montoOc: safeSubtotal,
+      noVa: 0,
       descuento: safeDescuento,
-      descuentoNoVa: safeDescuentoNoVa,
+      descuentoNoVa: 0,
       totalCobrado: safeTotalCobrado,
       ventaNetaOriginal,
+      total: ventaNetaOriginal,
       totalAjustes,
       ventaNetaAjustada,
+      totalTrasAjustes: ventaNetaAjustada,
       ventaNeta: ventaNetaAjustada,
       saldoPorCobrar
     };
@@ -765,12 +780,19 @@
     if (typeof source === 'string') {
       const trimmed = source.trim();
       if (!trimmed) return [];
-      try {
-        source = JSON.parse(trimmed);
-      } catch (_) {
+      const looksLikeJsonCollection = /^[\[{]/u.test(trimmed);
+      if (looksLikeJsonCollection) {
+        try {
+          source = JSON.parse(trimmed);
+        } catch (_) {
+          source = normalizeFacturasVentaFromText(trimmed);
+        }
+      } else {
         source = normalizeFacturasVentaFromText(trimmed);
       }
     }
+    if (typeof source === 'number') source = normalizeFacturasVentaFromText(String(source));
+    if (typeof source === 'string') source = normalizeFacturasVentaFromText(source);
     if (isPlainObject(source)) source = [source];
     if (!Array.isArray(source)) return [];
     const seen = new Set();
@@ -889,10 +911,14 @@
       fechaOc,
       diasCredito: Number.isNaN(diasCredito) ? 0 : diasCredito,
       fechaVencimiento,
-      montoOc: parseMoney(raw.montoOc),
+      subtotal: getVentaSubtotalBase(raw),
+      montoOc: getVentaSubtotalBase(raw),
+      montoOcLegacy: parseMoney(raw.montoOc),
       noVa: parseMoney(raw.noVa),
+      noVaLegacy: parseMoney(raw.noVa),
       descuento: parseMoney(raw.descuento),
       descuentoNoVa: parseMoney(raw.descuentoNoVa),
+      descuentoNoVaLegacy: parseMoney(raw.descuentoNoVa),
       totalCobrado: parseMoney(raw.totalCobrado),
       ajustes: normalizeVentaAjustesList(raw.ajustes || raw.ajustesCliente || raw.ajustesClientes || raw.notasCredito || raw.notas || []),
       facturas: normalizeVentaFacturasFromRaw(raw),
@@ -906,15 +932,21 @@
     const calculations = getVentaCalculations(base);
     return {
       ...base,
-      montoOc: Number.isNaN(base.montoOc) ? 0 : base.montoOc,
+      subtotal: calculations.subtotal,
+      montoOc: calculations.subtotal,
+      montoOcLegacy: Number.isNaN(base.montoOcLegacy) ? calculations.subtotal : base.montoOcLegacy,
       noVa: Number.isNaN(base.noVa) ? 0 : base.noVa,
-      descuento: Number.isNaN(base.descuento) ? 0 : base.descuento,
+      noVaLegacy: Number.isNaN(base.noVaLegacy) ? 0 : base.noVaLegacy,
+      descuento: calculations.descuento,
       descuentoNoVa: Number.isNaN(base.descuentoNoVa) ? 0 : base.descuentoNoVa,
+      descuentoNoVaLegacy: Number.isNaN(base.descuentoNoVaLegacy) ? 0 : base.descuentoNoVaLegacy,
       totalCobrado: calculations.totalCobrado,
       ajustes: normalizeVentaAjustesList(base.ajustes),
       totalAjustes: calculations.totalAjustes,
       ventaNetaOriginal: calculations.ventaNetaOriginal,
+      total: calculations.ventaNetaOriginal,
       ventaNetaAjustada: calculations.ventaNetaAjustada,
+      totalTrasAjustes: calculations.ventaNetaAjustada,
       facturas: normalizeFacturasVentaList(base.facturas),
       requiereEnvio: Boolean(base.requiereEnvio),
       logistica: normalizeLogisticaVentaRecord(base.logistica),
@@ -2148,8 +2180,11 @@
         </form>
 
         <section class="metric-grid resumen-metrics" aria-label="Indicadores principales">
-          <article class="metric-card"><span>Venta neta ajustada</span><strong>${escapeHtml(formatMoney(summary.totalVendido))}</strong><small>Original ${escapeHtml(formatMoney(summary.totalVendidoOriginal || 0))}</small></article>
+          <article class="metric-card"><span>Subtotal ventas</span><strong>${escapeHtml(formatMoney(summary.totalSubtotalVentas || summary.totalVendidoOriginal || 0))}</strong><small>Antes de descuento</small></article>
+          <article class="metric-card"><span>Descuentos</span><strong>${escapeHtml(formatMoney(summary.totalDescuentosVentas || 0))}</strong><small>Aplicados a OC</small></article>
+          <article class="metric-card"><span>Total ventas</span><strong>${escapeHtml(formatMoney(summary.totalVendidoOriginal || 0))}</strong><small>Subtotal - descuento</small></article>
           <article class="metric-card"><span>Ajustes clientes</span><strong>${summary.totalAjustesClientes > 0 ? '-' : ''}${escapeHtml(formatMoney(summary.totalAjustesClientes || 0))}</strong><small>No son cobros</small></article>
+          <article class="metric-card"><span>Total tras ajustes</span><strong>${escapeHtml(formatMoney(summary.totalVendido))}</strong><small>Total - ajustes</small></article>
           <article class="metric-card"><span>Total cobrado clientes</span><strong>${escapeHtml(formatMoney(summary.totalCobradoClientes))}</strong><small>Fecha real de cobro</small></article>
           <article class="metric-card"><span>Saldo por cobrar</span><strong>${escapeHtml(formatMoney(summary.saldoPorCobrar))}</strong><small>Cartera general</small></article>
           <article class="metric-card"><span>Compras ajustadas</span><strong>${escapeHtml(formatMoney(summary.totalComprasProveedores))}</strong><small>Original ${escapeHtml(formatMoney(summary.totalComprasOriginal || 0))}</small></article>
@@ -2265,6 +2300,8 @@
     ];
     const alertas = buildAlertasList({ clientesMora, proveedoresMora, ventasProximas, comprasProximas, saldosAltosClientes, saldosAltosProveedores, parciales });
 
+    const totalSubtotalVentas = sumMoney(ventasPeriodo, (venta) => venta.subtotal);
+    const totalDescuentosVentas = sumMoney(ventasPeriodo, (venta) => venta.descuento);
     const totalVendidoOriginal = sumMoney(ventasPeriodo, (venta) => venta.ventaNetaOriginal);
     const totalAjustesClientes = sumMoney(ventasPeriodo, (venta) => venta.totalAjustes);
     const totalVendido = sumMoney(ventasPeriodo, (venta) => venta.ventaNetaAjustada);
@@ -2292,6 +2329,8 @@
       cobrosPeriodo,
       pagosPeriodo,
       gastosPeriodo,
+      totalSubtotalVentas,
+      totalDescuentosVentas,
       totalVendidoOriginal,
       totalAjustesClientes,
       totalVendido,
@@ -3314,6 +3353,8 @@
       fechaVencimiento: venta.fechaVencimiento,
       diasMora,
       rango: getMoraRangeLabel(diasMora),
+      subtotal: venta.subtotal,
+      descuento: venta.descuento,
       ventaNetaOriginal: venta.ventaNetaOriginal,
       totalAjustes: venta.totalAjustes,
       ventaNetaAjustada: venta.ventaNetaAjustada,
@@ -3666,9 +3707,10 @@
         <div class="mora-detail-grid compact-grid">
           <div><span>Cliente</span><strong>${escapeHtml(cliente?.nombre || 'Cliente no encontrado')}</strong></div>
           <div><span>Sucursal</span><strong>${escapeHtml(sucursal?.nombre || 'Sucursal no encontrada')}</strong></div>
-          <div><span>Original</span><strong>${escapeHtml(formatMoney(venta.ventaNetaOriginal))}</strong></div>
+          <div><span>Subtotal</span><strong>${escapeHtml(formatMoney(venta.subtotal))}</strong></div>
+          <div><span>Descuento</span><strong>${escapeHtml(formatMoney(venta.descuento))}</strong></div>
+          <div><span>Total</span><strong>${escapeHtml(formatMoney(venta.ventaNetaOriginal))}</strong></div>
           <div><span>Ajustes</span><strong>${venta.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(venta.totalAjustes))}</strong></div>
-          <div><span>Total ajustado</span><strong>${escapeHtml(formatMoney(venta.ventaNetaAjustada))}</strong></div>
           <div><span>Cobrado</span><strong>${escapeHtml(formatMoney(venta.totalCobrado))}</strong></div>
           <div><span>Saldo actual</span><strong>${escapeHtml(formatMoney(venta.saldoPorCobrar))}</strong></div>
           <div><span>Facturas</span><strong>${normalizeFacturasVentaList(venta.facturas).length}</strong></div>
@@ -3751,9 +3793,10 @@
           { label: 'Cliente', value: cliente?.nombre || 'Cliente no encontrado' },
           { label: 'Sucursal', value: sucursal?.nombre || 'Sucursal no encontrada' },
           { label: 'Estado actual', value: venta.estado },
-          { label: 'Venta neta original', value: formatMoney(venta.ventaNetaOriginal) },
+          { label: 'Subtotal', value: formatMoney(venta.subtotal) },
+          { label: 'Descuento', value: formatMoney(venta.descuento) },
+          { label: 'Total', value: formatMoney(venta.ventaNetaOriginal) },
           { label: 'Ajustes / notas', value: `-${formatMoney(venta.totalAjustes)}` },
-          { label: 'Venta neta ajustada', value: formatMoney(venta.ventaNetaAjustada) },
           { label: 'Total cobrado', value: formatMoney(venta.totalCobrado) },
           { label: 'Saldo actual', value: formatMoney(venta.saldoPorCobrar) },
           { label: 'Facturas', value: formatFacturasVentaResumen(venta.facturas) }
@@ -3786,7 +3829,7 @@
       {
         date: formatDateTime(venta.createdAt),
         title: 'OC creada',
-        detail: `Venta neta original ${formatMoney(venta.ventaNetaOriginal)}. Total ajustado ${formatMoney(venta.ventaNetaAjustada)}. Vence el ${formatDate(venta.fechaVencimiento)}.`,
+        detail: `Subtotal ${formatMoney(venta.subtotal)}. Descuento ${formatMoney(venta.descuento)}. Total ${formatMoney(venta.ventaNetaOriginal)}. Vence el ${formatDate(venta.fechaVencimiento)}.`,
         statusClass: 'is-info'
       }
     ];
@@ -4240,13 +4283,13 @@
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Ventas / OC</h1>
-          <p class="lead">Registra órdenes de compra con venta neta original, ajustes posteriores, saldo real por cobrar y trazabilidad completa sin crear cobros falsos ni duplicar documentos.</p>
+          <p class="lead">Registra órdenes de compra con Subtotal - Descuento = Total, ajustes posteriores, saldo real por cobrar y trazabilidad completa sin crear cobros falsos ni duplicar documentos.</p>
         </div>
         <aside class="hero-status" aria-label="Resumen de ventas y OC">
           <h3>Totales básicos</h3>
           <div class="status-grid">
             <div class="status-item"><strong>OC activas</strong><span>${totals.activas}</span></div>
-            <div class="status-item"><strong>Total ajustado</strong><span>${escapeHtml(formatMoney(totals.ventaNetaAjustada))}</span></div>
+            <div class="status-item"><strong>Tras ajustes</strong><span>${escapeHtml(formatMoney(totals.ventaNetaAjustada))}</span></div>
             <div class="status-item"><strong>Saldo cobrar</strong><span>${escapeHtml(formatMoney(totals.saldoPorCobrar))}</span></div>
             <div class="status-item"><strong>Vencidas</strong><span>${totals.vencidas}</span></div>
           </div>
@@ -4259,9 +4302,11 @@
         ${missingCatalogs ? renderVentasCatalogWarning(clientesActivos, sucursalesActivas) : ''}
 
         <section class="metric-grid" aria-label="Resumen operativo de ventas">
-          <article class="metric-card"><span>Venta neta original</span><strong>${escapeHtml(formatMoney(totals.ventaNetaOriginal))}</strong></article>
+          <article class="metric-card"><span>Subtotal</span><strong>${escapeHtml(formatMoney(totals.subtotal))}</strong></article>
+          <article class="metric-card"><span>Descuento</span><strong>${escapeHtml(formatMoney(totals.descuento))}</strong></article>
+          <article class="metric-card"><span>Total</span><strong>${escapeHtml(formatMoney(totals.ventaNetaOriginal))}</strong></article>
           <article class="metric-card"><span>Ajustes aplicados</span><strong>${totals.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(totals.totalAjustes))}</strong></article>
-          <article class="metric-card"><span>Total ajustado</span><strong>${escapeHtml(formatMoney(totals.ventaNetaAjustada))}</strong></article>
+          
           <article class="metric-card"><span>Total cobrado</span><strong>${escapeHtml(formatMoney(totals.totalCobrado))}</strong></article>
           <article class="metric-card"><span>Saldo por cobrar</span><strong>${escapeHtml(formatMoney(totals.saldoPorCobrar))}</strong></article>
           <article class="metric-card"><span>Pendientes</span><strong>${totals.pendientes}</strong></article>
@@ -4278,7 +4323,7 @@
                   <h2>Crear venta / OC</h2>
                 </div>
               </div>
-              <p class="muted-text">La venta base conserva su monto histórico; los descuentos posteriores se manejan como ajustes ligados a la OC.</p>
+              <p class="muted-text">La venta se calcula como Subtotal - Descuento = Total. Los ajustes posteriores siguen ligados a la OC y no son cobros.</p>
               ${renderVentaForm(null, clientesActivos, sucursalesActivas, missingCatalogs, ventasState.quickCapture)}
             </article>
 
@@ -4398,9 +4443,10 @@
     return `
       <strong>${escapeHtml(venta.numeroDocumento || 'OC sin número')}</strong>
       <div class="formula-grid">
-        <span>Venta neta original</span><b>${escapeHtml(formatMoney(venta.ventaNetaOriginal))}</b>
+        <span>Subtotal</span><b>${escapeHtml(formatMoney(venta.subtotal))}</b>
+        <span>Descuento</span><b>${escapeHtml(formatMoney(venta.descuento))}</b>
+        <span>Total</span><b>${escapeHtml(formatMoney(venta.ventaNetaOriginal))}</b>
         <span>Ajustes actuales</span><b>${venta.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(venta.totalAjustes))}</b>
-        <span>Total ajustado</span><b>${escapeHtml(formatMoney(venta.ventaNetaAjustada))}</b>
         <span>Cobrado</span><b>${escapeHtml(formatMoney(venta.totalCobrado))}</b>
         <span>Saldo disponible</span><b>${escapeHtml(formatMoney(venta.saldoPorCobrar))}</b>
       </div>
@@ -4547,10 +4593,9 @@
     const diasCredito = record ? (record.diasCredito ?? '') : (draftDias !== '' ? draftDias : (selectedClienteId ? selectedTerms.diasCredito : ''));
     const fechaVencimiento = record?.fechaVencimiento || toDateInputValue(draft.fechaVencimiento) || addDaysToDate(fechaOc, Number(diasCredito) || 0);
     const previewSource = record || {
-      montoOc: draft.montoOc || 0,
-      noVa: draft.noVa || 0,
+      subtotal: draft.subtotal || draft.montoOc || 0,
+      montoOc: draft.subtotal || draft.montoOc || 0,
       descuento: draft.descuento || 0,
-      descuentoNoVa: draft.descuentoNoVa || 0,
       totalCobrado: 0
     };
     const calculations = getVentaCalculations(previewSource);
@@ -4592,29 +4637,21 @@
             <input type="date" name="fechaVencimiento" value="${escapeHtml(fechaVencimiento)}" data-venta-due />
           </label>
           <label class="form-field">
-            <span>Monto OC C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="montoOc" value="${escapeHtml(formatNumberInput(record ? record.montoOc : draft.montoOc))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-venta-calc />
-          </label>
-          <label class="form-field">
-            <span>NO VA C$</span>
-            <input type="number" name="noVa" value="${escapeHtml(formatNumberInput(record ? record.noVa : draft.noVa))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" data-venta-calc />
+            <span>Subtotal C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <input type="number" name="subtotal" value="${escapeHtml(formatNumberInput(record ? record.subtotal : (draft.subtotal || draft.montoOc)))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-venta-calc />
           </label>
           <label class="form-field">
             <span>Descuento C$</span>
             <input type="number" name="descuento" value="${escapeHtml(formatNumberInput(record ? record.descuento : draft.descuento))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" data-venta-calc />
           </label>
-          <label class="form-field">
-            <span>Descuento NO VA C$</span>
-            <input type="number" name="descuentoNoVa" value="${escapeHtml(formatNumberInput(record ? record.descuentoNoVa : draft.descuentoNoVa))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" data-venta-calc />
-          </label>
         </div>
 
         <div class="formula-card" aria-live="polite">
-          <strong>Venta neta original = Monto OC - NO VA - Descuento - Descuento NO VA</strong>
+          <strong>Subtotal - Descuento = Total</strong>
           <div class="formula-grid">
-            <span>Venta neta original</span><b data-venta-preview-original>${escapeHtml(formatMoney(calculations.ventaNetaOriginal))}</b>
+            <span>Total</span><b data-venta-preview-original>${escapeHtml(formatMoney(calculations.ventaNetaOriginal))}</b>
             <span>Ajustes / notas</span><b data-venta-preview-ajustes>${calculations.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(calculations.totalAjustes))}</b>
-            <span>Total ajustado</span><b data-venta-preview-neto>${escapeHtml(formatMoney(calculations.ventaNetaAjustada))}</b>
+            <span>Total tras ajustes</span><b data-venta-preview-neto>${escapeHtml(formatMoney(calculations.ventaNetaAjustada))}</b>
             <span>Total cobrado</span><b data-venta-preview-cobrado>${escapeHtml(formatMoney(record?.totalCobrado || 0))}</b>
             <span>Saldo por cobrar</span><b data-venta-preview-saldo>${escapeHtml(formatMoney(calculations.saldoPorCobrar))}</b>
           </div>
@@ -4665,12 +4702,13 @@
       ariaLabel: groupLabel ? `OC registradas de ${groupLabel}` : 'OC registradas',
       tableClass: 'operational-table-ventas',
       headers: `
-        <th>OC / doc.</th>
+        <th>OC</th>
         <th>Fecha</th>
         <th>Vence</th>
-        <th class="amount-cell">Original</th>
+        <th class="amount-cell">Subtotal</th>
+        <th class="amount-cell">Descuento</th>
+        <th class="amount-cell">Total</th>
         <th class="amount-cell">Ajustes</th>
-        <th class="amount-cell">Total ajustado</th>
         <th class="amount-cell">Cobrado</th>
         <th class="amount-cell">Saldo</th>
         <th>Estado</th>
@@ -4683,7 +4721,8 @@
         <col style="width: 92px;">
         <col style="width: 118px;">
         <col style="width: 118px;">
-        <col style="width: 132px;">
+        <col style="width: 118px;">
+        <col style="width: 118px;">
         <col style="width: 118px;">
         <col style="width: 118px;">
         <col style="width: 92px;">
@@ -4698,15 +4737,16 @@
     const sucursal = getCatalogRecordById('sucursales', record.sucursalId);
     const estadoClass = getEstadoClass(record.estado);
     const facturas = normalizeFacturasVentaList(record.facturas);
-    const ajustesRow = renderVentaAjustesCompactRow(record, 10);
+    const ajustesRow = renderVentaAjustesCompactRow(record, 11);
     return `
       <tr class="compact-record-row venta-row ${record.activo ? 'is-active' : 'is-inactive'}">
-        <td data-label="OC / doc."><span class="compact-primary">${escapeHtml(record.numeroDocumento || 'Sin número')}</span>${facturas.length ? `<small>Facturas: ${escapeHtml(formatFacturasVentaResumen(facturas))}</small>` : ''}${record.requiereEnvio ? `<small>${escapeHtml(formatLogisticaVentaResumen(record))}</small>` : ''}</td>
+        <td data-label="OC"><span class="compact-primary">${escapeHtml(record.numeroDocumento || 'Sin número')}</span>${facturas.length ? `<small>Facturas: ${escapeHtml(formatFacturasVentaResumen(facturas))}</small>` : ''}${record.requiereEnvio ? `<small>${escapeHtml(formatLogisticaVentaResumen(record))}</small>` : ''}</td>
         <td data-label="Fecha"><span>${escapeHtml(formatDate(record.fechaOc))}</span></td>
         <td data-label="Vence"><span>${escapeHtml(formatDate(record.fechaVencimiento))}</span></td>
-        <td data-label="Original" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.ventaNetaOriginal))}</span></td>
+        <td data-label="Subtotal" class="amount-cell"><span>${escapeHtml(formatMoney(record.subtotal))}</span></td>
+        <td data-label="Descuento" class="amount-cell"><span>${escapeHtml(formatMoney(record.descuento))}</span></td>
+        <td data-label="Total" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.ventaNetaOriginal))}</span></td>
         <td data-label="Ajustes" class="amount-cell"><span>${record.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(record.totalAjustes))}</span></td>
-        <td data-label="Total ajustado" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.ventaNetaAjustada))}</span></td>
         <td data-label="Cobrado" class="amount-cell"><span>${escapeHtml(formatMoney(record.totalCobrado))}</span></td>
         <td data-label="Saldo" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.saldoPorCobrar))}</span></td>
         <td data-label="Estado"><span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span></td>
@@ -4765,6 +4805,8 @@
         return totals;
       }
       totals.activas += 1;
+      totals.subtotal = roundMoney(totals.subtotal + venta.subtotal);
+      totals.descuento = roundMoney(totals.descuento + venta.descuento);
       totals.ventaNetaOriginal = roundMoney(totals.ventaNetaOriginal + venta.ventaNetaOriginal);
       totals.totalAjustes = roundMoney(totals.totalAjustes + venta.totalAjustes);
       totals.ventaNetaAjustada = roundMoney(totals.ventaNetaAjustada + venta.ventaNetaAjustada);
@@ -4775,7 +4817,7 @@
       if (venta.estado === 'Vencido') totals.vencidas += 1;
       if (venta.estado === 'Pagado') totals.pagadas += 1;
       return totals;
-    }, { activas: 0, anuladas: 0, pendientes: 0, vencidas: 0, pagadas: 0, ventaNetaOriginal: 0, totalAjustes: 0, ventaNetaAjustada: 0, ventaNeta: 0, totalCobrado: 0, saldoPorCobrar: 0 });
+    }, { activas: 0, anuladas: 0, pendientes: 0, vencidas: 0, pagadas: 0, subtotal: 0, descuento: 0, ventaNetaOriginal: 0, totalAjustes: 0, ventaNetaAjustada: 0, ventaNeta: 0, totalCobrado: 0, saldoPorCobrar: 0 });
   }
 
   function buildVentaFromForm(form, existingRecord) {
@@ -4797,10 +4839,11 @@
       fechaOc,
       diasCredito,
       fechaVencimiento,
-      montoOc: parseMoney(formData.get('montoOc')),
-      noVa: parseMoney(formData.get('noVa')),
+      subtotal: parseMoney(formData.get('subtotal') ?? formData.get('montoOc')),
+      montoOc: parseMoney(formData.get('subtotal') ?? formData.get('montoOc')),
+      noVa: existingRecord?.noVa || 0,
       descuento: parseMoney(formData.get('descuento')),
-      descuentoNoVa: parseMoney(formData.get('descuentoNoVa')),
+      descuentoNoVa: existingRecord?.descuentoNoVa || 0,
       totalCobrado: existingRecord?.totalCobrado || 0,
       ajustes: normalizeVentaAjustesList(existingRecord?.ajustes || []),
       facturas: syncFacturaRowsToHidden(form),
@@ -4821,14 +4864,20 @@
     return {
       ...base,
       diasCredito: Number.isNaN(base.diasCredito) ? 0 : base.diasCredito,
-      montoOc: Number.isNaN(base.montoOc) ? 0 : base.montoOc,
+      subtotal: calculations.subtotal,
+      montoOc: calculations.subtotal,
+      montoOcLegacy: Number.isNaN(base.montoOcLegacy) ? calculations.subtotal : base.montoOcLegacy,
       noVa: Number.isNaN(base.noVa) ? 0 : base.noVa,
-      descuento: Number.isNaN(base.descuento) ? 0 : base.descuento,
+      noVaLegacy: Number.isNaN(base.noVaLegacy) ? 0 : base.noVaLegacy,
+      descuento: calculations.descuento,
       descuentoNoVa: Number.isNaN(base.descuentoNoVa) ? 0 : base.descuentoNoVa,
+      descuentoNoVaLegacy: Number.isNaN(base.descuentoNoVaLegacy) ? 0 : base.descuentoNoVaLegacy,
       ajustes: normalizeVentaAjustesList(base.ajustes),
       totalAjustes: calculations.totalAjustes,
       ventaNetaOriginal: calculations.ventaNetaOriginal,
+      total: calculations.ventaNetaOriginal,
       ventaNetaAjustada: calculations.ventaNetaAjustada,
+      totalTrasAjustes: calculations.ventaNetaAjustada,
       facturas: normalizeFacturasVentaList(base.facturas),
       requiereEnvio: Boolean(base.requiereEnvio),
       logistica: normalizeLogisticaVentaRecord(base.logistica),
@@ -4844,20 +4893,18 @@
     if (!record.clienteId || !getActiveCatalogRecords('clientes').some((cliente) => cliente.id === record.clienteId)) return 'Selecciona un cliente activo desde Catálogos.';
     if (!record.sucursalId || !getActiveCatalogRecords('sucursales').some((sucursal) => sucursal.id === record.sucursalId)) return 'Selecciona una sucursal activa desde Catálogos.';
     if (!record.fechaOc) return 'La fecha OC es obligatoria.';
-    if (Number.isNaN(parseMoney(record.montoOc)) || record.montoOc <= 0) return 'Monto OC debe ser un número mayor que cero.';
+    if (Number.isNaN(parseMoney(record.subtotal)) || record.subtotal <= 0) return 'Subtotal debe ser un número mayor que cero.';
     if (Number.isNaN(parsePositiveInteger(record.diasCredito))) return 'Días de crédito debe ser cero o un número entero positivo.';
 
     const numericFields = [
-      ['NO VA', record.noVa],
-      ['Descuento', record.descuento],
-      ['Descuento NO VA', record.descuentoNoVa]
+      ['Descuento', record.descuento]
     ];
 
     const invalid = numericFields.find(([, value]) => Number.isNaN(parseMoney(value)) || Number(value) < 0);
     if (invalid) return `${invalid[0]} debe ser cero o un número positivo.`;
 
-    if (record.ventaNetaOriginal < 0) return 'La venta neta original no puede ser negativa. Revisa NO VA y descuentos.';
-    if ((record.noVa + record.descuento + record.descuentoNoVa) > record.montoOc) return 'NO VA y descuentos no pueden superar el Monto OC.';
+    if (record.ventaNetaOriginal < 0) return 'El Total no puede ser negativo. Revisa Subtotal y Descuento.';
+    if (record.descuento > record.subtotal) return 'Descuento no puede superar el Subtotal.';
     if (record.totalCobrado > record.ventaNetaAjustada) return 'El total ajustado no puede quedar menor que el total ya cobrado.';
     return '';
   }
@@ -4889,10 +4936,9 @@
       fechaOc,
       diasCredito: Number.isNaN(diasCredito) ? 0 : diasCredito,
       fechaVencimiento: toDateInputValue(formData.get('fechaVencimiento')) || addDaysToDate(fechaOc, Number.isNaN(diasCredito) ? 0 : diasCredito),
-      montoOc: cleanText(formData.get('montoOc')),
-      noVa: cleanText(formData.get('noVa')),
+      subtotal: cleanText(formData.get('subtotal') ?? formData.get('montoOc')),
+      montoOc: cleanText(formData.get('subtotal') ?? formData.get('montoOc')),
       descuento: cleanText(formData.get('descuento')),
-      descuentoNoVa: cleanText(formData.get('descuentoNoVa')),
       facturas: syncFacturaRowsToHidden(form),
       requiereEnvio: formData.get('requiereEnvio') === '1',
       logistica: normalizeLogisticaVentaRecord({
@@ -4910,7 +4956,6 @@
     const saved = normalizeVentaRecord(record);
     return {
       clienteId: saved.clienteId,
-      sucursalId: saved.sucursalId,
       fechaOc: saved.fechaOc || todayInputValue()
     };
   }
@@ -5097,7 +5142,7 @@
     } else {
       appData.ventas = [newRecord, ...records];
       ventasState.quickCapture = buildVentaQuickCaptureFromSavedRecord(newRecord);
-      ventasState.message = `OC ${newRecord.numeroDocumento} guardada. Lista la siguiente OC del mismo cliente, sucursal y fecha.`;
+      ventasState.message = `OC ${newRecord.numeroDocumento} guardada. Cliente y Fecha OC quedan listos; selecciona la nueva sucursal para continuar.`;
     }
 
     ventasState.editingId = null;
@@ -5244,10 +5289,9 @@
 
     const formData = new FormData(form);
     const calculations = getVentaCalculations({
-      montoOc: formData.get('montoOc'),
-      noVa: formData.get('noVa'),
+      subtotal: formData.get('subtotal') ?? formData.get('montoOc'),
+      montoOc: formData.get('subtotal') ?? formData.get('montoOc'),
       descuento: formData.get('descuento'),
-      descuentoNoVa: formData.get('descuentoNoVa'),
       totalCobrado: form.dataset.currentCobrado || 0,
       ajustes: currentAjustes
     });
@@ -5468,11 +5512,12 @@
           <span>Sucursal</span><b>${escapeHtml(sucursal?.nombre || 'Sucursal no encontrada')}</b>
           <span>Fecha OC</span><b>${escapeHtml(formatDate(record.fechaOc))}</b>
           <span>Vencimiento</span><b>${escapeHtml(formatDate(record.fechaVencimiento))}</b>
-          <span>Venta neta original</span><b>${escapeHtml(formatMoney(record.ventaNetaOriginal))}</b>
+          <span>Subtotal</span><b>${escapeHtml(formatMoney(record.subtotal))}</b>
+          <span>Descuento</span><b>${escapeHtml(formatMoney(record.descuento))}</b>
+          <span>Total</span><b>${escapeHtml(formatMoney(record.ventaNetaOriginal))}</b>
           <span>Ajustes / notas</span><b>${record.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(record.totalAjustes))}</b>
-          <span>Total ajustado</span><b>${escapeHtml(formatMoney(record.ventaNetaAjustada))}</b>
-          <span>Total cobrado actual</span><b>${escapeHtml(formatMoney(record.totalCobrado))}</b>
-          <span>Saldo por cobrar actual</span><b>${escapeHtml(formatMoney(record.saldoPorCobrar))}</b>
+          <span>Cobrado actual</span><b>${escapeHtml(formatMoney(record.totalCobrado))}</b>
+          <span>Saldo actual</span><b>${escapeHtml(formatMoney(record.saldoPorCobrar))}</b>
         </div>
       </div>
     `;
@@ -9227,6 +9272,8 @@
 
   function buildClosingTotals(summary) {
     return {
+      totalSubtotalVentas: roundMoney(summary.totalSubtotalVentas || summary.totalVendidoOriginal || 0),
+      totalDescuentosVentas: roundMoney(summary.totalDescuentosVentas || 0),
       totalVendidoOriginal: roundMoney(summary.totalVendidoOriginal || 0),
       totalAjustesClientes: roundMoney(summary.totalAjustesClientes || 0),
       totalVendido: roundMoney(summary.totalVendido),
@@ -9309,9 +9356,11 @@
       [xlsxLabel('Fecha/hora de exportación'), xlsxText(formatDateTime(exportedAt))],
       [],
       xlsxHeaderRow(['Indicador', 'Valor']),
-      [xlsxText('Venta neta original'), xlsxMoney(summary.totalVendidoOriginal || 0)],
+      [xlsxText('Subtotal ventas'), xlsxMoney(summary.totalSubtotalVentas || summary.totalVendidoOriginal || 0)],
+      [xlsxText('Descuento ventas'), xlsxMoney(summary.totalDescuentosVentas || 0)],
+      [xlsxText('Total ventas'), xlsxMoney(summary.totalVendidoOriginal || 0)],
       [xlsxText('Ajustes clientes'), xlsxMoney((summary.totalAjustesClientes || 0) > 0 ? -summary.totalAjustesClientes : 0)],
-      [xlsxText('Venta neta ajustada'), xlsxMoney(summary.totalVendido)],
+      [xlsxText('Total ventas ajustado'), xlsxMoney(summary.totalVendido)],
       [xlsxText('Total cobrado clientes'), xlsxMoney(summary.totalCobradoClientes)],
       [xlsxText('Saldo por cobrar'), xlsxMoney(summary.saldoPorCobrar)],
       [xlsxText('Compras originales'), xlsxMoney(summary.totalComprasOriginal || 0)],
@@ -9352,7 +9401,7 @@
       [xlsxTitle('Ventas / OC')],
       [xlsxLabel('Período'), xlsxText(summary.periodLabel)],
       [],
-      xlsxHeaderRow(['Fecha OC', 'Cliente', 'Sucursal', 'OC/documento', 'Facturas', 'Requiere envío', 'Transportista', 'Fecha de embarque', 'Fecha estimada', 'Fecha real', 'Guía', 'Monto OC', 'NO VA', 'Descuento', 'Descuento NO VA', 'Venta neta original', 'Ajustes', 'Venta neta ajustada', 'Total cobrado', 'Saldo por cobrar', 'Fecha vencimiento', 'Días mora', 'Estado', 'Ajustes detalle', 'Observación'])
+      xlsxHeaderRow(['Fecha OC', 'Cliente', 'Sucursal', 'OC/documento', 'Facturas', 'Requiere envío', 'Transportista', 'Fecha de embarque', 'Fecha estimada', 'Fecha real', 'Guía', 'Subtotal', 'Descuento', 'Total', 'Ajustes', 'Cobrado', 'Saldo', 'Vencimiento', 'Mora', 'Estado', 'Detalle', 'Observación'])
     ];
     getVentasForExport(summary.range, summary.filters).forEach((venta) => {
       const cliente = getCatalogRecordById('clientes', venta.clienteId);
@@ -9370,13 +9419,10 @@
         xlsxDate(logistica.fechaEstimada),
         xlsxDate(logistica.fechaReal),
         xlsxText(logistica.guia),
-        xlsxMoney(venta.montoOc),
-        xlsxMoney(venta.noVa),
+        xlsxMoney(venta.subtotal),
         xlsxMoney(venta.descuento),
-        xlsxMoney(venta.descuentoNoVa),
         xlsxMoney(venta.ventaNetaOriginal),
         xlsxMoney(venta.totalAjustes > 0 ? -venta.totalAjustes : 0),
-        xlsxMoney(venta.ventaNetaAjustada),
         xlsxMoney(venta.totalCobrado),
         xlsxMoney(venta.saldoPorCobrar),
         xlsxDate(venta.fechaVencimiento),
@@ -9386,7 +9432,7 @@
         xlsxText(venta.observacion)
       ]);
     });
-    return { name: 'Ventas', rows, cols: [14, 24, 24, 18, 30, 14, 20, 16, 16, 16, 18, 14, 14, 14, 16, 18, 14, 18, 16, 16, 16, 12, 14, 38, 32] };
+    return { name: 'Ventas', rows, cols: [14, 24, 24, 18, 30, 14, 20, 16, 16, 16, 18, 14, 14, 14, 14, 16, 16, 16, 12, 14, 38, 32] };
   }
 
   function buildProveedoresSheet(summary) {
@@ -10092,7 +10138,7 @@ ${rowsXml}
   }
 
   function importVentasRows(sheet, payload, warnings) {
-    const parsed = rowsToObjects(sheet, warnings, 'Ventas', [['OC/documento', 'OC', 'Documento'], ['Cliente'], ['Monto OC', 'Monto', 'Total OC']]);
+    const parsed = rowsToObjects(sheet, warnings, 'Ventas', [['OC/documento', 'OC', 'Documento'], ['Cliente'], ['Subtotal', 'Monto OC', 'Monto', 'Total OC']]);
     payload.__headersVentas = parsed.headers;
     parsed.objects.forEach((row, index) => {
       const clienteNombre = cleanText(pickCell(row, ['Cliente', 'Nombre cliente']));
@@ -10101,9 +10147,18 @@ ${rowsXml}
       const sucursalId = sucursalNombre ? addImportCatalog(payload, 'sucursales', sucursalNombre, { Cliente: clienteNombre }) : '';
       const totalCobrado = parseExcelMoney(pickCell(row, ['Total cobrado', 'Cobrado', 'Pagado', 'Abonado']));
       const totalAjustes = Math.abs(parseExcelMoney(pickCell(row, ['Ajustes', 'Ajuste', 'Notas crédito', 'Notas de crédito', 'Nota de crédito'])) || 0);
-      const montoOcRaw = pickCell(row, ['Monto OC', 'Monto de OC', 'Total OC', 'Total de la OC', 'Monto', 'Total']);
-      const ventaNetaRaw = pickCell(row, ['Venta neta original', 'Venta neta', 'Venta neta ajustada', 'Neto']);
-      const montoOc = parseExcelMoney(montoOcRaw || ventaNetaRaw);
+      const subtotalRaw = pickCell(row, ['Subtotal', 'Monto OC', 'Monto de OC', 'Total OC', 'Total de la OC', 'Monto']);
+      const ventaNetaRaw = pickCell(row, ['Total', 'Venta neta original', 'Venta neta', 'Venta neta ajustada', 'Neto']);
+      const descuentoImportado = parseExcelMoney(pickCell(row, ['Descuento', 'Desc']));
+      const legacyNoVa = parseExcelMoney(pickCell(row, ['NO VA', 'No VA', 'NOVA', 'No va']));
+      const legacyDescuentoNoVa = parseExcelMoney(pickCell(row, ['Descuento NO VA', 'Desc NO VA', 'Descuento NOVA']));
+      const montoOcLegacy = parseExcelMoney(subtotalRaw || ventaNetaRaw);
+      const subtotal = !Number.isNaN(parseExcelMoney(pickCell(row, ['Subtotal'])))
+        ? parseExcelMoney(pickCell(row, ['Subtotal']))
+        : (!Number.isNaN(parseExcelMoney(ventaNetaRaw))
+          ? roundMoney(parseExcelMoney(ventaNetaRaw) + (Number.isNaN(descuentoImportado) ? 0 : descuentoImportado))
+          : roundMoney((Number.isNaN(montoOcLegacy) ? 0 : montoOcLegacy) - (Number.isNaN(legacyNoVa) ? 0 : legacyNoVa) - (Number.isNaN(legacyDescuentoNoVa) ? 0 : legacyDescuentoNoVa)));
+      const montoOc = subtotal;
       const record = normalizeVentaRecord({
         id: generateId('venta'),
         numeroDocumento: cleanText(pickCell(row, ['OC/documento', 'OC', 'Documento', 'No OC', 'N° OC', 'Número OC', 'Numero OC', 'Orden de compra'])),
@@ -10121,10 +10176,12 @@ ${rowsXml}
           fechaReal: parseExcelDateValue(pickCell(row, ['Fecha real', 'Fecha real envío', 'Fecha real envio', 'Real'])),
           guia: pickCell(row, ['Guía', 'Guia', 'Número guía', 'Numero guia'])
         }),
+        subtotal,
         montoOc,
-        noVa: parseExcelMoney(pickCell(row, ['NO VA', 'No VA', 'NOVA', 'No va'])),
-        descuento: parseExcelMoney(pickCell(row, ['Descuento', 'Desc'])),
-        descuentoNoVa: parseExcelMoney(pickCell(row, ['Descuento NO VA', 'Desc NO VA', 'Descuento NOVA'])),
+        montoOcLegacy: Number.isNaN(montoOcLegacy) ? subtotal : montoOcLegacy,
+        noVa: Number.isNaN(legacyNoVa) ? 0 : legacyNoVa,
+        descuento: Number.isNaN(descuentoImportado) ? 0 : descuentoImportado,
+        descuentoNoVa: Number.isNaN(legacyDescuentoNoVa) ? 0 : legacyDescuentoNoVa,
         ajustes: totalAjustes > 0 ? [{
           id: generateId('ajusteCliente'),
           fecha: parseExcelDateValue(pickCell(row, ['Fecha OC', 'Fecha', 'Fecha origen', 'Fecha venta'])) || todayInputValue(),
