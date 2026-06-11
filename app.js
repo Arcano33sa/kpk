@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.16.7-post12-compras-contado-pago-automatico';
+  const APP_VERSION = '0.16.9-post12-ventas-oc-facturas-solo-numero-captura-multiple';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -252,6 +252,7 @@
 
   let ventasState = {
     editingId: null,
+    quickCapture: null,
     message: null,
     messageType: 'success'
   };
@@ -694,15 +695,20 @@
     return 'Pendiente';
   }
 
+  function cleanFacturaVentaNumero(value) {
+    return cleanText(value)
+      .replace(/\s*\((?:\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4})\)\s*$/u, '')
+      .trim();
+  }
+
   function normalizeFacturaVentaRecord(record) {
     const raw = isPlainObject(record) ? record : {};
-    const numero = cleanText(raw.numero || raw.numeroFactura || raw.factura || raw.documento || raw.referencia);
-    const fecha = toDateInputValue(raw.fecha || raw.fechaFactura || raw.fechaEmision || raw.fechaDocumento || '');
-    if (!numero || !fecha) return null;
+    const directValue = typeof record === 'string' || typeof record === 'number' ? record : '';
+    const numero = cleanFacturaVentaNumero(directValue || raw.numero || raw.numeroFactura || raw.factura || raw.documento || raw.referencia || raw.value);
+    if (!numero) return null;
     return {
       id: cleanText(raw.id) || generateId('factura'),
-      numero,
-      fecha
+      numero
     };
   }
 
@@ -714,30 +720,36 @@
       try {
         source = JSON.parse(trimmed);
       } catch (_) {
-        source = trimmed.split(';').map((part) => {
-          const clean = cleanText(part);
-          const match = clean.match(/^(.+?)\s*\((\d{4}-\d{2}-\d{2})\)$/);
-          return match ? { numero: match[1], fecha: match[2] } : { numero: clean, fecha: '' };
-        });
+        source = trimmed
+          .split(/[;,\n]+/u)
+          .map((part) => ({ numero: cleanFacturaVentaNumero(part) }));
       }
     }
+    if (isPlainObject(source)) source = [source];
     if (!Array.isArray(source)) return [];
     const seen = new Set();
     return source
       .map((item) => normalizeFacturaVentaRecord(item))
       .filter(Boolean)
       .filter((item) => {
-        const key = `${normalizeNameForCompare(item.numero)}|${item.fecha}`;
+        const key = normalizeNameForCompare(item.numero);
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
       });
   }
 
+  function normalizeVentaFacturasFromRaw(raw) {
+    const source = isPlainObject(raw) ? raw : {};
+    const structured = normalizeFacturasVentaList(source.facturas || source.facturasEmitidas || source.facturasOc || source.facturaEmitida || source.facturaVenta || []);
+    const legacy = normalizeFacturaVentaRecord(source.numeroFactura || source.numeroFacturaEmitida || source.facturaNumero || source.factura || source.facturaEmitidaNumero);
+    return normalizeFacturasVentaList(legacy ? [...structured, legacy] : structured);
+  }
+
   function formatFacturasVentaResumen(facturas) {
     const list = normalizeFacturasVentaList(facturas);
     if (!list.length) return 'Sin facturas registradas';
-    return list.map((factura) => `${factura.numero} (${factura.fecha})`).join('; ');
+    return list.map((factura) => factura.numero).join(', ');
   }
 
   function normalizeBooleanField(value, fallback = false) {
@@ -800,7 +812,7 @@
       descuento: parseMoney(raw.descuento),
       descuentoNoVa: parseMoney(raw.descuentoNoVa),
       totalCobrado: parseMoney(raw.totalCobrado),
-      facturas: normalizeFacturasVentaList(raw.facturas || raw.facturasEmitidas || raw.facturasOc || []),
+      facturas: normalizeVentaFacturasFromRaw(raw),
       requiereEnvio: normalizeBooleanField(raw.requiereEnvio ?? raw.requiereEnvío ?? raw.envioRequerido ?? raw.envíoRequerido, false),
       logistica: normalizeLogisticaVentaRecord(raw.logistica || raw.envio || raw.logisticaEnvio || {}),
       observacion: cleanText(raw.observacion),
@@ -1564,6 +1576,9 @@
 
     if (lastRenderedRoute === 'proveedores' && route !== 'proveedores') {
       resetProveedoresTransientState();
+    }
+    if (lastRenderedRoute === 'ventas' && route !== 'ventas') {
+      resetVentasTransientState();
     }
     lastRenderedRoute = route;
     setActiveNav(route);
@@ -3268,7 +3283,7 @@
     ];
     normalizeFacturasVentaList(venta.facturas).forEach((factura) => {
       entries.push({
-        date: formatDate(factura.fecha),
+        date: formatDate(venta.fechaOc),
         title: 'Factura registrada',
         detail: `Factura ${factura.numero} ligada a esta OC.`,
         statusClass: 'is-info'
@@ -3695,7 +3710,7 @@
               </div>
             </div>
             <p class="muted-text">La venta real para reportes será la venta neta, no el monto bruto de la OC.</p>
-            ${renderVentaForm(null, clientesActivos, sucursalesActivas, missingCatalogs)}
+            ${renderVentaForm(null, clientesActivos, sucursalesActivas, missingCatalogs, ventasState.quickCapture)}
           </article>
 
           <article class="panel-card venta-list-card">
@@ -3733,7 +3748,6 @@
     return `
         <section class="facturas-block" data-facturas-block>
           <input type="hidden" name="facturasJson" data-facturas-json value="${escapeHtml(JSON.stringify(facturas))}" />
-          <input type="hidden" data-factura-editing-id value="" />
           <div class="facturas-head">
             <div>
               <span class="eyebrow mini">Documentos emitidos</span>
@@ -3741,45 +3755,37 @@
             </div>
             <span class="count-pill" data-facturas-count>${facturas.length} factura${facturas.length === 1 ? '' : 's'}</span>
           </div>
-          <p class="muted-text compact-note">Registra solo número y fecha. Sin montos, sin artículos, sin contabilidad: aquí venimos finos, no enciclopédicos.</p>
-          <div class="form-grid facturas-entry-grid">
-            <label class="form-field">
-              <span>Número de factura</span>
-              <input type="text" data-factura-numero placeholder="Ej. FAC-001" autocomplete="off" />
-            </label>
-            <label class="form-field">
-              <span>Fecha</span>
-              <input type="date" data-factura-fecha />
-            </label>
-          </div>
-          <div class="form-actions facturas-actions">
-            <button type="button" class="secondary-action compact" data-factura-add>Agregar factura</button>
-            <button type="button" class="secondary-action compact is-hidden" data-factura-cancel>Cancelar edición</button>
-          </div>
-          <p class="compact-note facturas-message" data-factura-message aria-live="polite"></p>
+          <p class="muted-text compact-note">Captura varios números de factura para esta misma OC. Sin fecha, sin monto y sin artículos: la Fecha OC manda.</p>
           <div data-facturas-list>
             ${renderFacturasVentaEditorList(facturas)}
           </div>
+          <div class="form-actions facturas-actions">
+            <button type="button" class="secondary-action compact" data-factura-add>Agregar factura</button>
+          </div>
+          <p class="compact-note facturas-message" data-factura-message aria-live="polite"></p>
         </section>
     `;
   }
 
   function renderFacturasVentaEditorList(facturas) {
-    const list = normalizeFacturasVentaList(facturas);
-    if (!list.length) {
-      return '<div class="facturas-empty">Sin facturas registradas.</div>';
-    }
+    const source = Array.isArray(facturas) ? facturas : normalizeFacturasVentaList(facturas);
+    const rows = source.map((item) => {
+      const normalized = normalizeFacturaVentaRecord(item);
+      if (normalized) return normalized;
+      const raw = isPlainObject(item) ? item : {};
+      return { id: cleanText(raw.id) || generateId('factura'), numero: '' };
+    });
+    const safeRows = rows.length ? rows : [{ id: generateId('factura'), numero: '' }];
     return `
-      <div class="facturas-list">
-        ${list.map((factura) => `
-          <article class="factura-item">
-            <div>
-              <strong>${escapeHtml(factura.numero)}</strong>
-              <span>${escapeHtml(formatDate(factura.fecha))}</span>
-            </div>
+      <div class="facturas-list facturas-editor-list" data-facturas-editor-list>
+        ${safeRows.map((factura, index) => `
+          <article class="factura-item factura-input-row" data-factura-row data-factura-id="${escapeHtml(factura.id)}">
+            <label class="form-field factura-number-field">
+              <span>Factura ${index + 1}</span>
+              <input type="text" data-factura-numero value="${escapeHtml(factura.numero || '')}" placeholder="Número de factura" autocomplete="off" />
+            </label>
             <div class="record-actions">
-              <button type="button" class="secondary-action compact" data-factura-edit="${escapeHtml(factura.id)}">Editar</button>
-              <button type="button" class="danger-action compact" data-factura-delete="${escapeHtml(factura.id)}">Borrar</button>
+              <button type="button" class="danger-action compact" data-factura-remove>Quitar</button>
             </div>
           </article>
         `).join('')}
@@ -3795,7 +3801,7 @@
     return `
       <div class="facturas-display-list">
         ${list.map((factura) => `
-          <span class="factura-chip"><strong>${escapeHtml(factura.numero)}</strong> · ${escapeHtml(formatDate(factura.fecha))}</span>
+          <span class="factura-chip"><strong>${escapeHtml(factura.numero)}</strong></span>
         `).join('')}
       </div>
     `;
@@ -3866,11 +3872,25 @@
     `;
   }
 
-  function renderVentaForm(record, clientesActivos, sucursalesActivas, missingCatalogs) {
-    const fechaOc = record?.fechaOc || todayInputValue();
-    const diasCredito = record?.diasCredito ?? '';
-    const fechaVencimiento = record?.fechaVencimiento || addDaysToDate(fechaOc, Number(diasCredito) || 0);
-    const calculations = getVentaCalculations(record || {});
+  function renderVentaForm(record, clientesActivos, sucursalesActivas, missingCatalogs, quickCapture = null) {
+    const draft = !record && isPlainObject(quickCapture) ? quickCapture : {};
+    const selectedClienteId = record?.clienteId || cleanText(draft.clienteId);
+    const selectedSucursalId = record?.sucursalId || cleanText(draft.sucursalId);
+    const fechaOc = record?.fechaOc || toDateInputValue(draft.fechaOc) || todayInputValue();
+    const selectedTerms = selectedClienteId ? getCatalogPaymentTerms('clientes', selectedClienteId) : { diasCredito: 0 };
+    const draftDias = draft.diasCredito ?? '';
+    const diasCredito = record ? (record.diasCredito ?? '') : (draftDias !== '' ? draftDias : (selectedClienteId ? selectedTerms.diasCredito : ''));
+    const fechaVencimiento = record?.fechaVencimiento || toDateInputValue(draft.fechaVencimiento) || addDaysToDate(fechaOc, Number(diasCredito) || 0);
+    const previewSource = record || {
+      montoOc: draft.montoOc || 0,
+      noVa: draft.noVa || 0,
+      descuento: draft.descuento || 0,
+      descuentoNoVa: draft.descuentoNoVa || 0,
+      totalCobrado: 0
+    };
+    const calculations = getVentaCalculations(previewSource);
+    const facturasSource = record || draft;
+    const logisticaSource = record || draft;
 
     return `
       <form class="venta-form" data-venta-form data-current-cobrado="${escapeHtml(record?.totalCobrado || 0)}" novalidate>
@@ -3878,20 +3898,20 @@
         <div class="form-grid">
           <label class="form-field">
             <span>Número OC / documento <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="text" name="numeroDocumento" value="${escapeHtml(record?.numeroDocumento || '')}" placeholder="Ej. OC-001" required autocomplete="off" />
+            <input type="text" name="numeroDocumento" value="${escapeHtml(record?.numeroDocumento || cleanText(draft.numeroDocumento))}" placeholder="Ej. OC-001" required autocomplete="off" />
           </label>
           <label class="form-field">
             <span>Cliente <span class="required-dot" aria-label="obligatorio">*</span></span>
             <select name="clienteId" required ${missingCatalogs ? 'disabled' : ''} data-venta-client>
               <option value="">Seleccionar cliente</option>
-              ${clientesActivos.map((cliente) => `<option value="${escapeHtml(cliente.id)}" ${cliente.id === record?.clienteId ? 'selected' : ''}>${escapeHtml(cliente.nombre || 'Cliente sin nombre')} · ${escapeHtml(formatPaymentTermsLabel(cliente))}</option>`).join('')}
+              ${clientesActivos.map((cliente) => `<option value="${escapeHtml(cliente.id)}" ${cliente.id === selectedClienteId ? 'selected' : ''}>${escapeHtml(cliente.nombre || 'Cliente sin nombre')} · ${escapeHtml(formatPaymentTermsLabel(cliente))}</option>`).join('')}
             </select>
           </label>
           <label class="form-field">
             <span>Sucursal <span class="required-dot" aria-label="obligatorio">*</span></span>
             <select name="sucursalId" required ${missingCatalogs ? 'disabled' : ''}>
               <option value="">Seleccionar sucursal</option>
-              ${sucursalesActivas.map((sucursal) => `<option value="${escapeHtml(sucursal.id)}" ${sucursal.id === record?.sucursalId ? 'selected' : ''}>${escapeHtml(sucursal.nombre || 'Sucursal sin nombre')}</option>`).join('')}
+              ${sucursalesActivas.map((sucursal) => `<option value="${escapeHtml(sucursal.id)}" ${sucursal.id === selectedSucursalId ? 'selected' : ''}>${escapeHtml(sucursal.nombre || 'Sucursal sin nombre')}</option>`).join('')}
             </select>
           </label>
           <label class="form-field">
@@ -3908,38 +3928,38 @@
           </label>
           <label class="form-field">
             <span>Monto OC C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="montoOc" value="${escapeHtml(formatNumberInput(record?.montoOc))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-venta-calc />
+            <input type="number" name="montoOc" value="${escapeHtml(formatNumberInput(record ? record.montoOc : draft.montoOc))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-venta-calc />
           </label>
           <label class="form-field">
             <span>NO VA C$</span>
-            <input type="number" name="noVa" value="${escapeHtml(formatNumberInput(record?.noVa))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" data-venta-calc />
+            <input type="number" name="noVa" value="${escapeHtml(formatNumberInput(record ? record.noVa : draft.noVa))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" data-venta-calc />
           </label>
           <label class="form-field">
             <span>Descuento C$</span>
-            <input type="number" name="descuento" value="${escapeHtml(formatNumberInput(record?.descuento))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" data-venta-calc />
+            <input type="number" name="descuento" value="${escapeHtml(formatNumberInput(record ? record.descuento : draft.descuento))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" data-venta-calc />
           </label>
           <label class="form-field">
             <span>Descuento NO VA C$</span>
-            <input type="number" name="descuentoNoVa" value="${escapeHtml(formatNumberInput(record?.descuentoNoVa))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" data-venta-calc />
+            <input type="number" name="descuentoNoVa" value="${escapeHtml(formatNumberInput(record ? record.descuentoNoVa : draft.descuentoNoVa))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" data-venta-calc />
           </label>
         </div>
 
         <div class="formula-card" aria-live="polite">
           <strong>Venta neta = Monto OC - NO VA - Descuento - Descuento NO VA</strong>
           <div class="formula-grid">
-            <span>Venta neta</span><b data-venta-preview-neto>${escapeHtml(formatMoney(record ? calculations.ventaNeta : 0))}</b>
+            <span>Venta neta</span><b data-venta-preview-neto>${escapeHtml(formatMoney(calculations.ventaNeta))}</b>
             <span>Total cobrado</span><b data-venta-preview-cobrado>${escapeHtml(formatMoney(record?.totalCobrado || 0))}</b>
-            <span>Saldo por cobrar</span><b data-venta-preview-saldo>${escapeHtml(formatMoney(record ? calculations.saldoPorCobrar : 0))}</b>
+            <span>Saldo por cobrar</span><b data-venta-preview-saldo>${escapeHtml(formatMoney(calculations.saldoPorCobrar))}</b>
           </div>
         </div>
 
-        ${renderFacturasVentaBlock(record)}
+        ${renderFacturasVentaBlock(facturasSource)}
 
-        ${renderLogisticaVentaBlock(record)}
+        ${renderLogisticaVentaBlock(logisticaSource)}
 
         <label class="form-field">
           <span>Observación</span>
-          <textarea name="observacion" rows="3" placeholder="Notas internas de la OC">${escapeHtml(record?.observacion || '')}</textarea>
+          <textarea name="observacion" rows="3" placeholder="Notas internas de la OC">${escapeHtml(record?.observacion || cleanText(draft.observacion))}</textarea>
         </label>
 
         <div class="form-actions">
@@ -4064,7 +4084,7 @@
       descuento: parseMoney(formData.get('descuento')),
       descuentoNoVa: parseMoney(formData.get('descuentoNoVa')),
       totalCobrado: existingRecord?.totalCobrado || 0,
-      facturas: normalizeFacturasVentaList(formData.get('facturasJson') || existingRecord?.facturas || []),
+      facturas: syncFacturaRowsToHidden(form),
       requiereEnvio: formData.get('requiereEnvio') === '1',
       logistica: normalizeLogisticaVentaRecord({
         transportista: formData.get('logisticaTransportista') ?? existingRecord?.logistica?.transportista,
@@ -4119,16 +4139,64 @@
     return '';
   }
 
+  function syncFacturaRowsToHidden(form) {
+    const block = form?.querySelector?.('[data-facturas-block]');
+    if (!block) return [];
+    const hidden = block.querySelector('[data-facturas-json]');
+    const rows = Array.from(block.querySelectorAll('[data-factura-row]')).map((row) => ({
+      id: cleanText(row.dataset.facturaId) || generateId('factura'),
+      numero: cleanText(row.querySelector('[data-factura-numero]')?.value || '')
+    }));
+    const list = normalizeFacturasVentaList(rows);
+    if (hidden) hidden.value = JSON.stringify(list);
+    return list;
+  }
+
   function validatePendingFacturaInputs(form) {
-    const block = form.querySelector('[data-facturas-block]');
-    if (!block) return '';
-    const numero = cleanText(block.querySelector('[data-factura-numero]')?.value || '');
-    const fecha = cleanText(block.querySelector('[data-factura-fecha]')?.value || '');
-    const editingId = cleanText(block.querySelector('[data-factura-editing-id]')?.value || '');
-    if (!numero && !fecha && !editingId) return '';
-    if (!numero) return 'Hay una factura en edición sin número. Completa el número o cancela la edición.';
-    if (!fecha) return 'Hay una factura en edición sin fecha. Completa la fecha o cancela la edición.';
-    return 'Hay una factura lista pero no agregada/actualizada. Presiona Agregar/Actualizar factura antes de guardar la OC.';
+    syncFacturaRowsToHidden(form);
+    return '';
+  }
+
+  function buildVentaDraftFromForm(form) {
+    const formData = new FormData(form);
+    const fechaOc = toDateInputValue(formData.get('fechaOc')) || todayInputValue();
+    const diasCredito = parsePositiveInteger(formData.get('diasCredito'));
+    return {
+      numeroDocumento: cleanText(formData.get('numeroDocumento')),
+      clienteId: cleanText(formData.get('clienteId')),
+      sucursalId: cleanText(formData.get('sucursalId')),
+      fechaOc,
+      diasCredito: Number.isNaN(diasCredito) ? 0 : diasCredito,
+      fechaVencimiento: toDateInputValue(formData.get('fechaVencimiento')) || addDaysToDate(fechaOc, Number.isNaN(diasCredito) ? 0 : diasCredito),
+      montoOc: cleanText(formData.get('montoOc')),
+      noVa: cleanText(formData.get('noVa')),
+      descuento: cleanText(formData.get('descuento')),
+      descuentoNoVa: cleanText(formData.get('descuentoNoVa')),
+      facturas: syncFacturaRowsToHidden(form),
+      requiereEnvio: formData.get('requiereEnvio') === '1',
+      logistica: normalizeLogisticaVentaRecord({
+        transportista: formData.get('logisticaTransportista'),
+        fechaEmbarque: formData.get('logisticaFechaEmbarque'),
+        fechaEstimada: formData.get('logisticaFechaEstimada'),
+        fechaReal: formData.get('logisticaFechaReal'),
+        guia: formData.get('logisticaGuia')
+      }),
+      observacion: cleanText(formData.get('observacion'))
+    };
+  }
+
+  function buildVentaQuickCaptureFromSavedRecord(record) {
+    const saved = normalizeVentaRecord(record);
+    return {
+      clienteId: saved.clienteId,
+      sucursalId: saved.sucursalId,
+      fechaOc: saved.fechaOc || todayInputValue()
+    };
+  }
+
+  function resetVentasTransientState() {
+    ventasState.editingId = null;
+    ventasState.quickCapture = null;
   }
 
   function saveVentaRecord(form) {
@@ -4137,18 +4205,20 @@
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
     const pendingFacturaError = validatePendingFacturaInputs(form);
     if (pendingFacturaError) {
+      ventasState.quickCapture = existingRecord ? null : buildVentaDraftFromForm(form);
       ventasState.message = pendingFacturaError;
       ventasState.messageType = 'error';
-      renderRoute();
+      renderRoute({ preserveScroll: true });
       return;
     }
     const newRecord = buildVentaFromForm(form, existingRecord);
     const validationError = validateVentaRecord(newRecord);
 
     if (validationError) {
+      ventasState.quickCapture = existingRecord ? null : buildVentaDraftFromForm(form);
       ventasState.message = validationError;
       ventasState.messageType = 'error';
-      renderRoute();
+      renderRoute({ preserveScroll: true });
       return;
     }
 
@@ -4156,10 +4226,12 @@
 
     if (existingRecord) {
       appData.ventas = records.map((record) => record.id === existingId ? newRecord : record);
+      ventasState.quickCapture = null;
       ventasState.message = `OC ${newRecord.numeroDocumento} actualizada.`;
     } else {
       appData.ventas = [newRecord, ...records];
-      ventasState.message = `OC ${newRecord.numeroDocumento} guardada.`;
+      ventasState.quickCapture = buildVentaQuickCaptureFromSavedRecord(newRecord);
+      ventasState.message = `OC ${newRecord.numeroDocumento} guardada. Lista la siguiente OC del mismo cliente, sucursal y fecha.`;
     }
 
     ventasState.editingId = null;
@@ -4172,6 +4244,7 @@
     const record = appData.ventas.find((item) => item.id === recordId);
     if (!record) return;
     ventasState.editingId = recordId;
+    ventasState.quickCapture = null;
     ventasState.message = null;
     renderRoute();
   }
@@ -4196,6 +4269,7 @@
     });
 
     ventasState.editingId = null;
+    ventasState.quickCapture = null;
     ventasState.message = `OC ${record.numeroDocumento || ''} quedó ${shouldActivate ? 'reactivada' : 'anulada'}.`;
     ventasState.messageType = 'success';
     saveData(appData);
@@ -4204,6 +4278,7 @@
 
   function clearVentaForm() {
     ventasState.editingId = null;
+    ventasState.quickCapture = null;
     ventasState.message = null;
     renderRoute();
   }
@@ -4228,97 +4303,82 @@
     const block = form.querySelector('[data-facturas-block]');
     if (!block) return;
     const hidden = block.querySelector('[data-facturas-json]');
-    const numeroInput = block.querySelector('[data-factura-numero]');
-    const fechaInput = block.querySelector('[data-factura-fecha]');
-    const editingInput = block.querySelector('[data-factura-editing-id]');
     const addButton = block.querySelector('[data-factura-add]');
-    const cancelButton = block.querySelector('[data-factura-cancel]');
     const listNode = block.querySelector('[data-facturas-list]');
     const countNode = block.querySelector('[data-facturas-count]');
     const messageNode = block.querySelector('[data-factura-message]');
 
-    const readList = () => normalizeFacturasVentaList(hidden?.value || []);
-    const writeList = (list) => {
-      if (hidden) hidden.value = JSON.stringify(normalizeFacturasVentaList(list));
-    };
     const showMessage = (message, isError = false) => {
       if (!messageNode) return;
       messageNode.textContent = message || '';
       messageNode.classList.toggle('is-error', Boolean(isError));
     };
-    const resetInputs = () => {
-      if (numeroInput) numeroInput.value = '';
-      if (fechaInput) fechaInput.value = '';
-      if (editingInput) editingInput.value = '';
-      if (addButton) addButton.textContent = 'Agregar factura';
-      cancelButton?.classList.add('is-hidden');
-    };
-    const renderList = () => {
-      const list = readList();
-      if (listNode) listNode.innerHTML = renderFacturasVentaEditorList(list);
+
+    const readRows = () => Array.from(block.querySelectorAll('[data-factura-row]')).map((row) => ({
+      id: cleanText(row.dataset.facturaId) || generateId('factura'),
+      numero: cleanText(row.querySelector('[data-factura-numero]')?.value || '')
+    }));
+
+    const sync = () => {
+      const list = normalizeFacturasVentaList(readRows());
+      if (hidden) hidden.value = JSON.stringify(list);
       if (countNode) countNode.textContent = `${list.length} factura${list.length === 1 ? '' : 's'}`;
-      listNode?.querySelectorAll('[data-factura-edit]').forEach((button) => {
-        button.addEventListener('click', () => {
-          const factura = readList().find((item) => item.id === button.dataset.facturaEdit);
-          if (!factura) return;
-          if (numeroInput) numeroInput.value = factura.numero;
-          if (fechaInput) fechaInput.value = factura.fecha;
-          if (editingInput) editingInput.value = factura.id;
-          if (addButton) addButton.textContent = 'Actualizar factura';
-          cancelButton?.classList.remove('is-hidden');
-          showMessage(`Editando factura ${factura.numero}.`, false);
-          numeroInput?.focus();
+      return list;
+    };
+
+    const bindRows = () => {
+      block.querySelectorAll('[data-factura-numero]').forEach((input) => {
+        input.addEventListener('input', () => {
+          sync();
+          showMessage('', false);
         });
       });
-      listNode?.querySelectorAll('[data-factura-delete]').forEach((button) => {
+      block.querySelectorAll('[data-factura-remove]').forEach((button) => {
         button.addEventListener('click', () => {
-          const factura = readList().find((item) => item.id === button.dataset.facturaDelete);
-          const next = readList().filter((item) => item.id !== button.dataset.facturaDelete);
-          writeList(next);
-          renderList();
-          resetInputs();
-          showMessage(factura ? `Factura ${factura.numero} borrada del bloque. Guarda la OC para confirmar.` : 'Factura borrada del bloque.', false);
+          const rows = Array.from(block.querySelectorAll('[data-factura-row]'));
+          const row = button.closest('[data-factura-row]');
+          if (rows.length <= 1) {
+            const input = row?.querySelector('[data-factura-numero]');
+            if (input) input.value = '';
+            sync();
+            showMessage('Línea de factura limpiada.', false);
+            input?.focus();
+            return;
+          }
+          row?.remove();
+          renumberRows();
+          sync();
+          showMessage('Factura quitada del bloque. Guarda la OC para confirmar.', false);
         });
       });
+    };
+
+    const renumberRows = () => {
+      block.querySelectorAll('[data-factura-row]').forEach((row, index) => {
+        const label = row.querySelector('.factura-number-field span');
+        if (label) label.textContent = `Factura ${index + 1}`;
+      });
+    };
+
+    const renderRowsFromCurrent = (rows, focusLast = false) => {
+      const safeRows = rows.length ? rows : [{ id: generateId('factura'), numero: '' }];
+      if (listNode) listNode.innerHTML = renderFacturasVentaEditorList(safeRows);
+      bindRows();
+      sync();
+      if (focusLast) {
+        const inputs = block.querySelectorAll('[data-factura-numero]');
+        inputs[inputs.length - 1]?.focus();
+      }
     };
 
     addButton?.addEventListener('click', () => {
-      const numero = cleanText(numeroInput?.value || '');
-      const fecha = toDateInputValue(fechaInput?.value || '');
-      const editingId = cleanText(editingInput?.value || '');
-      if (!numero) {
-        showMessage('El número de factura es obligatorio.', true);
-        numeroInput?.focus();
-        return;
-      }
-      if (!fecha) {
-        showMessage('La fecha de factura es obligatoria.', true);
-        fechaInput?.focus();
-        return;
-      }
-      const current = readList();
-      const duplicate = current.find((item) => item.id !== editingId && normalizeNameForCompare(item.numero) === normalizeNameForCompare(numero) && item.fecha === fecha);
-      if (duplicate) {
-        showMessage('Esa factura ya está registrada para esta OC.', true);
-        return;
-      }
-      const nextFactura = { id: editingId || generateId('factura'), numero, fecha };
-      const next = editingId
-        ? current.map((item) => item.id === editingId ? nextFactura : item)
-        : [...current, nextFactura];
-      writeList(next);
-      renderList();
-      resetInputs();
-      showMessage(editingId ? 'Factura actualizada. Guarda la OC para confirmar.' : 'Factura agregada. Guarda la OC para confirmar.', false);
+      const rows = readRows();
+      rows.push({ id: generateId('factura'), numero: '' });
+      renderRowsFromCurrent(rows, true);
+      showMessage('Nueva línea de factura lista.', false);
     });
 
-    cancelButton?.addEventListener('click', () => {
-      resetInputs();
-      showMessage('Edición de factura cancelada.', false);
-    });
-
-    writeList(readList());
-    renderList();
+    renderRowsFromCurrent(normalizeFacturasVentaList(hidden?.value || []), false);
   }
 
   function setupVentaLogisticaForm(form) {

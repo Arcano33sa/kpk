@@ -1,3 +1,15 @@
+# KSA PRÁCTIKA — Post12 Ventas / OC: facturas solo con número y captura múltiple
+
+- Ventas / OC permite varias facturas dentro de una misma OC, cada una solo con número de factura.
+- El bloque Facturas funciona como captura múltiple compacta: varias líneas editables antes de guardar la OC.
+- Se eliminó la fecha de factura del flujo visible y operativo; la fecha documental válida es Fecha OC.
+- Después de guardar una OC nueva, el formulario retiene cliente, sucursal y fecha OC para captura rápida.
+- Al salir de Ventas / OC se limpia la captura rápida para evitar arrastres entre módulos.
+- Edición de OC carga, agrega, modifica y quita números de factura sin duplicarlos.
+- Se mantiene compatibilidad defensiva con facturas antiguas que pudieran traer fecha, operando solo con número.
+- No se cambian cobros, proveedores/compras, pagos, compras de contado, mora, cierre, cálculos, Excel ni JSON salvo compatibilidad documental.
+- Versión/cache PWA actualizado a 0.16.9-post12-ventas-oc-facturas-solo-numero-captura-multiple.
+
 # KSA PRÁCTIKA — Post12 Compras de contado Etapa 2/2
 
 - Las compras de contado crean automáticamente su pago en Pagos a proveedores.
@@ -209,14 +221,14 @@ Bloques principales:
 - Botón **Aplicar actualización** cuando existe un Service Worker en espera.
 - Aplicación de actualización mediante mensaje seguro `KSA_PRACTIKA_SKIP_WAITING` y recarga protegida contra bucles.
 - Persistencia de última búsqueda y última actualización dentro de `configuracion`, sin borrar `localStorage`.
-- Service Worker actualizado a `v0_15_1_post12_mejoras_etapa1_facturas`.
+- Service Worker actualizado a `v0_16_9_post12_ventas_oc_facturas_solo_numero_captura_multiple`.
 - Cache PWA incluye `index.html`, CSS, JS, manifest, logo, íconos y `vendor/jszip.min.js`.
 - Se mantienen intactos JSON, Excel, importación, exportación, cierres y datos de negocio.
 
 
 ## Post12 Mejoras — Etapa 1 Facturas
 - Se agregó bloque Facturas en Ventas / OC.
-- Cada OC guarda varias facturas con número y fecha.
+- Cada OC guarda varias facturas con número, sin fecha individual de factura.
 - Compatibilidad legacy: OCs sin facturas se normalizan con lista vacía.
 - Exportación Excel incluye resumen simple de facturas en la hoja Ventas sin alterar saldos.
 

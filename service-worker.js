@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_16_7_post12_compras_contado_pago_automatico';
+const CACHE_VERSION = 'v0_16_9_post12_ventas_oc_facturas_solo_numero_captura_multiple';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
