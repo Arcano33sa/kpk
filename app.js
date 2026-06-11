@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.4-post12-cierre-detalle-bloqueo-compacto';
+  const APP_VERSION = '0.17.5-post12-cierre-encabezados-una-palabra';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -2837,7 +2837,7 @@
       headers: `
         <th>Cliente</th>
         <th>Sucursal</th>
-        <th>OC / Documento</th>
+        <th>Documento</th>
         <th>Origen</th>
         <th>Vence</th>
         <th>Mora</th>
@@ -2875,7 +2875,7 @@
       `,
       headers: `
         <th>Proveedor</th>
-        <th>Factura / Referencia</th>
+        <th>Referencia</th>
         <th>Origen</th>
         <th>Vence</th>
         <th>Mora</th>
