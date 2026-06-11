@@ -39,7 +39,7 @@
       icon: '↧',
       title: 'Cobros de clientes',
       short: 'Cobros',
-      description: 'Control de pagos completos o abonos parciales ligados a una OC/documento específico.',
+      description: 'Control de pagos completos o abonos parciales ligados a una OC específica.',
       placeholder: 'Cobros ya permite registrar abonos o pagos completos, actualizar la OC y anular con reversión.'
     },
     {
@@ -338,6 +338,7 @@
 
   let lastRenderedRoute = null;
   let operationalScrollbarResizeHandler = null;
+  let operationalScrollbarCleanup = null;
 
 
   let jsonBackupState = {
@@ -1908,10 +1909,15 @@
       window.removeEventListener('resize', operationalScrollbarResizeHandler);
       operationalScrollbarResizeHandler = null;
     }
+    if (typeof operationalScrollbarCleanup === 'function') {
+      operationalScrollbarCleanup();
+      operationalScrollbarCleanup = null;
+    }
 
     if (!shells.length) return;
 
     const schedule = window.requestAnimationFrame || ((callback) => window.setTimeout(callback, 0));
+    const observers = [];
     const refreshers = shells.map((shell) => {
       const topScroll = shell.querySelector('[data-operational-top-scroll]');
       const spacer = shell.querySelector('[data-operational-top-spacer]');
@@ -1953,14 +1959,25 @@
 
       topScroll.addEventListener('scroll', syncFromTop, { passive: true });
       tableScroll.addEventListener('scroll', syncFromTable, { passive: true });
-      shell.closest('details')?.addEventListener('toggle', () => schedule(refresh), { passive: true });
+      const scheduleRefresh = () => schedule(refresh);
+      shell.closest('details')?.addEventListener('toggle', scheduleRefresh, { passive: true });
+      if ('ResizeObserver' in window) {
+        const observer = new ResizeObserver(scheduleRefresh);
+        observer.observe(shell);
+        observer.observe(tableScroll);
+        observer.observe(table);
+        observers.push(observer);
+      }
       refresh();
       schedule(refresh);
+      window.setTimeout(refresh, 80);
+      window.setTimeout(refresh, 240);
       return refresh;
     }).filter(Boolean);
 
     operationalScrollbarResizeHandler = () => refreshers.forEach((refresh) => refresh());
     window.addEventListener('resize', operationalScrollbarResizeHandler, { passive: true });
+    operationalScrollbarCleanup = () => observers.forEach((observer) => observer.disconnect());
   }
 
   function renderHome() {
@@ -2189,7 +2206,7 @@
           <article class="metric-card"><span>Saldo por cobrar</span><strong>${escapeHtml(formatMoney(summary.saldoPorCobrar))}</strong><small>Cartera general</small></article>
           <article class="metric-card"><span>Compras ajustadas</span><strong>${escapeHtml(formatMoney(summary.totalComprasProveedores))}</strong><small>Original ${escapeHtml(formatMoney(summary.totalComprasOriginal || 0))}</small></article>
           <article class="metric-card"><span>Ajustes proveedores</span><strong>${summary.totalAjustesProveedores > 0 ? '-' : ''}${escapeHtml(formatMoney(summary.totalAjustesProveedores || 0))}</strong><small>No son pagos</small></article>
-          <article class="metric-card"><span>Total pagado proveedores</span><strong>${escapeHtml(formatMoney(summary.totalPagadoProveedores))}</strong><small>Fecha real de pago</small></article>
+          <article class="metric-card"><span>Pagado proveedores</span><strong>${escapeHtml(formatMoney(summary.totalPagadoProveedores))}</strong><small>Fecha real de pago</small></article>
           <article class="metric-card"><span>Saldo por pagar</span><strong>${escapeHtml(formatMoney(summary.saldoPorPagar))}</strong><small>Cartera general</small></article>
           <article class="metric-card"><span>Total gastos</span><strong>${escapeHtml(formatMoney(summary.totalGastos))}</strong><small>Gastos no anulados</small></article>
           <article class="metric-card"><span>Clientes en mora</span><strong>${summary.clientesMoraCount}</strong><small>${summary.clientesMora.length} documentos</small></article>
@@ -2591,12 +2608,12 @@
     const proveedores = Array.isArray(status?.proveedoresDetalle) ? status.proveedoresDetalle : [];
 
     clientes.slice(0, 4).forEach((record) => {
-      lines.push(`Cliente: ${record.cliente} · OC/documento: ${record.documento} · saldo: ${formatMoney(record.saldoPendiente)}`);
+      lines.push(`Cliente: ${record.cliente} · OC: ${record.documento} · saldo: ${formatMoney(record.saldoPendiente)}`);
     });
     if (clientes.length > 4) lines.push(`Clientes: ${clientes.length - 4} documento(s) adicional(es) con saldo pendiente.`);
 
     proveedores.slice(0, 4).forEach((record) => {
-      lines.push(`Proveedor: ${record.proveedor} · Factura/referencia: ${record.documento} · saldo: ${formatMoney(record.saldoPendiente)}`);
+      lines.push(`Proveedor: ${record.proveedor} · Referencia: ${record.documento} · saldo: ${formatMoney(record.saldoPendiente)}`);
     });
     if (proveedores.length > 4) lines.push(`Proveedores: ${proveedores.length - 4} documento(s) adicional(es) con saldo pendiente.`);
 
@@ -3699,7 +3716,7 @@
       <article class="history-card" data-mora-search-card data-search-text="${escapeHtml(searchable)}">
         <div class="venta-card-head">
           <div>
-            <span class="eyebrow mini">OC / Cliente</span>
+            <span class="eyebrow mini">OC</span>
             <h3>${escapeHtml(venta.numeroDocumento || 'Sin número')}</h3>
           </div>
           <span class="state-pill ${getEstadoClass(venta.estado)}">${escapeHtml(venta.estado)}</span>
@@ -3730,7 +3747,7 @@
       <article class="history-card" data-mora-search-card data-search-text="${escapeHtml(searchable)}">
         <div class="venta-card-head">
           <div>
-            <span class="eyebrow mini">Factura / proveedor</span>
+            <span class="eyebrow mini">Referencia</span>
             <h3>${escapeHtml(compra.facturaReferencia || 'Sin referencia')}</h3>
           </div>
           <span class="state-pill ${getEstadoClass(compra.estado)}">${escapeHtml(compra.estado)}</span>
@@ -3739,7 +3756,7 @@
           <div><span>Proveedor</span><strong>${escapeHtml(proveedor?.nombre || compra.proveedorNombre || 'Proveedor no encontrado')}</strong></div>
           <div><span>Original</span><strong>${escapeHtml(formatMoney(compra.totalCompra))}</strong></div>
           <div><span>Ajustes</span><strong>${compra.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(compra.totalAjustes))}</strong></div>
-          <div><span>Total ajustado</span><strong>${escapeHtml(formatMoney(compra.totalAjustado))}</strong></div>
+          <div><span>Ajustado</span><strong>${escapeHtml(formatMoney(compra.totalAjustado))}</strong></div>
           <div><span>Pagado</span><strong>${escapeHtml(formatMoney(compra.totalPagado))}</strong></div>
           <div><span>Saldo actual</span><strong>${escapeHtml(formatMoney(compra.saldoPorPagar))}</strong></div>
           <div><span>Vencimiento</span><strong>${escapeHtml(formatDate(compra.fechaVencimiento))}</strong></div>
@@ -3813,10 +3830,10 @@
       details: [
         { label: 'Proveedor', value: proveedor?.nombre || compra.proveedorNombre || 'Proveedor no encontrado' },
         { label: 'Estado actual', value: compra.estado },
-        { label: 'Monto original', value: formatMoney(compra.totalCompra) },
+        { label: 'Original', value: formatMoney(compra.totalCompra) },
         { label: 'Ajustes / notas', value: `-${formatMoney(compra.totalAjustes)}` },
-        { label: 'Total ajustado', value: formatMoney(compra.totalAjustado) },
-        { label: 'Total pagado', value: formatMoney(compra.totalPagado) },
+        { label: 'Ajustado', value: formatMoney(compra.totalAjustado) },
+        { label: 'Pagado', value: formatMoney(compra.totalPagado) },
         { label: 'Saldo actual', value: formatMoney(compra.saldoPorPagar) },
         { label: 'Vencimiento', value: formatDate(compra.fechaVencimiento) }
       ],
@@ -3883,8 +3900,8 @@
     const entries = [
       {
         date: formatDateTime(compra.createdAt),
-        title: 'Factura/referencia creada',
-        detail: `Monto original ${formatMoney(compra.totalCompra)}. Total ajustado ${formatMoney(compra.totalAjustado)}. Vence el ${formatDate(compra.fechaVencimiento)}.`,
+        title: 'Referencia creada',
+        detail: `Original ${formatMoney(compra.totalCompra)}. Ajustado ${formatMoney(compra.totalAjustado)}. Vence el ${formatDate(compra.fechaVencimiento)}.`,
         statusClass: 'is-info'
       }
     ];
@@ -4399,7 +4416,7 @@
             </select>
           </label>
           <label class="form-field">
-            <span>OC / documento <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <span>OC <span class="required-dot" aria-label="obligatorio">*</span></span>
             <select name="ventaId" required data-ajuste-venta>
               <option value="">Seleccionar OC</option>
               ${ventas.map((venta) => {
@@ -4607,7 +4624,7 @@
         <input type="hidden" name="id" value="${escapeHtml(record?.id || '')}" />
         <div class="form-grid">
           <label class="form-field">
-            <span>Número OC / documento <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <span>Número OC <span class="required-dot" aria-label="obligatorio">*</span></span>
             <input type="text" name="numeroDocumento" value="${escapeHtml(record?.numeroDocumento || cleanText(draft.numeroDocumento))}" placeholder="Ej. OC-001" required autocomplete="off" />
           </label>
           <label class="form-field">
@@ -4889,7 +4906,7 @@
   }
 
   function validateVentaRecord(record) {
-    if (!record.numeroDocumento) return 'El número OC / documento es obligatorio.';
+    if (!record.numeroDocumento) return 'El número OC es obligatorio.';
     if (!record.clienteId || !getActiveCatalogRecords('clientes').some((cliente) => cliente.id === record.clienteId)) return 'Selecciona un cliente activo desde Catálogos.';
     if (!record.sucursalId || !getActiveCatalogRecords('sucursales').some((sucursal) => sucursal.id === record.sucursalId)) return 'Selecciona una sucursal activa desde Catálogos.';
     if (!record.fechaOc) return 'La fecha OC es obligatoria.';
@@ -4982,7 +4999,7 @@
 
   function validateVentaAjusteRecord(venta, ajuste, clienteId) {
     if (!venta || !venta.id || !venta.activo) return 'Selecciona una OC activa para aplicar el ajuste.';
-    if (!clienteId || clienteId !== venta.clienteId) return 'Selecciona el cliente correspondiente a la OC/documento.';
+    if (!clienteId || clienteId !== venta.clienteId) return 'Selecciona el cliente correspondiente a la OC.';
     if (!ajuste.fecha) return 'La fecha del ajuste es obligatoria.';
     if (!VENTA_AJUSTE_TYPES.includes(ajuste.tipo)) return 'Selecciona un tipo de ajuste válido.';
     if (Number.isNaN(parseMoney(ajuste.monto)) || ajuste.monto <= 0) return 'El monto del ajuste debe ser mayor que cero.';
@@ -5415,7 +5432,7 @@
       <form class="cobro-form" data-cobro-form novalidate>
         <div class="form-grid">
           <label class="form-field full-span">
-            <span>OC / documento <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <span>OC <span class="required-dot" aria-label="obligatorio">*</span></span>
             <select name="ventaId" required data-cobro-venta ${!ventasDisponibles.length ? 'disabled' : ''}>
               ${ventasDisponibles.length ? '' : '<option value="">No hay OC con saldo</option>'}
               ${ventasDisponibles.map((venta) => {
@@ -5468,7 +5485,7 @@
         <input type="hidden" name="ventaId" value="${escapeHtml(record.ventaId)}" />
         <div class="form-grid">
           <label class="form-field full-span">
-            <span>OC / documento ligado</span>
+            <span>OC ligado</span>
             <input type="text" value="${escapeHtml(record.numeroDocumento || venta?.numeroDocumento || 'Sin OC')}" disabled />
           </label>
           <label class="form-field">
@@ -5729,7 +5746,7 @@
       tableClass: 'operational-table-cobros',
       headers: `
         <th>Fecha</th>
-        <th>OC / documento</th>
+        <th>OC</th>
         <th class="amount-cell">Monto</th>
         <th>Método</th>
         <th>Banco</th>
@@ -5756,7 +5773,7 @@
     return `
       <tr class="compact-record-row cobro-row ${record.activo ? 'is-active' : 'is-inactive'}" data-cobro-card data-search-text="${escapeHtml(searchable)}">
         <td data-label="Fecha"><span class="compact-primary">${escapeHtml(formatDate(record.fechaCobro))}</span></td>
-        <td data-label="OC / documento"><span class="compact-primary">${escapeHtml(record.numeroDocumento || 'Sin OC')}</span>${record.sucursalNombre ? `<small>${escapeHtml(record.sucursalNombre)}</small>` : ''}</td>
+        <td data-label="OC"><span class="compact-primary">${escapeHtml(record.numeroDocumento || 'Sin OC')}</span>${record.sucursalNombre ? `<small>${escapeHtml(record.sucursalNombre)}</small>` : ''}</td>
         <td data-label="Monto" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.montoCobrado))}</span></td>
         <td data-label="Método"><span>${escapeHtml(record.metodoPagoNombre || '—')}</span></td>
         <td data-label="Banco"><span>${escapeHtml(record.cuentaBancoNombre || '—')}</span></td>
@@ -6035,10 +6052,10 @@
         ${missingProviders ? renderProveedoresCatalogWarning() : ''}
 
         <section class="metric-grid" aria-label="Resumen operativo de proveedores y compras">
-          <article class="metric-card"><span>Monto original activo</span><strong>${escapeHtml(formatMoney(totals.totalCompra))}</strong></article>
+          <article class="metric-card"><span>Original activo</span><strong>${escapeHtml(formatMoney(totals.totalCompra))}</strong></article>
           <article class="metric-card"><span>Ajustes aplicados</span><strong>-${escapeHtml(formatMoney(totals.totalAjustes))}</strong></article>
-          <article class="metric-card"><span>Total ajustado</span><strong>${escapeHtml(formatMoney(totals.totalAjustado))}</strong></article>
-          <article class="metric-card"><span>Total pagado</span><strong>${escapeHtml(formatMoney(totals.totalPagado))}</strong></article>
+          <article class="metric-card"><span>Ajustado</span><strong>${escapeHtml(formatMoney(totals.totalAjustado))}</strong></article>
+          <article class="metric-card"><span>Pagado</span><strong>${escapeHtml(formatMoney(totals.totalPagado))}</strong></article>
           <article class="metric-card"><span>Saldo por pagar</span><strong>${escapeHtml(formatMoney(totals.saldoPorPagar))}</strong></article>
           <article class="metric-card"><span>Pendientes</span><strong>${totals.pendientes}</strong></article>
           <article class="metric-card"><span>Vencidas</span><strong>${totals.vencidas}</strong></article>
@@ -6126,7 +6143,7 @@
             </select>
           </label>
           <label class="form-field">
-            <span>Factura / referencia <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <span>Referencia <span class="required-dot" aria-label="obligatorio">*</span></span>
             <select name="compraProveedorId" required data-ajuste-compra>
               <option value="">Seleccionar factura</option>
               ${compras.map((compra) => {
@@ -6172,7 +6189,7 @@
       <div class="formula-grid">
         <span>Original</span><b>${escapeHtml(formatMoney(compra.totalCompra))}</b>
         <span>Ajustes actuales</span><b>${compra.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(compra.totalAjustes))}</b>
-        <span>Total ajustado</span><b>${escapeHtml(formatMoney(compra.totalAjustado))}</b>
+        <span>Ajustado</span><b>${escapeHtml(formatMoney(compra.totalAjustado))}</b>
         <span>Pagado</span><b>${escapeHtml(formatMoney(compra.totalPagado))}</b>
         <span>Saldo disponible</span><b>${escapeHtml(formatMoney(compra.saldoPorPagar))}</b>
       </div>
@@ -6211,7 +6228,7 @@
             </select>
           </label>
           <label class="form-field">
-            <span>Factura / referencia <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <span>Referencia <span class="required-dot" aria-label="obligatorio">*</span></span>
             <input type="text" name="facturaReferencia" value="${escapeHtml(facturaReferencia)}" placeholder="Ej. FAC-001 / REF-001" required autocomplete="off" />
           </label>
           <label class="form-field">
@@ -6233,12 +6250,12 @@
         </div>
 
         <div class="formula-card" aria-live="polite">
-          <strong>Saldo por pagar = Total ajustado - Total pagado</strong>
+          <strong>Saldo por pagar = Ajustado - Pagado</strong>
           <div class="formula-grid">
-            <span>Monto original</span><b data-compra-preview-total>${escapeHtml(formatMoney(calculations.totalCompra))}</b>
+            <span>Original</span><b data-compra-preview-total>${escapeHtml(formatMoney(calculations.totalCompra))}</b>
             <span>Ajustes / notas</span><b data-compra-preview-ajustes>${calculations.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(calculations.totalAjustes))}</b>
-            <span>Total ajustado</span><b data-compra-preview-ajustado>${escapeHtml(formatMoney(calculations.totalAjustado))}</b>
-            <span>Total pagado</span><b data-compra-preview-pagado>${escapeHtml(formatMoney(record?.totalPagado || 0))}</b>
+            <span>Ajustado</span><b data-compra-preview-ajustado>${escapeHtml(formatMoney(calculations.totalAjustado))}</b>
+            <span>Pagado</span><b data-compra-preview-pagado>${escapeHtml(formatMoney(record?.totalPagado || 0))}</b>
             <span>Saldo por pagar</span><b data-compra-preview-saldo>${escapeHtml(formatMoney(calculations.saldoPorPagar))}</b>
           </div>
         </div>
@@ -6340,12 +6357,12 @@
       ariaLabel: groupLabel ? `Compras y deudas registradas de ${groupLabel}` : 'Compras y deudas registradas',
       tableClass: 'operational-table-compras',
       headers: `
-        <th>Factura / ref.</th>
+        <th>Referencia</th>
         <th>Compra</th>
         <th>Vence</th>
         <th class="amount-cell">Original</th>
         <th class="amount-cell">Ajustes</th>
-        <th class="amount-cell">Total ajustado</th>
+        <th class="amount-cell">Ajustado</th>
         <th class="amount-cell">Pagado</th>
         <th class="amount-cell">Saldo</th>
         <th>Estado</th>
@@ -6376,12 +6393,12 @@
     const ajustesRow = renderCompraAjustesCompactRow(record, 10);
     return `
       <tr class="compact-record-row compra-row ${record.activo ? 'is-active' : 'is-inactive'}">
-        <td data-label="Factura / ref."><span class="compact-primary">${escapeHtml(record.facturaReferencia || 'Sin referencia')}</span></td>
+        <td data-label="Referencia"><span class="compact-primary">${escapeHtml(record.facturaReferencia || 'Sin referencia')}</span></td>
         <td data-label="Compra"><span>${escapeHtml(formatDate(record.fechaCompra))}</span></td>
         <td data-label="Vence"><span>${escapeHtml(formatDate(record.fechaVencimiento))}</span></td>
         <td data-label="Original" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.totalCompra))}</span></td>
         <td data-label="Ajustes" class="amount-cell"><span>${record.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(record.totalAjustes))}</span></td>
-        <td data-label="Total ajustado" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.totalAjustado))}</span></td>
+        <td data-label="Ajustado" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.totalAjustado))}</span></td>
         <td data-label="Pagado" class="amount-cell"><span>${escapeHtml(formatMoney(record.totalPagado))}</span></td>
         <td data-label="Saldo" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.saldoPorPagar))}</span></td>
         <td data-label="Estado"><span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span></td>
@@ -6527,14 +6544,14 @@
 
   function validateCompraProveedorRecord(record, existingRecord = null) {
     if (!record.proveedorId || !getActiveCatalogRecords('proveedores').some((proveedor) => proveedor.id === record.proveedorId)) return 'Selecciona un proveedor activo desde Catálogos.';
-    if (!record.facturaReferencia) return 'La factura / referencia es obligatoria.';
+    if (!record.facturaReferencia) return 'La referencia es obligatoria.';
     if (!record.fechaCompra) return 'La fecha de compra es obligatoria.';
     if (!record.fechaVencimiento) return 'La fecha de vencimiento es obligatoria.';
     if (Number.isNaN(parsePositiveInteger(record.diasCredito))) return 'Días de crédito debe ser cero o un número entero positivo.';
     if (record.condicionPagoSnapshot === 'Contado' && Number(record.diasCredito) !== 0) return 'En compras de contado, días de crédito debe ser 0.';
     if (record.condicionPagoSnapshot === 'Contado' && record.fechaVencimiento !== record.fechaCompra) return 'En compras de contado, el vencimiento debe ser igual a la fecha de compra.';
     if (Number.isNaN(parseMoney(record.totalCompra)) || record.totalCompra <= 0) return 'Total compra/deuda debe ser un número mayor que cero.';
-    if (Number.isNaN(parseMoney(record.totalPagado)) || record.totalPagado < 0) return 'Total pagado no puede ser negativo.';
+    if (Number.isNaN(parseMoney(record.totalPagado)) || record.totalPagado < 0) return 'Pagado no puede ser negativo.';
     if (record.saldoPorPagar < 0) return 'El saldo por pagar no puede ser negativo.';
     const contadoError = validateCompraContadoPayment(record, existingRecord);
     if (contadoError) return contadoError;
@@ -7000,7 +7017,7 @@
           <div class="status-grid">
             <div class="status-item"><strong>Facturas pagables</strong><span>${comprasDisponibles.length}</span></div>
             <div class="status-item"><strong>Pagos activos</strong><span>${totals.activos}</span></div>
-            <div class="status-item"><strong>Total pagado</strong><span>${escapeHtml(formatMoney(totals.totalPagado))}</span></div>
+            <div class="status-item"><strong>Pagado</strong><span>${escapeHtml(formatMoney(totals.totalPagado))}</span></div>
             <div class="status-item"><strong>Anulados</strong><span>${totals.anulados}</span></div>
           </div>
         </aside>
@@ -7012,7 +7029,7 @@
         ${renderPagosWarning(comprasDisponibles, metodosActivos, cuentasActivas)}
 
         <section class="metric-grid" aria-label="Resumen operativo de pagos a proveedores">
-          <article class="metric-card"><span>Total pagado activo</span><strong>${escapeHtml(formatMoney(totals.totalPagado))}</strong></article>
+          <article class="metric-card"><span>Pagado activo</span><strong>${escapeHtml(formatMoney(totals.totalPagado))}</strong></article>
           <article class="metric-card"><span>Pagos registrados</span><strong>${totals.activos}</strong></article>
           <article class="metric-card"><span>Pagos anulados</span><strong>${totals.anulados}</strong></article>
           <article class="metric-card"><span>Facturas pagadas</span><strong>${totals.facturasPagadas}</strong></article>
@@ -7078,7 +7095,7 @@
       <form class="pago-form" data-pago-form novalidate>
         <div class="form-grid">
           <label class="form-field full-span">
-            <span>Factura / referencia <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <span>Referencia <span class="required-dot" aria-label="obligatorio">*</span></span>
             <select name="compraProveedorId" required data-pago-compra ${!comprasDisponibles.length ? 'disabled' : ''}>
               ${comprasDisponibles.length ? '' : '<option value="">No hay facturas con saldo</option>'}
               ${comprasDisponibles.map((compra) => {
@@ -7130,7 +7147,7 @@
         <input type="hidden" name="compraProveedorId" value="${escapeHtml(record.compraProveedorId)}" />
         <div class="form-grid">
           <label class="form-field full-span">
-            <span>Factura / referencia ligada</span>
+            <span>Referencia ligada</span>
             <input type="text" value="${escapeHtml(record.facturaReferencia || compra?.facturaReferencia || 'Sin referencia')}" disabled />
           </label>
           <label class="form-field">
@@ -7167,14 +7184,14 @@
   function renderSelectedCompraPagoSummary(compra, proveedor) {
     return `
       <div class="formula-card pago-summary" aria-live="polite">
-        <strong>Factura/referencia seleccionada</strong>
+        <strong>Referencia seleccionada</strong>
         <div class="formula-grid">
           <span>Proveedor</span><b>${escapeHtml(proveedor?.nombre || compra.proveedorNombre || 'Proveedor no encontrado')}</b>
-          <span>Factura/referencia</span><b>${escapeHtml(compra.facturaReferencia || 'Sin referencia')}</b>
+          <span>Referencia</span><b>${escapeHtml(compra.facturaReferencia || 'Sin referencia')}</b>
           <span>Fecha compra</span><b>${escapeHtml(formatDate(compra.fechaCompra))}</b>
           <span>Vencimiento</span><b>${escapeHtml(formatDate(compra.fechaVencimiento))}</b>
           <span>Total compra/deuda</span><b>${escapeHtml(formatMoney(compra.totalCompra))}</b>
-          <span>Total pagado actual</span><b>${escapeHtml(formatMoney(compra.totalPagado))}</b>
+          <span>Pagado actual</span><b>${escapeHtml(formatMoney(compra.totalPagado))}</b>
           <span>Saldo por pagar actual</span><b>${escapeHtml(formatMoney(compra.saldoPorPagar))}</b>
         </div>
       </div>
@@ -7210,7 +7227,7 @@
       tableClass: 'operational-table-pagos',
       headers: `
         <th>Fecha</th>
-        <th>Factura / ref.</th>
+        <th>Referencia</th>
         <th class="amount-cell">Monto</th>
         <th>Método</th>
         <th>Banco</th>
@@ -7237,7 +7254,7 @@
     return `
       <tr class="compact-record-row pago-row ${record.activo ? 'is-active' : 'is-inactive'}" data-pago-card data-search-text="${escapeHtml(searchable)}">
         <td data-label="Fecha"><span class="compact-primary">${escapeHtml(formatDate(record.fechaPago))}</span></td>
-        <td data-label="Factura / ref."><span class="compact-primary">${escapeHtml(record.facturaReferencia || '—')}</span></td>
+        <td data-label="Referencia"><span class="compact-primary">${escapeHtml(record.facturaReferencia || '—')}</span></td>
         <td data-label="Monto" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.montoPagado))}</span></td>
         <td data-label="Método"><span>${escapeHtml(record.metodoPagoNombre || '—')}</span></td>
         <td data-label="Banco"><span>${escapeHtml(record.cuentaBancoNombre || '—')}</span></td>
@@ -7633,7 +7650,7 @@
         <th class="amount-cell">Monto</th>
         <th>Método</th>
         <th>Banco</th>
-        <th>Obs.</th>
+        <th>Observación</th>
         <th>Estado</th>
         <th class="actions-cell">Acciones</th>
       `,
@@ -7665,7 +7682,7 @@
         <td data-label="Monto" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.monto))}</span></td>
         <td data-label="Método"><span>${escapeHtml(metodo?.nombre || record.metodoPagoNombre || 'Método no encontrado')}</span></td>
         <td data-label="Banco"><span>${escapeHtml(cuenta?.nombre || record.cuentaBancoNombre || '—')}</span></td>
-        <td data-label="Obs."><span>${escapeHtml(record.observacion || '—')}</span></td>
+        <td data-label="Observación"><span>${escapeHtml(record.observacion || '—')}</span></td>
         <td data-label="Estado"><span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span></td>
         <td data-label="Acciones" class="actions-cell">
           <div class="record-actions compact-row-actions">
@@ -9366,7 +9383,7 @@
       [xlsxText('Compras originales'), xlsxMoney(summary.totalComprasOriginal || 0)],
       [xlsxText('Ajustes proveedores'), xlsxMoney((summary.totalAjustesProveedores || 0) > 0 ? -summary.totalAjustesProveedores : 0)],
       [xlsxText('Compras ajustadas'), xlsxMoney(summary.totalComprasProveedores)],
-      [xlsxText('Total pagado proveedores'), xlsxMoney(summary.totalPagadoProveedores)],
+      [xlsxText('Pagado proveedores'), xlsxMoney(summary.totalPagadoProveedores)],
       [xlsxText('Saldo por pagar'), xlsxMoney(summary.saldoPorPagar)],
       [xlsxText('Total gastos'), xlsxMoney(summary.totalGastos)],
       [xlsxText('Flujo del período'), xlsxMoney(summary.flujoPeriodo)],
@@ -9378,7 +9395,7 @@
     summary.gastosPorTipo.forEach((item) => rows.push([xlsxText(item.tipo), xlsxMoney(item.total), xlsxNumber(item.cantidad)]));
     rows.push([], xlsxHeaderRow(['Venta ajustada por sucursal', 'Venta ajustada', 'Total cobrado', 'Saldo por cobrar', 'Documentos']));
     summary.ventaPorSucursal.forEach((item) => rows.push([xlsxText(item.sucursal), xlsxMoney(item.totalVendido), xlsxMoney(item.totalCobrado), xlsxMoney(item.saldoPorCobrar), xlsxNumber(item.documentos)]));
-    rows.push([], xlsxHeaderRow(['Saldos por proveedor', 'Monto original', 'Ajustes', 'Total ajustado', 'Total pagado', 'Saldo por pagar', 'Documentos']));
+    rows.push([], xlsxHeaderRow(['Saldos por proveedor', 'Original', 'Ajustes', 'Ajustado', 'Pagado', 'Saldo por pagar', 'Documentos']));
     summary.saldosPorProveedor.forEach((item) => rows.push([
       xlsxText(item.proveedor),
       xlsxMoney(item.totalCompra),
@@ -9388,9 +9405,9 @@
       xlsxMoney(item.saldoPorPagar),
       xlsxNumber(item.documentos)
     ]));
-    rows.push([], xlsxHeaderRow(['Clientes en mora', 'Sucursal', 'OC/documento', 'Fecha vencimiento', 'Días mora', 'Saldo pendiente', 'Estado']));
+    rows.push([], xlsxHeaderRow(['Clientes', 'Sucursal', 'OC', 'Vence', 'Días', 'Saldo', 'Estado']));
     summary.clientesMora.forEach((item) => rows.push([xlsxText(item.cliente), xlsxText(item.sucursal), xlsxText(item.documento), xlsxDate(item.fechaVencimiento), xlsxNumber(item.diasMora), xlsxMoney(item.saldoPendiente), xlsxText(item.estado)]));
-    rows.push([], xlsxHeaderRow(['Proveedores en mora', 'Factura/referencia', 'Fecha vencimiento', 'Días mora', 'Saldo pendiente', 'Estado']));
+    rows.push([], xlsxHeaderRow(['Proveedores en mora', 'Referencia', 'Fecha vencimiento', 'Días mora', 'Saldo pendiente', 'Estado']));
     summary.proveedoresMora.forEach((item) => rows.push([xlsxText(item.proveedor), xlsxText(item.documento), xlsxDate(item.fechaVencimiento), xlsxNumber(item.diasMora), xlsxMoney(item.saldoPendiente), xlsxText(item.estado)]));
 
     return { name: 'Resumen', rows, cols: [28, 18, 18, 18, 14, 18, 18] };
@@ -9401,7 +9418,7 @@
       [xlsxTitle('Ventas / OC')],
       [xlsxLabel('Período'), xlsxText(summary.periodLabel)],
       [],
-      xlsxHeaderRow(['Fecha OC', 'Cliente', 'Sucursal', 'OC/documento', 'Facturas', 'Requiere envío', 'Transportista', 'Fecha de embarque', 'Fecha estimada', 'Fecha real', 'Guía', 'Subtotal', 'Descuento', 'Total', 'Ajustes', 'Cobrado', 'Saldo', 'Vencimiento', 'Mora', 'Estado', 'Detalle', 'Observación'])
+      xlsxHeaderRow(['Fecha', 'Cliente', 'Sucursal', 'OC', 'Facturas', 'Envío', 'Transportista', 'Embarque', 'Estimada', 'Real', 'Guía', 'Subtotal', 'Descuento', 'Total', 'Ajustes', 'Cobrado', 'Saldo', 'Vence', 'Mora', 'Estado', 'Detalle', 'Observación'])
     ];
     getVentasForExport(summary.range, summary.filters).forEach((venta) => {
       const cliente = getCatalogRecordById('clientes', venta.clienteId);
@@ -9440,7 +9457,7 @@
       [xlsxTitle('Proveedores / Compras')],
       [xlsxLabel('Período'), xlsxText(summary.periodLabel)],
       [],
-      xlsxHeaderRow(['Fecha compra', 'Proveedor', 'Factura/referencia', 'Fecha vencimiento', 'Monto original', 'Ajustes', 'Total ajustado', 'Total pagado', 'Saldo por pagar', 'Días mora', 'Estado', 'Ajustes detalle', 'Observación'])
+      xlsxHeaderRow(['Fecha compra', 'Proveedor', 'Referencia', 'Fecha vencimiento', 'Original', 'Ajustes', 'Ajustado', 'Pagado', 'Saldo por pagar', 'Días mora', 'Estado', 'Ajustes detalle', 'Observación'])
     ];
     getComprasForExport(summary.range, summary.filters).forEach((compra) => {
       const proveedor = getCatalogRecordById('proveedores', compra.proveedorId);
@@ -10213,18 +10230,18 @@ ${rowsXml}
           observacion: 'Cobro histórico generado por total cobrado importado desde Ventas.'
         }));
       }
-      if (!record.numeroDocumento) warnings.push(`Ventas fila ${index + 2}: sin OC/documento; se importará como “Sin número”.`);
+      if (!record.numeroDocumento) warnings.push(`Ventas fila ${index + 2}: sin OC; se importará como “Sin número”.`);
     });
   }
 
   function importProveedoresRows(sheet, payload, warnings) {
-    const parsed = rowsToObjects(sheet, warnings, 'Proveedores', [['Proveedor'], ['Factura', 'Referencia', 'Documento'], ['Total compra', 'Total deuda', 'Monto', 'Monto original']]);
+    const parsed = rowsToObjects(sheet, warnings, 'Proveedores', [['Proveedor'], ['Factura', 'Referencia', 'Documento'], ['Total compra', 'Total deuda', 'Monto', 'Monto original', 'Original']]);
     payload.__headersProveedores = parsed.headers;
     parsed.objects.forEach((row) => {
       const proveedorNombre = cleanText(pickCell(row, ['Proveedor', 'Nombre proveedor']));
       const proveedorId = proveedorNombre ? addImportCatalog(payload, 'proveedores', proveedorNombre) : '';
       const totalPagado = parseExcelMoney(pickCell(row, ['Total pagado', 'Pagado', 'Abonado']));
-      const totalCompra = parseExcelMoney(pickCell(row, ['Monto original', 'Total compra', 'Total deuda', 'Monto', 'Total', 'Importe']));
+      const totalCompra = parseExcelMoney(pickCell(row, ['Monto original', 'Original', 'Total compra', 'Total deuda', 'Monto', 'Total', 'Importe']));
       const totalAjustes = Math.abs(parseExcelMoney(pickCell(row, ['Ajustes', 'Ajuste', 'Notas crédito', 'Notas de crédito', 'Nota de crédito'])) || 0);
       const record = normalizeCompraProveedorRecord({
         id: generateId('compraProveedor'),

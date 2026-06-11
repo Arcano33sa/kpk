@@ -112,7 +112,7 @@ button {
   display: block;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
 }
 
 .brand-text strong {
@@ -622,7 +622,7 @@ h3 {
 .catalog-tab strong {
   max-width: 100%;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
   white-space: nowrap;
   font-size: 0.82rem;
 }
@@ -2919,7 +2919,7 @@ textarea:disabled {
   width: 100%;
   min-width: 760px;
   border-collapse: collapse;
-  table-layout: fixed;
+  table-layout: auto;
   font-size: 0.86rem;
 }
 
@@ -2978,10 +2978,11 @@ textarea:disabled {
 .operational-table td > span,
 .operational-table td small {
   display: block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .operational-table td small {
@@ -3134,9 +3135,10 @@ textarea:disabled {
 
 .entity-accordion-name {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
   font-weight: 950;
 }
 
@@ -3757,4 +3759,138 @@ textarea:disabled {
   .catalog-compact-actions .compact-row-actions {
     justify-content: flex-start;
   }
+}
+
+
+/* Etapa 1/1 — normalización compacta: datos completos sin ellipsis y scroll interno */
+.app-shell,
+#viewRoot,
+.panel-card,
+.entity-accordion-list,
+.entity-accordion-item,
+.entity-accordion-panel,
+.operational-scroll-shell,
+.periodo-blocking-scroll-shell,
+.mora-compact-scroll-shell,
+.historial-compact-scroll-shell,
+.resumen-compact-scroll-shell,
+.catalog-compact-scroll-shell,
+.closing-compact-scroll-shell {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.operational-table-wrap,
+.periodo-blocking-table-wrap,
+.mora-compact-table-wrap,
+.historial-compact-table-wrap,
+.resumen-compact-table-wrap,
+.catalog-compact-table-wrap,
+.closing-compact-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  max-width: 100%;
+  scrollbar-gutter: stable;
+  overscroll-behavior-x: contain;
+}
+
+.operational-table,
+.periodo-blocking-table,
+.mora-compact-table,
+.historial-compact-table,
+.resumen-compact-table,
+.catalog-compact-table,
+.closing-compact-table {
+  table-layout: auto;
+  border-collapse: collapse;
+}
+
+.operational-table td > span,
+.operational-table td small,
+.operational-table .compact-primary,
+.periodo-blocking-table td > span,
+.periodo-blocking-table td small,
+.periodo-blocking-table .compact-primary,
+.mora-compact-table td > span,
+.mora-compact-table td small,
+.mora-compact-table .compact-primary,
+.historial-compact-table td > span,
+.historial-compact-table td small,
+.historial-compact-table .compact-primary,
+.resumen-compact-table td > span,
+.resumen-compact-table td small,
+.resumen-compact-table .compact-primary,
+.catalog-compact-table td > span,
+.catalog-compact-table td small,
+.catalog-compact-table .compact-primary,
+.closing-compact-table td > span,
+.closing-compact-table td small,
+.closing-compact-table .compact-primary,
+.entity-accordion-name {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.operational-table td > span,
+.operational-table td small,
+.operational-table .compact-primary,
+.entity-accordion-name {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.22;
+}
+
+.periodo-blocking-table td > span,
+.periodo-blocking-table td small,
+.mora-compact-table td > span,
+.mora-compact-table td small,
+.historial-compact-table td > span,
+.historial-compact-table td small,
+.resumen-compact-table td > span,
+.resumen-compact-table td small,
+.catalog-compact-table td > span,
+.catalog-compact-table td small,
+.closing-compact-table td > span,
+.closing-compact-table td small {
+  white-space: nowrap;
+}
+
+.operational-table .amount-cell,
+.operational-table .amount-cell > span,
+.operational-table .state-pill,
+.operational-table .actions-cell,
+.operational-table .actions-cell *,
+.periodo-blocking-date,
+.periodo-blocking-mora,
+.periodo-blocking-amount,
+.mora-compact-date,
+.mora-compact-mora,
+.mora-compact-amount,
+.mora-compact-state,
+.mora-compact-actions,
+.historial-compact-date,
+.historial-compact-amount,
+.historial-compact-state,
+.historial-compact-actions,
+.resumen-compact-date,
+.resumen-compact-mora,
+.resumen-compact-count,
+.resumen-compact-amount,
+.catalog-compact-state,
+.catalog-compact-actions,
+.closing-compact-period,
+.closing-compact-date {
+  white-space: nowrap;
+}
+
+.operational-top-scroll {
+  position: sticky;
+  top: calc(var(--topbar-height) + var(--safe-top) + 8px);
+  z-index: 12;
+  min-height: 18px;
+}
+
+body {
+  overflow-x: hidden;
 }
