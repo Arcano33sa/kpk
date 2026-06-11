@@ -3093,3 +3093,88 @@ textarea:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+/* Etapa Ajustes / Notas Proveedores y Ventas */
+.ventas-form-stack,
+.compras-form-stack {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.venta-ajuste-card,
+.compra-ajuste-card {
+  min-width: 0;
+}
+
+.ajuste-form {
+  display: grid;
+  gap: 14px;
+}
+
+.ajuste-preview {
+  margin: 0;
+}
+
+.compact-empty {
+  padding: 14px;
+}
+
+.compact-adjustments-row td {
+  padding: 7px 10px 10px;
+  background: rgba(255, 250, 240, 0.82);
+}
+
+.ajustes-inline-history {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.ajustes-inline-history > strong {
+  color: var(--accent-dark);
+}
+
+.ajuste-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 8px;
+  border: 1px solid rgba(185, 135, 43, 0.28);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.ajuste-chip.is-inactive {
+  opacity: 0.62;
+  text-decoration: line-through;
+}
+
+.mini-inline-action {
+  border: 0;
+  border-radius: 999px;
+  padding: 3px 7px;
+  font: inherit;
+  font-weight: 850;
+  color: var(--danger);
+  background: rgba(185, 28, 28, 0.08);
+  cursor: pointer;
+}
+
+.mini-inline-action:hover {
+  background: rgba(185, 28, 28, 0.14);
+}
+
+.operational-table-ventas {
+  min-width: 1320px;
+}
+
+.operational-table-compras {
+  min-width: 1300px;
+}

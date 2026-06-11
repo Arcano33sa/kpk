@@ -2,10 +2,12 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.0-post12-ventas-oc-facturas-captura-masiva';
+  const APP_VERSION = '0.17.3-post12-ajustes-integracion-general';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
+  const COMPRA_AJUSTE_TYPES = ['Faltante', 'Devolución', 'Rebaja', 'Nota de crédito', 'Corrección'];
+  const VENTA_AJUSTE_TYPES = ['Quebrado', 'Faltante', 'Devolución', 'Rebaja', 'Nota de crédito', 'Corrección'];
 
   const MODULES = [
     {
@@ -253,6 +255,8 @@
   let ventasState = {
     editingId: null,
     quickCapture: null,
+    selectedAjusteVentaId: '',
+    openGroupKey: '',
     message: null,
     messageType: 'success'
   };
@@ -269,6 +273,7 @@
   let proveedoresState = {
     editingId: null,
     quickCapture: null,
+    selectedAjusteCompraId: '',
     openGroupKey: '',
     message: null,
     messageType: 'success'
@@ -672,24 +677,34 @@
     const descuento = parseMoney(record.descuento);
     const descuentoNoVa = parseMoney(record.descuentoNoVa);
     const totalCobrado = parseMoney(record.totalCobrado);
-    const ventaNeta = roundMoney((Number.isNaN(montoOc) ? 0 : montoOc) - (Number.isNaN(noVa) ? 0 : noVa) - (Number.isNaN(descuento) ? 0 : descuento) - (Number.isNaN(descuentoNoVa) ? 0 : descuentoNoVa));
-    const saldoPorCobrar = roundMoney(ventaNeta - (Number.isNaN(totalCobrado) ? 0 : totalCobrado));
+    const safeMontoOc = Number.isNaN(montoOc) ? 0 : montoOc;
+    const safeNoVa = Number.isNaN(noVa) ? 0 : noVa;
+    const safeDescuento = Number.isNaN(descuento) ? 0 : descuento;
+    const safeDescuentoNoVa = Number.isNaN(descuentoNoVa) ? 0 : descuentoNoVa;
+    const safeTotalCobrado = Number.isNaN(totalCobrado) ? 0 : totalCobrado;
+    const ventaNetaOriginal = roundMoney(safeMontoOc - safeNoVa - safeDescuento - safeDescuentoNoVa);
+    const totalAjustes = Math.min(calculateTotalAjustesForVenta(record), Math.max(ventaNetaOriginal, 0));
+    const ventaNetaAjustada = roundMoney(Math.max(ventaNetaOriginal - totalAjustes, 0));
+    const saldoPorCobrar = roundMoney(Math.max(ventaNetaAjustada - safeTotalCobrado, 0));
 
     return {
-      montoOc: Number.isNaN(montoOc) ? 0 : montoOc,
-      noVa: Number.isNaN(noVa) ? 0 : noVa,
-      descuento: Number.isNaN(descuento) ? 0 : descuento,
-      descuentoNoVa: Number.isNaN(descuentoNoVa) ? 0 : descuentoNoVa,
-      totalCobrado: Number.isNaN(totalCobrado) ? 0 : totalCobrado,
-      ventaNeta,
+      montoOc: safeMontoOc,
+      noVa: safeNoVa,
+      descuento: safeDescuento,
+      descuentoNoVa: safeDescuentoNoVa,
+      totalCobrado: safeTotalCobrado,
+      ventaNetaOriginal,
+      totalAjustes,
+      ventaNetaAjustada,
+      ventaNeta: ventaNetaAjustada,
       saldoPorCobrar
     };
   }
 
   function determineVentaEstado(record) {
     if (!record.activo) return 'Anulado';
-    const { ventaNeta, totalCobrado, saldoPorCobrar } = getVentaCalculations(record);
-    if (ventaNeta > 0 && saldoPorCobrar <= 0) return 'Pagado';
+    const { ventaNetaOriginal, totalCobrado, saldoPorCobrar } = getVentaCalculations(record);
+    if (ventaNetaOriginal > 0 && saldoPorCobrar <= 0) return 'Pagado';
     if (saldoPorCobrar > 0 && isPastDate(record.fechaVencimiento)) return 'Vencido';
     if (saldoPorCobrar > 0 && totalCobrado > 0) return 'Abonado';
     return 'Pendiente';
@@ -770,6 +785,42 @@
       });
   }
 
+  function normalizeVentaAjusteRecord(record) {
+    const raw = isPlainObject(record) ? record : {};
+    const timestamp = nowIso();
+    const monto = parseMoney(raw.monto || raw.importe || raw.valor);
+    const tipo = VENTA_AJUSTE_TYPES.includes(raw.tipo) ? raw.tipo : (cleanText(raw.tipo) || 'Corrección');
+    const activo = typeof raw.activo === 'boolean' ? raw.activo : raw.estado !== 'Anulado';
+    return {
+      id: cleanText(raw.id) || generateId('ajusteCliente'),
+      fecha: toDateInputValue(raw.fecha || raw.fechaAjuste || '') || todayInputValue(),
+      tipo: VENTA_AJUSTE_TYPES.includes(tipo) ? tipo : 'Corrección',
+      monto: Number.isNaN(monto) ? 0 : Math.abs(monto),
+      observacion: cleanText(raw.observacion || raw.nota || raw.descripcion),
+      activo,
+      estado: activo ? 'Registrado' : 'Anulado',
+      createdAt: raw.createdAt || timestamp,
+      updatedAt: raw.updatedAt || raw.createdAt || timestamp
+    };
+  }
+
+  function normalizeVentaAjustesList(records) {
+    const source = Array.isArray(records) ? records : [];
+    return source
+      .map((record) => normalizeVentaAjusteRecord(record))
+      .filter((record) => record.monto > 0);
+  }
+
+  function getActiveAjustesForVenta(ventaRecord) {
+    const venta = isPlainObject(ventaRecord) ? ventaRecord : {};
+    return normalizeVentaAjustesList(venta.ajustes).filter((ajuste) => ajuste.activo);
+  }
+
+  function calculateTotalAjustesForVenta(ventaRecord) {
+    return getActiveAjustesForVenta(ventaRecord)
+      .reduce((sum, ajuste) => roundMoney(sum + ajuste.monto), 0);
+  }
+
   function normalizeVentaFacturasFromRaw(raw) {
     const source = isPlainObject(raw) ? raw : {};
     const structured = normalizeFacturasVentaList(source.facturas || source.facturasEmitidas || source.facturasOc || source.facturaEmitida || source.facturaVenta || []);
@@ -843,6 +894,7 @@
       descuento: parseMoney(raw.descuento),
       descuentoNoVa: parseMoney(raw.descuentoNoVa),
       totalCobrado: parseMoney(raw.totalCobrado),
+      ajustes: normalizeVentaAjustesList(raw.ajustes || raw.ajustesCliente || raw.ajustesClientes || raw.notasCredito || raw.notas || []),
       facturas: normalizeVentaFacturasFromRaw(raw),
       requiereEnvio: normalizeBooleanField(raw.requiereEnvio ?? raw.requiereEnvío ?? raw.envioRequerido ?? raw.envíoRequerido, false),
       logistica: normalizeLogisticaVentaRecord(raw.logistica || raw.envio || raw.logisticaEnvio || {}),
@@ -858,7 +910,11 @@
       noVa: Number.isNaN(base.noVa) ? 0 : base.noVa,
       descuento: Number.isNaN(base.descuento) ? 0 : base.descuento,
       descuentoNoVa: Number.isNaN(base.descuentoNoVa) ? 0 : base.descuentoNoVa,
-      totalCobrado: Number.isNaN(base.totalCobrado) ? 0 : base.totalCobrado,
+      totalCobrado: calculations.totalCobrado,
+      ajustes: normalizeVentaAjustesList(base.ajustes),
+      totalAjustes: calculations.totalAjustes,
+      ventaNetaOriginal: calculations.ventaNetaOriginal,
+      ventaNetaAjustada: calculations.ventaNetaAjustada,
       facturas: normalizeFacturasVentaList(base.facturas),
       requiereEnvio: Boolean(base.requiereEnvio),
       logistica: normalizeLogisticaVentaRecord(base.logistica),
@@ -898,15 +954,55 @@
   }
 
 
+  function normalizeCompraProveedorAjusteRecord(record) {
+    const raw = isPlainObject(record) ? record : {};
+    const timestamp = nowIso();
+    const monto = parseMoney(raw.monto || raw.importe || raw.valor);
+    const tipo = COMPRA_AJUSTE_TYPES.includes(raw.tipo) ? raw.tipo : (cleanText(raw.tipo) || 'Corrección');
+    const activo = typeof raw.activo === 'boolean' ? raw.activo : raw.estado !== 'Anulado';
+    return {
+      id: cleanText(raw.id) || generateId('ajusteProveedor'),
+      fecha: toDateInputValue(raw.fecha || raw.fechaAjuste || '') || todayInputValue(),
+      tipo: COMPRA_AJUSTE_TYPES.includes(tipo) ? tipo : 'Corrección',
+      monto: Number.isNaN(monto) ? 0 : Math.abs(monto),
+      observacion: cleanText(raw.observacion || raw.nota || raw.descripcion),
+      activo,
+      estado: activo ? 'Registrado' : 'Anulado',
+      createdAt: raw.createdAt || timestamp,
+      updatedAt: raw.updatedAt || raw.createdAt || timestamp
+    };
+  }
+
+  function normalizeCompraProveedorAjustesList(records) {
+    const source = Array.isArray(records) ? records : [];
+    return source
+      .map((record) => normalizeCompraProveedorAjusteRecord(record))
+      .filter((record) => record.monto > 0);
+  }
+
+  function getActiveAjustesForCompra(compraRecord) {
+    const compra = isPlainObject(compraRecord) ? compraRecord : {};
+    return normalizeCompraProveedorAjustesList(compra.ajustes).filter((ajuste) => ajuste.activo);
+  }
+
+  function calculateTotalAjustesForCompra(compraRecord) {
+    return getActiveAjustesForCompra(compraRecord)
+      .reduce((sum, ajuste) => roundMoney(sum + ajuste.monto), 0);
+  }
+
   function getCompraProveedorCalculations(record) {
     const totalCompra = parseMoney(record.totalCompra ?? record.totalDeuda ?? record.monto ?? record.total);
     const totalPagado = parseMoney(record.totalPagado);
     const safeTotalCompra = Number.isNaN(totalCompra) ? 0 : totalCompra;
     const safeTotalPagado = Number.isNaN(totalPagado) ? 0 : totalPagado;
-    const saldoPorPagar = roundMoney(Math.max(safeTotalCompra - safeTotalPagado, 0));
+    const totalAjustes = Math.min(calculateTotalAjustesForCompra(record), safeTotalCompra);
+    const totalAjustado = roundMoney(Math.max(safeTotalCompra - totalAjustes, 0));
+    const saldoPorPagar = roundMoney(Math.max(totalAjustado - safeTotalPagado, 0));
 
     return {
       totalCompra: safeTotalCompra,
+      totalAjustes,
+      totalAjustado,
       totalPagado: safeTotalPagado,
       saldoPorPagar
     };
@@ -939,6 +1035,7 @@
       fechaVencimiento,
       totalCompra: parseMoney(raw.totalCompra ?? raw.totalDeuda ?? raw.monto ?? raw.total),
       totalPagado: parseMoney(raw.totalPagado),
+      ajustes: normalizeCompraProveedorAjustesList(raw.ajustes),
       condicionPagoSnapshot: cleanText(raw.condicionPagoSnapshot || raw.condicionPagoCompra || raw.condicionPago || raw.condicion) ? normalizePaymentCondition(raw.condicionPagoSnapshot || raw.condicionPagoCompra || raw.condicionPago || raw.condicion) : '',
       metodoPagoContadoId: cleanText(raw.metodoPagoContadoId || raw.metodoPagoContado || raw.metodoPagoContadoCodigo),
       metodoPagoContadoNombre: cleanText(raw.metodoPagoContadoNombre || raw.metodoPagoContadoTexto || raw.metodoPagoContadoName),
@@ -955,6 +1052,9 @@
     return {
       ...base,
       totalCompra: calculations.totalCompra,
+      ajustes: base.ajustes,
+      totalAjustes: calculations.totalAjustes,
+      totalAjustado: calculations.totalAjustado,
       totalPagado: calculations.totalPagado,
       saldoPorPagar: calculations.saldoPorPagar,
       estado: determineCompraProveedorEstado(base)
@@ -1090,6 +1190,56 @@
     return ventas.map((venta) => recalculateVentaWithCobros(venta, cobrosSource));
   }
 
+  function getAjusteClienteDuplicateKey(record) {
+    const ajuste = normalizeVentaAjusteRecord(record);
+    return [ajuste.fecha, ajuste.tipo, roundMoney(ajuste.monto), normalizeNameForCompare(ajuste.observacion)].join('|');
+  }
+
+  function mergeVentaAjustes(existingRecord, incomingRecord) {
+    const existing = normalizeVentaRecord(existingRecord);
+    const incoming = normalizeVentaRecord(incomingRecord);
+    const merged = normalizeVentaAjustesList(existing.ajustes);
+    const ids = new Set(merged.map((ajuste) => ajuste.id).filter(Boolean));
+    const keys = new Set(merged.map((ajuste) => getAjusteClienteDuplicateKey(ajuste)));
+    normalizeVentaAjustesList(incoming.ajustes).forEach((ajuste) => {
+      const key = getAjusteClienteDuplicateKey(ajuste);
+      if ((ajuste.id && ids.has(ajuste.id)) || keys.has(key)) return;
+      merged.push(ajuste);
+      if (ajuste.id) ids.add(ajuste.id);
+      keys.add(key);
+    });
+    return normalizeVentaRecord({
+      ...existing,
+      ajustes: merged,
+      updatedAt: nowIso()
+    });
+  }
+
+  function getAjusteProveedorDuplicateKey(record) {
+    const ajuste = normalizeCompraProveedorAjusteRecord(record);
+    return [ajuste.fecha, ajuste.tipo, roundMoney(ajuste.monto), normalizeNameForCompare(ajuste.observacion)].join('|');
+  }
+
+  function mergeCompraProveedorAjustes(existingRecord, incomingRecord) {
+    const existing = normalizeCompraProveedorRecord(existingRecord);
+    const incoming = normalizeCompraProveedorRecord(incomingRecord);
+    const merged = normalizeCompraProveedorAjustesList(existing.ajustes);
+    const ids = new Set(merged.map((ajuste) => ajuste.id).filter(Boolean));
+    const keys = new Set(merged.map((ajuste) => getAjusteProveedorDuplicateKey(ajuste)));
+    normalizeCompraProveedorAjustesList(incoming.ajustes).forEach((ajuste) => {
+      const key = getAjusteProveedorDuplicateKey(ajuste);
+      if ((ajuste.id && ids.has(ajuste.id)) || keys.has(key)) return;
+      merged.push(ajuste);
+      if (ajuste.id) ids.add(ajuste.id);
+      keys.add(key);
+    });
+    return normalizeCompraProveedorRecord({
+      ...existing,
+      ajustes: merged,
+      updatedAt: nowIso()
+    });
+  }
+
   function getActivePagosForCompra(compraProveedorId, pagosSource) {
     const source = Array.isArray(pagosSource) ? pagosSource : [];
     return source
@@ -1152,7 +1302,7 @@
     const requiredBankType = getBankTypeForPaymentMethod(methodValue);
     const banco = requiredBankType ? getCatalogRecordById('cuentasBancos', compra.bancoPagoContadoId) : null;
     const manualPagado = calculateManualPagadoForCompra(compra.id, appData.pagosProveedores);
-    const montoAuto = roundMoney(Math.max(compra.totalCompra - manualPagado, 0));
+    const montoAuto = roundMoney(Math.max((compra.totalAjustado ?? compra.totalCompra) - manualPagado, 0));
     const activeAuto = Boolean(compra.activo && montoAuto > 0);
 
     return normalizePagoProveedorRecord({
@@ -1997,10 +2147,12 @@
         </form>
 
         <section class="metric-grid resumen-metrics" aria-label="Indicadores principales">
-          <article class="metric-card"><span>Total vendido</span><strong>${escapeHtml(formatMoney(summary.totalVendido))}</strong><small>Venta neta del período</small></article>
+          <article class="metric-card"><span>Venta neta ajustada</span><strong>${escapeHtml(formatMoney(summary.totalVendido))}</strong><small>Original ${escapeHtml(formatMoney(summary.totalVendidoOriginal || 0))}</small></article>
+          <article class="metric-card"><span>Ajustes clientes</span><strong>${summary.totalAjustesClientes > 0 ? '-' : ''}${escapeHtml(formatMoney(summary.totalAjustesClientes || 0))}</strong><small>No son cobros</small></article>
           <article class="metric-card"><span>Total cobrado clientes</span><strong>${escapeHtml(formatMoney(summary.totalCobradoClientes))}</strong><small>Fecha real de cobro</small></article>
           <article class="metric-card"><span>Saldo por cobrar</span><strong>${escapeHtml(formatMoney(summary.saldoPorCobrar))}</strong><small>Cartera general</small></article>
-          <article class="metric-card"><span>Total compras/proveedores</span><strong>${escapeHtml(formatMoney(summary.totalComprasProveedores))}</strong><small>Documentos originados</small></article>
+          <article class="metric-card"><span>Compras ajustadas</span><strong>${escapeHtml(formatMoney(summary.totalComprasProveedores))}</strong><small>Original ${escapeHtml(formatMoney(summary.totalComprasOriginal || 0))}</small></article>
+          <article class="metric-card"><span>Ajustes proveedores</span><strong>${summary.totalAjustesProveedores > 0 ? '-' : ''}${escapeHtml(formatMoney(summary.totalAjustesProveedores || 0))}</strong><small>No son pagos</small></article>
           <article class="metric-card"><span>Total pagado proveedores</span><strong>${escapeHtml(formatMoney(summary.totalPagadoProveedores))}</strong><small>Fecha real de pago</small></article>
           <article class="metric-card"><span>Saldo por pagar</span><strong>${escapeHtml(formatMoney(summary.saldoPorPagar))}</strong><small>Cartera general</small></article>
           <article class="metric-card"><span>Total gastos</span><strong>${escapeHtml(formatMoney(summary.totalGastos))}</strong><small>Gastos no anulados</small></article>
@@ -2112,10 +2264,14 @@
     ];
     const alertas = buildAlertasList({ clientesMora, proveedoresMora, ventasProximas, comprasProximas, saldosAltosClientes, saldosAltosProveedores, parciales });
 
-    const totalVendido = sumMoney(ventasPeriodo, (venta) => venta.ventaNeta);
+    const totalVendidoOriginal = sumMoney(ventasPeriodo, (venta) => venta.ventaNetaOriginal);
+    const totalAjustesClientes = sumMoney(ventasPeriodo, (venta) => venta.totalAjustes);
+    const totalVendido = sumMoney(ventasPeriodo, (venta) => venta.ventaNetaAjustada);
     const totalCobradoClientes = sumMoney(cobrosPeriodo, (cobro) => cobro.montoCobrado);
     const saldoPorCobrar = sumMoney(ventasCartera, (venta) => venta.saldoPorCobrar);
-    const totalComprasProveedores = sumMoney(comprasPeriodo, (compra) => compra.totalCompra);
+    const totalComprasOriginal = sumMoney(comprasPeriodo, (compra) => compra.totalCompra);
+    const totalAjustesProveedores = sumMoney(comprasPeriodo, (compra) => compra.totalAjustes);
+    const totalComprasProveedores = sumMoney(comprasPeriodo, (compra) => compra.totalAjustado ?? compra.totalCompra);
     const totalPagadoProveedores = sumMoney(pagosPeriodo, (pago) => pago.montoPagado);
     const saldoPorPagar = sumMoney(comprasCartera, (compra) => compra.saldoPorPagar);
     const totalGastos = sumMoney(gastosPeriodo, (gasto) => gasto.monto);
@@ -2135,10 +2291,16 @@
       cobrosPeriodo,
       pagosPeriodo,
       gastosPeriodo,
+      totalVendidoOriginal,
+      totalAjustesClientes,
       totalVendido,
+      ventaNetaAjustada: totalVendido,
       totalCobradoClientes,
       saldoPorCobrar,
+      totalComprasOriginal,
+      totalAjustesProveedores,
       totalComprasProveedores,
+      totalComprasAjustadas: totalComprasProveedores,
       totalPagadoProveedores,
       saldoPorPagar,
       totalGastos,
@@ -2363,7 +2525,9 @@
 
   function buildPeriodClosingStatus(month, year) {
     const periodo = getPeriodKey(month, year);
-    const summary = buildPeriodosCierreSummary(appData.ventas, appData.comprasProveedores);
+    const ventas = recalculateVentasWithCobros(appData.ventas, appData.cobros).map((record) => normalizeVentaRecord(record));
+    const compras = recalculateComprasProveedoresWithPagos(appData.comprasProveedores, appData.pagosProveedores).map((record) => normalizeCompraProveedorRecord(record));
+    const summary = buildPeriodosCierreSummary(ventas, compras);
     return summary.items.find((item) => item.periodo === periodo) || createPeriodoCierreBase(month, year);
   }
 
@@ -2735,19 +2899,23 @@
         key,
         proveedor: proveedor?.nombre || compra.proveedorNombre || 'Proveedor no encontrado',
         totalCompra: 0,
+        totalAjustes: 0,
+        totalAjustado: 0,
         totalPagado: 0,
         saldoPorPagar: 0,
         documentos: 0
       };
       current.totalCompra = roundMoney(current.totalCompra + compra.totalCompra);
+      current.totalAjustes = roundMoney(current.totalAjustes + compra.totalAjustes);
+      current.totalAjustado = roundMoney(current.totalAjustado + compra.totalAjustado);
       current.totalPagado = roundMoney(current.totalPagado + compra.totalPagado);
       current.saldoPorPagar = roundMoney(current.saldoPorPagar + compra.saldoPorPagar);
       current.documentos += 1;
       groups.set(key, current);
     });
     return Array.from(groups.values())
-      .filter((item) => item.totalCompra || item.totalPagado || item.saldoPorPagar)
-      .sort((a, b) => b.saldoPorPagar - a.saldoPorPagar || b.totalCompra - a.totalCompra || a.proveedor.localeCompare(b.proveedor, 'es-NI'));
+      .filter((item) => item.totalAjustado || item.totalPagado || item.saldoPorPagar)
+      .sort((a, b) => b.saldoPorPagar - a.saldoPorPagar || b.totalAjustado - a.totalAjustado || a.proveedor.localeCompare(b.proveedor, 'es-NI'));
   }
 
   function renderResumenGastosPorTipo(items) {
@@ -2772,7 +2940,7 @@
           <article class="resumen-row-card stacked">
             <div class="resumen-row-head"><strong>${escapeHtml(item.sucursal)}</strong><span>${item.documentos} OC originada${item.documentos === 1 ? '' : 's'}</span></div>
             <div class="resumen-mini-grid">
-              <div><span>Vendido</span><strong>${escapeHtml(formatMoney(item.totalVendido))}</strong></div>
+              <div><span>Venta ajustada</span><strong>${escapeHtml(formatMoney(item.totalVendido))}</strong></div>
               <div><span>Cobrado</span><strong>${escapeHtml(formatMoney(item.totalCobrado))}</strong></div>
               <div><span>Saldo</span><strong>${escapeHtml(formatMoney(item.saldoPorCobrar))}</strong></div>
             </div>
@@ -2790,7 +2958,9 @@
           <article class="resumen-row-card stacked">
             <div class="resumen-row-head"><strong>${escapeHtml(item.proveedor)}</strong><span>${item.documentos} documento${item.documentos === 1 ? '' : 's'}</span></div>
             <div class="resumen-mini-grid provider-grid">
-              <div><span>Total compra/deuda</span><strong>${escapeHtml(formatMoney(item.totalCompra))}</strong></div>
+              <div><span>Original</span><strong>${escapeHtml(formatMoney(item.totalCompra))}</strong></div>
+              <div><span>Ajustes</span><strong>${item.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(item.totalAjustes))}</strong></div>
+              <div><span>Total ajustado</span><strong>${escapeHtml(formatMoney(item.totalAjustado))}</strong></div>
               <div><span>Total pagado</span><strong>${escapeHtml(formatMoney(item.totalPagado))}</strong></div>
               <div><span>Saldo por pagar</span><strong>${escapeHtml(formatMoney(item.saldoPorPagar))}</strong></div>
             </div>
@@ -3038,7 +3208,10 @@
       fechaVencimiento: venta.fechaVencimiento,
       diasMora,
       rango: getMoraRangeLabel(diasMora),
-      ventaNeta: venta.ventaNeta,
+      ventaNetaOriginal: venta.ventaNetaOriginal,
+      totalAjustes: venta.totalAjustes,
+      ventaNetaAjustada: venta.ventaNetaAjustada,
+      ventaNeta: venta.ventaNetaAjustada,
       totalCobrado: venta.totalCobrado,
       saldoPendiente: venta.saldoPorCobrar,
       estado: venta.estado
@@ -3057,6 +3230,8 @@
       diasMora,
       rango: getMoraRangeLabel(diasMora),
       totalCompra: compra.totalCompra,
+      totalAjustes: compra.totalAjustes,
+      totalAjustado: compra.totalAjustado,
       totalPagado: compra.totalPagado,
       saldoPendiente: compra.saldoPorPagar,
       estado: compra.estado
@@ -3101,7 +3276,9 @@
           <div><span>OC/documento</span><strong>${escapeHtml(item.documento)}</strong></div>
           <div><span>Fecha origen</span><strong>${escapeHtml(formatDate(item.fechaOrigen))}</strong></div>
           <div><span>Vencimiento</span><strong>${escapeHtml(formatDate(item.fechaVencimiento))}</strong></div>
-          <div><span>Venta neta</span><strong>${escapeHtml(formatMoney(item.ventaNeta))}</strong></div>
+          <div><span>Original</span><strong>${escapeHtml(formatMoney(item.ventaNetaOriginal))}</strong></div>
+          <div><span>Ajustes</span><strong>${item.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(item.totalAjustes))}</strong></div>
+          <div><span>Total ajustado</span><strong>${escapeHtml(formatMoney(item.ventaNetaAjustada))}</strong></div>
           <div><span>Total cobrado</span><strong>${escapeHtml(formatMoney(item.totalCobrado))}</strong></div>
           <div><span>Saldo pendiente</span><strong>${escapeHtml(formatMoney(item.saldoPendiente))}</strong></div>
           <div><span>Estado</span><strong>${escapeHtml(item.estado)}</strong></div>
@@ -3128,7 +3305,9 @@
           <div><span>Factura/referencia</span><strong>${escapeHtml(item.documento)}</strong></div>
           <div><span>Fecha origen</span><strong>${escapeHtml(formatDate(item.fechaOrigen))}</strong></div>
           <div><span>Vencimiento</span><strong>${escapeHtml(formatDate(item.fechaVencimiento))}</strong></div>
-          <div><span>Total compra/deuda</span><strong>${escapeHtml(formatMoney(item.totalCompra))}</strong></div>
+          <div><span>Original</span><strong>${escapeHtml(formatMoney(item.totalCompra))}</strong></div>
+          <div><span>Ajustes</span><strong>${item.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(item.totalAjustes))}</strong></div>
+          <div><span>Total ajustado</span><strong>${escapeHtml(formatMoney(item.totalAjustado))}</strong></div>
           <div><span>Total pagado</span><strong>${escapeHtml(formatMoney(item.totalPagado))}</strong></div>
           <div><span>Saldo pendiente</span><strong>${escapeHtml(formatMoney(item.saldoPendiente))}</strong></div>
           <div><span>Estado</span><strong>${escapeHtml(item.estado)}</strong></div>
@@ -3200,6 +3379,10 @@
         <div class="mora-detail-grid compact-grid">
           <div><span>Cliente</span><strong>${escapeHtml(cliente?.nombre || 'Cliente no encontrado')}</strong></div>
           <div><span>Sucursal</span><strong>${escapeHtml(sucursal?.nombre || 'Sucursal no encontrada')}</strong></div>
+          <div><span>Original</span><strong>${escapeHtml(formatMoney(venta.ventaNetaOriginal))}</strong></div>
+          <div><span>Ajustes</span><strong>${venta.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(venta.totalAjustes))}</strong></div>
+          <div><span>Total ajustado</span><strong>${escapeHtml(formatMoney(venta.ventaNetaAjustada))}</strong></div>
+          <div><span>Cobrado</span><strong>${escapeHtml(formatMoney(venta.totalCobrado))}</strong></div>
           <div><span>Saldo actual</span><strong>${escapeHtml(formatMoney(venta.saldoPorCobrar))}</strong></div>
           <div><span>Facturas</span><strong>${normalizeFacturasVentaList(venta.facturas).length}</strong></div>
         </div>
@@ -3225,6 +3408,10 @@
         </div>
         <div class="mora-detail-grid compact-grid">
           <div><span>Proveedor</span><strong>${escapeHtml(proveedor?.nombre || compra.proveedorNombre || 'Proveedor no encontrado')}</strong></div>
+          <div><span>Original</span><strong>${escapeHtml(formatMoney(compra.totalCompra))}</strong></div>
+          <div><span>Ajustes</span><strong>${compra.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(compra.totalAjustes))}</strong></div>
+          <div><span>Total ajustado</span><strong>${escapeHtml(formatMoney(compra.totalAjustado))}</strong></div>
+          <div><span>Pagado</span><strong>${escapeHtml(formatMoney(compra.totalPagado))}</strong></div>
           <div><span>Saldo actual</span><strong>${escapeHtml(formatMoney(compra.saldoPorPagar))}</strong></div>
           <div><span>Vencimiento</span><strong>${escapeHtml(formatDate(compra.fechaVencimiento))}</strong></div>
         </div>
@@ -3277,7 +3464,9 @@
           { label: 'Cliente', value: cliente?.nombre || 'Cliente no encontrado' },
           { label: 'Sucursal', value: sucursal?.nombre || 'Sucursal no encontrada' },
           { label: 'Estado actual', value: venta.estado },
-          { label: 'Venta neta', value: formatMoney(venta.ventaNeta) },
+          { label: 'Venta neta original', value: formatMoney(venta.ventaNetaOriginal) },
+          { label: 'Ajustes / notas', value: `-${formatMoney(venta.totalAjustes)}` },
+          { label: 'Venta neta ajustada', value: formatMoney(venta.ventaNetaAjustada) },
           { label: 'Total cobrado', value: formatMoney(venta.totalCobrado) },
           { label: 'Saldo actual', value: formatMoney(venta.saldoPorCobrar) },
           { label: 'Facturas', value: formatFacturasVentaResumen(venta.facturas) }
@@ -3294,7 +3483,9 @@
       details: [
         { label: 'Proveedor', value: proveedor?.nombre || compra.proveedorNombre || 'Proveedor no encontrado' },
         { label: 'Estado actual', value: compra.estado },
-        { label: 'Total compra/deuda', value: formatMoney(compra.totalCompra) },
+        { label: 'Monto original', value: formatMoney(compra.totalCompra) },
+        { label: 'Ajustes / notas', value: `-${formatMoney(compra.totalAjustes)}` },
+        { label: 'Total ajustado', value: formatMoney(compra.totalAjustado) },
         { label: 'Total pagado', value: formatMoney(compra.totalPagado) },
         { label: 'Saldo actual', value: formatMoney(compra.saldoPorPagar) },
         { label: 'Vencimiento', value: formatDate(compra.fechaVencimiento) }
@@ -3308,7 +3499,7 @@
       {
         date: formatDateTime(venta.createdAt),
         title: 'OC creada',
-        detail: `Venta neta inicial ${formatMoney(venta.ventaNeta)}. Vence el ${formatDate(venta.fechaVencimiento)}.`,
+        detail: `Venta neta original ${formatMoney(venta.ventaNetaOriginal)}. Total ajustado ${formatMoney(venta.ventaNetaAjustada)}. Vence el ${formatDate(venta.fechaVencimiento)}.`,
         statusClass: 'is-info'
       }
     ];
@@ -3329,6 +3520,16 @@
         statusClass: 'is-info'
       });
     }
+    normalizeVentaAjustesList(venta.ajustes)
+      .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || String(a.createdAt).localeCompare(String(b.createdAt)))
+      .forEach((ajuste) => {
+        entries.push({
+          date: formatDate(ajuste.fecha),
+          title: ajuste.activo ? `Ajuste aplicado · ${ajuste.tipo}` : `Ajuste anulado · ${ajuste.tipo}`,
+          detail: `${formatMoney(ajuste.monto)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`,
+          statusClass: ajuste.activo ? 'is-partial' : 'is-danger'
+        });
+      });
     getCobrosByVentaId(venta.id)
       .sort((a, b) => String(a.fechaCobro).localeCompare(String(b.fechaCobro)) || String(a.createdAt).localeCompare(String(b.createdAt)))
       .forEach((cobro) => {
@@ -3353,7 +3554,7 @@
       {
         date: formatDateTime(compra.createdAt),
         title: 'Factura/referencia creada',
-        detail: `Total compra/deuda ${formatMoney(compra.totalCompra)}. Vence el ${formatDate(compra.fechaVencimiento)}.`,
+        detail: `Monto original ${formatMoney(compra.totalCompra)}. Total ajustado ${formatMoney(compra.totalAjustado)}. Vence el ${formatDate(compra.fechaVencimiento)}.`,
         statusClass: 'is-info'
       }
     ];
@@ -3365,6 +3566,16 @@
         statusClass: 'is-info'
       });
     }
+    normalizeCompraProveedorAjustesList(compra.ajustes)
+      .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || String(a.createdAt).localeCompare(String(b.createdAt)))
+      .forEach((ajuste) => {
+        entries.push({
+          date: formatDate(ajuste.fecha),
+          title: ajuste.activo ? `Ajuste aplicado · ${ajuste.tipo}` : `Ajuste anulado · ${ajuste.tipo}`,
+          detail: `${formatMoney(ajuste.monto)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`,
+          statusClass: ajuste.activo ? 'is-partial' : 'is-danger'
+        });
+      });
     getPagosByCompraId(compra.id)
       .sort((a, b) => String(a.fechaPago).localeCompare(String(b.fechaPago)) || String(a.createdAt).localeCompare(String(b.createdAt)))
       .forEach((pago) => {
@@ -3700,19 +3911,20 @@
     const editingRecord = ventasState.editingId ? appData.ventas.find((record) => record.id === ventasState.editingId) : null;
     const totals = getVentasTotals();
     const missingCatalogs = !clientesActivos.length || !sucursalesActivas.length;
+    const ventasAjustables = ventas.filter((venta) => venta.activo && venta.saldoPorCobrar > 0);
 
     return `
       <section class="hero ventas-hero">
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Ventas / OC</h1>
-          <p class="lead">Registra órdenes de compra con venta neta real: Monto OC menos NO VA, descuento y descuento NO VA. Aquí empieza la cartera y Cobros actualiza total cobrado, saldo y estado sin necesidad de malabares contables.</p>
+          <p class="lead">Registra órdenes de compra con venta neta original, ajustes posteriores, saldo real por cobrar y trazabilidad completa sin crear cobros falsos ni duplicar documentos.</p>
         </div>
         <aside class="hero-status" aria-label="Resumen de ventas y OC">
           <h3>Totales básicos</h3>
           <div class="status-grid">
             <div class="status-item"><strong>OC activas</strong><span>${totals.activas}</span></div>
-            <div class="status-item"><strong>Venta neta</strong><span>${escapeHtml(formatMoney(totals.ventaNeta))}</span></div>
+            <div class="status-item"><strong>Total ajustado</strong><span>${escapeHtml(formatMoney(totals.ventaNetaAjustada))}</span></div>
             <div class="status-item"><strong>Saldo cobrar</strong><span>${escapeHtml(formatMoney(totals.saldoPorCobrar))}</span></div>
             <div class="status-item"><strong>Vencidas</strong><span>${totals.vencidas}</span></div>
           </div>
@@ -3725,7 +3937,9 @@
         ${missingCatalogs ? renderVentasCatalogWarning(clientesActivos, sucursalesActivas) : ''}
 
         <section class="metric-grid" aria-label="Resumen operativo de ventas">
-          <article class="metric-card"><span>Venta neta activa</span><strong>${escapeHtml(formatMoney(totals.ventaNeta))}</strong></article>
+          <article class="metric-card"><span>Venta neta original</span><strong>${escapeHtml(formatMoney(totals.ventaNetaOriginal))}</strong></article>
+          <article class="metric-card"><span>Ajustes aplicados</span><strong>${totals.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(totals.totalAjustes))}</strong></article>
+          <article class="metric-card"><span>Total ajustado</span><strong>${escapeHtml(formatMoney(totals.ventaNetaAjustada))}</strong></article>
           <article class="metric-card"><span>Total cobrado</span><strong>${escapeHtml(formatMoney(totals.totalCobrado))}</strong></article>
           <article class="metric-card"><span>Saldo por cobrar</span><strong>${escapeHtml(formatMoney(totals.saldoPorCobrar))}</strong></article>
           <article class="metric-card"><span>Pendientes</span><strong>${totals.pendientes}</strong></article>
@@ -3734,16 +3948,29 @@
         </section>
 
         <div class="ventas-layout">
-          <article class="panel-card venta-form-card">
-            <div class="section-title-row">
-              <div>
-                <span class="eyebrow mini">Nueva OC</span>
-                <h2>Crear venta / OC</h2>
+          <div class="ventas-form-stack">
+            <article class="panel-card venta-form-card">
+              <div class="section-title-row">
+                <div>
+                  <span class="eyebrow mini">Nueva OC</span>
+                  <h2>Crear venta / OC</h2>
+                </div>
               </div>
-            </div>
-            <p class="muted-text">La venta real para reportes será la venta neta, no el monto bruto de la OC.</p>
-            ${renderVentaForm(null, clientesActivos, sucursalesActivas, missingCatalogs, ventasState.quickCapture)}
-          </article>
+              <p class="muted-text">La venta base conserva su monto histórico; los descuentos posteriores se manejan como ajustes ligados a la OC.</p>
+              ${renderVentaForm(null, clientesActivos, sucursalesActivas, missingCatalogs, ventasState.quickCapture)}
+            </article>
+
+            <article class="panel-card venta-ajuste-card">
+              <div class="section-title-row">
+                <div>
+                  <span class="eyebrow mini">Ajustes / notas</span>
+                  <h2>Registrar ajuste</h2>
+                </div>
+              </div>
+              <p class="muted-text">Reduce el saldo de una OC existente por quebrado, faltante, devolución o nota, sin crear cobro, caja ni banco. Aquí se descuenta mercadería; no aparece dinero fantasma.</p>
+              ${renderVentaAjusteForm(ventasAjustables)}
+            </article>
+          </div>
 
           <article class="panel-card venta-list-card">
             <div class="section-title-row">
@@ -3756,7 +3983,7 @@
             ${renderVentasList(ventas)}
           </article>
         </div>
-        ${editingRecord ? renderEditModal(getVentaModalId(), 'Editar venta / OC', 'La edición se guarda sobre la OC actual y recalcula venta neta, saldo y estado.', renderVentaForm(editingRecord, clientesActivos, sucursalesActivas, missingCatalogs)) : ''}
+        ${editingRecord ? renderEditModal(getVentaModalId(), 'Editar venta / OC', 'La edición se guarda sobre la OC actual, mantiene ajustes/notas y recalcula saldo real.', renderVentaForm(editingRecord, clientesActivos, sucursalesActivas, missingCatalogs)) : ''}
       </section>
     `;
   }
@@ -3772,6 +3999,89 @@
         <p>Para guardar una OC, primero crea o activa esos registros en Catálogos. La app no inventa clientes; bastante tenemos con los duendes de Excel.</p>
         <button type="button" class="secondary-action compact" data-go="catalogos">Ir a Catálogos</button>
       </article>
+    `;
+  }
+
+  function renderVentaAjusteForm(ventasAjustables) {
+    const ventas = Array.isArray(ventasAjustables) ? ventasAjustables.map((record) => normalizeVentaRecord(record)).filter((record) => record.activo) : [];
+    if (!ventas.length) {
+      return `
+        <div class="empty-state compact-empty">
+          <strong>No hay OC activas para ajustar.</strong>
+          <p>Primero registra una OC activa con saldo por cobrar. Ajuste sin OC es rebaja sin brújula.</p>
+        </div>
+      `;
+    }
+
+    const selectedVenta = ventas.find((venta) => venta.id === ventasState.selectedAjusteVentaId) || ventas[0];
+    const selectedClienteId = selectedVenta?.clienteId || '';
+    const clientes = Array.from(new Map(ventas.map((venta) => {
+      const cliente = getCatalogRecordById('clientes', venta.clienteId);
+      const label = cleanText(cliente?.nombre || venta.clienteNombre) || 'Cliente no encontrado';
+      return [venta.clienteId || label, { id: venta.clienteId, nombre: label }];
+    })).values()).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+
+    return `
+      <form class="ajuste-form" data-ajuste-venta-form novalidate>
+        <div class="form-grid ajuste-form-grid">
+          <label class="form-field">
+            <span>Cliente <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <select name="clienteId" required data-ajuste-client>
+              <option value="">Seleccionar cliente</option>
+              ${clientes.map((cliente) => `<option value="${escapeHtml(cliente.id)}" ${cliente.id === selectedClienteId ? 'selected' : ''}>${escapeHtml(cliente.nombre)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>OC / documento <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <select name="ventaId" required data-ajuste-venta>
+              <option value="">Seleccionar OC</option>
+              ${ventas.map((venta) => {
+                const cliente = getCatalogRecordById('clientes', venta.clienteId);
+                const label = `${cliente?.nombre || venta.clienteNombre || 'Cliente'} · ${venta.numeroDocumento || 'Sin número'} · Saldo ${formatMoney(venta.saldoPorCobrar)}`;
+                return `<option value="${escapeHtml(venta.id)}" data-client-id="${escapeHtml(venta.clienteId)}" ${venta.id === selectedVenta.id ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+              }).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Fecha ajuste <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <input type="date" name="fecha" value="${escapeHtml(todayInputValue())}" required />
+          </label>
+          <label class="form-field">
+            <span>Tipo de ajuste <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <select name="tipo" required>
+              ${VENTA_AJUSTE_TYPES.map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Monto ajuste C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <input type="number" name="monto" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-ajuste-monto />
+          </label>
+        </div>
+        <div class="formula-card ajuste-preview" aria-live="polite" data-ajuste-venta-preview>
+          ${renderVentaAjustePreview(selectedVenta)}
+        </div>
+        <label class="form-field">
+          <span>Observación</span>
+          <textarea name="observacion" rows="2" placeholder="Ej. Producto llegó quebrado al cliente"></textarea>
+        </label>
+        <div class="form-actions">
+          <button type="submit" class="card-action">Registrar ajuste</button>
+        </div>
+      </form>
+    `;
+  }
+
+  function renderVentaAjustePreview(ventaRecord) {
+    const venta = normalizeVentaRecord(ventaRecord || {});
+    return `
+      <strong>${escapeHtml(venta.numeroDocumento || 'OC sin número')}</strong>
+      <div class="formula-grid">
+        <span>Venta neta original</span><b>${escapeHtml(formatMoney(venta.ventaNetaOriginal))}</b>
+        <span>Ajustes actuales</span><b>${venta.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(venta.totalAjustes))}</b>
+        <span>Total ajustado</span><b>${escapeHtml(formatMoney(venta.ventaNetaAjustada))}</b>
+        <span>Cobrado</span><b>${escapeHtml(formatMoney(venta.totalCobrado))}</b>
+        <span>Saldo disponible</span><b>${escapeHtml(formatMoney(venta.saldoPorCobrar))}</b>
+      </div>
     `;
   }
 
@@ -3926,7 +4236,7 @@
     const logisticaSource = record || draft;
 
     return `
-      <form class="venta-form" data-venta-form data-current-cobrado="${escapeHtml(record?.totalCobrado || 0)}" novalidate>
+      <form class="venta-form" data-venta-form data-current-cobrado="${escapeHtml(record?.totalCobrado || 0)}" data-current-ajustes="${escapeHtml(JSON.stringify(record?.ajustes || []))}" novalidate>
         <input type="hidden" name="id" value="${escapeHtml(record?.id || '')}" />
         <div class="form-grid">
           <label class="form-field">
@@ -3978,9 +4288,11 @@
         </div>
 
         <div class="formula-card" aria-live="polite">
-          <strong>Venta neta = Monto OC - NO VA - Descuento - Descuento NO VA</strong>
+          <strong>Venta neta original = Monto OC - NO VA - Descuento - Descuento NO VA</strong>
           <div class="formula-grid">
-            <span>Venta neta</span><b data-venta-preview-neto>${escapeHtml(formatMoney(calculations.ventaNeta))}</b>
+            <span>Venta neta original</span><b data-venta-preview-original>${escapeHtml(formatMoney(calculations.ventaNetaOriginal))}</b>
+            <span>Ajustes / notas</span><b data-venta-preview-ajustes>${calculations.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(calculations.totalAjustes))}</b>
+            <span>Total ajustado</span><b data-venta-preview-neto>${escapeHtml(formatMoney(calculations.ventaNetaAjustada))}</b>
             <span>Total cobrado</span><b data-venta-preview-cobrado>${escapeHtml(formatMoney(record?.totalCobrado || 0))}</b>
             <span>Saldo por cobrar</span><b data-venta-preview-saldo>${escapeHtml(formatMoney(calculations.saldoPorCobrar))}</b>
           </div>
@@ -4013,11 +4325,49 @@
       `;
     }
 
-    return `
-      <div class="ventas-list">
-        ${ventas.map((venta) => renderVentaCard(venta)).join('')}
-      </div>
-    `;
+    const groups = buildAccordionGroups(ventas, getVentaAccordionInfo);
+    ensureOpenAccordionGroup(ventasState, groups);
+
+    return renderAccordionGroups({
+      module: 'ventas',
+      groups,
+      openGroupKey: ventasState.openGroupKey,
+      renderOpenGroup: (group) => renderVentasTable(group.records, group.label)
+    });
+  }
+
+  function renderVentasTable(ventas, groupLabel = '') {
+    return renderOperationalTableShell({
+      shellClass: 'ventas-scroll-shell',
+      wrapClass: 'ventas-list',
+      ariaLabel: groupLabel ? `OC registradas de ${groupLabel}` : 'OC registradas',
+      tableClass: 'operational-table-ventas',
+      headers: `
+        <th>OC / doc.</th>
+        <th>Fecha</th>
+        <th>Vence</th>
+        <th class="amount-cell">Original</th>
+        <th class="amount-cell">Ajustes</th>
+        <th class="amount-cell">Total ajustado</th>
+        <th class="amount-cell">Cobrado</th>
+        <th class="amount-cell">Saldo</th>
+        <th>Estado</th>
+        <th class="actions-cell">Acciones</th>
+      `,
+      rows: ventas.map((venta) => renderVentaCard(venta)).join(''),
+      colgroup: `
+        <col style="width: 176px;">
+        <col style="width: 92px;">
+        <col style="width: 92px;">
+        <col style="width: 118px;">
+        <col style="width: 118px;">
+        <col style="width: 132px;">
+        <col style="width: 118px;">
+        <col style="width: 118px;">
+        <col style="width: 92px;">
+        <col style="width: 320px;">
+      `
+    });
   }
 
   function renderVentaCard(venta) {
@@ -4025,48 +4375,58 @@
     const cliente = getCatalogRecordById('clientes', record.clienteId);
     const sucursal = getCatalogRecordById('sucursales', record.sucursalId);
     const estadoClass = getEstadoClass(record.estado);
-
+    const facturas = normalizeFacturasVentaList(record.facturas);
+    const ajustesRow = renderVentaAjustesCompactRow(record, 10);
     return `
-      <div class="venta-card ${record.activo ? 'is-active' : 'is-inactive'}">
-        <div class="venta-card-head">
-          <div>
-            <span class="eyebrow mini">OC / Documento</span>
-            <h3>${escapeHtml(record.numeroDocumento || 'Sin número')}</h3>
+      <tr class="compact-record-row venta-row ${record.activo ? 'is-active' : 'is-inactive'}">
+        <td data-label="OC / doc."><span class="compact-primary">${escapeHtml(record.numeroDocumento || 'Sin número')}</span>${facturas.length ? `<small>Facturas: ${escapeHtml(formatFacturasVentaResumen(facturas))}</small>` : ''}${record.requiereEnvio ? `<small>${escapeHtml(formatLogisticaVentaResumen(record))}</small>` : ''}</td>
+        <td data-label="Fecha"><span>${escapeHtml(formatDate(record.fechaOc))}</span></td>
+        <td data-label="Vence"><span>${escapeHtml(formatDate(record.fechaVencimiento))}</span></td>
+        <td data-label="Original" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.ventaNetaOriginal))}</span></td>
+        <td data-label="Ajustes" class="amount-cell"><span>${record.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(record.totalAjustes))}</span></td>
+        <td data-label="Total ajustado" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.ventaNetaAjustada))}</span></td>
+        <td data-label="Cobrado" class="amount-cell"><span>${escapeHtml(formatMoney(record.totalCobrado))}</span></td>
+        <td data-label="Saldo" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.saldoPorCobrar))}</span></td>
+        <td data-label="Estado"><span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span></td>
+        <td data-label="Acciones" class="actions-cell">
+          <div class="record-actions compact-row-actions">
+            ${record.activo && record.saldoPorCobrar > 0 ? `<button type="button" class="card-action compact" data-cobros-for="${escapeHtml(record.id)}">Cobrar</button>` : ''}
+            ${record.activo && record.saldoPorCobrar > 0 ? `<button type="button" class="secondary-action compact" data-ajuste-venta-start="${escapeHtml(record.id)}">Ajustar</button>` : ''}
+            <button type="button" class="secondary-action compact" data-venta-edit="${escapeHtml(record.id)}">Editar</button>
+            <button type="button" class="secondary-action compact" data-cobros-for="${escapeHtml(record.id)}">Cobros</button>
+            <button type="button" class="secondary-action compact" data-history-venta="${escapeHtml(record.id)}">Historial</button>
+            ${canCurrentRole('annulMovements') ? `<button type="button" class="${record.activo ? 'danger-action' : 'card-action'} compact" data-venta-toggle="${escapeHtml(record.id)}">${record.activo ? 'Anular' : 'Reactivar'}</button>` : ''}
           </div>
-          <span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span>
-        </div>
-        <div class="venta-detail-grid">
-          <div><span>Cliente</span><strong>${escapeHtml(cliente?.nombre || 'Cliente no encontrado')}</strong></div>
-          <div><span>Sucursal</span><strong>${escapeHtml(sucursal?.nombre || 'Sucursal no encontrada')}</strong></div>
-          <div><span>Fecha OC</span><strong>${escapeHtml(formatDate(record.fechaOc))}</strong></div>
-          <div><span>Vencimiento</span><strong>${escapeHtml(formatDate(record.fechaVencimiento))}</strong></div>
-          <div><span>Venta neta</span><strong>${escapeHtml(formatMoney(record.ventaNeta))}</strong></div>
-          <div><span>Total cobrado</span><strong>${escapeHtml(formatMoney(record.totalCobrado))}</strong></div>
-          <div><span>Saldo por cobrar</span><strong>${escapeHtml(formatMoney(record.saldoPorCobrar))}</strong></div>
-          <div><span>Días crédito</span><strong>${Number(record.diasCredito) || 0}</strong></div>
-          <div><span>Cobros ligados</span><strong>${getCobrosByVentaId(record.id).length}</strong></div>
-          <div><span>Facturas</span><strong>${normalizeFacturasVentaList(record.facturas).length}</strong></div>
-          <div><span>Requiere envío</span><strong>${record.requiereEnvio ? 'Sí' : 'No'}</strong></div>
-        </div>
-        <div class="facturas-card-block">
-          <strong>Facturas</strong>
-          ${renderFacturasVentaDisplay(record.facturas)}
-        </div>
-        ${renderLogisticaVentaDisplay(record)}
-        ${record.observacion ? `<p class="record-note">${escapeHtml(record.observacion)}</p>` : ''}
-        <dl class="record-meta">
-          <dt>ID</dt><dd>${escapeHtml(record.id)}</dd>
-          <dt>Creado</dt><dd>${escapeHtml(formatDateTime(record.createdAt))}</dd>
-          <dt>Actualizado</dt><dd>${escapeHtml(formatDateTime(record.updatedAt))}</dd>
-        </dl>
-        <div class="record-actions">
-          <button type="button" class="secondary-action compact" data-venta-edit="${escapeHtml(record.id)}">Editar</button>
-          <button type="button" class="secondary-action compact" data-cobros-for="${escapeHtml(record.id)}">Ver cobros</button>
-          <button type="button" class="secondary-action compact" data-history-venta="${escapeHtml(record.id)}">Historial</button>
-          ${canCurrentRole('annulMovements') ? `<button type="button" class="${record.activo ? 'danger-action' : 'card-action'} compact" data-venta-toggle="${escapeHtml(record.id)}">${record.activo ? 'Anular' : 'Reactivar'}</button>` : ''}
-        </div>
-      </div>
+        </td>
+      </tr>
+      ${ajustesRow}
     `;
+  }
+
+  function renderVentaAjustesCompactRow(venta, colspan = 10) {
+    const record = normalizeVentaRecord(venta);
+    const ajustes = normalizeVentaAjustesList(record.ajustes);
+    if (!ajustes.length) return '';
+    return `
+      <tr class="compact-adjustments-row">
+        <td colspan="${colspan}">
+          <div class="ajustes-inline-history">
+            <strong>Ajustes:</strong>
+            ${ajustes.map((ajuste) => `
+              <span class="ajuste-chip ${ajuste.activo ? '' : 'is-inactive'}">
+                ${escapeHtml(formatDate(ajuste.fecha))} — ${escapeHtml(ajuste.tipo)} — ${ajuste.activo ? '-' : ''}${escapeHtml(formatMoney(ajuste.monto))}${ajuste.observacion ? ` — ${escapeHtml(ajuste.observacion)}` : ''}
+                ${ajuste.activo && canCurrentRole('annulMovements') ? `<button type="button" class="mini-inline-action" data-ajuste-venta-delete="${escapeHtml(record.id)}" data-ajuste-id="${escapeHtml(ajuste.id)}">Eliminar</button>` : ''}
+              </span>
+            `).join('')}
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  function formatVentaAjustesExport(ajustesSource) {
+    const ajustes = normalizeVentaAjustesList(ajustesSource).filter((ajuste) => ajuste.activo);
+    return ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`).join(' | ');
   }
 
   function getVentasOrdenadas() {
@@ -4083,6 +4443,9 @@
         return totals;
       }
       totals.activas += 1;
+      totals.ventaNetaOriginal = roundMoney(totals.ventaNetaOriginal + venta.ventaNetaOriginal);
+      totals.totalAjustes = roundMoney(totals.totalAjustes + venta.totalAjustes);
+      totals.ventaNetaAjustada = roundMoney(totals.ventaNetaAjustada + venta.ventaNetaAjustada);
       totals.ventaNeta = roundMoney(totals.ventaNeta + venta.ventaNeta);
       totals.totalCobrado = roundMoney(totals.totalCobrado + venta.totalCobrado);
       totals.saldoPorCobrar = roundMoney(totals.saldoPorCobrar + venta.saldoPorCobrar);
@@ -4090,7 +4453,7 @@
       if (venta.estado === 'Vencido') totals.vencidas += 1;
       if (venta.estado === 'Pagado') totals.pagadas += 1;
       return totals;
-    }, { activas: 0, anuladas: 0, pendientes: 0, vencidas: 0, pagadas: 0, ventaNeta: 0, totalCobrado: 0, saldoPorCobrar: 0 });
+    }, { activas: 0, anuladas: 0, pendientes: 0, vencidas: 0, pagadas: 0, ventaNetaOriginal: 0, totalAjustes: 0, ventaNetaAjustada: 0, ventaNeta: 0, totalCobrado: 0, saldoPorCobrar: 0 });
   }
 
   function buildVentaFromForm(form, existingRecord) {
@@ -4117,6 +4480,7 @@
       descuento: parseMoney(formData.get('descuento')),
       descuentoNoVa: parseMoney(formData.get('descuentoNoVa')),
       totalCobrado: existingRecord?.totalCobrado || 0,
+      ajustes: normalizeVentaAjustesList(existingRecord?.ajustes || []),
       facturas: syncFacturaRowsToHidden(form),
       requiereEnvio: formData.get('requiereEnvio') === '1',
       logistica: normalizeLogisticaVentaRecord({
@@ -4139,6 +4503,10 @@
       noVa: Number.isNaN(base.noVa) ? 0 : base.noVa,
       descuento: Number.isNaN(base.descuento) ? 0 : base.descuento,
       descuentoNoVa: Number.isNaN(base.descuentoNoVa) ? 0 : base.descuentoNoVa,
+      ajustes: normalizeVentaAjustesList(base.ajustes),
+      totalAjustes: calculations.totalAjustes,
+      ventaNetaOriginal: calculations.ventaNetaOriginal,
+      ventaNetaAjustada: calculations.ventaNetaAjustada,
       facturas: normalizeFacturasVentaList(base.facturas),
       requiereEnvio: Boolean(base.requiereEnvio),
       logistica: normalizeLogisticaVentaRecord(base.logistica),
@@ -4166,9 +4534,9 @@
     const invalid = numericFields.find(([, value]) => Number.isNaN(parseMoney(value)) || Number(value) < 0);
     if (invalid) return `${invalid[0]} debe ser cero o un número positivo.`;
 
-    if (record.ventaNeta < 0) return 'La venta neta no puede ser negativa. Revisa NO VA y descuentos.';
+    if (record.ventaNetaOriginal < 0) return 'La venta neta original no puede ser negativa. Revisa NO VA y descuentos.';
     if ((record.noVa + record.descuento + record.descuentoNoVa) > record.montoOc) return 'NO VA y descuentos no pueden superar el Monto OC.';
-    if (record.totalCobrado > record.ventaNeta) return 'La venta neta no puede quedar menor que el total ya cobrado.';
+    if (record.totalCobrado > record.ventaNetaAjustada) return 'El total ajustado no puede quedar menor que el total ya cobrado.';
     return '';
   }
 
@@ -4228,6 +4596,151 @@
   function resetVentasTransientState() {
     ventasState.editingId = null;
     ventasState.quickCapture = null;
+    ventasState.selectedAjusteVentaId = '';
+  }
+
+  function buildVentaAjusteFromForm(form) {
+    const formData = new FormData(form);
+    return normalizeVentaAjusteRecord({
+      id: generateId('ajusteCliente'),
+      fecha: toDateInputValue(formData.get('fecha')),
+      tipo: cleanText(formData.get('tipo')),
+      monto: parseMoney(formData.get('monto')),
+      observacion: cleanText(formData.get('observacion')),
+      activo: true,
+      createdAt: nowIso(),
+      updatedAt: nowIso()
+    });
+  }
+
+  function validateVentaAjusteRecord(venta, ajuste, clienteId) {
+    if (!venta || !venta.id || !venta.activo) return 'Selecciona una OC activa para aplicar el ajuste.';
+    if (!clienteId || clienteId !== venta.clienteId) return 'Selecciona el cliente correspondiente a la OC/documento.';
+    if (!ajuste.fecha) return 'La fecha del ajuste es obligatoria.';
+    if (!VENTA_AJUSTE_TYPES.includes(ajuste.tipo)) return 'Selecciona un tipo de ajuste válido.';
+    if (Number.isNaN(parseMoney(ajuste.monto)) || ajuste.monto <= 0) return 'El monto del ajuste debe ser mayor que cero.';
+    if (ajuste.monto > venta.saldoPorCobrar) return `El ajuste no puede superar el saldo lógico disponible de ${formatMoney(venta.saldoPorCobrar)}. Si ya se cobró de más, registra la corrección fuera de cobros para no crear banco falso.`;
+    return '';
+  }
+
+  function saveVentaAjusteRecord(form) {
+    const formData = new FormData(form);
+    const ventaId = cleanText(formData.get('ventaId'));
+    const clienteId = cleanText(formData.get('clienteId'));
+    const ventas = Array.isArray(appData.ventas) ? appData.ventas : [];
+    const venta = ventas.map((record) => normalizeVentaRecord(record)).find((record) => record.id === ventaId);
+    const ajuste = buildVentaAjusteFromForm(form);
+    const validationError = validateVentaAjusteRecord(venta, ajuste, clienteId);
+
+    if (validationError) {
+      ventasState.selectedAjusteVentaId = ventaId;
+      ventasState.message = validationError;
+      ventasState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+
+    if (!warnIfClosedPeriod(ajuste.fecha, 'Registrar este ajuste/nota de cliente')) return;
+
+    appData.ventas = ventas.map((record) => {
+      if (record.id !== ventaId) return normalizeVentaRecord(record);
+      const normalized = normalizeVentaRecord(record);
+      return normalizeVentaRecord({
+        ...normalized,
+        ajustes: [ajuste, ...normalizeVentaAjustesList(normalized.ajustes)],
+        updatedAt: nowIso()
+      });
+    });
+
+    const savedVenta = appData.ventas.find((record) => record.id === ventaId);
+    ventasState.selectedAjusteVentaId = ventaId;
+    openAccordionGroupForRecord('ventas', savedVenta || venta);
+    ventasState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${venta.numeroDocumento}. Saldo recalculado sin crear cobro.`;
+    ventasState.messageType = 'success';
+    saveData(appData);
+    renderRoute();
+  }
+
+  function startAjusteForVenta(ventaId) {
+    const cleanVentaId = cleanText(ventaId);
+    ventasState.selectedAjusteVentaId = cleanVentaId;
+    const venta = appData.ventas.find((record) => record.id === cleanVentaId);
+    if (venta) openAccordionGroupForRecord('ventas', venta);
+    ventasState.message = null;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function deleteVentaAjuste(ventaId, ajusteId) {
+    if (!canCurrentRole('annulMovements')) {
+      ventasState.message = 'Solo Administrador puede eliminar ajustes/notas.';
+      ventasState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+    const ventas = Array.isArray(appData.ventas) ? appData.ventas : [];
+    const venta = ventas.map((record) => normalizeVentaRecord(record)).find((record) => record.id === ventaId);
+    const ajuste = venta ? normalizeVentaAjustesList(venta.ajustes).find((item) => item.id === ajusteId) : null;
+    if (!venta || !ajuste) return;
+    if (!warnIfClosedPeriod(ajuste.fecha, 'Eliminar este ajuste/nota de cliente')) return;
+    const ok = window.confirm(`Vas a eliminar el ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} de ${venta.numeroDocumento}. No se tocarán cobros, caja ni bancos. ¿Continuar?`);
+    if (!ok) return;
+
+    appData.ventas = ventas.map((record) => {
+      if (record.id !== ventaId) return normalizeVentaRecord(record);
+      const normalized = normalizeVentaRecord(record);
+      return normalizeVentaRecord({
+        ...normalized,
+        ajustes: normalizeVentaAjustesList(normalized.ajustes).filter((item) => item.id !== ajusteId),
+        updatedAt: nowIso()
+      });
+    });
+
+    const savedVenta = appData.ventas.find((record) => record.id === ventaId);
+    ventasState.selectedAjusteVentaId = ventaId;
+    openAccordionGroupForRecord('ventas', savedVenta || venta);
+    ventasState.message = `Ajuste eliminado de ${venta.numeroDocumento}. Saldo recalculado.`;
+    ventasState.messageType = 'success';
+    saveData(appData);
+    renderRoute();
+  }
+
+  function setupVentaAjusteForm(form) {
+    const clientSelect = form.querySelector('[data-ajuste-client]');
+    const ventaSelect = form.querySelector('[data-ajuste-venta]');
+    const preview = form.querySelector('[data-ajuste-venta-preview]');
+    if (!clientSelect || !ventaSelect) return;
+
+    const updatePreview = () => {
+      const ventaId = cleanText(ventaSelect.value);
+      const ventas = Array.isArray(appData.ventas) ? appData.ventas : [];
+      const venta = ventas.map((record) => normalizeVentaRecord(record)).find((record) => record.id === ventaId);
+      if (preview && venta) preview.innerHTML = renderVentaAjustePreview(venta);
+      ventasState.selectedAjusteVentaId = ventaId;
+    };
+
+    const syncVentaOptions = () => {
+      const clienteId = cleanText(clientSelect.value);
+      let firstVisible = '';
+      Array.from(ventaSelect.options).forEach((option) => {
+        if (!option.value) return;
+        const visible = !clienteId || option.dataset.clientId === clienteId;
+        option.hidden = !visible;
+        option.disabled = !visible;
+        if (visible && !firstVisible) firstVisible = option.value;
+      });
+      const selectedOption = ventaSelect.selectedOptions && ventaSelect.selectedOptions[0];
+      if (!selectedOption || selectedOption.disabled || selectedOption.hidden) ventaSelect.value = firstVisible;
+      updatePreview();
+    };
+
+    clientSelect.addEventListener('change', syncVentaOptions);
+    ventaSelect.addEventListener('change', () => {
+      const selected = ventaSelect.selectedOptions && ventaSelect.selectedOptions[0];
+      const clienteId = selected?.dataset?.clientId || '';
+      if (clienteId) clientSelect.value = clienteId;
+      syncVentaOptions();
+    });
+    syncVentaOptions();
   }
 
   function saveVentaRecord(form) {
@@ -4266,6 +4779,8 @@
     }
 
     ventasState.editingId = null;
+    const savedRecord = appData.ventas.find((record) => record.id === newRecord.id) || newRecord;
+    openAccordionGroupForRecord('ventas', savedRecord);
     ventasState.messageType = 'success';
     saveData(appData);
     renderRoute();
@@ -4398,19 +4913,31 @@
       if (dueInput && due && form.dataset.manualDue !== '1') dueInput.value = due;
     }
 
+    let currentAjustes = [];
+    try {
+      currentAjustes = form.dataset.currentAjustes ? JSON.parse(form.dataset.currentAjustes) : [];
+    } catch (_) {
+      currentAjustes = [];
+    }
+
     const formData = new FormData(form);
     const calculations = getVentaCalculations({
       montoOc: formData.get('montoOc'),
       noVa: formData.get('noVa'),
       descuento: formData.get('descuento'),
       descuentoNoVa: formData.get('descuentoNoVa'),
-      totalCobrado: form.dataset.currentCobrado || 0
+      totalCobrado: form.dataset.currentCobrado || 0,
+      ajustes: currentAjustes
     });
 
+    const originalNode = form.querySelector('[data-venta-preview-original]');
+    const ajustesNode = form.querySelector('[data-venta-preview-ajustes]');
     const netoNode = form.querySelector('[data-venta-preview-neto]');
     const cobradoNode = form.querySelector('[data-venta-preview-cobrado]');
     const saldoNode = form.querySelector('[data-venta-preview-saldo]');
-    if (netoNode) netoNode.textContent = formatMoney(calculations.ventaNeta);
+    if (originalNode) originalNode.textContent = formatMoney(calculations.ventaNetaOriginal);
+    if (ajustesNode) ajustesNode.textContent = `${calculations.totalAjustes > 0 ? '-' : ''}${formatMoney(calculations.totalAjustes)}`;
+    if (netoNode) netoNode.textContent = formatMoney(calculations.ventaNetaAjustada);
     if (cobradoNode) cobradoNode.textContent = formatMoney(calculations.totalCobrado);
     if (saldoNode) saldoNode.textContent = formatMoney(calculations.saldoPorCobrar);
   }
@@ -4610,17 +5137,20 @@
   }
 
   function renderSelectedVentaCobroSummary(venta, cliente, sucursal) {
+    const record = normalizeVentaRecord(venta);
     return `
       <div class="formula-card cobro-summary" aria-live="polite">
         <strong>OC seleccionada</strong>
         <div class="formula-grid">
           <span>Cliente</span><b>${escapeHtml(cliente?.nombre || 'Cliente no encontrado')}</b>
           <span>Sucursal</span><b>${escapeHtml(sucursal?.nombre || 'Sucursal no encontrada')}</b>
-          <span>Fecha OC</span><b>${escapeHtml(formatDate(venta.fechaOc))}</b>
-          <span>Vencimiento</span><b>${escapeHtml(formatDate(venta.fechaVencimiento))}</b>
-          <span>Venta neta</span><b>${escapeHtml(formatMoney(venta.ventaNeta))}</b>
-          <span>Total cobrado actual</span><b>${escapeHtml(formatMoney(venta.totalCobrado))}</b>
-          <span>Saldo por cobrar actual</span><b>${escapeHtml(formatMoney(venta.saldoPorCobrar))}</b>
+          <span>Fecha OC</span><b>${escapeHtml(formatDate(record.fechaOc))}</b>
+          <span>Vencimiento</span><b>${escapeHtml(formatDate(record.fechaVencimiento))}</b>
+          <span>Venta neta original</span><b>${escapeHtml(formatMoney(record.ventaNetaOriginal))}</b>
+          <span>Ajustes / notas</span><b>${record.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(record.totalAjustes))}</b>
+          <span>Total ajustado</span><b>${escapeHtml(formatMoney(record.ventaNetaAjustada))}</b>
+          <span>Total cobrado actual</span><b>${escapeHtml(formatMoney(record.totalCobrado))}</b>
+          <span>Saldo por cobrar actual</span><b>${escapeHtml(formatMoney(record.saldoPorCobrar))}</b>
         </div>
       </div>
     `;
@@ -4706,6 +5236,18 @@
     `;
   }
 
+  function getVentaAccordionInfo(venta) {
+    const record = normalizeVentaRecord(venta);
+    const cliente = getCatalogRecordById('clientes', record.clienteId);
+    const sucursal = getCatalogRecordById('sucursales', record.sucursalId);
+    const label = cleanText(cliente?.nombre || record.clienteNombre) || 'Sin cliente';
+    return {
+      key: makeAccordionGroupKey('ventas-cliente', record.clienteId, label),
+      label,
+      searchText: `${label} ${sucursal?.nombre || record.sucursalNombre || ''} ${record.numeroDocumento} ${formatFacturasVentaResumen(record.facturas)} ${record.estado} ${record.observacion}`
+    };
+  }
+
   function getCompraProveedorAccordionInfo(compra) {
     const record = normalizeCompraProveedorRecord(compra);
     const proveedor = getCatalogRecordById('proveedores', record.proveedorId);
@@ -4760,6 +5302,7 @@
 
   function getAccordionStateByModule(module) {
     return {
+      ventas: ventasState,
       compras: proveedoresState,
       pagos: pagosState,
       cobros: cobrosState,
@@ -4768,6 +5311,7 @@
   }
 
   function getAccordionInfoByModule(module, record) {
+    if (module === 'ventas') return getVentaAccordionInfo(record);
     if (module === 'compras') return getCompraProveedorAccordionInfo(record);
     if (module === 'pagos') return getPagoProveedorAccordionInfo(record);
     if (module === 'cobros') return getCobroAccordionInfo(record);
@@ -5097,6 +5641,7 @@
     const proveedoresActivos = getActiveCatalogRecords('proveedores');
     const editingRecord = proveedoresState.editingId ? appData.comprasProveedores.find((record) => record.id === proveedoresState.editingId) : null;
     const totals = getComprasProveedoresTotals();
+    const comprasAjustables = compras.filter((compra) => compra.activo && compra.saldoPorPagar > 0);
     const missingProviders = !proveedoresActivos.length;
 
     return `
@@ -5123,7 +5668,9 @@
         ${missingProviders ? renderProveedoresCatalogWarning() : ''}
 
         <section class="metric-grid" aria-label="Resumen operativo de proveedores y compras">
-          <article class="metric-card"><span>Deuda/compra activa</span><strong>${escapeHtml(formatMoney(totals.totalCompra))}</strong></article>
+          <article class="metric-card"><span>Monto original activo</span><strong>${escapeHtml(formatMoney(totals.totalCompra))}</strong></article>
+          <article class="metric-card"><span>Ajustes aplicados</span><strong>-${escapeHtml(formatMoney(totals.totalAjustes))}</strong></article>
+          <article class="metric-card"><span>Total ajustado</span><strong>${escapeHtml(formatMoney(totals.totalAjustado))}</strong></article>
           <article class="metric-card"><span>Total pagado</span><strong>${escapeHtml(formatMoney(totals.totalPagado))}</strong></article>
           <article class="metric-card"><span>Saldo por pagar</span><strong>${escapeHtml(formatMoney(totals.saldoPorPagar))}</strong></article>
           <article class="metric-card"><span>Pendientes</span><strong>${totals.pendientes}</strong></article>
@@ -5132,16 +5679,29 @@
         </section>
 
         <div class="compras-layout">
-          <article class="panel-card compra-form-card">
-            <div class="section-title-row">
-              <div>
-                <span class="eyebrow mini">Nueva deuda</span>
-                <h2>Crear compra / deuda</h2>
+          <div class="compras-form-stack">
+            <article class="panel-card compra-form-card">
+              <div class="section-title-row">
+                <div>
+                  <span class="eyebrow mini">Nueva deuda</span>
+                  <h2>Crear compra / deuda</h2>
+                </div>
               </div>
-            </div>
-            <p class="muted-text">Los pagos a proveedor se registran en su propio módulo; aquí queda la deuda/factura base con su saldo actualizado.</p>
-            ${renderCompraProveedorForm(null, proveedoresActivos, missingProviders, proveedoresState.quickCapture)}
-          </article>
+              <p class="muted-text">Los pagos a proveedor se registran en su propio módulo; aquí queda la deuda/factura base con su saldo actualizado.</p>
+              ${renderCompraProveedorForm(null, proveedoresActivos, missingProviders, proveedoresState.quickCapture)}
+            </article>
+
+            <article class="panel-card compra-ajuste-card">
+              <div class="section-title-row">
+                <div>
+                  <span class="eyebrow mini">Ajustes / notas</span>
+                  <h2>Registrar ajuste</h2>
+                </div>
+              </div>
+              <p class="muted-text">Reduce el saldo de una factura existente sin crear pago, caja ni banco. Aquí se descuenta el faltante; el dinero no se teletransporta.</p>
+              ${renderProveedorAjusteForm(comprasAjustables)}
+            </article>
+          </div>
 
           <article class="panel-card compra-list-card">
             <div class="section-title-row">
@@ -5169,6 +5729,89 @@
     `;
   }
 
+  function renderProveedorAjusteForm(comprasAjustables) {
+    const compras = Array.isArray(comprasAjustables) ? comprasAjustables.map((record) => normalizeCompraProveedorRecord(record)).filter((record) => record.activo) : [];
+    if (!compras.length) {
+      return `
+        <div class="empty-state compact-empty">
+          <strong>No hay compras activas para ajustar.</strong>
+          <p>Primero registra una compra/factura de proveedor. El ajuste siempre necesita documento padre; ajuste huérfano, problema con sombrero.</p>
+        </div>
+      `;
+    }
+
+    const selectedCompra = compras.find((compra) => compra.id === proveedoresState.selectedAjusteCompraId) || compras[0];
+    const selectedProveedorId = selectedCompra?.proveedorId || '';
+    const proveedores = Array.from(new Map(compras.map((compra) => {
+      const proveedor = getCatalogRecordById('proveedores', compra.proveedorId);
+      const label = cleanText(proveedor?.nombre || compra.proveedorNombre) || 'Proveedor no encontrado';
+      return [compra.proveedorId || label, { id: compra.proveedorId, nombre: label }];
+    })).values()).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+
+    return `
+      <form class="ajuste-form" data-ajuste-proveedor-form novalidate>
+        <div class="form-grid ajuste-form-grid">
+          <label class="form-field">
+            <span>Proveedor <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <select name="proveedorId" required data-ajuste-provider>
+              <option value="">Seleccionar proveedor</option>
+              ${proveedores.map((proveedor) => `<option value="${escapeHtml(proveedor.id)}" ${proveedor.id === selectedProveedorId ? 'selected' : ''}>${escapeHtml(proveedor.nombre)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Factura / referencia <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <select name="compraProveedorId" required data-ajuste-compra>
+              <option value="">Seleccionar factura</option>
+              ${compras.map((compra) => {
+                const proveedor = getCatalogRecordById('proveedores', compra.proveedorId);
+                const label = `${proveedor?.nombre || compra.proveedorNombre || 'Proveedor'} · ${compra.facturaReferencia || 'Sin referencia'} · Saldo ${formatMoney(compra.saldoPorPagar)}`;
+                return `<option value="${escapeHtml(compra.id)}" data-provider-id="${escapeHtml(compra.proveedorId)}" ${compra.id === selectedCompra.id ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+              }).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Fecha ajuste <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <input type="date" name="fecha" value="${escapeHtml(todayInputValue())}" required />
+          </label>
+          <label class="form-field">
+            <span>Tipo de ajuste <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <select name="tipo" required>
+              ${COMPRA_AJUSTE_TYPES.map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Monto ajuste C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <input type="number" name="monto" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-ajuste-monto />
+          </label>
+        </div>
+        <div class="formula-card ajuste-preview" aria-live="polite" data-ajuste-preview>
+          ${renderAjustePreview(selectedCompra)}
+        </div>
+        <label class="form-field">
+          <span>Observación</span>
+          <textarea name="observacion" rows="2" placeholder="Ej. Broches no disponibles"></textarea>
+        </label>
+        <div class="form-actions">
+          <button type="submit" class="card-action">Registrar ajuste</button>
+        </div>
+      </form>
+    `;
+  }
+
+  function renderAjustePreview(compraRecord) {
+    const compra = normalizeCompraProveedorRecord(compraRecord || {});
+    return `
+      <strong>${escapeHtml(compra.facturaReferencia || 'Factura sin referencia')}</strong>
+      <div class="formula-grid">
+        <span>Original</span><b>${escapeHtml(formatMoney(compra.totalCompra))}</b>
+        <span>Ajustes actuales</span><b>${compra.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(compra.totalAjustes))}</b>
+        <span>Total ajustado</span><b>${escapeHtml(formatMoney(compra.totalAjustado))}</b>
+        <span>Pagado</span><b>${escapeHtml(formatMoney(compra.totalPagado))}</b>
+        <span>Saldo disponible</span><b>${escapeHtml(formatMoney(compra.saldoPorPagar))}</b>
+      </div>
+    `;
+  }
+
   function renderCompraProveedorForm(record, proveedoresActivos, missingProviders, quickCapture = null) {
     const draft = !record && isPlainObject(quickCapture) ? quickCapture : {};
     const selectedProveedorId = record?.proveedorId || cleanText(draft.proveedorId);
@@ -5190,7 +5833,7 @@
     const observacion = record?.observacion || cleanText(draft.observacion);
 
     return `
-      <form class="compra-form" data-compra-form data-current-pagado="${escapeHtml(record?.totalPagado || 0)}" novalidate>
+      <form class="compra-form" data-compra-form data-current-pagado="${escapeHtml(record?.totalPagado || 0)}" data-current-ajustes="${escapeHtml(JSON.stringify(record?.ajustes || []))}" novalidate>
         <input type="hidden" name="id" value="${escapeHtml(record?.id || '')}" />
         <div class="form-grid">
           <label class="form-field">
@@ -5223,9 +5866,11 @@
         </div>
 
         <div class="formula-card" aria-live="polite">
-          <strong>Saldo por pagar = Total compra/deuda - Total pagado</strong>
+          <strong>Saldo por pagar = Total ajustado - Total pagado</strong>
           <div class="formula-grid">
-            <span>Total compra/deuda</span><b data-compra-preview-total>${escapeHtml(formatMoney(calculations.totalCompra))}</b>
+            <span>Monto original</span><b data-compra-preview-total>${escapeHtml(formatMoney(calculations.totalCompra))}</b>
+            <span>Ajustes / notas</span><b data-compra-preview-ajustes>${calculations.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(calculations.totalAjustes))}</b>
+            <span>Total ajustado</span><b data-compra-preview-ajustado>${escapeHtml(formatMoney(calculations.totalAjustado))}</b>
             <span>Total pagado</span><b data-compra-preview-pagado>${escapeHtml(formatMoney(record?.totalPagado || 0))}</b>
             <span>Saldo por pagar</span><b data-compra-preview-saldo>${escapeHtml(formatMoney(calculations.saldoPorPagar))}</b>
           </div>
@@ -5331,7 +5976,9 @@
         <th>Factura / ref.</th>
         <th>Compra</th>
         <th>Vence</th>
-        <th class="amount-cell">Total</th>
+        <th class="amount-cell">Original</th>
+        <th class="amount-cell">Ajustes</th>
+        <th class="amount-cell">Total ajustado</th>
         <th class="amount-cell">Pagado</th>
         <th class="amount-cell">Saldo</th>
         <th>Estado</th>
@@ -5344,9 +5991,11 @@
         <col style="width: 90px;">
         <col style="width: 118px;">
         <col style="width: 118px;">
+        <col style="width: 132px;">
+        <col style="width: 118px;">
         <col style="width: 118px;">
         <col style="width: 92px;">
-        <col style="width: 210px;">
+        <col style="width: 260px;">
       `
     });
   }
@@ -5357,25 +6006,56 @@
     const estadoClass = getEstadoClass(record.estado);
     const proveedorNombre = proveedor?.nombre || record.proveedorNombre || 'Proveedor no encontrado';
 
+    const ajustesRow = renderCompraAjustesCompactRow(record, 10);
     return `
       <tr class="compact-record-row compra-row ${record.activo ? 'is-active' : 'is-inactive'}">
         <td data-label="Factura / ref."><span class="compact-primary">${escapeHtml(record.facturaReferencia || 'Sin referencia')}</span></td>
         <td data-label="Compra"><span>${escapeHtml(formatDate(record.fechaCompra))}</span></td>
         <td data-label="Vence"><span>${escapeHtml(formatDate(record.fechaVencimiento))}</span></td>
-        <td data-label="Total" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.totalCompra))}</span></td>
+        <td data-label="Original" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.totalCompra))}</span></td>
+        <td data-label="Ajustes" class="amount-cell"><span>${record.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(record.totalAjustes))}</span></td>
+        <td data-label="Total ajustado" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.totalAjustado))}</span></td>
         <td data-label="Pagado" class="amount-cell"><span>${escapeHtml(formatMoney(record.totalPagado))}</span></td>
         <td data-label="Saldo" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.saldoPorPagar))}</span></td>
         <td data-label="Estado"><span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span></td>
         <td data-label="Acciones" class="actions-cell">
           <div class="record-actions compact-row-actions">
             ${record.activo && record.saldoPorPagar > 0 ? `<button type="button" class="card-action compact" data-pago-start="${escapeHtml(record.id)}">Pagar</button>` : ''}
+            ${record.activo && record.saldoPorPagar > 0 ? `<button type="button" class="secondary-action compact" data-ajuste-start="${escapeHtml(record.id)}">Ajustar</button>` : ''}
             <button type="button" class="secondary-action compact" data-compra-edit="${escapeHtml(record.id)}">Editar</button>
             <button type="button" class="secondary-action compact" data-history-compra="${escapeHtml(record.id)}">Historial</button>
             ${canCurrentRole('annulMovements') ? `<button type="button" class="${record.activo ? 'danger-action' : 'card-action'} compact" data-compra-toggle="${escapeHtml(record.id)}">${record.activo ? 'Anular' : 'Reactivar'}</button>` : ''}
           </div>
         </td>
       </tr>
+      ${ajustesRow}
     `;
+  }
+
+  function renderCompraAjustesCompactRow(compra, colspan = 10) {
+    const record = normalizeCompraProveedorRecord(compra);
+    const ajustes = normalizeCompraProveedorAjustesList(record.ajustes);
+    if (!ajustes.length) return '';
+    return `
+      <tr class="compact-adjustments-row">
+        <td colspan="${colspan}">
+          <div class="ajustes-inline-history">
+            <strong>Ajustes:</strong>
+            ${ajustes.map((ajuste) => `
+              <span class="ajuste-chip ${ajuste.activo ? '' : 'is-inactive'}">
+                ${escapeHtml(formatDate(ajuste.fecha))} — ${escapeHtml(ajuste.tipo)} — ${ajuste.activo ? '-' : ''}${escapeHtml(formatMoney(ajuste.monto))}${ajuste.observacion ? ` — ${escapeHtml(ajuste.observacion)}` : ''}
+                ${ajuste.activo && canCurrentRole('annulMovements') ? `<button type="button" class="mini-inline-action" data-ajuste-delete="${escapeHtml(record.id)}" data-ajuste-id="${escapeHtml(ajuste.id)}">Eliminar</button>` : ''}
+              </span>
+            `).join('')}
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  function formatCompraAjustesExport(ajustesSource) {
+    const ajustes = normalizeCompraProveedorAjustesList(ajustesSource).filter((ajuste) => ajuste.activo);
+    return ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`).join(' | ');
   }
 
   function getComprasProveedoresOrdenadas() {
@@ -5393,13 +6073,15 @@
       }
       totals.activas += 1;
       totals.totalCompra = roundMoney(totals.totalCompra + compra.totalCompra);
+      totals.totalAjustes = roundMoney(totals.totalAjustes + compra.totalAjustes);
+      totals.totalAjustado = roundMoney(totals.totalAjustado + compra.totalAjustado);
       totals.totalPagado = roundMoney(totals.totalPagado + compra.totalPagado);
       totals.saldoPorPagar = roundMoney(totals.saldoPorPagar + compra.saldoPorPagar);
       if (compra.estado === 'Pendiente') totals.pendientes += 1;
       if (compra.estado === 'Vencido') totals.vencidas += 1;
       if (compra.estado === 'Pagado') totals.pagadas += 1;
       return totals;
-    }, { activas: 0, anuladas: 0, pendientes: 0, vencidas: 0, pagadas: 0, totalCompra: 0, totalPagado: 0, saldoPorPagar: 0 });
+    }, { activas: 0, anuladas: 0, pendientes: 0, vencidas: 0, pagadas: 0, totalCompra: 0, totalAjustes: 0, totalAjustado: 0, totalPagado: 0, saldoPorPagar: 0 });
   }
 
   function buildCompraProveedorFromForm(form, existingRecord) {
@@ -5451,6 +6133,9 @@
       ...base,
       diasCredito: Number.isNaN(base.diasCredito) ? 0 : base.diasCredito,
       totalCompra: Number.isNaN(base.totalCompra) ? 0 : base.totalCompra,
+      ajustes: normalizeCompraProveedorAjustesList(base.ajustes),
+      totalAjustes: calculations.totalAjustes,
+      totalAjustado: calculations.totalAjustado,
       totalPagado: calculations.totalPagado,
       saldoPorPagar: calculations.saldoPorPagar,
       estado: determineCompraProveedorEstado(base)
@@ -5483,7 +6168,6 @@
     if (record.condicionPagoSnapshot === 'Contado' && record.fechaVencimiento !== record.fechaCompra) return 'En compras de contado, el vencimiento debe ser igual a la fecha de compra.';
     if (Number.isNaN(parseMoney(record.totalCompra)) || record.totalCompra <= 0) return 'Total compra/deuda debe ser un número mayor que cero.';
     if (Number.isNaN(parseMoney(record.totalPagado)) || record.totalPagado < 0) return 'Total pagado no puede ser negativo.';
-    if (record.totalPagado > record.totalCompra) return 'El total compra/deuda no puede quedar menor que el total ya pagado.';
     if (record.saldoPorPagar < 0) return 'El saldo por pagar no puede ser negativo.';
     const contadoError = validateCompraContadoPayment(record, existingRecord);
     if (contadoError) return contadoError;
@@ -5616,6 +6300,7 @@
   function resetProveedoresTransientState() {
     proveedoresState.editingId = null;
     proveedoresState.quickCapture = null;
+    proveedoresState.selectedAjusteCompraId = '';
   }
 
   function clearCompraProveedorForm() {
@@ -5623,6 +6308,153 @@
     proveedoresState.quickCapture = null;
     proveedoresState.message = null;
     renderRoute();
+  }
+
+  function buildProveedorAjusteFromForm(form) {
+    const formData = new FormData(form);
+    return normalizeCompraProveedorAjusteRecord({
+      id: generateId('ajusteProveedor'),
+      fecha: toDateInputValue(formData.get('fecha')),
+      tipo: cleanText(formData.get('tipo')),
+      monto: parseMoney(formData.get('monto')),
+      observacion: cleanText(formData.get('observacion')),
+      activo: true,
+      createdAt: nowIso(),
+      updatedAt: nowIso()
+    });
+  }
+
+  function validateProveedorAjusteRecord(compra, ajuste, proveedorId) {
+    if (!compra || !compra.id || !compra.activo) return 'Selecciona una compra/factura activa para aplicar el ajuste.';
+    if (!proveedorId || proveedorId !== compra.proveedorId) return 'Selecciona el proveedor correspondiente a la factura/referencia.';
+    if (!ajuste.fecha) return 'La fecha del ajuste es obligatoria.';
+    if (!COMPRA_AJUSTE_TYPES.includes(ajuste.tipo)) return 'Selecciona un tipo de ajuste válido.';
+    if (Number.isNaN(parseMoney(ajuste.monto)) || ajuste.monto <= 0) return 'El monto del ajuste debe ser mayor que cero.';
+    if (ajuste.monto > compra.saldoPorPagar) return `El ajuste no puede superar el saldo lógico disponible de ${formatMoney(compra.saldoPorPagar)}. Si ya se pagó de más, registra la corrección fuera de pagos para no crear caja falsa.`;
+    return '';
+  }
+
+  function saveProveedorAjusteRecord(form) {
+    const formData = new FormData(form);
+    const compraProveedorId = cleanText(formData.get('compraProveedorId'));
+    const proveedorId = cleanText(formData.get('proveedorId'));
+    const compras = Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [];
+    const compra = compras.map((record) => normalizeCompraProveedorRecord(record)).find((record) => record.id === compraProveedorId);
+    const ajuste = buildProveedorAjusteFromForm(form);
+    const validationError = validateProveedorAjusteRecord(compra, ajuste, proveedorId);
+
+    if (validationError) {
+      proveedoresState.selectedAjusteCompraId = compraProveedorId;
+      proveedoresState.message = validationError;
+      proveedoresState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+
+    if (!warnIfClosedPeriod(ajuste.fecha, 'Registrar este ajuste/nota de proveedor')) return;
+
+    appData.comprasProveedores = compras.map((record) => {
+      if (record.id !== compraProveedorId) return normalizeCompraProveedorRecord(record);
+      const normalized = normalizeCompraProveedorRecord(record);
+      return normalizeCompraProveedorRecord({
+        ...normalized,
+        ajustes: [ajuste, ...normalizeCompraProveedorAjustesList(normalized.ajustes)],
+        updatedAt: nowIso()
+      });
+    });
+
+    const savedCompra = appData.comprasProveedores.find((record) => record.id === compraProveedorId);
+    const syncResult = savedCompra ? syncAutoPagoCompraContado(savedCompra) : { action: 'none' };
+    proveedoresState.selectedAjusteCompraId = compraProveedorId;
+    openAccordionGroupForRecord('compras', savedCompra || compra);
+    proveedoresState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${compra.facturaReferencia}. Saldo recalculado sin crear pago.`;
+    if (syncResult.action === 'updated') proveedoresState.message += ' Pago automático de contado sincronizado defensivamente.';
+    proveedoresState.messageType = 'success';
+    saveData(appData);
+    renderRoute();
+  }
+
+  function startAjusteForCompra(compraProveedorId) {
+    const cleanCompraId = cleanText(compraProveedorId);
+    proveedoresState.selectedAjusteCompraId = cleanCompraId;
+    const compra = appData.comprasProveedores.find((record) => record.id === cleanCompraId);
+    if (compra) openAccordionGroupForRecord('compras', compra);
+    proveedoresState.message = null;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function deleteCompraProveedorAjuste(compraProveedorId, ajusteId) {
+    if (!canCurrentRole('annulMovements')) {
+      proveedoresState.message = 'Solo Administrador puede eliminar ajustes/notas.';
+      proveedoresState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+    const compras = Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [];
+    const compra = compras.map((record) => normalizeCompraProveedorRecord(record)).find((record) => record.id === compraProveedorId);
+    const ajuste = compra ? normalizeCompraProveedorAjustesList(compra.ajustes).find((item) => item.id === ajusteId) : null;
+    if (!compra || !ajuste) return;
+    if (!warnIfClosedPeriod(ajuste.fecha, 'Eliminar este ajuste/nota de proveedor')) return;
+    const ok = window.confirm(`Vas a eliminar el ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} de ${compra.facturaReferencia}. No se tocarán pagos, caja ni bancos. ¿Continuar?`);
+    if (!ok) return;
+
+    appData.comprasProveedores = compras.map((record) => {
+      if (record.id !== compraProveedorId) return normalizeCompraProveedorRecord(record);
+      const normalized = normalizeCompraProveedorRecord(record);
+      return normalizeCompraProveedorRecord({
+        ...normalized,
+        ajustes: normalizeCompraProveedorAjustesList(normalized.ajustes).filter((item) => item.id !== ajusteId),
+        updatedAt: nowIso()
+      });
+    });
+
+    const savedCompra = appData.comprasProveedores.find((record) => record.id === compraProveedorId);
+    syncAutoPagoCompraContado(savedCompra || compra);
+    proveedoresState.selectedAjusteCompraId = compraProveedorId;
+    openAccordionGroupForRecord('compras', savedCompra || compra);
+    proveedoresState.message = `Ajuste eliminado de ${compra.facturaReferencia}. Saldo recalculado.`;
+    proveedoresState.messageType = 'success';
+    saveData(appData);
+    renderRoute();
+  }
+
+  function setupProveedorAjusteForm(form) {
+    const providerSelect = form.querySelector('[data-ajuste-provider]');
+    const compraSelect = form.querySelector('[data-ajuste-compra]');
+    const preview = form.querySelector('[data-ajuste-preview]');
+    if (!providerSelect || !compraSelect) return;
+
+    const updatePreview = () => {
+      const compraId = cleanText(compraSelect.value);
+      const compras = Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [];
+      const compra = compras.map((record) => normalizeCompraProveedorRecord(record)).find((record) => record.id === compraId);
+      if (preview && compra) preview.innerHTML = renderAjustePreview(compra);
+      proveedoresState.selectedAjusteCompraId = compraId;
+    };
+
+    const syncCompraOptions = () => {
+      const proveedorId = cleanText(providerSelect.value);
+      let firstVisible = '';
+      Array.from(compraSelect.options).forEach((option) => {
+        if (!option.value) return;
+        const visible = !proveedorId || option.dataset.providerId === proveedorId;
+        option.hidden = !visible;
+        option.disabled = !visible;
+        if (visible && !firstVisible) firstVisible = option.value;
+      });
+      const selectedOption = compraSelect.selectedOptions && compraSelect.selectedOptions[0];
+      if (!selectedOption || selectedOption.disabled || selectedOption.hidden) compraSelect.value = firstVisible;
+      updatePreview();
+    };
+
+    providerSelect.addEventListener('change', syncCompraOptions);
+    compraSelect.addEventListener('change', () => {
+      const selected = compraSelect.selectedOptions && compraSelect.selectedOptions[0];
+      const providerId = selected?.dataset?.providerId || '';
+      if (providerId) providerSelect.value = providerId;
+      syncCompraOptions();
+    });
+    syncCompraOptions();
   }
 
   function setupCompraProveedorLiveCalculations(form) {
@@ -5696,13 +6528,18 @@
     const formData = new FormData(form);
     const calculations = getCompraProveedorCalculations({
       totalCompra: formData.get('totalCompra'),
-      totalPagado: form.dataset.currentPagado || 0
+      totalPagado: form.dataset.currentPagado || 0,
+      ajustes: form.dataset.currentAjustes ? JSON.parse(form.dataset.currentAjustes) : []
     });
 
     const totalNode = form.querySelector('[data-compra-preview-total]');
+    const ajustesNode = form.querySelector('[data-compra-preview-ajustes]');
+    const ajustadoNode = form.querySelector('[data-compra-preview-ajustado]');
     const pagadoNode = form.querySelector('[data-compra-preview-pagado]');
     const saldoNode = form.querySelector('[data-compra-preview-saldo]');
     if (totalNode) totalNode.textContent = formatMoney(calculations.totalCompra);
+    if (ajustesNode) ajustesNode.textContent = `${calculations.totalAjustes > 0 ? '-' : ''}${formatMoney(calculations.totalAjustes)}`;
+    if (ajustadoNode) ajustadoNode.textContent = formatMoney(calculations.totalAjustado);
     if (pagadoNode) pagadoNode.textContent = formatMoney(calculations.totalPagado);
     if (saldoNode) saldoNode.textContent = formatMoney(calculations.saldoPorPagar);
   }
@@ -6871,6 +7708,8 @@
           <div class="status-item"><strong>Compras/prov.</strong><span>${preview.counts.comprasProveedores}</span></div>
           <div class="status-item"><strong>Pagos</strong><span>${preview.counts.pagosProveedores}</span></div>
           <div class="status-item"><strong>Gastos</strong><span>${preview.counts.gastos}</span></div>
+          <div class="status-item"><strong>Ajustes clientes</strong><span>${preview.counts.ajustesClientes || 0}</span></div>
+          <div class="status-item"><strong>Ajustes prov.</strong><span>${preview.counts.ajustesProveedores || 0}</span></div>
           <div class="status-item"><strong>Catálogos</strong><span>${preview.counts.catalogos}</span></div>
           <div class="status-item"><strong>Cierres</strong><span>${preview.counts.cierresMensuales}</span></div>
         </div>
@@ -6902,7 +7741,9 @@
       pagosProveedores: Array.isArray(data.pagosProveedores) ? data.pagosProveedores.length : 0,
       gastos: Array.isArray(data.gastos) ? data.gastos.length : 0,
       cierresMensuales: Array.isArray(data.cierresMensuales) ? data.cierresMensuales.length : 0,
-      exportacionesExcel: Array.isArray(data.exportacionesExcel) ? data.exportacionesExcel.length : 0
+      exportacionesExcel: Array.isArray(data.exportacionesExcel) ? data.exportacionesExcel.length : 0,
+      ajustesClientes: Array.isArray(data.ventas) ? data.ventas.reduce((sum, venta) => sum + normalizeVentaAjustesList(venta?.ajustes).length, 0) : 0,
+      ajustesProveedores: Array.isArray(data.comprasProveedores) ? data.comprasProveedores.reduce((sum, compra) => sum + normalizeCompraProveedorAjustesList(compra?.ajustes).length, 0) : 0
     };
     counts.total = Object.values(counts).reduce((sum, value) => sum + value, 0);
     return counts;
@@ -7065,6 +7906,8 @@
       ? data.cuentasBancos.filter((bank) => cleanText(bank?.nombre) && !normalizeBankType(bank?.tipo)).length
       : 0;
     if (banksWithoutType > 0) warnings.push(`${banksWithoutType} banco${banksWithoutType === 1 ? '' : 's'} sin tipo detectado${banksWithoutType === 1 ? '' : 's'}; se conservarán y podrás completar el tipo desde Catálogos → Bancos.`);
+    const totalAjustesImportados = (counts.ajustesClientes || 0) + (counts.ajustesProveedores || 0);
+    if (totalAjustesImportados > 0) warnings.push(`Se detectaron ${totalAjustesImportados} ajuste(s)/nota(s); se importarán ligados a su documento original y no como cobros/pagos.`);
 
     const preview = {
       isValid: errors.length === 0,
@@ -7202,6 +8045,8 @@
       });
       const existing = target.ventas.find((item) => item.id === remapped.id || getVentaDuplicateKey(item) === getVentaDuplicateKey(remapped));
       if (existing) {
+        const mergedExisting = mergeVentaAjustes(existing, remapped);
+        target.ventas = target.ventas.map((item) => item.id === existing.id ? mergedExisting : item);
         ventaIdMap.set(venta.id, existing.id);
         skipped += 1;
         return;
@@ -7219,6 +8064,8 @@
       });
       const existing = target.comprasProveedores.find((item) => item.id === remapped.id || getCompraDuplicateKey(item) === getCompraDuplicateKey(remapped));
       if (existing) {
+        const mergedExisting = mergeCompraProveedorAjustes(existing, remapped);
+        target.comprasProveedores = target.comprasProveedores.map((item) => item.id === existing.id ? mergedExisting : item);
         compraIdMap.set(compra.id, existing.id);
         skipped += 1;
         return;
@@ -8037,10 +8884,16 @@
 
   function buildClosingTotals(summary) {
     return {
+      totalVendidoOriginal: roundMoney(summary.totalVendidoOriginal || 0),
+      totalAjustesClientes: roundMoney(summary.totalAjustesClientes || 0),
       totalVendido: roundMoney(summary.totalVendido),
+      ventaNetaAjustada: roundMoney(summary.ventaNetaAjustada || summary.totalVendido),
       totalCobradoClientes: roundMoney(summary.totalCobradoClientes),
       saldoPorCobrar: roundMoney(summary.saldoPorCobrar),
+      totalComprasOriginal: roundMoney(summary.totalComprasOriginal || 0),
+      totalAjustesProveedores: roundMoney(summary.totalAjustesProveedores || 0),
       totalComprasProveedores: roundMoney(summary.totalComprasProveedores),
+      totalComprasAjustadas: roundMoney(summary.totalComprasAjustadas || summary.totalComprasProveedores),
       totalPagadoProveedores: roundMoney(summary.totalPagadoProveedores),
       saldoPorPagar: roundMoney(summary.saldoPorPagar),
       totalGastos: roundMoney(summary.totalGastos),
@@ -8113,10 +8966,14 @@
       [xlsxLabel('Fecha/hora de exportación'), xlsxText(formatDateTime(exportedAt))],
       [],
       xlsxHeaderRow(['Indicador', 'Valor']),
-      [xlsxText('Total vendido'), xlsxMoney(summary.totalVendido)],
+      [xlsxText('Venta neta original'), xlsxMoney(summary.totalVendidoOriginal || 0)],
+      [xlsxText('Ajustes clientes'), xlsxMoney((summary.totalAjustesClientes || 0) > 0 ? -summary.totalAjustesClientes : 0)],
+      [xlsxText('Venta neta ajustada'), xlsxMoney(summary.totalVendido)],
       [xlsxText('Total cobrado clientes'), xlsxMoney(summary.totalCobradoClientes)],
       [xlsxText('Saldo por cobrar'), xlsxMoney(summary.saldoPorCobrar)],
-      [xlsxText('Total compras/proveedores'), xlsxMoney(summary.totalComprasProveedores)],
+      [xlsxText('Compras originales'), xlsxMoney(summary.totalComprasOriginal || 0)],
+      [xlsxText('Ajustes proveedores'), xlsxMoney((summary.totalAjustesProveedores || 0) > 0 ? -summary.totalAjustesProveedores : 0)],
+      [xlsxText('Compras ajustadas'), xlsxMoney(summary.totalComprasProveedores)],
       [xlsxText('Total pagado proveedores'), xlsxMoney(summary.totalPagadoProveedores)],
       [xlsxText('Saldo por pagar'), xlsxMoney(summary.saldoPorPagar)],
       [xlsxText('Total gastos'), xlsxMoney(summary.totalGastos)],
@@ -8127,14 +8984,22 @@
       xlsxHeaderRow(['Gastos por tipo', 'Total', 'Cantidad'])
     ];
     summary.gastosPorTipo.forEach((item) => rows.push([xlsxText(item.tipo), xlsxMoney(item.total), xlsxNumber(item.cantidad)]));
-    rows.push([], xlsxHeaderRow(['Total vendido por sucursal', 'Total vendido', 'Total cobrado', 'Saldo por cobrar', 'Documentos']));
+    rows.push([], xlsxHeaderRow(['Venta ajustada por sucursal', 'Venta ajustada', 'Total cobrado', 'Saldo por cobrar', 'Documentos']));
     summary.ventaPorSucursal.forEach((item) => rows.push([xlsxText(item.sucursal), xlsxMoney(item.totalVendido), xlsxMoney(item.totalCobrado), xlsxMoney(item.saldoPorCobrar), xlsxNumber(item.documentos)]));
-    rows.push([], xlsxHeaderRow(['Saldos por proveedor', 'Total compra/deuda', 'Total pagado', 'Saldo por pagar', 'Documentos']));
-    summary.saldosPorProveedor.forEach((item) => rows.push([xlsxText(item.proveedor), xlsxMoney(item.totalCompra), xlsxMoney(item.totalPagado), xlsxMoney(item.saldoPorPagar), xlsxNumber(item.documentos)]));
+    rows.push([], xlsxHeaderRow(['Saldos por proveedor', 'Monto original', 'Ajustes', 'Total ajustado', 'Total pagado', 'Saldo por pagar', 'Documentos']));
+    summary.saldosPorProveedor.forEach((item) => rows.push([
+      xlsxText(item.proveedor),
+      xlsxMoney(item.totalCompra),
+      xlsxMoney(item.totalAjustes > 0 ? -item.totalAjustes : 0),
+      xlsxMoney(item.totalAjustado),
+      xlsxMoney(item.totalPagado),
+      xlsxMoney(item.saldoPorPagar),
+      xlsxNumber(item.documentos)
+    ]));
     rows.push([], xlsxHeaderRow(['Clientes en mora', 'Sucursal', 'OC/documento', 'Fecha vencimiento', 'Días mora', 'Saldo pendiente', 'Estado']));
     summary.clientesMora.forEach((item) => rows.push([xlsxText(item.cliente), xlsxText(item.sucursal), xlsxText(item.documento), xlsxDate(item.fechaVencimiento), xlsxNumber(item.diasMora), xlsxMoney(item.saldoPendiente), xlsxText(item.estado)]));
     rows.push([], xlsxHeaderRow(['Proveedores en mora', 'Factura/referencia', 'Fecha vencimiento', 'Días mora', 'Saldo pendiente', 'Estado']));
-    summary.proveedoresMora.forEach((item) => rows.push([xlsxText(item.proveedor), xlsxText(item.referencia), xlsxDate(item.fechaVencimiento), xlsxNumber(item.diasMora), xlsxMoney(item.saldoPendiente), xlsxText(item.estado)]));
+    summary.proveedoresMora.forEach((item) => rows.push([xlsxText(item.proveedor), xlsxText(item.documento), xlsxDate(item.fechaVencimiento), xlsxNumber(item.diasMora), xlsxMoney(item.saldoPendiente), xlsxText(item.estado)]));
 
     return { name: 'Resumen', rows, cols: [28, 18, 18, 18, 14, 18, 18] };
   }
@@ -8144,7 +9009,7 @@
       [xlsxTitle('Ventas / OC')],
       [xlsxLabel('Período'), xlsxText(summary.periodLabel)],
       [],
-      xlsxHeaderRow(['Fecha OC', 'Cliente', 'Sucursal', 'OC/documento', 'Facturas', 'Requiere envío', 'Transportista', 'Fecha de embarque', 'Fecha estimada', 'Fecha real', 'Guía', 'Monto OC', 'NO VA', 'Descuento', 'Descuento NO VA', 'Venta neta', 'Total cobrado', 'Saldo por cobrar', 'Fecha vencimiento', 'Días mora', 'Estado', 'Observación'])
+      xlsxHeaderRow(['Fecha OC', 'Cliente', 'Sucursal', 'OC/documento', 'Facturas', 'Requiere envío', 'Transportista', 'Fecha de embarque', 'Fecha estimada', 'Fecha real', 'Guía', 'Monto OC', 'NO VA', 'Descuento', 'Descuento NO VA', 'Venta neta original', 'Ajustes', 'Venta neta ajustada', 'Total cobrado', 'Saldo por cobrar', 'Fecha vencimiento', 'Días mora', 'Estado', 'Ajustes detalle', 'Observación'])
     ];
     getVentasForExport(summary.range, summary.filters).forEach((venta) => {
       const cliente = getCatalogRecordById('clientes', venta.clienteId);
@@ -8166,16 +9031,19 @@
         xlsxMoney(venta.noVa),
         xlsxMoney(venta.descuento),
         xlsxMoney(venta.descuentoNoVa),
-        xlsxMoney(venta.ventaNeta),
+        xlsxMoney(venta.ventaNetaOriginal),
+        xlsxMoney(venta.totalAjustes > 0 ? -venta.totalAjustes : 0),
+        xlsxMoney(venta.ventaNetaAjustada),
         xlsxMoney(venta.totalCobrado),
         xlsxMoney(venta.saldoPorCobrar),
         xlsxDate(venta.fechaVencimiento),
         xlsxNumber(getDaysOverdue(venta.fechaVencimiento)),
         xlsxText(venta.estado),
+        xlsxText(formatVentaAjustesExport(venta.ajustes)),
         xlsxText(venta.observacion)
       ]);
     });
-    return { name: 'Ventas', rows, cols: [14, 24, 24, 18, 30, 14, 20, 16, 16, 16, 18, 14, 14, 14, 16, 14, 16, 16, 16, 12, 14, 32] };
+    return { name: 'Ventas', rows, cols: [14, 24, 24, 18, 30, 14, 20, 16, 16, 16, 18, 14, 14, 14, 16, 18, 14, 18, 16, 16, 16, 12, 14, 38, 32] };
   }
 
   function buildProveedoresSheet(summary) {
@@ -8183,7 +9051,7 @@
       [xlsxTitle('Proveedores / Compras')],
       [xlsxLabel('Período'), xlsxText(summary.periodLabel)],
       [],
-      xlsxHeaderRow(['Fecha compra', 'Proveedor', 'Factura/referencia', 'Fecha vencimiento', 'Total compra/deuda', 'Total pagado', 'Saldo por pagar', 'Días mora', 'Estado', 'Observación'])
+      xlsxHeaderRow(['Fecha compra', 'Proveedor', 'Factura/referencia', 'Fecha vencimiento', 'Monto original', 'Ajustes', 'Total ajustado', 'Total pagado', 'Saldo por pagar', 'Días mora', 'Estado', 'Ajustes detalle', 'Observación'])
     ];
     getComprasForExport(summary.range, summary.filters).forEach((compra) => {
       const proveedor = getCatalogRecordById('proveedores', compra.proveedorId);
@@ -8193,14 +9061,17 @@
         xlsxText(compra.facturaReferencia),
         xlsxDate(compra.fechaVencimiento),
         xlsxMoney(compra.totalCompra),
+        xlsxMoney(compra.totalAjustes > 0 ? -compra.totalAjustes : 0),
+        xlsxMoney(compra.totalAjustado),
         xlsxMoney(compra.totalPagado),
         xlsxMoney(compra.saldoPorPagar),
         xlsxNumber(getDaysOverdue(compra.fechaVencimiento)),
         xlsxText(compra.estado),
+        xlsxText(formatCompraAjustesExport(compra.ajustes)),
         xlsxText(compra.observacion)
       ]);
     });
-    return { name: 'Proveedores', rows, cols: [16, 28, 22, 16, 18, 16, 16, 12, 14, 34] };
+    return { name: 'Proveedores', rows, cols: [16, 28, 22, 16, 18, 14, 18, 16, 16, 12, 14, 38, 34] };
   }
 
   function buildGastosSheet(summary) {
@@ -8886,8 +9757,9 @@ ${rowsXml}
       const clienteId = clienteNombre ? addImportCatalog(payload, 'clientes', clienteNombre) : '';
       const sucursalId = sucursalNombre ? addImportCatalog(payload, 'sucursales', sucursalNombre, { Cliente: clienteNombre }) : '';
       const totalCobrado = parseExcelMoney(pickCell(row, ['Total cobrado', 'Cobrado', 'Pagado', 'Abonado']));
+      const totalAjustes = Math.abs(parseExcelMoney(pickCell(row, ['Ajustes', 'Ajuste', 'Notas crédito', 'Notas de crédito', 'Nota de crédito'])) || 0);
       const montoOcRaw = pickCell(row, ['Monto OC', 'Monto de OC', 'Total OC', 'Total de la OC', 'Monto', 'Total']);
-      const ventaNetaRaw = pickCell(row, ['Venta neta', 'Neto']);
+      const ventaNetaRaw = pickCell(row, ['Venta neta original', 'Venta neta', 'Venta neta ajustada', 'Neto']);
       const montoOc = parseExcelMoney(montoOcRaw || ventaNetaRaw);
       const record = normalizeVentaRecord({
         id: generateId('venta'),
@@ -8910,6 +9782,13 @@ ${rowsXml}
         noVa: parseExcelMoney(pickCell(row, ['NO VA', 'No VA', 'NOVA', 'No va'])),
         descuento: parseExcelMoney(pickCell(row, ['Descuento', 'Desc'])),
         descuentoNoVa: parseExcelMoney(pickCell(row, ['Descuento NO VA', 'Desc NO VA', 'Descuento NOVA'])),
+        ajustes: totalAjustes > 0 ? [{
+          id: generateId('ajusteCliente'),
+          fecha: parseExcelDateValue(pickCell(row, ['Fecha OC', 'Fecha', 'Fecha origen', 'Fecha venta'])) || todayInputValue(),
+          tipo: 'Corrección',
+          monto: totalAjustes,
+          observacion: cleanText(pickCell(row, ['Ajustes detalle', 'Detalle ajustes', 'Observación', 'Observacion', 'Notas', 'Comentario']))
+        }] : [],
         totalCobrado: Number.isNaN(totalCobrado) ? 0 : totalCobrado,
         estado: cleanText(pickCell(row, ['Estado', 'Estatus'])),
         observacion: cleanText(pickCell(row, ['Observación', 'Observacion', 'Notas', 'Comentario']))
@@ -8939,13 +9818,14 @@ ${rowsXml}
   }
 
   function importProveedoresRows(sheet, payload, warnings) {
-    const parsed = rowsToObjects(sheet, warnings, 'Proveedores', [['Proveedor'], ['Factura', 'Referencia', 'Documento'], ['Total compra', 'Total deuda', 'Monto']]);
+    const parsed = rowsToObjects(sheet, warnings, 'Proveedores', [['Proveedor'], ['Factura', 'Referencia', 'Documento'], ['Total compra', 'Total deuda', 'Monto', 'Monto original']]);
     payload.__headersProveedores = parsed.headers;
     parsed.objects.forEach((row) => {
       const proveedorNombre = cleanText(pickCell(row, ['Proveedor', 'Nombre proveedor']));
       const proveedorId = proveedorNombre ? addImportCatalog(payload, 'proveedores', proveedorNombre) : '';
       const totalPagado = parseExcelMoney(pickCell(row, ['Total pagado', 'Pagado', 'Abonado']));
-      const totalCompra = parseExcelMoney(pickCell(row, ['Total compra', 'Total deuda', 'Monto', 'Total', 'Importe']));
+      const totalCompra = parseExcelMoney(pickCell(row, ['Monto original', 'Total compra', 'Total deuda', 'Monto', 'Total', 'Importe']));
+      const totalAjustes = Math.abs(parseExcelMoney(pickCell(row, ['Ajustes', 'Ajuste', 'Notas crédito', 'Notas de crédito', 'Nota de crédito'])) || 0);
       const record = normalizeCompraProveedorRecord({
         id: generateId('compraProveedor'),
         proveedorId,
@@ -8955,6 +9835,7 @@ ${rowsXml}
         diasCredito: parsePositiveInteger(pickCell(row, ['Días crédito', 'Dias credito', 'Crédito', 'Credito'])),
         fechaVencimiento: parseExcelDateValue(pickCell(row, ['Fecha vencimiento', 'Vencimiento', 'Fecha de vencimiento'])),
         totalCompra,
+        ajustes: totalAjustes > 0 ? [{ id: generateId('ajusteProveedor'), fecha: parseExcelDateValue(pickCell(row, ['Fecha compra', 'Fecha', 'Fecha origen'])) || todayInputValue(), tipo: 'Corrección', monto: totalAjustes, observacion: cleanText(pickCell(row, ['Ajustes detalle', 'Detalle ajustes', 'Observación', 'Observacion', 'Notas', 'Comentario'])) }] : [],
         totalPagado: Number.isNaN(totalPagado) ? 0 : totalPagado,
         estado: cleanText(pickCell(row, ['Estado', 'Estatus'])),
         observacion: cleanText(pickCell(row, ['Observación', 'Observacion', 'Notas', 'Comentario']))
@@ -9592,6 +10473,14 @@ ${rowsXml}
       });
     });
 
+    viewRoot.querySelectorAll('[data-ajuste-venta-form]').forEach((form) => {
+      setupVentaAjusteForm(form);
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveVentaAjusteRecord(form);
+      });
+    });
+
     viewRoot.querySelectorAll('[data-venta-clear], [data-venta-cancel]').forEach((button) => {
       button.addEventListener('click', clearVentaForm);
     });
@@ -9602,6 +10491,14 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-venta-toggle]').forEach((button) => {
       button.addEventListener('click', () => toggleVentaRecord(button.dataset.ventaToggle));
+    });
+
+    viewRoot.querySelectorAll('[data-ajuste-venta-start]').forEach((button) => {
+      button.addEventListener('click', () => startAjusteForVenta(button.dataset.ajusteVentaStart));
+    });
+
+    viewRoot.querySelectorAll('[data-ajuste-venta-delete]').forEach((button) => {
+      button.addEventListener('click', () => deleteVentaAjuste(button.dataset.ajusteVentaDelete, button.dataset.ajusteId));
     });
 
     viewRoot.querySelectorAll('[data-cobros-for]').forEach((button) => {
@@ -9648,6 +10545,14 @@ ${rowsXml}
       });
     });
 
+    viewRoot.querySelectorAll('[data-ajuste-proveedor-form]').forEach((form) => {
+      setupProveedorAjusteForm(form);
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveProveedorAjusteRecord(form);
+      });
+    });
+
     viewRoot.querySelectorAll('[data-compra-clear], [data-compra-cancel]').forEach((button) => {
       button.addEventListener('click', clearCompraProveedorForm);
     });
@@ -9658,6 +10563,14 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-compra-toggle]').forEach((button) => {
       button.addEventListener('click', () => toggleCompraProveedorRecord(button.dataset.compraToggle));
+    });
+
+    viewRoot.querySelectorAll('[data-ajuste-start]').forEach((button) => {
+      button.addEventListener('click', () => startAjusteForCompra(button.dataset.ajusteStart));
+    });
+
+    viewRoot.querySelectorAll('[data-ajuste-delete]').forEach((button) => {
+      button.addEventListener('click', () => deleteCompraProveedorAjuste(button.dataset.ajusteDelete, button.dataset.ajusteId));
     });
 
     viewRoot.querySelectorAll('[data-pago-start]').forEach((button) => {

@@ -254,3 +254,30 @@ Bloques principales:
 
 - Se agregó scrollbar horizontal superior sticky sincronizado para Compras, Pagos, Cobros y Gastos.
 - Se actualizó Service Worker/cache para detección PWA de nueva versión.
+
+## 0.17.1 — Ajustes / Notas en Proveedores / Compras
+
+- Proveedores / Compras permite registrar ajustes ligados a compras/facturas existentes.
+- Los ajustes reducen el total ajustado y el saldo por pagar sin crear pagos, caja ni banco.
+- La compra conserva el monto original y muestra ajustes, total ajustado, pagado y saldo.
+- El historial de compra incorpora ajustes/notas y permite eliminación controlada con confirmación.
+- Pagos a proveedores, Mora, Alertas, Cierre mensual, JSON y Excel usan saldos recalculados.
+- Se mantiene el listado compacto por acordeones, columnas esenciales y scrollbar superior sticky.
+- Service Worker/cache actualizado a `v0_17_1_post12_ajustes_proveedores_compras`.
+
+## 0.17.2 — Ajustes / Notas en Ventas / OC
+
+- Ventas / OC permite registrar ajustes/notas ligados a OC existentes.
+- Los ajustes reducen saldo por cobrar sin crear cobros, caja ni bancos.
+- Excel, JSON y PWA actualizados para incluir ajustes de clientes.
+- Service Worker/cache actualizado a `v0_17_2_post12_ajustes_ventas_oc`.
+
+## 0.17.3 — Integración general de Ajustes
+
+- Resumen / Tablero usa ventas y compras ajustadas sin inflar cobros, pagos ni flujo.
+- Mora, Alertas, Cierre mensual y Períodos Pendientes de Cierre calculan saldos reales después de ajustes.
+- Historial muestra ajustes compactos en Ventas / OC y Proveedores / Compras.
+- Excel general y Excel obligatorio antes del cierre reflejan originales, ajustes, totales ajustados, cobros/pagos reales y saldos.
+- Respaldo JSON e importación validada incluyen ajustes sin duplicarlos y conservan compatibilidad con registros antiguos.
+- Facturas múltiples, acordeones, columnas esenciales y scrollbar horizontal superior sticky se mantienen.
+- Service Worker/cache actualizado a `v0_17_3_post12_ajustes_integracion_general`.
