@@ -3295,3 +3295,466 @@ textarea:disabled {
 .operational-table-compras {
   min-width: 1300px;
 }
+
+
+/* Post12 Compactos — Etapa 1/3: Mora y Alertas en líneas compactas */
+.mora-compact-scroll-shell {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.mora-compact-scroll-shell .operational-top-scroll {
+  top: calc(var(--topbar-height) + var(--safe-top) + 8px);
+}
+
+.mora-compact-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.mora-compact-table {
+  table-layout: auto;
+  width: 100%;
+  font-size: 0.82rem;
+}
+
+.mora-compact-table-clientes {
+  min-width: 1220px;
+}
+
+.mora-compact-table-proveedores {
+  min-width: 980px;
+}
+
+.mora-compact-table th,
+.mora-compact-table td {
+  padding: 7px 9px;
+}
+
+.mora-compact-table td > span,
+.mora-compact-table td small,
+.mora-compact-table .compact-primary {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.mora-compact-table .mora-compact-text span,
+.mora-compact-table .mora-compact-doc span {
+  color: var(--ink);
+  font-weight: 850;
+}
+
+.mora-compact-date,
+.mora-compact-mora,
+.mora-compact-amount,
+.mora-compact-state,
+.mora-compact-actions {
+  white-space: nowrap;
+}
+
+.mora-compact-amount {
+  font-weight: 950;
+}
+
+.mora-compact-actions .compact-row-actions {
+  justify-content: center;
+}
+
+.mora-compact-actions .secondary-action.compact {
+  min-width: 58px;
+  justify-content: center;
+}
+
+.mora-col-cliente,
+.mora-col-proveedor {
+  min-width: 230px;
+}
+
+.mora-col-sucursal {
+  min-width: 190px;
+}
+
+.mora-col-documento,
+.mora-col-referencia {
+  min-width: 190px;
+}
+
+.mora-col-fecha {
+  min-width: 118px;
+}
+
+.mora-col-mora {
+  min-width: 105px;
+}
+
+.mora-col-saldo {
+  min-width: 135px;
+}
+
+.mora-col-estado {
+  min-width: 120px;
+}
+
+.mora-col-historial {
+  min-width: 96px;
+}
+
+@media (max-width: 620px) {
+  .mora-compact-table-clientes {
+    min-width: 1180px;
+  }
+
+  .mora-compact-table-proveedores {
+    min-width: 940px;
+  }
+}
+
+
+/* Post12 Compactos — Etapa 2/3: Historial por documento compacto */
+.historial-compact-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.historial-compact-card {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 12px 28px rgba(17, 24, 39, 0.05);
+}
+
+.historial-compact-card h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.historial-panel .selected-history {
+  margin-top: 14px;
+}
+
+.historial-compact-scroll-shell {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.historial-compact-scroll-shell .operational-top-scroll {
+  top: calc(var(--topbar-height) + var(--safe-top) + 8px);
+}
+
+.historial-compact-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.historial-compact-table {
+  table-layout: auto;
+  width: 100%;
+  min-width: 980px;
+  font-size: 0.82rem;
+}
+
+.historial-compact-table th,
+.historial-compact-table td {
+  padding: 7px 9px;
+}
+
+.historial-compact-table td > span,
+.historial-compact-table td small,
+.historial-compact-table .compact-primary {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.historial-compact-table .historial-compact-text span,
+.historial-compact-table .historial-compact-doc span {
+  color: var(--ink);
+  font-weight: 850;
+}
+
+.historial-compact-date,
+.historial-compact-amount,
+.historial-compact-state,
+.historial-compact-actions {
+  white-space: nowrap;
+}
+
+.historial-compact-amount {
+  font-weight: 950;
+}
+
+.historial-compact-actions .compact-row-actions {
+  justify-content: center;
+}
+
+.historial-compact-actions .secondary-action.compact {
+  min-width: 58px;
+  justify-content: center;
+}
+
+.historial-col-cliente,
+.historial-col-proveedor {
+  min-width: 240px;
+}
+
+.historial-col-documento,
+.historial-col-referencia {
+  min-width: 190px;
+}
+
+.historial-col-fecha {
+  min-width: 120px;
+}
+
+.historial-col-saldo {
+  min-width: 140px;
+}
+
+.historial-col-estado {
+  min-width: 125px;
+}
+
+.historial-col-ver {
+  min-width: 88px;
+}
+
+@media (max-width: 620px) {
+  .historial-compact-table {
+    min-width: 940px;
+  }
+
+  .historial-compact-card {
+    padding: 12px;
+  }
+}
+
+.historial-detail-row td {
+  padding: 12px !important;
+  background: linear-gradient(180deg, rgba(255, 250, 240, 0.92), rgba(255, 255, 255, 0.96));
+}
+
+.historial-detail-row .selected-history {
+  margin: 0;
+  box-shadow: none;
+}
+
+
+/* Post12 Compactos — Etapa 3/3: Resumen, Catálogos e Historial de cierres */
+.resumen-compact-scroll-shell,
+.catalog-compact-scroll-shell,
+.closing-compact-scroll-shell {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.resumen-compact-scroll-shell .operational-top-scroll,
+.catalog-compact-scroll-shell .operational-top-scroll,
+.closing-compact-scroll-shell .operational-top-scroll {
+  top: calc(var(--topbar-height) + var(--safe-top) + 8px);
+}
+
+.resumen-compact-table-wrap,
+.catalog-compact-table-wrap,
+.closing-compact-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.resumen-compact-table,
+.catalog-compact-table,
+.closing-compact-table {
+  table-layout: auto;
+  width: 100%;
+  font-size: 0.82rem;
+}
+
+.resumen-saldos-proveedor-table {
+  min-width: 1040px;
+}
+
+.resumen-clientes-mora-table {
+  min-width: 920px;
+}
+
+.resumen-proveedores-mora-table {
+  min-width: 760px;
+}
+
+.catalog-compact-table-basic {
+  min-width: 720px;
+}
+
+.catalog-compact-table-type {
+  min-width: 820px;
+}
+
+.closing-compact-table {
+  min-width: 760px;
+}
+
+.resumen-compact-table th,
+.resumen-compact-table td,
+.catalog-compact-table th,
+.catalog-compact-table td,
+.closing-compact-table th,
+.closing-compact-table td {
+  padding: 7px 9px;
+}
+
+.resumen-compact-table td > span,
+.catalog-compact-table td > span,
+.closing-compact-table td > span,
+.resumen-compact-table td small,
+.catalog-compact-table td small,
+.closing-compact-table td small {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.resumen-compact-table .resumen-compact-text span,
+.resumen-compact-table .resumen-compact-doc span,
+.catalog-compact-table .catalog-compact-name span,
+.catalog-compact-table .catalog-compact-type span,
+.closing-compact-table .closing-compact-period span,
+.closing-compact-table .closing-compact-file span {
+  color: var(--ink);
+  font-weight: 850;
+}
+
+.resumen-compact-date,
+.resumen-compact-mora,
+.resumen-compact-count,
+.resumen-compact-amount,
+.catalog-compact-type,
+.catalog-compact-state,
+.catalog-compact-actions,
+.closing-compact-period,
+.closing-compact-date {
+  white-space: nowrap;
+}
+
+.resumen-compact-amount,
+.resumen-compact-count {
+  font-weight: 950;
+}
+
+.catalog-compact-name small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.catalog-compact-note {
+  color: var(--accent-dark) !important;
+}
+
+.catalog-compact-actions .compact-row-actions {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+.catalog-compact-actions .secondary-action.compact,
+.catalog-compact-actions .danger-action.compact,
+.catalog-compact-actions .card-action.compact {
+  min-width: 72px;
+  justify-content: center;
+}
+
+.closing-compact-file span {
+  white-space: nowrap;
+}
+
+.resumen-col-cliente,
+.resumen-col-proveedor,
+.catalog-col-nombre {
+  min-width: 230px;
+}
+
+.resumen-col-sucursal {
+  min-width: 180px;
+}
+
+.resumen-col-documento,
+.resumen-col-referencia {
+  min-width: 170px;
+}
+
+.resumen-col-fecha,
+.closing-col-periodo {
+  min-width: 122px;
+}
+
+.resumen-col-mora {
+  min-width: 105px;
+}
+
+.resumen-col-saldo,
+.resumen-col-money {
+  min-width: 135px;
+}
+
+.resumen-col-documentos {
+  min-width: 112px;
+}
+
+.catalog-col-tipo,
+.catalog-col-estado {
+  min-width: 125px;
+}
+
+.catalog-col-editar {
+  min-width: 185px;
+}
+
+.closing-col-fecha {
+  min-width: 190px;
+}
+
+.closing-col-archivo {
+  min-width: 420px;
+}
+
+@media (max-width: 620px) {
+  .resumen-saldos-proveedor-table {
+    min-width: 1010px;
+  }
+
+  .resumen-clientes-mora-table {
+    min-width: 890px;
+  }
+
+  .resumen-proveedores-mora-table {
+    min-width: 735px;
+  }
+
+  .catalog-compact-table-basic {
+    min-width: 690px;
+  }
+
+  .catalog-compact-table-type {
+    min-width: 790px;
+  }
+
+  .closing-compact-table {
+    min-width: 730px;
+  }
+
+  .catalog-compact-actions .compact-row-actions {
+    justify-content: flex-start;
+  }
+}

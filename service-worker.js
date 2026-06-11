@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_5_post12_cierre_encabezados_una_palabra';
+const CACHE_VERSION = 'v0_17_8_post12_compactos_resumen_catalogos_cierres';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

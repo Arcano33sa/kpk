@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.5-post12-cierre-encabezados-una-palabra';
+  const APP_VERSION = '0.17.8-post12-compactos-resumen-catalogos-cierres';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -3003,62 +3003,122 @@
 
   function renderResumenSaldosProveedor(items) {
     if (!items.length) return renderMoraEmptyState('Sin saldos por proveedor.', 'Las compras/deudas no anuladas aparecerán agrupadas por proveedor.');
-    return `
-      <div class="resumen-list provider-list">
-        ${items.map((item) => `
-          <article class="resumen-row-card stacked">
-            <div class="resumen-row-head"><strong>${escapeHtml(item.proveedor)}</strong><span>${item.documentos} documento${item.documentos === 1 ? '' : 's'}</span></div>
-            <div class="resumen-mini-grid provider-grid">
-              <div><span>Original</span><strong>${escapeHtml(formatMoney(item.totalCompra))}</strong></div>
-              <div><span>Ajustes</span><strong>${item.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(item.totalAjustes))}</strong></div>
-              <div><span>Total ajustado</span><strong>${escapeHtml(formatMoney(item.totalAjustado))}</strong></div>
-              <div><span>Total pagado</span><strong>${escapeHtml(formatMoney(item.totalPagado))}</strong></div>
-              <div><span>Saldo por pagar</span><strong>${escapeHtml(formatMoney(item.saldoPorPagar))}</strong></div>
-            </div>
-          </article>
-        `).join('')}
-      </div>
-    `;
+    const rows = items.map((item) => `
+      <tr class="compact-record-row resumen-compact-row">
+        <td class="resumen-compact-text"><span title="${escapeHtml(item.proveedor)}">${escapeHtml(item.proveedor)}</span></td>
+        <td class="resumen-compact-count"><span>${escapeHtml(String(item.documentos || 0))}</span></td>
+        <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.totalCompra))}</span></td>
+        <td class="amount-cell resumen-compact-amount"><span>${item.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(item.totalAjustes))}</span></td>
+        <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.totalAjustado))}</span></td>
+        <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.totalPagado))}</span></td>
+        <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.saldoPorPagar))}</span></td>
+      </tr>
+    `).join('');
+
+    return renderOperationalTableShell({
+      shellClass: 'resumen-compact-scroll-shell resumen-saldos-proveedor-shell',
+      wrapClass: 'resumen-compact-table-wrap',
+      ariaLabel: 'Saldos por proveedor en líneas compactas',
+      tableClass: 'resumen-compact-table resumen-saldos-proveedor-table',
+      colgroup: `
+        <colgroup>
+          <col class="resumen-col-proveedor">
+          <col class="resumen-col-documentos">
+          <col class="resumen-col-money">
+          <col class="resumen-col-money">
+          <col class="resumen-col-money">
+          <col class="resumen-col-money">
+          <col class="resumen-col-money">
+        </colgroup>
+      `,
+      headers: `
+        <th>Proveedor</th>
+        <th>Documentos</th>
+        <th class="amount-cell">Original</th>
+        <th class="amount-cell">Ajustes</th>
+        <th class="amount-cell">Total</th>
+        <th class="amount-cell">Pagado</th>
+        <th class="amount-cell">Saldo</th>
+      `,
+      rows
+    });
   }
 
   function renderResumenClientesMora(items) {
     if (!items.length) return renderMoraEmptyState('No hay clientes en mora.', 'La cartera vencida con saldo pendiente aparecerá aquí.');
-    return `
-      <div class="resumen-list mora-resumen-list">
-        ${items.map((item) => `
-          <article class="resumen-row-card stacked">
-            <div class="resumen-row-head"><strong>${escapeHtml(item.cliente)}</strong><span>${escapeHtml(item.rango)} · ${item.diasMora} días</span></div>
-            <div class="resumen-mini-grid">
-              <div><span>Sucursal</span><strong>${escapeHtml(item.sucursal)}</strong></div>
-              <div><span>OC</span><strong>${escapeHtml(item.documento)}</strong></div>
-              <div><span>Vencimiento</span><strong>${escapeHtml(formatDate(item.fechaVencimiento))}</strong></div>
-              <div><span>Saldo</span><strong>${escapeHtml(formatMoney(item.saldoPendiente))}</strong></div>
-            </div>
-            <div class="record-actions"><button type="button" class="secondary-action compact" data-history-venta="${escapeHtml(item.id)}">Ver historial</button></div>
-          </article>
-        `).join('')}
-      </div>
-    `;
+    const rows = items.map((item) => `
+      <tr class="compact-record-row resumen-compact-row">
+        <td class="resumen-compact-text"><span title="${escapeHtml(item.cliente)}">${escapeHtml(item.cliente)}</span></td>
+        <td class="resumen-compact-text"><span title="${escapeHtml(item.sucursal)}">${escapeHtml(item.sucursal)}</span></td>
+        <td class="resumen-compact-doc"><span title="${escapeHtml(item.documento)}">${escapeHtml(item.documento)}</span></td>
+        <td class="resumen-compact-date"><span>${escapeHtml(formatDate(item.fechaVencimiento))}</span></td>
+        <td class="resumen-compact-mora"><span>${escapeHtml(formatPeriodoMoraLabel(item.diasMora))}</span></td>
+        <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.saldoPendiente))}</span></td>
+      </tr>
+    `).join('');
+
+    return renderOperationalTableShell({
+      shellClass: 'resumen-compact-scroll-shell resumen-clientes-mora-shell',
+      wrapClass: 'resumen-compact-table-wrap',
+      ariaLabel: 'Clientes en mora del tablero en líneas compactas',
+      tableClass: 'resumen-compact-table resumen-clientes-mora-table',
+      colgroup: `
+        <colgroup>
+          <col class="resumen-col-cliente">
+          <col class="resumen-col-sucursal">
+          <col class="resumen-col-documento">
+          <col class="resumen-col-fecha">
+          <col class="resumen-col-mora">
+          <col class="resumen-col-saldo">
+        </colgroup>
+      `,
+      headers: `
+        <th>Cliente</th>
+        <th>Sucursal</th>
+        <th>Documento</th>
+        <th>Vence</th>
+        <th>Mora</th>
+        <th class="amount-cell">Saldo</th>
+      `,
+      rows
+    });
   }
 
   function renderResumenProveedoresMora(items) {
     if (!items.length) return renderMoraEmptyState('No hay proveedores en mora.', 'Las facturas vencidas con saldo pendiente aparecerán aquí.');
-    return `
-      <div class="resumen-list mora-resumen-list">
-        ${items.map((item) => `
-          <article class="resumen-row-card stacked">
-            <div class="resumen-row-head"><strong>${escapeHtml(item.proveedor)}</strong><span>${escapeHtml(item.rango)} · ${item.diasMora} días</span></div>
-            <div class="resumen-mini-grid">
-              <div><span>Factura/ref.</span><strong>${escapeHtml(item.documento)}</strong></div>
-              <div><span>Vencimiento</span><strong>${escapeHtml(formatDate(item.fechaVencimiento))}</strong></div>
-              <div><span>Total compra</span><strong>${escapeHtml(formatMoney(item.totalCompra))}</strong></div>
-              <div><span>Saldo</span><strong>${escapeHtml(formatMoney(item.saldoPendiente))}</strong></div>
-            </div>
-            <div class="record-actions"><button type="button" class="secondary-action compact" data-history-compra="${escapeHtml(item.id)}">Ver historial</button></div>
-          </article>
-        `).join('')}
-      </div>
-    `;
+    const rows = items.map((item) => `
+      <tr class="compact-record-row resumen-compact-row">
+        <td class="resumen-compact-text"><span title="${escapeHtml(item.proveedor)}">${escapeHtml(item.proveedor)}</span></td>
+        <td class="resumen-compact-doc"><span title="${escapeHtml(item.documento)}">${escapeHtml(item.documento)}</span></td>
+        <td class="resumen-compact-date"><span>${escapeHtml(formatDate(item.fechaVencimiento))}</span></td>
+        <td class="resumen-compact-mora"><span>${escapeHtml(formatPeriodoMoraLabel(item.diasMora))}</span></td>
+        <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.saldoPendiente))}</span></td>
+      </tr>
+    `).join('');
+
+    return renderOperationalTableShell({
+      shellClass: 'resumen-compact-scroll-shell resumen-proveedores-mora-shell',
+      wrapClass: 'resumen-compact-table-wrap',
+      ariaLabel: 'Proveedores en mora del tablero en líneas compactas',
+      tableClass: 'resumen-compact-table resumen-proveedores-mora-table',
+      colgroup: `
+        <colgroup>
+          <col class="resumen-col-proveedor">
+          <col class="resumen-col-referencia">
+          <col class="resumen-col-fecha">
+          <col class="resumen-col-mora">
+          <col class="resumen-col-saldo">
+        </colgroup>
+      `,
+      headers: `
+        <th>Proveedor</th>
+        <th>Referencia</th>
+        <th>Vence</th>
+        <th>Mora</th>
+        <th class="amount-cell">Saldo</th>
+      `,
+      rows
+    });
   }
 
   function updateResumenFiltersFromForm(form) {
@@ -3097,11 +3157,11 @@
   function renderMoraAlertas() {
     const summary = buildMoraAlertasSummary();
     const selectedHistory = getSelectedDocumentHistory();
-    const moraClientesCards = summary.clientesMora.length
-      ? summary.clientesMora.map((item) => renderClienteMoraCard(item)).join('')
+    const moraClientesCompact = summary.clientesMora.length
+      ? renderClientesMoraCompactTable(summary.clientesMora)
       : renderMoraEmptyState('No hay clientes en mora.', 'Las OC vencidas con saldo aparecerán aquí automáticamente.');
-    const moraProveedoresCards = summary.proveedoresMora.length
-      ? summary.proveedoresMora.map((item) => renderProveedorMoraCard(item)).join('')
+    const moraProveedoresCompact = summary.proveedoresMora.length
+      ? renderProveedoresMoraCompactTable(summary.proveedoresMora)
       : renderMoraEmptyState('No hay proveedores en mora.', 'Las facturas vencidas con saldo aparecerán aquí automáticamente.');
 
     return `
@@ -3132,8 +3192,6 @@
           <article class="metric-card"><span>Alertas activas</span><strong>${summary.alertas.length}</strong></article>
         </section>
 
-        ${selectedHistory ? renderSelectedHistoryPanel(selectedHistory) : ''}
-
         <section class="panel-grid mora-two-columns">
           <article class="panel-card mora-panel">
             <div class="section-title-row">
@@ -3146,7 +3204,7 @@
             <div class="range-summary" aria-label="Rangos de mora de clientes">
               ${renderRangeSummary(summary.clientesRangeCounts)}
             </div>
-            <div class="mora-list">${moraClientesCards}</div>
+            <div class="mora-list">${moraClientesCompact}</div>
           </article>
 
           <article class="panel-card mora-panel">
@@ -3160,7 +3218,7 @@
             <div class="range-summary" aria-label="Rangos de mora de proveedores">
               ${renderRangeSummary(summary.proveedoresRangeCounts)}
             </div>
-            <div class="mora-list">${moraProveedoresCards}</div>
+            <div class="mora-list">${moraProveedoresCompact}</div>
           </article>
         </section>
 
@@ -3186,10 +3244,7 @@
               <input type="search" placeholder="OC, factura, cliente o proveedor" data-mora-search autocomplete="off" />
             </label>
           </div>
-          <div class="historial-grid">
-            ${summary.ventas.map((venta) => renderVentaHistoryCard(venta)).join('') || renderMoraEmptyState('No hay OC para historial.', 'Cuando registres ventas, cada documento tendrá su trazabilidad.')}
-            ${summary.compras.map((compra) => renderCompraHistoryCard(compra)).join('') || renderMoraEmptyState('No hay facturas para historial.', 'Cuando registres proveedores/compras, cada factura tendrá su trazabilidad.')}
-          </div>
+          ${renderHistorialDocumentosCompact(summary, selectedHistory)}
         </section>
       </section>
     `;
@@ -3292,7 +3347,7 @@
   function buildAlertasList(parts) {
     const alertas = [];
     if (parts.clientesMora.length) alertas.push({ tipo: 'danger', titulo: 'Clientes vencidos', detalle: `${parts.clientesMora.length} OC vencidas con saldo por cobrar.` });
-    if (parts.proveedoresMora.length) alertas.push({ tipo: 'danger', titulo: 'Proveedores vencidos', detalle: `${parts.proveedoresMora.length} facturas/referencias vencidas con saldo por pagar.` });
+    if (parts.proveedoresMora.length) alertas.push({ tipo: 'danger', titulo: 'Proveedores vencidos', detalle: `${parts.proveedoresMora.length} facturas o referencias vencidas con saldo por pagar.` });
     if (parts.ventasProximas.length) alertas.push({ tipo: 'warning', titulo: 'OC próximas a vencer', detalle: `${parts.ventasProximas.length} OC vencen dentro de los próximos 7 días.` });
     if (parts.comprasProximas.length) alertas.push({ tipo: 'warning', titulo: 'Facturas próximas a vencer', detalle: `${parts.comprasProximas.length} facturas/referencias vencen dentro de los próximos 7 días.` });
     if (parts.saldosAltosClientes.length || parts.saldosAltosProveedores.length) alertas.push({ tipo: 'info', titulo: 'Saldos pendientes altos', detalle: 'Se muestran los saldos pendientes más altos para priorizar seguimiento.' });
@@ -3311,63 +3366,103 @@
     return ranges.map(([label, count]) => `<span class="range-pill"><strong>${count}</strong>${escapeHtml(label)}</span>`).join('');
   }
 
-  function renderClienteMoraCard(item) {
-    const searchable = normalizeNameForCompare(`${item.cliente} ${item.sucursal} ${item.documento} ${item.estado} ${item.rango}`);
-    return `
-      <article class="mora-card" data-mora-search-card data-search-text="${escapeHtml(searchable)}">
-        <div class="venta-card-head">
-          <div>
-            <span class="eyebrow mini">${escapeHtml(item.rango)}</span>
-            <h3>${escapeHtml(item.cliente)}</h3>
-          </div>
-          <span class="state-pill is-overdue">${item.diasMora} días</span>
-        </div>
-        <div class="mora-detail-grid">
-          <div><span>Sucursal</span><strong>${escapeHtml(item.sucursal)}</strong></div>
-          <div><span>OC/documento</span><strong>${escapeHtml(item.documento)}</strong></div>
-          <div><span>Fecha origen</span><strong>${escapeHtml(formatDate(item.fechaOrigen))}</strong></div>
-          <div><span>Vencimiento</span><strong>${escapeHtml(formatDate(item.fechaVencimiento))}</strong></div>
-          <div><span>Original</span><strong>${escapeHtml(formatMoney(item.ventaNetaOriginal))}</strong></div>
-          <div><span>Ajustes</span><strong>${item.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(item.totalAjustes))}</strong></div>
-          <div><span>Total ajustado</span><strong>${escapeHtml(formatMoney(item.ventaNetaAjustada))}</strong></div>
-          <div><span>Total cobrado</span><strong>${escapeHtml(formatMoney(item.totalCobrado))}</strong></div>
-          <div><span>Saldo pendiente</span><strong>${escapeHtml(formatMoney(item.saldoPendiente))}</strong></div>
-          <div><span>Estado</span><strong>${escapeHtml(item.estado)}</strong></div>
-        </div>
-        <div class="record-actions">
-          <button type="button" class="secondary-action compact" data-history-venta="${escapeHtml(item.id)}">Ver historial</button>
-        </div>
-      </article>
-    `;
+  function renderClientesMoraCompactTable(items) {
+    const rows = items.map((item) => {
+      const searchable = normalizeNameForCompare(`${item.cliente} ${item.sucursal} ${item.documento} ${item.fechaOrigen} ${item.fechaVencimiento} ${item.estado} ${item.rango}`);
+      return `
+        <tr class="compact-record-row mora-compact-row" data-mora-search-card data-search-text="${escapeHtml(searchable)}">
+          <td class="mora-compact-text"><span title="${escapeHtml(item.cliente)}">${escapeHtml(item.cliente)}</span></td>
+          <td class="mora-compact-text"><span title="${escapeHtml(item.sucursal)}">${escapeHtml(item.sucursal)}</span></td>
+          <td class="mora-compact-doc"><span title="${escapeHtml(item.documento)}">${escapeHtml(item.documento)}</span></td>
+          <td class="mora-compact-date"><span>${escapeHtml(formatDate(item.fechaOrigen))}</span></td>
+          <td class="mora-compact-date"><span>${escapeHtml(formatDate(item.fechaVencimiento))}</span></td>
+          <td class="mora-compact-mora"><span>${escapeHtml(formatPeriodoMoraLabel(item.diasMora))}</span></td>
+          <td class="amount-cell mora-compact-amount"><span>${escapeHtml(formatMoney(item.saldoPendiente))}</span></td>
+          <td class="mora-compact-state"><span class="state-pill ${getEstadoClass(item.estado)}">${escapeHtml(item.estado)}</span></td>
+          <td class="mora-compact-actions"><div class="compact-row-actions"><button type="button" class="secondary-action compact" data-history-venta="${escapeHtml(item.id)}">Ver</button></div></td>
+        </tr>
+      `;
+    }).join('');
+
+    return renderOperationalTableShell({
+      shellClass: 'mora-compact-scroll-shell mora-clientes-scroll-shell',
+      wrapClass: 'mora-compact-table-wrap',
+      ariaLabel: 'Clientes en mora con saldo pendiente',
+      tableClass: 'mora-compact-table mora-compact-table-clientes',
+      colgroup: `
+        <colgroup>
+          <col class="mora-col-cliente">
+          <col class="mora-col-sucursal">
+          <col class="mora-col-documento">
+          <col class="mora-col-fecha">
+          <col class="mora-col-fecha">
+          <col class="mora-col-mora">
+          <col class="mora-col-saldo">
+          <col class="mora-col-estado">
+          <col class="mora-col-historial">
+        </colgroup>
+      `,
+      headers: `
+        <th>Cliente</th>
+        <th>Sucursal</th>
+        <th>Documento</th>
+        <th>Origen</th>
+        <th>Vence</th>
+        <th>Mora</th>
+        <th class="amount-cell">Saldo</th>
+        <th>Estado</th>
+        <th>Ver</th>
+      `,
+      rows
+    });
   }
 
-  function renderProveedorMoraCard(item) {
-    const searchable = normalizeNameForCompare(`${item.proveedor} ${item.documento} ${item.estado} ${item.rango}`);
-    return `
-      <article class="mora-card" data-mora-search-card data-search-text="${escapeHtml(searchable)}">
-        <div class="venta-card-head">
-          <div>
-            <span class="eyebrow mini">${escapeHtml(item.rango)}</span>
-            <h3>${escapeHtml(item.proveedor)}</h3>
-          </div>
-          <span class="state-pill is-overdue">${item.diasMora} días</span>
-        </div>
-        <div class="mora-detail-grid">
-          <div><span>Factura/referencia</span><strong>${escapeHtml(item.documento)}</strong></div>
-          <div><span>Fecha origen</span><strong>${escapeHtml(formatDate(item.fechaOrigen))}</strong></div>
-          <div><span>Vencimiento</span><strong>${escapeHtml(formatDate(item.fechaVencimiento))}</strong></div>
-          <div><span>Original</span><strong>${escapeHtml(formatMoney(item.totalCompra))}</strong></div>
-          <div><span>Ajustes</span><strong>${item.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(item.totalAjustes))}</strong></div>
-          <div><span>Total ajustado</span><strong>${escapeHtml(formatMoney(item.totalAjustado))}</strong></div>
-          <div><span>Total pagado</span><strong>${escapeHtml(formatMoney(item.totalPagado))}</strong></div>
-          <div><span>Saldo pendiente</span><strong>${escapeHtml(formatMoney(item.saldoPendiente))}</strong></div>
-          <div><span>Estado</span><strong>${escapeHtml(item.estado)}</strong></div>
-        </div>
-        <div class="record-actions">
-          <button type="button" class="secondary-action compact" data-history-compra="${escapeHtml(item.id)}">Ver historial</button>
-        </div>
-      </article>
-    `;
+  function renderProveedoresMoraCompactTable(items) {
+    const rows = items.map((item) => {
+      const searchable = normalizeNameForCompare(`${item.proveedor} ${item.documento} ${item.fechaOrigen} ${item.fechaVencimiento} ${item.estado} ${item.rango}`);
+      return `
+        <tr class="compact-record-row mora-compact-row" data-mora-search-card data-search-text="${escapeHtml(searchable)}">
+          <td class="mora-compact-text"><span title="${escapeHtml(item.proveedor)}">${escapeHtml(item.proveedor)}</span></td>
+          <td class="mora-compact-doc"><span title="${escapeHtml(item.documento)}">${escapeHtml(item.documento)}</span></td>
+          <td class="mora-compact-date"><span>${escapeHtml(formatDate(item.fechaOrigen))}</span></td>
+          <td class="mora-compact-date"><span>${escapeHtml(formatDate(item.fechaVencimiento))}</span></td>
+          <td class="mora-compact-mora"><span>${escapeHtml(formatPeriodoMoraLabel(item.diasMora))}</span></td>
+          <td class="amount-cell mora-compact-amount"><span>${escapeHtml(formatMoney(item.saldoPendiente))}</span></td>
+          <td class="mora-compact-state"><span class="state-pill ${getEstadoClass(item.estado)}">${escapeHtml(item.estado)}</span></td>
+          <td class="mora-compact-actions"><div class="compact-row-actions"><button type="button" class="secondary-action compact" data-history-compra="${escapeHtml(item.id)}">Ver</button></div></td>
+        </tr>
+      `;
+    }).join('');
+
+    return renderOperationalTableShell({
+      shellClass: 'mora-compact-scroll-shell mora-proveedores-scroll-shell',
+      wrapClass: 'mora-compact-table-wrap',
+      ariaLabel: 'Proveedores en mora con saldo pendiente',
+      tableClass: 'mora-compact-table mora-compact-table-proveedores',
+      colgroup: `
+        <colgroup>
+          <col class="mora-col-proveedor">
+          <col class="mora-col-referencia">
+          <col class="mora-col-fecha">
+          <col class="mora-col-fecha">
+          <col class="mora-col-mora">
+          <col class="mora-col-saldo">
+          <col class="mora-col-estado">
+          <col class="mora-col-historial">
+        </colgroup>
+      `,
+      headers: `
+        <th>Proveedor</th>
+        <th>Referencia</th>
+        <th>Origen</th>
+        <th>Vence</th>
+        <th>Mora</th>
+        <th class="amount-cell">Saldo</th>
+        <th>Estado</th>
+        <th>Ver</th>
+      `,
+      rows
+    });
   }
 
   function renderAlertasPrincipales(summary) {
@@ -3410,6 +3505,147 @@
         <h3>${escapeHtml(title)}</h3>
         ${itemsMarkup ? `<ul>${itemsMarkup}</ul>` : '<p class="muted-text">Sin registros por ahora.</p>'}
       </article>
+    `;
+  }
+
+  function renderHistorialDocumentosCompact(summary, selectedHistory) {
+    const ventasMarkup = summary.ventas.length
+      ? renderHistorialVentasCompactTable(summary.ventas, selectedHistory)
+      : renderMoraEmptyState('No hay documentos de clientes.', 'Cuando registres ventas, cada documento tendrá su trazabilidad.');
+    const comprasMarkup = summary.compras.length
+      ? renderHistorialComprasCompactTable(summary.compras, selectedHistory)
+      : renderMoraEmptyState('No hay documentos de proveedores.', 'Cuando registres proveedores/compras, cada referencia tendrá su trazabilidad.');
+
+    return `
+      <div class="historial-compact-grid">
+        <article class="historial-compact-card">
+          <div class="section-title-row compact-title-row">
+            <div>
+              <span class="eyebrow mini">Clientes</span>
+              <h3>Documentos</h3>
+            </div>
+            <div class="count-pill">${summary.ventas.length} registros</div>
+          </div>
+          ${ventasMarkup}
+        </article>
+        <article class="historial-compact-card">
+          <div class="section-title-row compact-title-row">
+            <div>
+              <span class="eyebrow mini">Proveedores</span>
+              <h3>Referencias</h3>
+            </div>
+            <div class="count-pill">${summary.compras.length} registros</div>
+          </div>
+          ${comprasMarkup}
+        </article>
+      </div>
+    `;
+  }
+
+  function renderHistorialVentasCompactTable(items, selectedHistory) {
+    const rows = items.map((venta) => {
+      const cliente = getCatalogRecordById('clientes', venta.clienteId);
+      const sucursal = getCatalogRecordById('sucursales', venta.sucursalId);
+      const clienteNombre = cliente?.nombre || 'Cliente no encontrado';
+      const documento = venta.numeroDocumento || 'Sin número';
+      const searchable = normalizeNameForCompare(`${documento} ${clienteNombre} ${sucursal?.nombre || ''} ${venta.fechaOc} ${venta.fechaVencimiento} ${venta.saldoPorCobrar} ${venta.estado}`);
+      return `
+        <tr class="compact-record-row historial-compact-row" data-mora-search-card data-search-text="${escapeHtml(searchable)}">
+          <td class="historial-compact-text"><span title="${escapeHtml(clienteNombre)}">${escapeHtml(clienteNombre)}</span></td>
+          <td class="historial-compact-doc"><span title="${escapeHtml(documento)}">${escapeHtml(documento)}</span></td>
+          <td class="historial-compact-date"><span>${escapeHtml(formatDate(venta.fechaOc))}</span></td>
+          <td class="historial-compact-date"><span>${escapeHtml(formatDate(venta.fechaVencimiento))}</span></td>
+          <td class="amount-cell historial-compact-amount"><span>${escapeHtml(formatMoney(venta.saldoPorCobrar))}</span></td>
+          <td class="historial-compact-state"><span class="state-pill ${getEstadoClass(venta.estado)}">${escapeHtml(venta.estado)}</span></td>
+          <td class="historial-compact-actions"><div class="compact-row-actions"><button type="button" class="secondary-action compact" data-history-venta="${escapeHtml(venta.id)}">Ver</button></div></td>
+        </tr>
+        ${moraState.selectedKind === 'venta' && moraState.selectedId === venta.id && selectedHistory ? renderHistorialInlineDetailRow(selectedHistory, searchable) : ''}
+      `;
+    }).join('');
+
+    return renderOperationalTableShell({
+      shellClass: 'historial-compact-scroll-shell historial-clientes-scroll-shell',
+      wrapClass: 'historial-compact-table-wrap',
+      ariaLabel: 'Historial compacto de documentos de clientes',
+      tableClass: 'historial-compact-table historial-compact-table-clientes',
+      colgroup: `
+        <colgroup>
+          <col class="historial-col-cliente">
+          <col class="historial-col-documento">
+          <col class="historial-col-fecha">
+          <col class="historial-col-fecha">
+          <col class="historial-col-saldo">
+          <col class="historial-col-estado">
+          <col class="historial-col-ver">
+        </colgroup>
+      `,
+      headers: `
+        <th>Cliente</th>
+        <th>Documento</th>
+        <th>Origen</th>
+        <th>Vence</th>
+        <th class="amount-cell">Saldo</th>
+        <th>Estado</th>
+        <th>Ver</th>
+      `,
+      rows
+    });
+  }
+
+  function renderHistorialComprasCompactTable(items, selectedHistory) {
+    const rows = items.map((compra) => {
+      const proveedor = getCatalogRecordById('proveedores', compra.proveedorId);
+      const proveedorNombre = proveedor?.nombre || compra.proveedorNombre || 'Proveedor no encontrado';
+      const referencia = compra.facturaReferencia || 'Sin referencia';
+      const searchable = normalizeNameForCompare(`${referencia} ${proveedorNombre} ${compra.fechaCompra} ${compra.fechaVencimiento} ${compra.saldoPorPagar} ${compra.estado}`);
+      return `
+        <tr class="compact-record-row historial-compact-row" data-mora-search-card data-search-text="${escapeHtml(searchable)}">
+          <td class="historial-compact-text"><span title="${escapeHtml(proveedorNombre)}">${escapeHtml(proveedorNombre)}</span></td>
+          <td class="historial-compact-doc"><span title="${escapeHtml(referencia)}">${escapeHtml(referencia)}</span></td>
+          <td class="historial-compact-date"><span>${escapeHtml(formatDate(compra.fechaCompra))}</span></td>
+          <td class="historial-compact-date"><span>${escapeHtml(formatDate(compra.fechaVencimiento))}</span></td>
+          <td class="amount-cell historial-compact-amount"><span>${escapeHtml(formatMoney(compra.saldoPorPagar))}</span></td>
+          <td class="historial-compact-state"><span class="state-pill ${getEstadoClass(compra.estado)}">${escapeHtml(compra.estado)}</span></td>
+          <td class="historial-compact-actions"><div class="compact-row-actions"><button type="button" class="secondary-action compact" data-history-compra="${escapeHtml(compra.id)}">Ver</button></div></td>
+        </tr>
+        ${moraState.selectedKind === 'compra' && moraState.selectedId === compra.id && selectedHistory ? renderHistorialInlineDetailRow(selectedHistory, searchable) : ''}
+      `;
+    }).join('');
+
+    return renderOperationalTableShell({
+      shellClass: 'historial-compact-scroll-shell historial-proveedores-scroll-shell',
+      wrapClass: 'historial-compact-table-wrap',
+      ariaLabel: 'Historial compacto de referencias de proveedores',
+      tableClass: 'historial-compact-table historial-compact-table-proveedores',
+      colgroup: `
+        <colgroup>
+          <col class="historial-col-proveedor">
+          <col class="historial-col-referencia">
+          <col class="historial-col-fecha">
+          <col class="historial-col-fecha">
+          <col class="historial-col-saldo">
+          <col class="historial-col-estado">
+          <col class="historial-col-ver">
+        </colgroup>
+      `,
+      headers: `
+        <th>Proveedor</th>
+        <th>Referencia</th>
+        <th>Origen</th>
+        <th>Vence</th>
+        <th class="amount-cell">Saldo</th>
+        <th>Estado</th>
+        <th>Ver</th>
+      `,
+      rows
+    });
+  }
+
+  function renderHistorialInlineDetailRow(history, searchable = '') {
+    return `
+      <tr class="historial-detail-row" data-mora-search-card data-search-text="${escapeHtml(searchable)}">
+        <td colspan="7">${renderSelectedHistoryPanel(history)}</td>
+      </tr>
     `;
   }
 
@@ -3480,7 +3716,7 @@
             <span class="eyebrow mini">Historial seleccionado</span>
             <h2>${escapeHtml(history.title)}</h2>
           </div>
-          <button type="button" class="secondary-action compact" data-history-clear>Ver todos</button>
+          <button type="button" class="secondary-action compact" data-history-clear>Cerrar</button>
         </div>
         <div class="mora-detail-grid">
           ${history.details.map((item) => `<div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></div>`).join('')}
@@ -3655,6 +3891,10 @@
   function showDocumentHistory(kind, id) {
     moraState.selectedKind = kind;
     moraState.selectedId = id || '';
+    if (getRoute() === 'mora') {
+      renderRoute({ preserveScroll: true });
+      return;
+    }
     setRoute('mora');
   }
 
@@ -3893,37 +4133,68 @@
       `;
     }
 
+    const showType = shouldShowCatalogTypeColumn(catalog, records);
+    const rows = records.map((record) => renderCatalogRecord(catalog, record, showType)).join('');
+
+    return renderOperationalTableShell({
+      shellClass: `catalog-compact-scroll-shell ${showType ? 'catalog-compact-with-type' : 'catalog-compact-basic'}`,
+      wrapClass: 'catalog-compact-table-wrap',
+      ariaLabel: `Listado compacto de ${catalog.label}`,
+      tableClass: `catalog-compact-table ${showType ? 'catalog-compact-table-type' : 'catalog-compact-table-basic'}`,
+      colgroup: `
+        <colgroup>
+          <col class="catalog-col-nombre">
+          ${showType ? '<col class="catalog-col-tipo">' : ''}
+          <col class="catalog-col-estado">
+          <col class="catalog-col-editar">
+        </colgroup>
+      `,
+      headers: `
+        <th>Nombre</th>
+        ${showType ? '<th>Tipo</th>' : ''}
+        <th>Estado</th>
+        <th>Editar</th>
+      `,
+      rows
+    });
+  }
+
+  function shouldShowCatalogTypeColumn(catalog, records) {
+    return catalog.fields.some((field) => field.name === 'tipo') || records.some((record) => cleanText(record.tipo));
+  }
+
+  function renderCatalogRecord(catalog, record, showType = false) {
+    const secondary = getCatalogCompactSecondaryText(catalog, record);
+    const canEdit = canCurrentRole('editCatalogs');
+    const toggleLabel = record.activo
+      ? (isSafeDeleteCatalog(catalog.id) ? 'Borrar seguro' : 'Desactivar')
+      : (isSafeDeleteCatalog(catalog.id) ? 'Restaurar' : 'Activar');
     return `
-      <div class="catalog-record-list">
-        ${records.map((record) => renderCatalogRecord(catalog, record)).join('')}
-      </div>
+      <tr class="compact-record-row catalog-compact-row ${record.activo ? 'is-active' : 'is-inactive'}">
+        <td class="catalog-compact-name">
+          <span title="${escapeHtml(record.nombre || 'Sin nombre')}">${escapeHtml(record.nombre || 'Sin nombre')}</span>
+          ${secondary ? `<small title="${escapeHtml(secondary)}">${escapeHtml(secondary)}</small>` : ''}
+          ${record.observacion ? `<small class="catalog-compact-note" title="${escapeHtml(record.observacion)}">${escapeHtml(record.observacion)}</small>` : ''}
+        </td>
+        ${showType ? `<td class="catalog-compact-type"><span title="${escapeHtml(getCatalogCompactTypeText(record))}">${escapeHtml(getCatalogCompactTypeText(record))}</span></td>` : ''}
+        <td class="catalog-compact-state"><span class="state-pill ${record.activo ? 'is-active' : 'is-inactive'}">${record.activo ? 'Activo' : 'Inactivo'}</span></td>
+        <td class="catalog-compact-actions">
+          <div class="record-actions compact-row-actions">
+            ${canEdit ? `<button type="button" class="secondary-action compact" data-catalog-edit="${escapeHtml(record.id)}">Editar</button>` : '<span class="muted-text compact-note">Lectura</span>'}
+            ${canEdit ? `<button type="button" class="${record.activo ? 'danger-action' : 'card-action'} compact" data-catalog-toggle="${escapeHtml(record.id)}">${escapeHtml(toggleLabel)}</button>` : ''}
+          </div>
+        </td>
+      </tr>
     `;
   }
 
-  function renderCatalogRecord(catalog, record) {
-    const secondary = getRecordSecondaryText(catalog, record);
-    const canEdit = canCurrentRole('editCatalogs');
-    return `
-      <div class="catalog-record ${record.activo ? 'is-active' : 'is-inactive'}">
-        <div class="record-main">
-          <div class="record-title-row">
-            <strong>${escapeHtml(record.nombre || 'Sin nombre')}</strong>
-            <span class="state-pill ${record.activo ? 'is-active' : 'is-inactive'}">${record.activo ? 'Activo' : 'Inactivo'}</span>
-          </div>
-          ${secondary ? `<p>${escapeHtml(secondary)}</p>` : ''}
-          ${record.observacion ? `<p class="record-note">${escapeHtml(record.observacion)}</p>` : ''}
-          <dl class="record-meta">
-            <dt>ID</dt><dd>${escapeHtml(record.id)}</dd>
-            <dt>Creado</dt><dd>${escapeHtml(formatDateTime(record.createdAt))}</dd>
-            <dt>Actualizado</dt><dd>${escapeHtml(formatDateTime(record.updatedAt))}</dd>
-          </dl>
-        </div>
-        <div class="record-actions">
-          ${canEdit ? `<button type="button" class="secondary-action compact" data-catalog-edit="${escapeHtml(record.id)}">Editar</button>` : '<span class="muted-text compact-note">Solo lectura</span>'}
-          ${canEdit ? `<button type="button" class="${record.activo ? 'danger-action' : 'card-action'} compact" data-catalog-toggle="${escapeHtml(record.id)}">${record.activo ? (isSafeDeleteCatalog(catalog.id) ? 'Borrar seguro' : 'Desactivar') : (isSafeDeleteCatalog(catalog.id) ? 'Restaurar' : 'Activar')}</button>` : ''}
-        </div>
-      </div>
-    `;
+  function getCatalogCompactTypeText(record) {
+    return cleanText(record.tipo) || '—';
+  }
+
+  function getCatalogCompactSecondaryText(catalog, record) {
+    if (catalog.id === 'cuentasBancos') return '';
+    return getRecordSecondaryText(catalog, record);
   }
 
   function renderEditModal(modalId, title, subtitle, bodyHtml) {
@@ -8772,20 +9043,41 @@
               <h2>Cierres recientes</h2>
             </div>
           </div>
-          ${cierres.length ? `
-            <div class="closing-list">
-              ${cierres.map((item) => `
-                <div class="closing-card">
-                  <strong>${escapeHtml(getMonthLabel(item.month))} ${escapeHtml(item.year)}</strong>
-                  <span>${escapeHtml(formatDateTime(item.fechaHoraCierre))}</span>
-                  <p>${escapeHtml(item.nombreArchivoExcel || 'Sin nombre de archivo registrado')}</p>
-                </div>
-              `).join('')}
-            </div>
-          ` : `<div class="empty-state"><strong>Sin cierres registrados.</strong><p>Cuando cierres un mes, aparecerá aquí con fecha, rol y archivo Excel usado.</p></div>`}
+          ${cierres.length ? renderCierresRecientesCompactTable(cierres) : `<div class="empty-state"><strong>Sin cierres registrados.</strong><p>Cuando cierres un mes, aparecerá aquí con fecha, rol y archivo Excel usado.</p></div>`}
         </article>
       </section>
     `;
+  }
+
+
+  function renderCierresRecientesCompactTable(cierres) {
+    const rows = cierres.map((item) => `
+      <tr class="compact-record-row closing-compact-row">
+        <td class="closing-compact-period"><span>${escapeHtml(getMonthLabel(item.month))} ${escapeHtml(item.year)}</span></td>
+        <td class="closing-compact-date"><span>${escapeHtml(formatDateTime(item.fechaHoraCierre))}</span></td>
+        <td class="closing-compact-file"><span title="${escapeHtml(item.nombreArchivoExcel || 'Sin nombre de archivo registrado')}">${escapeHtml(item.nombreArchivoExcel || 'Sin nombre de archivo registrado')}</span></td>
+      </tr>
+    `).join('');
+
+    return renderOperationalTableShell({
+      shellClass: 'closing-compact-scroll-shell',
+      wrapClass: 'closing-compact-table-wrap',
+      ariaLabel: 'Historial de cierres recientes en líneas compactas',
+      tableClass: 'closing-compact-table',
+      colgroup: `
+        <colgroup>
+          <col class="closing-col-periodo">
+          <col class="closing-col-fecha">
+          <col class="closing-col-archivo">
+        </colgroup>
+      `,
+      headers: `
+        <th>Período</th>
+        <th>Fecha</th>
+        <th>Archivo</th>
+      `,
+      rows
+    });
   }
 
   function getMonthLabel(month) {
