@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.3-post12-ajustes-integracion-general';
+  const APP_VERSION = '0.17.4-post12-cierre-detalle-bloqueo-compacto';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -1921,6 +1921,7 @@
 
       topScroll.addEventListener('scroll', syncFromTop, { passive: true });
       tableScroll.addEventListener('scroll', syncFromTable, { passive: true });
+      shell.closest('details')?.addEventListener('toggle', () => schedule(refresh), { passive: true });
       refresh();
       schedule(refresh);
       return refresh;
@@ -2787,51 +2788,101 @@
     }
 
     return `
-      <div class="periodo-detail-wrap">
-        <section>
+      <div class="periodo-detail-wrap periodo-blocking-detail-wrap" aria-label="Detalle informativo del bloqueo de cierre">
+        <section class="periodo-blocking-section">
           <h3>Clientes</h3>
-          ${item.clientesDetalle.length ? item.clientesDetalle.map((record) => renderPeriodoClienteDetailRow(record)).join('') : '<p class="periodo-detail-empty">Sin saldos pendientes de clientes.</p>'}
+          ${item.clientesDetalle.length ? renderPeriodoClientesBlockingTable(item.clientesDetalle) : '<p class="periodo-detail-empty">Sin saldos pendientes de clientes.</p>'}
         </section>
-        <section>
+        <section class="periodo-blocking-section">
           <h3>Proveedores</h3>
-          ${item.proveedoresDetalle.length ? item.proveedoresDetalle.map((record) => renderPeriodoProveedorDetailRow(record)).join('') : '<p class="periodo-detail-empty">Sin saldos pendientes de proveedores.</p>'}
+          ${item.proveedoresDetalle.length ? renderPeriodoProveedoresBlockingTable(item.proveedoresDetalle) : '<p class="periodo-detail-empty">Sin saldos pendientes de proveedores.</p>'}
         </section>
       </div>
     `;
   }
 
-  function renderPeriodoClienteDetailRow(record) {
-    return `
-      <article class="periodo-detail-row">
-        <div class="resumen-row-head"><strong>${escapeHtml(record.cliente)}</strong><span>${escapeHtml(record.estado)}</span></div>
-        <div class="resumen-mini-grid periodo-detail-grid">
-          <div><span>Sucursal</span><strong>${escapeHtml(record.sucursal)}</strong></div>
-          <div><span>OC / documento</span><strong>${escapeHtml(record.documento)}</strong></div>
-          <div><span>Fecha origen</span><strong>${escapeHtml(formatDate(record.fechaOrigen))}</strong></div>
-          <div><span>Vencimiento</span><strong>${escapeHtml(formatDate(record.fechaVencimiento))}</strong></div>
-          <div><span>Días de mora</span><strong>${record.diasMora > 0 ? `${record.diasMora} días` : 'No aplica'}</strong></div>
-          <div><span>Saldo pendiente</span><strong>${escapeHtml(formatMoney(record.saldoPendiente))}</strong></div>
-        </div>
-        <div class="record-actions"><button type="button" class="secondary-action compact" data-history-venta="${escapeHtml(record.id)}">Ver historial</button></div>
-      </article>
-    `;
+  function formatPeriodoMoraLabel(diasMora) {
+    const dias = Number(diasMora) || 0;
+    return dias > 0 ? `${dias} día${dias === 1 ? '' : 's'}` : 'No aplica';
   }
 
-  function renderPeriodoProveedorDetailRow(record) {
-    return `
-      <article class="periodo-detail-row">
-        <div class="resumen-row-head"><strong>${escapeHtml(record.proveedor)}</strong><span>${escapeHtml(record.estado)}</span></div>
-        <div class="resumen-mini-grid periodo-detail-grid">
-          <div><span>Factura / referencia</span><strong>${escapeHtml(record.documento)}</strong></div>
-          <div><span>Fecha origen</span><strong>${escapeHtml(formatDate(record.fechaOrigen))}</strong></div>
-          <div><span>Vencimiento</span><strong>${escapeHtml(formatDate(record.fechaVencimiento))}</strong></div>
-          <div><span>Días de mora</span><strong>${record.diasMora > 0 ? `${record.diasMora} días` : 'No aplica'}</strong></div>
-          <div><span>Saldo pendiente</span><strong>${escapeHtml(formatMoney(record.saldoPendiente))}</strong></div>
-          <div><span>Estado</span><strong>${escapeHtml(record.estado)}</strong></div>
-        </div>
-        <div class="record-actions"><button type="button" class="secondary-action compact" data-history-compra="${escapeHtml(record.id)}">Ver historial</button></div>
-      </article>
-    `;
+  function renderPeriodoClientesBlockingTable(records) {
+    const rows = records.map((record) => `
+      <tr class="compact-record-row periodo-blocking-row">
+        <td class="periodo-blocking-text"><span title="${escapeHtml(record.cliente)}">${escapeHtml(record.cliente)}</span></td>
+        <td class="periodo-blocking-text"><span title="${escapeHtml(record.sucursal)}">${escapeHtml(record.sucursal)}</span></td>
+        <td class="periodo-blocking-doc"><span title="${escapeHtml(record.documento)}">${escapeHtml(record.documento)}</span></td>
+        <td class="periodo-blocking-date"><span>${escapeHtml(formatDate(record.fechaOrigen))}</span></td>
+        <td class="periodo-blocking-date"><span>${escapeHtml(formatDate(record.fechaVencimiento))}</span></td>
+        <td class="periodo-blocking-mora"><span>${escapeHtml(formatPeriodoMoraLabel(record.diasMora))}</span></td>
+        <td class="amount-cell periodo-blocking-amount"><span>${escapeHtml(formatMoney(record.saldoPendiente))}</span></td>
+      </tr>
+    `).join('');
+    return renderOperationalTableShell({
+      shellClass: 'periodo-blocking-scroll-shell periodo-blocking-clientes-shell',
+      wrapClass: 'periodo-blocking-table-wrap',
+      ariaLabel: 'Clientes pendientes que bloquean el cierre del período',
+      tableClass: 'periodo-blocking-table periodo-blocking-table-clientes',
+      colgroup: `
+        <colgroup>
+          <col class="periodo-col-cliente">
+          <col class="periodo-col-sucursal">
+          <col class="periodo-col-documento">
+          <col class="periodo-col-fecha">
+          <col class="periodo-col-fecha">
+          <col class="periodo-col-mora">
+          <col class="periodo-col-saldo">
+        </colgroup>
+      `,
+      headers: `
+        <th>Cliente</th>
+        <th>Sucursal</th>
+        <th>OC / Documento</th>
+        <th>Origen</th>
+        <th>Vence</th>
+        <th>Mora</th>
+        <th class="amount-cell">Saldo</th>
+      `,
+      rows
+    });
+  }
+
+  function renderPeriodoProveedoresBlockingTable(records) {
+    const rows = records.map((record) => `
+      <tr class="compact-record-row periodo-blocking-row">
+        <td class="periodo-blocking-text"><span title="${escapeHtml(record.proveedor)}">${escapeHtml(record.proveedor)}</span></td>
+        <td class="periodo-blocking-doc"><span title="${escapeHtml(record.documento)}">${escapeHtml(record.documento)}</span></td>
+        <td class="periodo-blocking-date"><span>${escapeHtml(formatDate(record.fechaOrigen))}</span></td>
+        <td class="periodo-blocking-date"><span>${escapeHtml(formatDate(record.fechaVencimiento))}</span></td>
+        <td class="periodo-blocking-mora"><span>${escapeHtml(formatPeriodoMoraLabel(record.diasMora))}</span></td>
+        <td class="amount-cell periodo-blocking-amount"><span>${escapeHtml(formatMoney(record.saldoPendiente))}</span></td>
+      </tr>
+    `).join('');
+    return renderOperationalTableShell({
+      shellClass: 'periodo-blocking-scroll-shell periodo-blocking-proveedores-shell',
+      wrapClass: 'periodo-blocking-table-wrap',
+      ariaLabel: 'Proveedores pendientes que bloquean el cierre del período',
+      tableClass: 'periodo-blocking-table periodo-blocking-table-proveedores',
+      colgroup: `
+        <colgroup>
+          <col class="periodo-col-proveedor">
+          <col class="periodo-col-documento">
+          <col class="periodo-col-fecha">
+          <col class="periodo-col-fecha">
+          <col class="periodo-col-mora">
+          <col class="periodo-col-saldo">
+        </colgroup>
+      `,
+      headers: `
+        <th>Proveedor</th>
+        <th>Factura / Referencia</th>
+        <th>Origen</th>
+        <th>Vence</th>
+        <th>Mora</th>
+        <th class="amount-cell">Saldo</th>
+      `,
+      rows
+    });
   }
 
   function buildGastosPorTipo(gastos) {

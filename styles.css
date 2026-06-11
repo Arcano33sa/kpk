@@ -2676,6 +2676,123 @@ textarea:disabled {
 }
 
 
+/* Post12 Cierre Detalle Bloqueo — detalle compacto informativo */
+.periodo-blocking-detail-wrap {
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+.periodo-blocking-section {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.periodo-blocking-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--accent-dark);
+  font-size: 0.92rem;
+  font-weight: 950;
+}
+
+.periodo-blocking-scroll-shell {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.periodo-blocking-scroll-shell .operational-top-scroll {
+  top: calc(var(--topbar-height) + var(--safe-top) + 8px);
+}
+
+.periodo-blocking-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.periodo-blocking-table {
+  table-layout: auto;
+  width: 100%;
+  font-size: 0.82rem;
+}
+
+.periodo-blocking-table-clientes {
+  min-width: 1160px;
+}
+
+.periodo-blocking-table-proveedores {
+  min-width: 940px;
+}
+
+.periodo-blocking-table th,
+.periodo-blocking-table td {
+  padding: 7px 9px;
+}
+
+.periodo-blocking-table td > span,
+.periodo-blocking-table td small,
+.periodo-blocking-table .compact-primary {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.periodo-blocking-table .periodo-blocking-text span,
+.periodo-blocking-table .periodo-blocking-doc span {
+  color: var(--ink);
+  font-weight: 850;
+}
+
+.periodo-blocking-date,
+.periodo-blocking-mora,
+.periodo-blocking-amount {
+  white-space: nowrap;
+}
+
+.periodo-blocking-amount {
+  font-weight: 950;
+}
+
+.periodo-col-cliente,
+.periodo-col-proveedor {
+  min-width: 230px;
+}
+
+.periodo-col-sucursal {
+  min-width: 190px;
+}
+
+.periodo-col-documento {
+  min-width: 190px;
+}
+
+.periodo-col-fecha {
+  min-width: 118px;
+}
+
+.periodo-col-mora {
+  min-width: 105px;
+}
+
+.periodo-col-saldo {
+  min-width: 135px;
+}
+
+@media (max-width: 620px) {
+  .periodo-blocking-table-clientes {
+    min-width: 1120px;
+  }
+
+  .periodo-blocking-table-proveedores {
+    min-width: 900px;
+  }
+}
+
+
 /* Etapa Post12 Cierre Períodos 2/2 — Bloqueo inteligente y notificación de listo */
 .period-ready-alert,
 .period-card-action {

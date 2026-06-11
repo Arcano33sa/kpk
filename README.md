@@ -281,3 +281,12 @@ Bloques principales:
 - Respaldo JSON e importación validada incluyen ajustes sin duplicarlos y conservan compatibilidad con registros antiguos.
 - Facturas múltiples, acordeones, columnas esenciales y scrollbar horizontal superior sticky se mantienen.
 - Service Worker/cache actualizado a `v0_17_3_post12_ajustes_integracion_general`.
+
+## Post12 — Cierre Detalle Bloqueo Compacto
+
+- Cerrar Período conserva el desplegable “Ver detalle del bloqueo”.
+- Clientes y Proveedores pendientes ahora se muestran como líneas compactas con columnas informativas.
+- Se retiraron las tarjetas grandes y las acciones operativas dentro del detalle de bloqueo.
+- Se agregó tabla con scrollbar horizontal interno/sticky cuando el ancho no alcanza.
+- No se modificaron cálculos, saldos ajustados, mora, alertas, cierre, Excel, JSON ni datos de negocio.
+- Versión PWA/cache: 0.17.4-post12-cierre-detalle-bloqueo-compacto.

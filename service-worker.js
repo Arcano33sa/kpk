@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_3_post12_ajustes_integracion_general';
+const CACHE_VERSION = 'v0_17_4_post12_cierre_detalle_bloqueo_compacto';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
