@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.16.9-post12-ventas-oc-facturas-solo-numero-captura-multiple';
+  const APP_VERSION = '0.17.0-post12-ventas-oc-facturas-captura-masiva';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -701,6 +701,39 @@
       .trim();
   }
 
+  function isSafeFacturaSpaceToken(token) {
+    const value = cleanFacturaVentaNumero(token);
+    if (!value) return false;
+    if (!/\d/u.test(value)) return false;
+    return /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9._#\/-]+$/u.test(value);
+  }
+
+  function splitFacturasVentaText(value) {
+    const text = String(value ?? '').trim();
+    if (!text) return [];
+    const splitSafeSpaces = (part) => {
+      const normalizedPart = String(part ?? '').trim();
+      if (!normalizedPart) return [];
+      const compactTokens = normalizedPart.split(/\s+/u).map((token) => cleanFacturaVentaNumero(token)).filter(Boolean);
+      if (compactTokens.length > 1 && compactTokens.every((token) => isSafeFacturaSpaceToken(token))) {
+        return compactTokens;
+      }
+      return [cleanFacturaVentaNumero(normalizedPart)].filter(Boolean);
+    };
+    if (/[;,\n\r]/u.test(text)) {
+      return text.split(/[;,\n\r]+/u).reduce((items, part) => items.concat(splitSafeSpaces(part)), []);
+    }
+    return splitSafeSpaces(text);
+  }
+
+  function normalizeFacturasVentaFromText(value) {
+    return splitFacturasVentaText(value).map((numero) => ({ numero }));
+  }
+
+  function formatFacturasVentaInput(facturas) {
+    return normalizeFacturasVentaList(facturas).map((factura) => factura.numero).join(', ');
+  }
+
   function normalizeFacturaVentaRecord(record) {
     const raw = isPlainObject(record) ? record : {};
     const directValue = typeof record === 'string' || typeof record === 'number' ? record : '';
@@ -720,9 +753,7 @@
       try {
         source = JSON.parse(trimmed);
       } catch (_) {
-        source = trimmed
-          .split(/[;,\n]+/u)
-          .map((part) => ({ numero: cleanFacturaVentaNumero(part) }));
+        source = normalizeFacturasVentaFromText(trimmed);
       }
     }
     if (isPlainObject(source)) source = [source];
@@ -3249,7 +3280,7 @@
           { label: 'Venta neta', value: formatMoney(venta.ventaNeta) },
           { label: 'Total cobrado', value: formatMoney(venta.totalCobrado) },
           { label: 'Saldo actual', value: formatMoney(venta.saldoPorCobrar) },
-          { label: 'Facturas registradas', value: String(normalizeFacturasVentaList(venta.facturas).length) }
+          { label: 'Facturas', value: formatFacturasVentaResumen(venta.facturas) }
         ],
         entries: getVentaHistoryEntries(venta)
       };
@@ -3281,14 +3312,15 @@
         statusClass: 'is-info'
       }
     ];
-    normalizeFacturasVentaList(venta.facturas).forEach((factura) => {
+    const facturasVenta = normalizeFacturasVentaList(venta.facturas);
+    if (facturasVenta.length) {
       entries.push({
         date: formatDate(venta.fechaOc),
-        title: 'Factura registrada',
-        detail: `Factura ${factura.numero} ligada a esta OC.`,
+        title: 'Facturas registradas',
+        detail: formatFacturasVentaResumen(facturasVenta),
         statusClass: 'is-info'
       });
-    });
+    }
     if (venta.updatedAt && venta.updatedAt !== venta.createdAt) {
       entries.push({
         date: formatDateTime(venta.updatedAt),
@@ -3745,6 +3777,7 @@
 
   function renderFacturasVentaBlock(record) {
     const facturas = normalizeFacturasVentaList(record?.facturas || []);
+    const facturasText = formatFacturasVentaInput(facturas);
     return `
         <section class="facturas-block" data-facturas-block>
           <input type="hidden" name="facturasJson" data-facturas-json value="${escapeHtml(JSON.stringify(facturas))}" />
@@ -3756,12 +3789,12 @@
             <span class="count-pill" data-facturas-count>${facturas.length} factura${facturas.length === 1 ? '' : 's'}</span>
           </div>
           <p class="muted-text compact-note">Captura varios números de factura para esta misma OC. Sin fecha, sin monto y sin artículos: la Fecha OC manda.</p>
-          <div data-facturas-list>
-            ${renderFacturasVentaEditorList(facturas)}
-          </div>
-          <div class="form-actions facturas-actions">
-            <button type="button" class="secondary-action compact" data-factura-add>Agregar factura</button>
-          </div>
+          <label class="form-field facturas-mass-field">
+            <span>Números de factura</span>
+            <textarea name="facturasTexto" data-facturas-mass rows="3" placeholder="001245, 001246, 001247" autocomplete="off">${escapeHtml(facturasText)}</textarea>
+          </label>
+          <p class="compact-note">Separa varias facturas por coma, punto y coma o salto de línea. También acepta espacios cuando parezca una lista simple de códigos.</p>
+          <div class="facturas-preview" data-facturas-preview>${facturas.length ? `Facturas detectadas: ${escapeHtml(formatFacturasVentaResumen(facturas))}` : 'Facturas detectadas: ninguna'}</div>
           <p class="compact-note facturas-message" data-factura-message aria-live="polite"></p>
         </section>
     `;
@@ -4143,11 +4176,9 @@
     const block = form?.querySelector?.('[data-facturas-block]');
     if (!block) return [];
     const hidden = block.querySelector('[data-facturas-json]');
-    const rows = Array.from(block.querySelectorAll('[data-factura-row]')).map((row) => ({
-      id: cleanText(row.dataset.facturaId) || generateId('factura'),
-      numero: cleanText(row.querySelector('[data-factura-numero]')?.value || '')
-    }));
-    const list = normalizeFacturasVentaList(rows);
+    const massInput = block.querySelector('[data-facturas-mass]');
+    const source = massInput ? massInput.value : (hidden?.value || '');
+    const list = normalizeFacturasVentaList(source);
     if (hidden) hidden.value = JSON.stringify(list);
     return list;
   }
@@ -4303,10 +4334,11 @@
     const block = form.querySelector('[data-facturas-block]');
     if (!block) return;
     const hidden = block.querySelector('[data-facturas-json]');
-    const addButton = block.querySelector('[data-factura-add]');
-    const listNode = block.querySelector('[data-facturas-list]');
+    const massInput = block.querySelector('[data-facturas-mass]');
     const countNode = block.querySelector('[data-facturas-count]');
+    const previewNode = block.querySelector('[data-facturas-preview]');
     const messageNode = block.querySelector('[data-factura-message]');
+    if (!massInput) return;
 
     const showMessage = (message, isError = false) => {
       if (!messageNode) return;
@@ -4314,71 +4346,27 @@
       messageNode.classList.toggle('is-error', Boolean(isError));
     };
 
-    const readRows = () => Array.from(block.querySelectorAll('[data-factura-row]')).map((row) => ({
-      id: cleanText(row.dataset.facturaId) || generateId('factura'),
-      numero: cleanText(row.querySelector('[data-factura-numero]')?.value || '')
-    }));
-
     const sync = () => {
-      const list = normalizeFacturasVentaList(readRows());
+      const list = normalizeFacturasVentaList(massInput.value);
       if (hidden) hidden.value = JSON.stringify(list);
       if (countNode) countNode.textContent = `${list.length} factura${list.length === 1 ? '' : 's'}`;
+      if (previewNode) previewNode.textContent = list.length ? `Facturas detectadas: ${formatFacturasVentaResumen(list)}` : 'Facturas detectadas: ninguna';
       return list;
     };
 
-    const bindRows = () => {
-      block.querySelectorAll('[data-factura-numero]').forEach((input) => {
-        input.addEventListener('input', () => {
-          sync();
-          showMessage('', false);
-        });
-      });
-      block.querySelectorAll('[data-factura-remove]').forEach((button) => {
-        button.addEventListener('click', () => {
-          const rows = Array.from(block.querySelectorAll('[data-factura-row]'));
-          const row = button.closest('[data-factura-row]');
-          if (rows.length <= 1) {
-            const input = row?.querySelector('[data-factura-numero]');
-            if (input) input.value = '';
-            sync();
-            showMessage('Línea de factura limpiada.', false);
-            input?.focus();
-            return;
-          }
-          row?.remove();
-          renumberRows();
-          sync();
-          showMessage('Factura quitada del bloque. Guarda la OC para confirmar.', false);
-        });
-      });
-    };
+    const current = normalizeFacturasVentaList(hidden?.value || []);
+    massInput.value = formatFacturasVentaInput(current);
+    sync();
 
-    const renumberRows = () => {
-      block.querySelectorAll('[data-factura-row]').forEach((row, index) => {
-        const label = row.querySelector('.factura-number-field span');
-        if (label) label.textContent = `Factura ${index + 1}`;
-      });
-    };
-
-    const renderRowsFromCurrent = (rows, focusLast = false) => {
-      const safeRows = rows.length ? rows : [{ id: generateId('factura'), numero: '' }];
-      if (listNode) listNode.innerHTML = renderFacturasVentaEditorList(safeRows);
-      bindRows();
+    massInput.addEventListener('input', () => {
       sync();
-      if (focusLast) {
-        const inputs = block.querySelectorAll('[data-factura-numero]');
-        inputs[inputs.length - 1]?.focus();
-      }
-    };
-
-    addButton?.addEventListener('click', () => {
-      const rows = readRows();
-      rows.push({ id: generateId('factura'), numero: '' });
-      renderRowsFromCurrent(rows, true);
-      showMessage('Nueva línea de factura lista.', false);
+      showMessage('', false);
     });
-
-    renderRowsFromCurrent(normalizeFacturasVentaList(hidden?.value || []), false);
+    massInput.addEventListener('blur', () => {
+      const list = sync();
+      massInput.value = formatFacturasVentaInput(list);
+      sync();
+    });
   }
 
   function setupVentaLogisticaForm(form) {

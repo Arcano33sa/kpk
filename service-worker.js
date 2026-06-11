@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_16_9_post12_ventas_oc_facturas_solo_numero_captura_multiple';
+const CACHE_VERSION = 'v0_17_0_post12_ventas_oc_facturas_captura_masiva';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

@@ -1,14 +1,14 @@
-# KSA PRÁCTIKA — Post12 Ventas / OC: facturas solo con número y captura múltiple
+# KSA PRÁCTIKA — Post12 Ventas / OC: captura masiva inteligente de facturas
 
 - Ventas / OC permite varias facturas dentro de una misma OC, cada una solo con número de factura.
-- El bloque Facturas funciona como captura múltiple compacta: varias líneas editables antes de guardar la OC.
+- El bloque Facturas funciona como captura masiva compacta: un solo campo acepta varias facturas por coma, punto y coma, salto de línea o espacios cuando son códigos simples.
 - Se eliminó la fecha de factura del flujo visible y operativo; la fecha documental válida es Fecha OC.
 - Después de guardar una OC nueva, el formulario retiene cliente, sucursal y fecha OC para captura rápida.
 - Al salir de Ventas / OC se limpia la captura rápida para evitar arrastres entre módulos.
-- Edición de OC carga, agrega, modifica y quita números de factura sin duplicarlos.
+- Edición de OC carga todos los números en el campo masivo para agregar, modificar o quitar facturas sin duplicarlas.
 - Se mantiene compatibilidad defensiva con facturas antiguas que pudieran traer fecha, operando solo con número.
 - No se cambian cobros, proveedores/compras, pagos, compras de contado, mora, cierre, cálculos, Excel ni JSON salvo compatibilidad documental.
-- Versión/cache PWA actualizado a 0.16.9-post12-ventas-oc-facturas-solo-numero-captura-multiple.
+- Versión/cache PWA actualizado a 0.17.0-post12-ventas-oc-facturas-captura-masiva.
 
 # KSA PRÁCTIKA — Post12 Compras de contado Etapa 2/2
 
@@ -221,7 +221,7 @@ Bloques principales:
 - Botón **Aplicar actualización** cuando existe un Service Worker en espera.
 - Aplicación de actualización mediante mensaje seguro `KSA_PRACTIKA_SKIP_WAITING` y recarga protegida contra bucles.
 - Persistencia de última búsqueda y última actualización dentro de `configuracion`, sin borrar `localStorage`.
-- Service Worker actualizado a `v0_16_9_post12_ventas_oc_facturas_solo_numero_captura_multiple`.
+- Service Worker actualizado a `v0_17_0_post12_ventas_oc_facturas_captura_masiva`.
 - Cache PWA incluye `index.html`, CSS, JS, manifest, logo, íconos y `vendor/jszip.min.js`.
 - Se mantienen intactos JSON, Excel, importación, exportación, cierres y datos de negocio.
 

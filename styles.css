@@ -2238,6 +2238,23 @@ textarea:disabled {
   color: var(--danger);
 }
 
+.facturas-mass-field textarea {
+  min-height: 82px;
+  resize: vertical;
+}
+
+.facturas-preview {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px dashed rgba(185, 135, 43, 0.42);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--accent-dark);
+  font-size: 0.85rem;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
 .facturas-empty {
   padding: 12px;
   border: 1px dashed var(--line-strong);
