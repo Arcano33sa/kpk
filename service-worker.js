@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_11_post12_compactos_columnas_scrollbar_datos';
+const CACHE_VERSION = 'v0_17_13_post12_resumen_tarjetas_utilidad';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

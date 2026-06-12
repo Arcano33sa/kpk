@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.10-post12-ventasoc-subtotal-descuento-total';
+  const APP_VERSION = '0.17.13-post12-resumen-tarjetas-utilidad';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -2200,6 +2200,8 @@
           <article class="metric-card"><span>Subtotal ventas</span><strong>${escapeHtml(formatMoney(summary.totalSubtotalVentas || summary.totalVendidoOriginal || 0))}</strong><small>Antes de descuento</small></article>
           <article class="metric-card"><span>Descuentos</span><strong>${escapeHtml(formatMoney(summary.totalDescuentosVentas || 0))}</strong><small>Aplicados a OC</small></article>
           <article class="metric-card"><span>Total ventas</span><strong>${escapeHtml(formatMoney(summary.totalVendidoOriginal || 0))}</strong><small>Subtotal - descuento</small></article>
+          <article class="metric-card resumen-utility-card ${summary.utilidadPeriodo < 0 ? 'is-negative' : ''}" aria-label="Utilidad del período"><span>Utilidad</span><strong>${escapeHtml(formatMoney(summary.utilidadPeriodo || 0))}</strong><small>Según fecha del documento</small></article>
+          <article class="metric-card resumen-utility-card ${summary.utilidadAcumulada < 0 ? 'is-negative' : ''}" aria-label="Utilidad acumulada"><span>Acumulada</span><strong>${escapeHtml(formatMoney(summary.utilidadAcumulada || 0))}</strong><small>Hasta corte seleccionado</small></article>
           <article class="metric-card"><span>Ajustes clientes</span><strong>${summary.totalAjustesClientes > 0 ? '-' : ''}${escapeHtml(formatMoney(summary.totalAjustesClientes || 0))}</strong><small>No son cobros</small></article>
           <article class="metric-card"><span>Total tras ajustes</span><strong>${escapeHtml(formatMoney(summary.totalVendido))}</strong><small>Total - ajustes</small></article>
           <article class="metric-card"><span>Total cobrado clientes</span><strong>${escapeHtml(formatMoney(summary.totalCobradoClientes))}</strong><small>Fecha real de cobro</small></article>
@@ -2213,6 +2215,7 @@
           <article class="metric-card"><span>Proveedores en mora</span><strong>${summary.proveedoresMoraCount}</strong><small>${summary.proveedoresMora.length} documentos</small></article>
           <article class="metric-card"><span>Flujo del período</span><strong>${escapeHtml(formatMoney(summary.flujoPeriodo))}</strong><small>Cobros - pagos - gastos</small></article>
         </section>
+        <p class="resumen-utility-note">Utilidad por origen, flujo por movimiento.</p>
 
         ${renderPeriodosPendientesCierreCard(summary.periodosCierre)}
 
@@ -2331,6 +2334,7 @@
     const saldoPorPagar = sumMoney(comprasCartera, (compra) => compra.saldoPorPagar);
     const totalGastos = sumMoney(gastosPeriodo, (gasto) => gasto.monto);
     const flujoPeriodo = roundMoney(totalCobradoClientes - totalPagadoProveedores - totalGastos);
+    const utilidadMetrics = buildResumenUtilityMetrics({ ventas, compras, gastos, filters, range });
 
     return {
       filters,
@@ -2362,6 +2366,7 @@
       saldoPorPagar,
       totalGastos,
       flujoPeriodo,
+      ...utilidadMetrics,
       clientesMora,
       proveedoresMora,
       clientesMoraCount: countUnique(clientesMora, (item) => item.cliente),
@@ -2433,6 +2438,70 @@
     const safeDate = toDateInputValue(dateInput);
     if (!safeDate) return false;
     return safeDate >= range.from && safeDate <= range.to;
+  }
+
+  function getResumenAccumulatedRange(filters, range) {
+    if (!range) return null;
+    const explicitDateTo = toDateInputValue(filters?.dateTo);
+    const hasClearCutoff = range.mode === 'month' || range.mode === 'year' || Boolean(explicitDateTo);
+    if (!hasClearCutoff) return null;
+    return { from: '0001-01-01', to: explicitDateTo || range.to, mode: 'accumulated' };
+  }
+
+  function matchesResumenUtilityVenta(venta, range) {
+    if (!venta?.activo) return false;
+    return isDateInResumenRange(venta.fechaOc, range);
+  }
+
+  function matchesResumenUtilityCompra(compra, range) {
+    if (!compra?.activo) return false;
+    return isDateInResumenRange(compra.fechaCompra, range);
+  }
+
+  function matchesResumenUtilityGasto(gasto, range) {
+    if (!gasto?.activo) return false;
+    return isDateInResumenRange(gasto.fecha, range);
+  }
+
+  function buildResumenUtilitySlice(ventas, compras, gastos, range) {
+    const ventasUtilidad = ventas.filter((venta) => matchesResumenUtilityVenta(venta, range));
+    const comprasUtilidad = compras.filter((compra) => matchesResumenUtilityCompra(compra, range));
+    const gastosUtilidad = gastos.filter((gasto) => matchesResumenUtilityGasto(gasto, range));
+    const totalVentasAjustadas = sumMoney(ventasUtilidad, (venta) => venta.ventaNetaAjustada);
+    const totalComprasAjustadas = sumMoney(comprasUtilidad, (compra) => compra.totalAjustado ?? compra.totalCompra);
+    const totalGastos = sumMoney(gastosUtilidad, (gasto) => gasto.monto);
+    const utilidad = roundMoney(totalVentasAjustadas - totalComprasAjustadas - totalGastos);
+
+    return {
+      range,
+      ventasUtilidad,
+      comprasUtilidad,
+      gastosUtilidad,
+      totalVentasAjustadas,
+      totalComprasAjustadas,
+      totalGastos,
+      utilidad
+    };
+  }
+
+  function buildResumenUtilityMetrics({ ventas, compras, gastos, filters, range }) {
+    const periodo = buildResumenUtilitySlice(ventas, compras, gastos, range);
+    const accumulatedRange = getResumenAccumulatedRange(filters, range);
+    const acumulado = buildResumenUtilitySlice(ventas, compras, gastos, accumulatedRange);
+
+    return {
+      utilidadPeriodo: periodo.utilidad,
+      utilidadDelPeriodo: periodo.utilidad,
+      utilidadAcumulada: acumulado.utilidad,
+      utilidadVentasPeriodo: periodo.totalVentasAjustadas,
+      utilidadComprasPeriodo: periodo.totalComprasAjustadas,
+      utilidadGastosPeriodo: periodo.totalGastos,
+      utilidadVentasAcumulada: acumulado.totalVentasAjustadas,
+      utilidadComprasAcumulada: acumulado.totalComprasAjustadas,
+      utilidadGastosAcumulada: acumulado.totalGastos,
+      utilidadPeriodoDetalle: periodo,
+      utilidadAcumuladaDetalle: acumulado
+    };
   }
 
   function matchesResumenVenta(venta, filters, range, useDate) {
@@ -9305,6 +9374,15 @@
       saldoPorPagar: roundMoney(summary.saldoPorPagar),
       totalGastos: roundMoney(summary.totalGastos),
       flujoPeriodo: roundMoney(summary.flujoPeriodo),
+      utilidadPeriodo: roundMoney(summary.utilidadPeriodo || 0),
+      utilidadDelPeriodo: roundMoney(summary.utilidadDelPeriodo || summary.utilidadPeriodo || 0),
+      utilidadAcumulada: roundMoney(summary.utilidadAcumulada || 0),
+      utilidadVentasPeriodo: roundMoney(summary.utilidadVentasPeriodo || 0),
+      utilidadComprasPeriodo: roundMoney(summary.utilidadComprasPeriodo || 0),
+      utilidadGastosPeriodo: roundMoney(summary.utilidadGastosPeriodo || 0),
+      utilidadVentasAcumulada: roundMoney(summary.utilidadVentasAcumulada || 0),
+      utilidadComprasAcumulada: roundMoney(summary.utilidadComprasAcumulada || 0),
+      utilidadGastosAcumulada: roundMoney(summary.utilidadGastosAcumulada || 0),
       clientesMora: summary.clientesMora.length,
       proveedoresMora: summary.proveedoresMora.length
     };
