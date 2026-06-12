@@ -290,3 +290,28 @@ Bloques principales:
 - Se agregó tabla con scrollbar horizontal interno/sticky cuando el ancho no alcanza.
 - No se modificaron cálculos, saldos ajustados, mora, alertas, cierre, Excel, JSON ni datos de negocio.
 - Versión PWA/cache: 0.17.4-post12-cierre-detalle-bloqueo-compacto.
+
+## 0.17.15 — Ventas / OC: Fecha de entrega
+
+- Se agregó el campo opcional **Fecha de entrega** en el formulario de Ventas / OC, cerca de Fecha OC y Días de crédito.
+- Cada OC guarda y carga `fechaEntrega` al editar sin afectar OCs antiguas que no tengan ese dato.
+- No se modifican vencimiento, mora, alertas, cierre, utilidad, Excel ni la fórmula Subtotal - Descuento = Total.
+- Service Worker/cache actualizado a `v0_17_15_post12_ventas_fecha_entrega`.
+
+## 0.17.16 — Ventas / OC: Fecha de entrega para crédito, vencimiento y mora
+
+- La fecha base de crédito de clientes ahora usa **Fecha de entrega** cuando existe y **Fecha OC** solo como respaldo.
+- El vencimiento de Ventas / OC se recalcula como fecha base de crédito + días de crédito.
+- Mora de clientes, días de mora, alertas de vencidos y próximos a vencer usan el vencimiento basado en Fecha de entrega.
+- Cierre mensual y períodos pendientes muestran saldos de clientes con la nueva fecha de vencimiento, sin adelantar mora antes de la entrega.
+- No se modifica la lógica de utilidad, cobros, pagos, proveedores, fórmula de Ventas / OC, Excel, JSON ni localStorage.
+- Service Worker/cache actualizado a `v0_17_16_post12_ventas_fecha_entrega_credito_mora`.
+
+
+## 0.17.17 — Fecha de entrega en Excel, JSON y hardening final
+
+- Exportación Excel agrega **Fecha entrega** en la hoja Ventas y conserva la columna sin romper OCs antiguas sin ese dato.
+- Resumen de mora en Excel incluye Entrega para clientes cuando aplica.
+- Respaldo JSON mantiene `fechaEntrega` en cada Venta / OC mediante normalización; respaldos antiguos sin el campo siguen importando con valor vacío.
+- Importación desde Excel reconoce encabezados compatibles de Fecha entrega para rondas futuras de ida/vuelta.
+- Versión PWA/cache actualizada a `v0_17_17_post12_ventas_fecha_entrega_excel_json_hardening`.

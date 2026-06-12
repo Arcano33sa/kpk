@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.14-post12-resumen-mes-todos';
+  const APP_VERSION = '0.17.17-post12-ventas-fecha-entrega-excel-json-hardening';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -666,6 +666,41 @@
     return formatDateInput(date);
   }
 
+  function getVentaCreditBaseDate(record) {
+    const raw = isPlainObject(record) ? record : {};
+    return toDateInputValue(raw.fechaEntrega || raw.fechaDeEntrega || raw.entrega || raw.fechaRecepcion || raw.fechaRecepción || '')
+      || toDateInputValue(raw.fechaOc || raw.fechaOC || raw.fecha || '');
+  }
+
+  function calculateVentaFechaVencimiento(record, diasCredito) {
+    const baseDate = getVentaCreditBaseDate(record);
+    const safeDays = Number.isFinite(Number(diasCredito)) ? Number(diasCredito) : 0;
+    return baseDate ? addDaysToDate(baseDate, safeDays) : '';
+  }
+
+  function isVentaCreditBaseEntrega(record) {
+    const raw = isPlainObject(record) ? record : {};
+    return Boolean(toDateInputValue(raw.fechaEntrega || raw.fechaDeEntrega || raw.entrega || raw.fechaRecepcion || raw.fechaRecepción || ''));
+  }
+
+  function isPastVentaDue(record) {
+    const venta = isPlainObject(record) ? record : {};
+    const derivedDue = calculateVentaFechaVencimiento(venta, venta.diasCredito);
+    return isPastDate(derivedDue || venta.fechaVencimiento);
+  }
+
+  function isVentaDueWithinNextDays(record, days) {
+    const venta = isPlainObject(record) ? record : {};
+    const derivedDue = calculateVentaFechaVencimiento(venta, venta.diasCredito);
+    return isWithinNextDays(derivedDue || venta.fechaVencimiento, days);
+  }
+
+  function getVentaDaysOverdue(record) {
+    const venta = isPlainObject(record) ? record : {};
+    const derivedDue = calculateVentaFechaVencimiento(venta, venta.diasCredito);
+    return getDaysOverdue(derivedDue || venta.fechaVencimiento);
+  }
+
   function isPastDate(dateInput) {
     const safeDate = toDateInputValue(dateInput);
     if (!safeDate) return false;
@@ -721,7 +756,7 @@
     if (!record.activo) return 'Anulado';
     const { ventaNetaOriginal, totalCobrado, saldoPorCobrar } = getVentaCalculations(record);
     if (ventaNetaOriginal > 0 && saldoPorCobrar <= 0) return 'Pagado';
-    if (saldoPorCobrar > 0 && isPastDate(record.fechaVencimiento)) return 'Vencido';
+    if (saldoPorCobrar > 0 && isPastVentaDue(record)) return 'Vencido';
     if (saldoPorCobrar > 0 && totalCobrado > 0) return 'Abonado';
     return 'Pendiente';
   }
@@ -902,15 +937,21 @@
     const raw = isPlainObject(record) ? record : {};
     const timestamp = nowIso();
     const diasCredito = parsePositiveInteger(raw.diasCredito);
+    const safeDiasCredito = Number.isNaN(diasCredito) ? 0 : diasCredito;
     const fechaOc = toDateInputValue(raw.fechaOc || raw.fechaOC || raw.fecha || '');
-    const fechaVencimiento = toDateInputValue(raw.fechaVencimiento || raw.vencimiento || '') || (fechaOc ? addDaysToDate(fechaOc, Number.isNaN(diasCredito) ? 0 : diasCredito) : '');
+    const fechaEntrega = toDateInputValue(raw.fechaEntrega || raw.fechaDeEntrega || raw.entrega || raw.fechaRecepcion || raw.fechaRecepción || '');
+    const fechaBaseCredito = getVentaCreditBaseDate({ ...raw, fechaOc, fechaEntrega });
+    const fechaVencimiento = calculateVentaFechaVencimiento({ ...raw, fechaOc, fechaEntrega }, safeDiasCredito);
     const base = {
       id: raw.id || generateId('venta'),
       numeroDocumento: cleanText(raw.numeroDocumento || raw.numeroOC || raw.numeroOc || raw.documento || raw.oc),
       clienteId: cleanText(raw.clienteId),
       sucursalId: cleanText(raw.sucursalId),
       fechaOc,
-      diasCredito: Number.isNaN(diasCredito) ? 0 : diasCredito,
+      fechaEntrega,
+      fechaBaseCredito,
+      fechaBaseCreditoTipo: fechaEntrega ? 'Entrega' : 'OC',
+      diasCredito: safeDiasCredito,
       fechaVencimiento,
       subtotal: getVentaSubtotalBase(raw),
       montoOc: getVentaSubtotalBase(raw),
@@ -2299,7 +2340,7 @@
     const gastosPeriodo = gastos.filter((gasto) => gasto.activo && matchesResumenGasto(gasto, filters, range));
 
     const clientesMora = ventas
-      .filter((venta) => venta.activo && venta.saldoPorCobrar > 0 && isPastDate(venta.fechaVencimiento) && matchesResumenVenta(venta, filters, null, false))
+      .filter((venta) => venta.activo && venta.saldoPorCobrar > 0 && isPastVentaDue(venta) && matchesResumenVenta(venta, filters, null, false))
       .map((venta) => buildClienteMoraItem(venta))
       .sort((a, b) => b.diasMora - a.diasMora || b.saldoPendiente - a.saldoPendiente);
     const proveedoresMora = compras
@@ -2307,7 +2348,7 @@
       .map((compra) => buildProveedorMoraItem(compra))
       .sort((a, b) => b.diasMora - a.diasMora || b.saldoPendiente - a.saldoPendiente);
     const ventasProximas = ventas
-      .filter((venta) => venta.activo && venta.saldoPorCobrar > 0 && isWithinNextDays(venta.fechaVencimiento, 7) && matchesResumenVenta(venta, filters, null, false))
+      .filter((venta) => venta.activo && venta.saldoPorCobrar > 0 && isVentaDueWithinNextDays(venta, 7) && matchesResumenVenta(venta, filters, null, false))
       .sort((a, b) => String(a.fechaVencimiento).localeCompare(String(b.fechaVencimiento)));
     const comprasProximas = compras
       .filter((compra) => compra.activo && compra.saldoPorPagar > 0 && isWithinNextDays(compra.fechaVencimiento, 7) && matchesResumenCompra(compra, filters, null, false))
@@ -2727,13 +2768,16 @@
   function buildPeriodoClienteDetalle(venta) {
     const cliente = getCatalogRecordById('clientes', venta.clienteId);
     const sucursal = getCatalogRecordById('sucursales', venta.sucursalId);
-    const diasMora = getDaysOverdue(venta.fechaVencimiento);
+    const diasMora = getVentaDaysOverdue(venta);
     return {
       id: venta.id,
       cliente: cliente?.nombre || 'Cliente no encontrado',
       sucursal: sucursal?.nombre || 'Sucursal no encontrada',
       documento: venta.numeroDocumento || 'Sin número',
       fechaOrigen: venta.fechaOc,
+      fechaEntrega: venta.fechaEntrega || '',
+      fechaBaseCredito: venta.fechaBaseCredito || getVentaCreditBaseDate(venta),
+      fechaBaseCreditoTipo: venta.fechaBaseCreditoTipo || (isVentaCreditBaseEntrega(venta) ? 'Entrega' : 'OC'),
       fechaVencimiento: venta.fechaVencimiento,
       diasMora,
       saldoPendiente: venta.saldoPorCobrar,
@@ -3379,7 +3423,7 @@
     const ventas = recalculateVentasWithCobros(appData.ventas, appData.cobros).map((record) => normalizeVentaRecord(record));
     const compras = recalculateComprasProveedoresWithPagos(appData.comprasProveedores, appData.pagosProveedores).map((record) => normalizeCompraProveedorRecord(record));
     const clientesMora = ventas
-      .filter((venta) => venta.activo && venta.saldoPorCobrar > 0 && isPastDate(venta.fechaVencimiento))
+      .filter((venta) => venta.activo && venta.saldoPorCobrar > 0 && isPastVentaDue(venta))
       .map((venta) => buildClienteMoraItem(venta))
       .sort((a, b) => b.diasMora - a.diasMora || b.saldoPendiente - a.saldoPendiente);
     const proveedoresMora = compras
@@ -3387,7 +3431,7 @@
       .map((compra) => buildProveedorMoraItem(compra))
       .sort((a, b) => b.diasMora - a.diasMora || b.saldoPendiente - a.saldoPendiente);
     const ventasProximas = ventas
-      .filter((venta) => venta.activo && venta.saldoPorCobrar > 0 && isWithinNextDays(venta.fechaVencimiento, 7))
+      .filter((venta) => venta.activo && venta.saldoPorCobrar > 0 && isVentaDueWithinNextDays(venta, 7))
       .sort((a, b) => String(a.fechaVencimiento).localeCompare(String(b.fechaVencimiento)));
     const comprasProximas = compras
       .filter((compra) => compra.activo && compra.saldoPorPagar > 0 && isWithinNextDays(compra.fechaVencimiento, 7))
@@ -3429,13 +3473,16 @@
   function buildClienteMoraItem(venta) {
     const cliente = getCatalogRecordById('clientes', venta.clienteId);
     const sucursal = getCatalogRecordById('sucursales', venta.sucursalId);
-    const diasMora = getDaysOverdue(venta.fechaVencimiento);
+    const diasMora = getVentaDaysOverdue(venta);
     return {
       id: venta.id,
       cliente: cliente?.nombre || 'Cliente no encontrado',
       sucursal: sucursal?.nombre || 'Sucursal no encontrada',
       documento: venta.numeroDocumento || 'Sin número',
       fechaOrigen: venta.fechaOc,
+      fechaEntrega: venta.fechaEntrega || '',
+      fechaBaseCredito: venta.fechaBaseCredito || getVentaCreditBaseDate(venta),
+      fechaBaseCreditoTipo: venta.fechaBaseCreditoTipo || (isVentaCreditBaseEntrega(venta) ? 'Entrega' : 'OC'),
       fechaVencimiento: venta.fechaVencimiento,
       diasMora,
       rango: getMoraRangeLabel(diasMora),
@@ -4674,10 +4721,12 @@
     const selectedClienteId = record?.clienteId || cleanText(draft.clienteId);
     const selectedSucursalId = record?.sucursalId || cleanText(draft.sucursalId);
     const fechaOc = record?.fechaOc || toDateInputValue(draft.fechaOc) || todayInputValue();
+    const fechaEntrega = record?.fechaEntrega || toDateInputValue(draft.fechaEntrega) || '';
     const selectedTerms = selectedClienteId ? getCatalogPaymentTerms('clientes', selectedClienteId) : { diasCredito: 0 };
     const draftDias = draft.diasCredito ?? '';
     const diasCredito = record ? (record.diasCredito ?? '') : (draftDias !== '' ? draftDias : (selectedClienteId ? selectedTerms.diasCredito : ''));
-    const fechaVencimiento = record?.fechaVencimiento || toDateInputValue(draft.fechaVencimiento) || addDaysToDate(fechaOc, Number(diasCredito) || 0);
+    const fechaBaseCredito = getVentaCreditBaseDate({ fechaOc, fechaEntrega });
+    const fechaVencimiento = calculateVentaFechaVencimiento({ fechaOc, fechaEntrega }, Number(diasCredito) || 0) || addDaysToDate(fechaBaseCredito, Number(diasCredito) || 0);
     const previewSource = record || {
       subtotal: draft.subtotal || draft.montoOc || 0,
       montoOc: draft.subtotal || draft.montoOc || 0,
@@ -4715,12 +4764,16 @@
             <input type="date" name="fechaOc" value="${escapeHtml(fechaOc)}" required data-venta-date />
           </label>
           <label class="form-field">
+            <span>Fecha de entrega</span>
+            <input type="date" name="fechaEntrega" value="${escapeHtml(fechaEntrega)}" data-venta-delivery />
+          </label>
+          <label class="form-field">
             <span>Días de crédito</span>
             <input type="number" name="diasCredito" value="${escapeHtml(diasCredito)}" min="0" step="1" inputmode="numeric" data-venta-days />
           </label>
           <label class="form-field">
             <span>Fecha vencimiento</span>
-            <input type="date" name="fechaVencimiento" value="${escapeHtml(fechaVencimiento)}" data-venta-due />
+            <input type="date" name="fechaVencimiento" value="${escapeHtml(fechaVencimiento)}" data-venta-due readonly />
           </label>
           <label class="form-field">
             <span>Subtotal C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
@@ -4915,7 +4968,9 @@
     const terms = getCatalogPaymentTerms('clientes', clienteId);
     let diasCredito = parsePositiveInteger(diasCreditoRaw);
     if (!diasCreditoRaw && clienteId) diasCredito = terms.diasCredito;
-    const fechaVencimiento = toDateInputValue(formData.get('fechaVencimiento')) || addDaysToDate(fechaOc, Number.isNaN(diasCredito) ? 0 : diasCredito);
+    const fechaEntrega = toDateInputValue(formData.get('fechaEntrega'));
+    const safeDiasCredito = Number.isNaN(diasCredito) ? 0 : diasCredito;
+    const fechaVencimiento = calculateVentaFechaVencimiento({ fechaOc, fechaEntrega }, safeDiasCredito);
     const base = {
       ...(existingRecord || {}),
       id: existingRecord?.id || generateId('venta'),
@@ -4923,6 +4978,9 @@
       clienteId,
       sucursalId: cleanText(formData.get('sucursalId')),
       fechaOc,
+      fechaEntrega,
+      fechaBaseCredito: getVentaCreditBaseDate({ fechaOc, fechaEntrega }),
+      fechaBaseCreditoTipo: fechaEntrega ? 'Entrega' : 'OC',
       diasCredito,
       fechaVencimiento,
       subtotal: parseMoney(formData.get('subtotal') ?? formData.get('montoOc')),
@@ -5014,14 +5072,19 @@
   function buildVentaDraftFromForm(form) {
     const formData = new FormData(form);
     const fechaOc = toDateInputValue(formData.get('fechaOc')) || todayInputValue();
+    const fechaEntrega = toDateInputValue(formData.get('fechaEntrega'));
     const diasCredito = parsePositiveInteger(formData.get('diasCredito'));
+    const safeDiasCredito = Number.isNaN(diasCredito) ? 0 : diasCredito;
     return {
       numeroDocumento: cleanText(formData.get('numeroDocumento')),
       clienteId: cleanText(formData.get('clienteId')),
       sucursalId: cleanText(formData.get('sucursalId')),
       fechaOc,
-      diasCredito: Number.isNaN(diasCredito) ? 0 : diasCredito,
-      fechaVencimiento: toDateInputValue(formData.get('fechaVencimiento')) || addDaysToDate(fechaOc, Number.isNaN(diasCredito) ? 0 : diasCredito),
+      fechaEntrega,
+      fechaBaseCredito: getVentaCreditBaseDate({ fechaOc, fechaEntrega }),
+      fechaBaseCreditoTipo: fechaEntrega ? 'Entrega' : 'OC',
+      diasCredito: safeDiasCredito,
+      fechaVencimiento: calculateVentaFechaVencimiento({ fechaOc, fechaEntrega }, safeDiasCredito),
       subtotal: cleanText(formData.get('subtotal') ?? formData.get('montoOc')),
       montoOc: cleanText(formData.get('subtotal') ?? formData.get('montoOc')),
       descuento: cleanText(formData.get('descuento')),
@@ -5295,6 +5358,7 @@
 
     form.querySelector('[data-venta-client]')?.addEventListener('change', () => applyVentaPaymentTermsSuggestion(form));
     form.querySelector('[data-venta-date]')?.addEventListener('change', () => updateVentaPreviewFromForm(form, true));
+    form.querySelector('[data-venta-delivery]')?.addEventListener('change', () => updateVentaPreviewFromForm(form, true));
     form.querySelector('[data-venta-days]')?.addEventListener('input', () => updateVentaPreviewFromForm(form, true));
   }
 
@@ -5360,10 +5424,11 @@
   function updateVentaPreviewFromForm(form, recalculateDue) {
     if (recalculateDue) {
       const dateInput = form.querySelector('[data-venta-date]');
+      const deliveryInput = form.querySelector('[data-venta-delivery]');
       const daysInput = form.querySelector('[data-venta-days]');
       const dueInput = form.querySelector('[data-venta-due]');
-      const due = addDaysToDate(dateInput?.value, Number.parseInt(daysInput?.value || '0', 10) || 0);
-      if (dueInput && due && form.dataset.manualDue !== '1') dueInput.value = due;
+      const due = calculateVentaFechaVencimiento({ fechaOc: dateInput?.value, fechaEntrega: deliveryInput?.value }, Number.parseInt(daysInput?.value || '0', 10) || 0);
+      if (dueInput && due) dueInput.value = due;
     }
 
     let currentAjustes = [];
@@ -9483,12 +9548,12 @@
       xlsxMoney(item.saldoPorPagar),
       xlsxNumber(item.documentos)
     ]));
-    rows.push([], xlsxHeaderRow(['Clientes', 'Sucursal', 'OC', 'Vence', 'Días', 'Saldo', 'Estado']));
-    summary.clientesMora.forEach((item) => rows.push([xlsxText(item.cliente), xlsxText(item.sucursal), xlsxText(item.documento), xlsxDate(item.fechaVencimiento), xlsxNumber(item.diasMora), xlsxMoney(item.saldoPendiente), xlsxText(item.estado)]));
+    rows.push([], xlsxHeaderRow(['Clientes', 'Sucursal', 'OC', 'Entrega', 'Vence', 'Días', 'Saldo', 'Estado']));
+    summary.clientesMora.forEach((item) => rows.push([xlsxText(item.cliente), xlsxText(item.sucursal), xlsxText(item.documento), xlsxDate(item.fechaEntrega), xlsxDate(item.fechaVencimiento), xlsxNumber(item.diasMora), xlsxMoney(item.saldoPendiente), xlsxText(item.estado)]));
     rows.push([], xlsxHeaderRow(['Proveedores en mora', 'Referencia', 'Fecha vencimiento', 'Días mora', 'Saldo pendiente', 'Estado']));
     summary.proveedoresMora.forEach((item) => rows.push([xlsxText(item.proveedor), xlsxText(item.documento), xlsxDate(item.fechaVencimiento), xlsxNumber(item.diasMora), xlsxMoney(item.saldoPendiente), xlsxText(item.estado)]));
 
-    return { name: 'Resumen', rows, cols: [28, 18, 18, 18, 14, 18, 18] };
+    return { name: 'Resumen', rows, cols: [28, 18, 18, 16, 18, 14, 18, 18] };
   }
 
   function buildVentasSheet(summary) {
@@ -9496,7 +9561,7 @@
       [xlsxTitle('Ventas / OC')],
       [xlsxLabel('Período'), xlsxText(summary.periodLabel)],
       [],
-      xlsxHeaderRow(['Fecha', 'Cliente', 'Sucursal', 'OC', 'Facturas', 'Envío', 'Transportista', 'Embarque', 'Estimada', 'Real', 'Guía', 'Subtotal', 'Descuento', 'Total', 'Ajustes', 'Cobrado', 'Saldo', 'Vence', 'Mora', 'Estado', 'Detalle', 'Observación'])
+      xlsxHeaderRow(['Fecha', 'Fecha entrega', 'Cliente', 'Sucursal', 'OC', 'Facturas', 'Envío', 'Transportista', 'Embarque', 'Estimada', 'Real', 'Guía', 'Subtotal', 'Descuento', 'Total', 'Ajustes', 'Cobrado', 'Saldo', 'Vence', 'Mora', 'Estado', 'Detalle', 'Observación'])
     ];
     getVentasForExport(summary.range, summary.filters).forEach((venta) => {
       const cliente = getCatalogRecordById('clientes', venta.clienteId);
@@ -9504,6 +9569,7 @@
       const logistica = normalizeLogisticaVentaRecord(venta.logistica);
       rows.push([
         xlsxDate(venta.fechaOc),
+        xlsxDate(venta.fechaEntrega),
         xlsxText(cliente?.nombre || venta.clienteNombre || 'Cliente no encontrado'),
         xlsxText(sucursal?.nombre || venta.sucursalNombre || 'Sucursal no encontrada'),
         xlsxText(venta.numeroDocumento),
@@ -9521,13 +9587,13 @@
         xlsxMoney(venta.totalCobrado),
         xlsxMoney(venta.saldoPorCobrar),
         xlsxDate(venta.fechaVencimiento),
-        xlsxNumber(getDaysOverdue(venta.fechaVencimiento)),
+        xlsxNumber(getVentaDaysOverdue(venta)),
         xlsxText(venta.estado),
         xlsxText(formatVentaAjustesExport(venta.ajustes)),
         xlsxText(venta.observacion)
       ]);
     });
-    return { name: 'Ventas', rows, cols: [14, 24, 24, 18, 30, 14, 20, 16, 16, 16, 18, 14, 14, 14, 14, 16, 16, 16, 12, 14, 38, 32] };
+    return { name: 'Ventas', rows, cols: [14, 16, 24, 24, 18, 30, 14, 20, 16, 16, 16, 18, 14, 14, 14, 14, 16, 16, 16, 12, 14, 38, 32] };
   }
 
   function buildProveedoresSheet(summary) {
@@ -10260,6 +10326,7 @@ ${rowsXml}
         clienteId,
         sucursalId,
         fechaOc: parseExcelDateValue(pickCell(row, ['Fecha OC', 'Fecha', 'Fecha origen', 'Fecha venta'])),
+        fechaEntrega: parseExcelDateValue(pickCell(row, ['Fecha entrega', 'Fecha de entrega', 'Entrega', 'Fecha recepción', 'Fecha recepcion'])),
         diasCredito: parsePositiveInteger(pickCell(row, ['Días crédito', 'Dias credito', 'Crédito', 'Credito'])),
         fechaVencimiento: parseExcelDateValue(pickCell(row, ['Fecha vencimiento', 'Vencimiento', 'Fecha de vencimiento'])),
         facturas: normalizeFacturasVentaList(pickCell(row, ['Facturas', 'Facturas emitidas', 'Factura emitida'])),

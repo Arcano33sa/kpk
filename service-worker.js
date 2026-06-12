@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_14_post12_resumen_mes_todos';
+const CACHE_VERSION = 'v0_17_17_post12_ventas_fecha_entrega_excel_json_hardening';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
