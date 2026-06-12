@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.17-post12-ventas-fecha-entrega-excel-json-hardening';
+  const APP_VERSION = '0.17.18-post12-ventas-formulario-orden-visual';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -4746,6 +4746,10 @@
             <input type="text" name="numeroDocumento" value="${escapeHtml(record?.numeroDocumento || cleanText(draft.numeroDocumento))}" placeholder="Ej. OC-001" required autocomplete="off" />
           </label>
           <label class="form-field">
+            <span>Fecha OC <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <input type="date" name="fechaOc" value="${escapeHtml(fechaOc)}" required data-venta-date />
+          </label>
+          <label class="form-field">
             <span>Cliente <span class="required-dot" aria-label="obligatorio">*</span></span>
             <select name="clienteId" required ${missingCatalogs ? 'disabled' : ''} data-venta-client>
               <option value="">Seleccionar cliente</option>
@@ -4760,16 +4764,8 @@
             </select>
           </label>
           <label class="form-field">
-            <span>Fecha OC <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="date" name="fechaOc" value="${escapeHtml(fechaOc)}" required data-venta-date />
-          </label>
-          <label class="form-field">
             <span>Fecha de entrega</span>
             <input type="date" name="fechaEntrega" value="${escapeHtml(fechaEntrega)}" data-venta-delivery />
-          </label>
-          <label class="form-field">
-            <span>Días de crédito</span>
-            <input type="number" name="diasCredito" value="${escapeHtml(diasCredito)}" min="0" step="1" inputmode="numeric" data-venta-days />
           </label>
           <label class="form-field">
             <span>Fecha vencimiento</span>
@@ -4782,6 +4778,10 @@
           <label class="form-field">
             <span>Descuento C$</span>
             <input type="number" name="descuento" value="${escapeHtml(formatNumberInput(record ? record.descuento : draft.descuento))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" data-venta-calc />
+          </label>
+          <label class="form-field venta-credit-days-field">
+            <span>Días de crédito</span>
+            <input type="number" name="diasCredito" value="${escapeHtml(diasCredito)}" min="0" step="1" inputmode="numeric" data-venta-days />
           </label>
         </div>
 

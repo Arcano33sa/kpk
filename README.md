@@ -1,3 +1,12 @@
+# KSA PRÁCTIKA — Post12 Ventas / OC: formulario orden visual
+
+- Se reordenó visualmente el bloque principal de Crear venta / OC: Número OC / Fecha OC, Cliente / Sucursal, Fecha de entrega / Fecha vencimiento, Subtotal / Descuento y Días de crédito al final.
+- El cambio es solo visual: no altera cálculos, almacenamiento, JSON, Excel, mora, cierre, resumen ni vencimientos.
+- Días de crédito conserva la lógica vigente: usa Fecha de entrega cuando existe y Fecha OC como respaldo.
+- Se actualiza versión/cache PWA a `0.17.18-post12-ventas-formulario-orden-visual`.
+
+---
+
 # KSA PRÁCTIKA — Post12 Ventas / OC: captura masiva inteligente de facturas
 
 - Ventas / OC permite varias facturas dentro de una misma OC, cada una solo con número de factura.
