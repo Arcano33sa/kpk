@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.13-post12-resumen-tarjetas-utilidad';
+  const APP_VERSION = '0.17.14-post12-resumen-mes-todos';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -301,7 +301,7 @@
   };
 
   let resumenState = {
-    month: String(new Date().getMonth() + 1).padStart(2, '0'),
+    month: '',
     year: String(new Date().getFullYear()),
     dateFrom: '',
     dateTo: '',
