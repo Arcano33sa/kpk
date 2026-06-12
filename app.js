@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.18-post12-ventas-formulario-orden-visual';
+  const APP_VERSION = '0.17.19-post12-ventas-layout-ajuste-derecha';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -4448,7 +4448,7 @@
         </section>
 
         <div class="ventas-layout">
-          <div class="ventas-form-stack">
+          <div class="ventas-left-column">
             <article class="panel-card venta-form-card">
               <div class="section-title-row">
                 <div>
@@ -4458,6 +4458,19 @@
               </div>
               <p class="muted-text">La venta se calcula como Subtotal - Descuento = Total. Los ajustes posteriores siguen ligados a la OC y no son cobros.</p>
               ${renderVentaForm(null, clientesActivos, sucursalesActivas, missingCatalogs, ventasState.quickCapture)}
+            </article>
+          </div>
+
+          <div class="ventas-right-column">
+            <article class="panel-card venta-list-card">
+              <div class="section-title-row">
+                <div>
+                  <span class="eyebrow mini">Listado</span>
+                  <h2>OC registradas</h2>
+                </div>
+                <div class="count-pill">${ventas.length} registros</div>
+              </div>
+              ${renderVentasList(ventas)}
             </article>
 
             <article class="panel-card venta-ajuste-card">
@@ -4471,17 +4484,6 @@
               ${renderVentaAjusteForm(ventasAjustables)}
             </article>
           </div>
-
-          <article class="panel-card venta-list-card">
-            <div class="section-title-row">
-              <div>
-                <span class="eyebrow mini">Listado</span>
-                <h2>OC registradas</h2>
-              </div>
-              <div class="count-pill">${ventas.length} registros</div>
-            </div>
-            ${renderVentasList(ventas)}
-          </article>
         </div>
         ${editingRecord ? renderEditModal(getVentaModalId(), 'Editar venta / OC', 'La edición se guarda sobre la OC actual, mantiene ajustes/notas y recalcula saldo real.', renderVentaForm(editingRecord, clientesActivos, sucursalesActivas, missingCatalogs)) : ''}
       </section>

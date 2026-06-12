@@ -3917,3 +3917,53 @@ textarea:disabled {
 body {
   overflow-x: hidden;
 }
+
+/* Post12 Ventas / OC — layout responsive: ajuste debajo de OC en pantallas anchas */
+.ventas-layout {
+  grid-template-columns: minmax(360px, 0.9fr) minmax(0, 1.1fr);
+  align-items: start;
+}
+
+.ventas-left-column,
+.ventas-right-column {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  align-content: start;
+}
+
+.ventas-right-column {
+  grid-template-rows: auto auto;
+}
+
+.venta-list-card {
+  order: 1;
+}
+
+.venta-ajuste-card {
+  order: 2;
+}
+
+@media (max-width: 899px) {
+  .ventas-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ventas-left-column,
+  .ventas-right-column {
+    display: contents;
+  }
+
+  .venta-form-card {
+    order: 1;
+  }
+
+  .venta-ajuste-card {
+    order: 2;
+  }
+
+  .venta-list-card {
+    order: 3;
+  }
+}
+

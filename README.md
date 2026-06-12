@@ -1,3 +1,13 @@
+# KSA PRÁCTIKA — Post12 Ventas / OC: layout ajuste derecha
+
+- Se reacomodó visualmente Ventas / OC en pantallas anchas: Crear venta / OC queda a la izquierda y, a la derecha, OC registradas arriba con Registrar ajuste debajo.
+- OC registradas puede expandirse normalmente y Registrar ajuste baja de forma natural, sin superposición ni flotación rara.
+- En iPad vertical y móvil se conserva el orden vertical: Crear venta / OC, Registrar ajuste, OC registradas.
+- Cambio solo estético: no se alteran cálculos, lógica de negocio, almacenamiento, JSON, Excel, mora, cierre, resumen ni PWA salvo versión/cache.
+- Se actualiza versión/cache PWA a `0.17.19-post12-ventas-layout-ajuste-derecha`.
+
+---
+
 # KSA PRÁCTIKA — Post12 Ventas / OC: formulario orden visual
 
 - Se reordenó visualmente el bloque principal de Crear venta / OC: Número OC / Fecha OC, Cliente / Sucursal, Fecha de entrega / Fecha vencimiento, Subtotal / Descuento y Días de crédito al final.
