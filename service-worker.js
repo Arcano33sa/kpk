@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_19_post12_ventas_layout_ajuste_derecha';
+const CACHE_VERSION = 'v0_17_21_post12_mora_excel_grid_flexible';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

@@ -3967,3 +3967,232 @@ body {
   }
 }
 
+
+
+/* Etapa 1/2 — Resumen / Tablero: rejilla flexible compacta */
+.resumen-shell {
+  gap: 12px;
+}
+
+.resumen-filter-panel {
+  padding: 16px;
+}
+
+.resumen-filter-panel .section-title-row {
+  margin-bottom: 8px;
+}
+
+.resumen-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  gap: 10px;
+  align-items: end;
+  margin-top: 10px;
+}
+
+.resumen-filter-grid .form-field {
+  gap: 5px;
+}
+
+.resumen-filter-grid .form-field span {
+  font-size: 0.78rem;
+}
+
+.resumen-filter-grid .form-field input,
+.resumen-filter-grid .form-field select {
+  min-height: 44px;
+  padding: 10px 11px;
+  border-radius: 13px;
+}
+
+.filter-help {
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.filter-help span {
+  padding: 6px 8px;
+  font-size: 0.7rem;
+}
+
+.resumen-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 165px), 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+
+.resumen-metrics .metric-card {
+  display: grid;
+  align-content: center;
+  min-height: 104px;
+  padding: 12px 13px;
+  border-radius: 16px;
+}
+
+.resumen-metrics .metric-card span {
+  font-size: 0.74rem;
+  line-height: 1.16;
+}
+
+.resumen-metrics .metric-card strong {
+  margin-top: 3px;
+  font-size: clamp(0.98rem, 1.35vw, 1.2rem);
+  line-height: 1.13;
+}
+
+.resumen-metrics .metric-card small {
+  margin-top: 3px;
+  font-size: 0.68rem;
+  line-height: 1.18;
+}
+
+.resumen-utility-note {
+  margin: -4px 0 2px;
+}
+
+@media (min-width: 621px) and (max-width: 900px) {
+  .resumen-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .resumen-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .resumen-filter-panel {
+    padding: 14px;
+  }
+
+  .resumen-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .resumen-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .resumen-metrics .metric-card {
+    min-height: 92px;
+  }
+}
+
+@media (max-width: 420px) {
+  .resumen-filter-panel .section-title-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+/* Etapa 2/2 — Mora, Alertas y Excel / Cierre con rejilla flexible */
+.mora-shell > .metric-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  gap: 10px;
+}
+
+.mora-shell > .metric-grid .metric-card {
+  display: grid;
+  align-content: center;
+  min-height: 92px;
+  padding: 12px 13px;
+}
+
+.mora-two-columns {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
+}
+
+.alert-grid,
+.alert-detail-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+}
+
+.alert-card,
+.mini-list-card {
+  padding: 13px;
+}
+
+.range-summary {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 118px), 1fr));
+}
+
+.import-shell,
+.excel-stage-shell {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  align-items: start;
+}
+
+.import-summary-grid,
+.compact-summary,
+.excel-stage-shell .periodo-cierre-grid,
+.excel-stage-shell .periodo-detail-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 155px), 1fr));
+}
+
+.excel-stage-shell > .panel-card.import-card.full-span {
+  grid-column: auto;
+}
+
+.excel-stage-shell > .panel-card.import-card.full-span:nth-child(3) {
+  grid-column: 1 / -1;
+}
+
+.excel-stage-shell .import-card,
+.import-shell .import-card {
+  align-self: start;
+}
+
+.excel-stage-shell .notice,
+.import-shell .notice {
+  margin-bottom: 12px;
+}
+
+.excel-stage-shell .badge-row,
+.import-shell .badge-row {
+  gap: 8px;
+}
+
+.compact-period-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 220px));
+}
+
+.cierre-status-card {
+  gap: 9px;
+  padding: 12px;
+}
+
+@media (min-width: 621px) and (max-width: 900px) {
+  .mora-shell > .metric-grid,
+  .import-summary-grid,
+  .compact-summary,
+  .excel-stage-shell .periodo-cierre-grid,
+  .excel-stage-shell .periodo-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .alert-grid,
+  .alert-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .mora-shell > .metric-grid,
+  .mora-two-columns,
+  .alert-grid,
+  .alert-detail-grid,
+  .import-shell,
+  .excel-stage-shell,
+  .import-summary-grid,
+  .compact-summary,
+  .excel-stage-shell .periodo-cierre-grid,
+  .excel-stage-shell .periodo-detail-grid,
+  .compact-period-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mora-shell > .metric-grid .metric-card {
+    min-height: 84px;
+  }
+}

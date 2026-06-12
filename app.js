@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.19-post12-ventas-layout-ajuste-derecha';
+  const APP_VERSION = '0.17.20-post12-resumen-grid-flexible';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
