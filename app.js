@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.28-post12-bdatos-etapa2-buscar-medio';
+  const APP_VERSION = '0.17.29-post12-bdatos-etapa1-copiar-articulo';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -5573,6 +5573,7 @@
         <td class="amount-cell"><span>${escapeHtml(formatMoney(record.precio))}</span></td>
         <td class="actions-cell">
           <div class="record-actions compact-row-actions">
+            <button type="button" class="secondary-action compact" data-bdatos-copy="${escapeHtml(record.id)}">Copiar</button>
             <button type="button" class="secondary-action compact" data-bdatos-edit="${escapeHtml(record.id)}">Editar</button>
             <button type="button" class="danger-action compact" data-bdatos-delete="${escapeHtml(record.id)}">Borrar</button>
           </div>
@@ -5716,6 +5717,75 @@
       detail: buildActivityDetail(['Artículo borrado', record.codigo, record.descripcion]),
       source: 'local'
     });
+    renderRoute({ preserveScroll: true });
+  }
+
+  function fallbackCopyTextToClipboard(text) {
+    const activeElement = document.activeElement;
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.top = '-9999px';
+    textarea.style.left = '-9999px';
+    textarea.style.width = '1px';
+    textarea.style.height = '1px';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    try {
+      textarea.focus({ preventScroll: true });
+    } catch (error) {
+      textarea.focus();
+    }
+    textarea.select();
+    textarea.setSelectionRange(0, text.length);
+
+    let copied = false;
+    try {
+      copied = document.execCommand('copy');
+    } catch (error) {
+      copied = false;
+    } finally {
+      document.body.removeChild(textarea);
+      if (activeElement && typeof activeElement.focus === 'function') {
+        try {
+          activeElement.focus({ preventScroll: true });
+        } catch (error) {
+          activeElement.focus();
+        }
+      }
+    }
+    return copied;
+  }
+
+  async function copyTextToClipboard(text) {
+    if (!text) return false;
+    if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (error) {
+        // Se intenta fallback abajo para Safari/iPad/PWA sin ensuciar consola.
+      }
+    }
+    return fallbackCopyTextToClipboard(text);
+  }
+
+  async function copyBdatosRecord(recordId) {
+    const record = getBdatosRecords().find((item) => item.id === recordId);
+    if (!record) {
+      bdatosState.message = 'No se pudo copiar';
+      bdatosState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+
+    const codigo = cleanText(record.codigo);
+    const descripcion = cleanText(record.descripcion);
+    const copyText = `${codigo} - ${descripcion}`;
+    const copied = await copyTextToClipboard(copyText);
+    bdatosState.message = copied ? 'Copiado' : 'No se pudo copiar';
+    bdatosState.messageType = copied ? 'success' : 'error';
     renderRoute({ preserveScroll: true });
   }
 
@@ -13080,6 +13150,10 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-bdatos-edit-cancel]').forEach((button) => {
       button.addEventListener('click', clearBdatosEdit);
+    });
+
+    viewRoot.querySelectorAll('[data-bdatos-copy]').forEach((button) => {
+      button.addEventListener('click', () => copyBdatosRecord(button.dataset.bdatosCopy));
     });
 
     viewRoot.querySelectorAll('[data-bdatos-edit]').forEach((button) => {
