@@ -4431,6 +4431,9 @@ body {
 .bdatos-layout {
   display: grid;
   grid-template-columns: minmax(280px, 0.78fr) minmax(0, 1.22fr);
+  grid-template-areas:
+    "form search"
+    "form list";
   gap: 16px;
   align-items: start;
 }
@@ -4441,12 +4444,21 @@ body {
   min-width: 0;
 }
 
+.bdatos-form-card {
+  grid-area: form;
+}
+
 .bdatos-search-card {
+  grid-area: search;
   padding: 16px;
 }
 
+.bdatos-list-card {
+  grid-area: list;
+}
+
 .bdatos-search-field {
-  max-width: 680px;
+  max-width: none;
 }
 
 .operational-table-bdatos {
@@ -4472,6 +4484,10 @@ body {
 @media (max-width: 920px) {
   .bdatos-layout {
     grid-template-columns: 1fr;
+    grid-template-areas:
+      "form"
+      "search"
+      "list";
   }
 }
 

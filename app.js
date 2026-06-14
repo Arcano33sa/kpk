@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.27-post12-bdatos-etapa2-excel-integrado';
+  const APP_VERSION = '0.17.28-post12-bdatos-etapa2-buscar-medio';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -5461,13 +5461,6 @@
       <section class="bdatos-shell">
         ${bdatosState.message ? `<div class="form-message ${bdatosState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(bdatosState.message)}</div>` : ''}
 
-        <article class="panel-card bdatos-search-card">
-          <label class="form-field bdatos-search-field">
-            <span>Buscar</span>
-            <input type="search" value="${escapeHtml(bdatosState.search || '')}" placeholder="Buscar por código o descripción..." autocomplete="off" data-bdatos-search />
-          </label>
-        </article>
-
         <div class="bdatos-layout">
           <article class="panel-card bdatos-form-card">
             <div class="section-title-row">
@@ -5478,6 +5471,13 @@
             </div>
             <p class="muted-text">Este formulario solo crea artículos nuevos. La edición se hace en ventana modal para evitar cruces raros.</p>
             ${renderBdatosForm(null, 'create')}
+          </article>
+
+          <article class="panel-card bdatos-search-card">
+            <label class="form-field bdatos-search-field">
+              <span>Buscar</span>
+              <input type="search" value="${escapeHtml(bdatosState.search || '')}" placeholder="Buscar por código o descripción..." autocomplete="off" data-bdatos-search />
+            </label>
           </article>
 
           <article class="panel-card bdatos-list-card">

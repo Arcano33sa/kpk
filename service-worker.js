@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_27_post12_bdatos_etapa2_excel_integrado';
+const CACHE_VERSION = 'v0_17_28_post12_bdatos_etapa2_buscar_medio';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
