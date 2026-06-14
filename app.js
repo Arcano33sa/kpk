@@ -2,9 +2,12 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.20-post12-resumen-grid-flexible';
+  const APP_VERSION = '0.17.25-post12-identidad-equipo-etapa4-comparador-json';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
+  const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
+  const ACTIVITY_LOG_STORAGE_KEY = 'KSA_PRACTIKA_ACTIVITY_LOG_v1';
+  const ACTIVITY_LOG_MAX_ENTRIES = 300;
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
   const COMPRA_AJUSTE_TYPES = ['Faltante', 'Devolución', 'Rebaja', 'Nota de crédito', 'Corrección'];
   const VENTA_AJUSTE_TYPES = ['Quebrado', 'Faltante', 'Devolución', 'Rebaja', 'Nota de crédito', 'Corrección'];
@@ -346,6 +349,7 @@
     isProcessing: false,
     preview: null,
     payload: null,
+    activityLog: [],
     message: null,
     messageType: 'success'
   };
@@ -378,6 +382,520 @@
   function generateId(prefix = 'id') {
     const random = Math.random().toString(36).slice(2, 9);
     return `${prefix}_${Date.now().toString(36)}_${random}`;
+  }
+
+  function createDefaultDeviceIdentity(timestamp = nowIso()) {
+    return {
+      deviceId: generateId('dev'),
+      deviceName: 'Este equipo',
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+  }
+
+  function normalizeDeviceIdentity(identity) {
+    const timestamp = nowIso();
+    const source = isPlainObject(identity) ? identity : {};
+    const fallback = createDefaultDeviceIdentity(timestamp);
+    return {
+      deviceId: cleanText(source.deviceId) || fallback.deviceId,
+      deviceName: cleanText(source.deviceName) || 'Este equipo',
+      createdAt: cleanText(source.createdAt) || timestamp,
+      updatedAt: cleanText(source.updatedAt) || cleanText(source.createdAt) || timestamp,
+      lastActivity: normalizeActivitySummary(source.lastActivity)
+    };
+  }
+
+  function loadDeviceIdentity() {
+    try {
+      const raw = localStorage.getItem(DEVICE_IDENTITY_STORAGE_KEY);
+      const identity = raw ? normalizeDeviceIdentity(JSON.parse(raw)) : createDefaultDeviceIdentity();
+      localStorage.setItem(DEVICE_IDENTITY_STORAGE_KEY, JSON.stringify(identity));
+      return identity;
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: se regeneró la identidad local del equipo.', error);
+      const identity = createDefaultDeviceIdentity();
+      try {
+        localStorage.setItem(DEVICE_IDENTITY_STORAGE_KEY, JSON.stringify(identity));
+      } catch (storageError) {
+        console.warn('KSA PRÁCTIKA: no se pudo guardar la identidad local del equipo.', storageError);
+      }
+      return identity;
+    }
+  }
+
+  function saveDeviceIdentity(identity) {
+    appDeviceIdentity = normalizeDeviceIdentity(identity);
+    try {
+      localStorage.setItem(DEVICE_IDENTITY_STORAGE_KEY, JSON.stringify(appDeviceIdentity));
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo guardar la identidad local del equipo.', error);
+    }
+    return appDeviceIdentity;
+  }
+
+  function getShortDeviceId(deviceId) {
+    const cleanId = cleanText(deviceId);
+    if (!cleanId) return '—';
+    const compact = cleanId.replace(/[^a-z0-9]/gi, '');
+    const suffix = compact.slice(-8) || cleanId.slice(-8);
+    return `...${suffix.toUpperCase()}`;
+  }
+
+  function formatDateTimeOrText(iso, fallbackText) {
+    return cleanText(iso) ? formatDateTime(iso) : fallbackText;
+  }
+
+  function normalizeActivitySummary(summary) {
+    const raw = isPlainObject(summary) ? summary : {};
+    const ts = cleanText(raw.ts || raw.createdAt || raw.updatedAt);
+    const detail = cleanText(raw.detail || raw.detalle);
+    const module = cleanText(raw.module || raw.modulo);
+    const action = cleanText(raw.action || raw.accion);
+    if (!ts && !detail && !module && !action) return null;
+    return {
+      ts,
+      tsVisible: cleanText(raw.tsVisible || raw.fechaVisible) || (ts ? formatDateTime(ts) : ''),
+      deviceId: cleanText(raw.deviceId),
+      deviceName: cleanText(raw.deviceName || raw.equipo),
+      module,
+      action,
+      entityType: cleanText(raw.entityType || raw.tipoEntidad),
+      entityRef: cleanText(raw.entityRef || raw.referencia),
+      amount: Number.isFinite(Number(raw.amount)) ? roundMoney(raw.amount) : '',
+      detail,
+      source: cleanText(raw.source || raw.origen || 'local') || 'local'
+    };
+  }
+
+  function normalizeActivityEntry(record) {
+    const raw = isPlainObject(record) ? record : {};
+    const ts = cleanText(raw.ts || raw.createdAt || raw.updatedAt) || nowIso();
+    const amountValue = Number(raw.amount);
+    return {
+      id: cleanText(raw.id) || generateId('log'),
+      ts,
+      tsVisible: cleanText(raw.tsVisible || raw.fechaVisible) || formatDateTime(ts),
+      deviceId: cleanText(raw.deviceId),
+      deviceName: cleanText(raw.deviceName || raw.equipo) || 'Este equipo',
+      module: cleanText(raw.module || raw.modulo) || 'Sistema',
+      action: cleanText(raw.action || raw.accion) || 'Registrado',
+      entityType: cleanText(raw.entityType || raw.tipoEntidad),
+      entityRef: cleanText(raw.entityRef || raw.referencia),
+      amount: Number.isFinite(amountValue) ? roundMoney(amountValue) : '',
+      detail: cleanText(raw.detail || raw.detalle) || 'Actividad registrada.',
+      source: cleanText(raw.source || raw.origen || 'local') || 'local'
+    };
+  }
+
+  function loadActivityLog() {
+    try {
+      const raw = localStorage.getItem(ACTIVITY_LOG_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed)
+        ? parsed.map((entry) => normalizeActivityEntry(entry)).sort((a, b) => String(b.ts).localeCompare(String(a.ts))).slice(0, ACTIVITY_LOG_MAX_ENTRIES)
+        : [];
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo leer la bitácora local.', error);
+      return [];
+    }
+  }
+
+  function saveActivityLog(entries) {
+    try {
+      const normalized = (Array.isArray(entries) ? entries : [])
+        .map((entry) => normalizeActivityEntry(entry))
+        .sort((a, b) => String(b.ts).localeCompare(String(a.ts)))
+        .slice(0, ACTIVITY_LOG_MAX_ENTRIES);
+      localStorage.setItem(ACTIVITY_LOG_STORAGE_KEY, JSON.stringify(normalized));
+      appActivityLog = normalized;
+      return normalized;
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo guardar la bitácora local.', error);
+      return Array.isArray(appActivityLog) ? appActivityLog : [];
+    }
+  }
+
+  function updateDeviceLastActivity(entry) {
+    try {
+      const normalizedEntry = normalizeActivityEntry(entry);
+      const identity = normalizeDeviceIdentity(appDeviceIdentity);
+      saveDeviceIdentity({
+        ...identity,
+        updatedAt: normalizedEntry.ts,
+        lastActivity: normalizeActivitySummary(normalizedEntry)
+      });
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo actualizar la última actividad del equipo.', error);
+    }
+  }
+
+  function registerActivity(payload = {}) {
+    try {
+      const identity = normalizeDeviceIdentity(appDeviceIdentity);
+      const ts = nowIso();
+      const entry = normalizeActivityEntry({
+        id: generateId('log'),
+        ts,
+        tsVisible: formatDateTime(ts),
+        deviceId: identity.deviceId,
+        deviceName: identity.deviceName,
+        source: 'local',
+        ...payload
+      });
+      const current = Array.isArray(appActivityLog) ? appActivityLog : loadActivityLog();
+      saveActivityLog([entry, ...current]);
+      updateDeviceLastActivity(entry);
+      return entry;
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: la operación principal se guardó, pero no se pudo registrar en bitácora.', error);
+      return null;
+    }
+  }
+
+  function getRecentActivityEntries(limit = 20) {
+    const source = Array.isArray(appActivityLog) ? appActivityLog : loadActivityLog();
+    return source
+      .map((entry) => normalizeActivityEntry(entry))
+      .sort((a, b) => String(b.ts).localeCompare(String(a.ts)))
+      .slice(0, limit);
+  }
+
+  function buildActivityDetail(parts) {
+    return (Array.isArray(parts) ? parts : [])
+      .map((part) => cleanText(part))
+      .filter(Boolean)
+      .join(' · ');
+  }
+
+  function normalizeBackupCounts(rawCounts = {}) {
+    const raw = isPlainObject(rawCounts) ? rawCounts : {};
+    const compras = parsePositiveInteger(raw.comprasProveedores ?? raw.compras ?? raw.proveedores);
+    const pagos = parsePositiveInteger(raw.pagosProveedores ?? raw.pagos);
+    const cierres = parsePositiveInteger(raw.cierresMensuales ?? raw.cierres);
+    const safeNumber = (value) => Number.isNaN(parsePositiveInteger(value)) ? 0 : parsePositiveInteger(value);
+    return {
+      ventas: safeNumber(raw.ventas),
+      cobros: safeNumber(raw.cobros),
+      comprasProveedores: Number.isNaN(compras) ? 0 : compras,
+      proveedores: Number.isNaN(compras) ? 0 : compras,
+      pagosProveedores: Number.isNaN(pagos) ? 0 : pagos,
+      pagos: Number.isNaN(pagos) ? 0 : pagos,
+      gastos: safeNumber(raw.gastos),
+      catalogos: safeNumber(raw.catalogos),
+      cierresMensuales: Number.isNaN(cierres) ? 0 : cierres,
+      cierres: Number.isNaN(cierres) ? 0 : cierres,
+      exportacionesExcel: safeNumber(raw.exportacionesExcel),
+      ajustesClientes: safeNumber(raw.ajustesClientes),
+      ajustesProveedores: safeNumber(raw.ajustesProveedores),
+      bitacora: safeNumber(raw.bitacora)
+    };
+  }
+
+  function getBackupCountsTotal(counts) {
+    const normalized = normalizeBackupCounts(counts);
+    return normalized.ventas
+      + normalized.cobros
+      + normalized.comprasProveedores
+      + normalized.pagosProveedores
+      + normalized.gastos
+      + normalized.catalogos
+      + normalized.cierresMensuales
+      + normalized.exportacionesExcel
+      + normalized.ajustesClientes
+      + normalized.ajustesProveedores
+      + normalized.bitacora;
+  }
+
+  function formatBackupCountsSummary(counts) {
+    const normalized = normalizeBackupCounts(counts);
+    const parts = [
+      `${normalized.ventas} OC`,
+      `${normalized.cobros} cobros`,
+      `${normalized.comprasProveedores} compras`,
+      `${normalized.pagosProveedores} pagos`,
+      `${normalized.gastos} gastos`,
+      `${normalized.bitacora} bitácora`
+    ];
+    return parts.join(', ');
+  }
+
+  function normalizeJsonBackupExportSummary(summary) {
+    const raw = isPlainObject(summary) ? summary : {};
+    const exportedAt = cleanText(raw.exportedAt || raw.fechaExportacion || raw.createdAt);
+    const counts = normalizeBackupCounts(raw.counts || raw.recordCounts || raw.conteos);
+    const lastActivity = normalizeActivitySummary(raw.lastActivity || raw.ultimaActividad);
+    if (!exportedAt && !raw.sourceDeviceName && getBackupCountsTotal(counts) <= 0 && !lastActivity) return null;
+    return {
+      exportedAt,
+      exportedAtDisplay: cleanText(raw.exportedAtDisplay || raw.fechaExportacionVisible) || (exportedAt ? formatDateTime(exportedAt) : ''),
+      sourceDeviceId: cleanText(raw.sourceDeviceId || raw.deviceId),
+      sourceDeviceName: cleanText(raw.sourceDeviceName || raw.deviceName || raw.equipo) || 'Equipo no identificado',
+      fileName: cleanText(raw.fileName || raw.nombreArchivo),
+      counts,
+      lastActivity
+    };
+  }
+
+  function normalizeJsonBackupImportSummary(summary) {
+    const raw = isPlainObject(summary) ? summary : {};
+    const importedAt = cleanText(raw.importedAt || raw.fechaImportacion || raw.createdAt);
+    const exportedAt = cleanText(raw.exportedAt || raw.fechaExportacion || raw.backupDate);
+    const counts = normalizeBackupCounts(raw.counts || raw.recordCounts || raw.conteos);
+    const lastActivity = normalizeActivitySummary(raw.lastActivity || raw.jsonLastActivity || raw.ultimaActividadJson || raw.ultimaActividad);
+    if (!importedAt && !exportedAt && !raw.sourceDeviceName && !raw.mode && getBackupCountsTotal(counts) <= 0 && !lastActivity) return null;
+    return {
+      importedAt,
+      importedAtDisplay: cleanText(raw.importedAtDisplay || raw.fechaImportacionVisible) || (importedAt ? formatDateTime(importedAt) : ''),
+      targetDeviceId: cleanText(raw.targetDeviceId || raw.localDeviceId || raw.equipoDestinoId),
+      targetDeviceName: cleanText(raw.targetDeviceName || raw.localDeviceName || raw.equipoDestino) || 'Este equipo',
+      sourceDeviceId: cleanText(raw.sourceDeviceId || raw.deviceId || raw.equipoOrigenId),
+      sourceDeviceName: cleanText(raw.sourceDeviceName || raw.deviceName || raw.equipoOrigen || raw.equipo) || 'Origen no identificado',
+      mode: cleanText(raw.mode || raw.modo) || 'merge',
+      modeLabel: cleanText(raw.modeLabel || raw.modoVisible) || ((raw.mode || raw.modo) === 'replace' ? 'Reemplazar' : 'Fusionar'),
+      fileName: cleanText(raw.fileName || raw.nombreArchivo),
+      exportedAt,
+      exportedAtDisplay: cleanText(raw.exportedAtDisplay || raw.fechaExportacionVisible) || (exportedAt ? formatDateTime(exportedAt) : ''),
+      counts,
+      lastActivity
+    };
+  }
+
+  function renderLastImportSummaryCard(summary, lastImportAt = '') {
+    const normalized = normalizeJsonBackupImportSummary(summary);
+    if (!normalized) {
+      return `
+        <div class="status-item device-import-summary">
+          <strong>Última importación JSON</strong>
+          <span>${escapeHtml(formatDateTimeOrText(lastImportAt, 'No se ha importado JSON en este equipo.'))}</span>
+        </div>
+      `;
+    }
+    const originLine = buildActivityDetail([
+      normalized.modeLabel,
+      normalized.sourceDeviceName,
+      normalized.importedAtDisplay || formatDateTime(normalized.importedAt)
+    ]);
+    const backupLine = buildActivityDetail([
+      normalized.exportedAtDisplay ? `Exportado ${normalized.exportedAtDisplay}` : '',
+      normalized.fileName
+    ]);
+    const lastActivityText = normalized.lastActivity
+      ? (normalized.lastActivity.detail || buildActivityDetail([normalized.lastActivity.module, normalized.lastActivity.action, normalized.lastActivity.entityRef]))
+      : 'Sin última actividad incluida.';
+    return `
+      <div class="status-item device-import-summary">
+        <strong>Última importación JSON</strong>
+        <span>${escapeHtml(originLine || 'Importación registrada')}</span>
+        ${backupLine ? `<small>${escapeHtml(backupLine)}</small>` : ''}
+        <small>Incluyó: ${escapeHtml(formatBackupCountsSummary(normalized.counts))}</small>
+        <small>Última actividad JSON: ${escapeHtml(lastActivityText)}</small>
+      </div>
+    `;
+  }
+
+  function parseComparableTimestamp(value) {
+    const text = cleanText(value);
+    if (!text) return 0;
+    const parsed = Date.parse(text);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
+  function getComparisonActivityText(activity, fallbackText = 'No registrada.') {
+    const normalized = normalizeActivitySummary(activity);
+    if (!normalized) return fallbackText;
+    return buildActivityDetail([
+      normalized.tsVisible || formatDateTime(normalized.ts),
+      normalized.detail || buildActivityDetail([normalized.module, normalized.action, normalized.entityRef])
+    ]) || fallbackText;
+  }
+
+  function getJsonComparisonModules() {
+    return [
+      { key: 'ventas', label: 'OC / Ventas' },
+      { key: 'cobros', label: 'Cobros' },
+      { key: 'comprasProveedores', label: 'Compras / Proveedores' },
+      { key: 'pagosProveedores', label: 'Pagos' },
+      { key: 'gastos', label: 'Gastos' },
+      { key: 'cierresMensuales', label: 'Cierres' },
+      { key: 'catalogos', label: 'Catálogos' },
+      { key: 'bitacora', label: 'Bitácora' }
+    ];
+  }
+
+  function formatCountDifference(localCount, jsonCount) {
+    const localValue = Number(localCount) || 0;
+    const jsonValue = Number(jsonCount) || 0;
+    const diff = jsonValue - localValue;
+    if (diff > 0) return `JSON trae ${diff} más`;
+    if (diff < 0) return `Local trae ${Math.abs(diff)} más`;
+    return 'Iguales';
+  }
+
+  function buildJsonRecencyIndicator(localTimestamp, jsonTimestamp) {
+    if (!localTimestamp || !jsonTimestamp) {
+      return {
+        status: 'unknown',
+        title: 'No se puede determinar',
+        message: 'No hay suficiente metadata para determinar cuál base es más reciente.'
+      };
+    }
+    if (Math.abs(jsonTimestamp - localTimestamp) < 1000) {
+      return {
+        status: 'unknown',
+        title: 'Sin diferencia clara',
+        message: 'No hay suficiente metadata para determinar cuál base es más reciente.'
+      };
+    }
+    if (jsonTimestamp > localTimestamp) {
+      return {
+        status: 'json-newer',
+        title: 'JSON parece más reciente',
+        message: 'Este JSON parece más reciente que la base local.'
+      };
+    }
+    return {
+      status: 'local-newer',
+      title: 'Base local parece más reciente',
+      message: 'Esta base local parece tener actividad más reciente que el JSON.'
+    };
+  }
+
+  function buildJsonImportComparison({ data, metadataPreview, counts, backupDate, hasMetadata }) {
+    const config = normalizeConfiguracion(appData.configuracion);
+    const identity = normalizeDeviceIdentity(appDeviceIdentity);
+    const localActivity = normalizeActivitySummary(getRecentActivityEntries(1)[0] || identity.lastActivity);
+    const jsonActivity = normalizeActivitySummary(metadataPreview?.lastActivity);
+    const localCounts = getJsonRecordCounts(appData, getRecentActivityEntries(ACTIVITY_LOG_MAX_ENTRIES));
+    const jsonCounts = normalizeBackupCounts(counts || getJsonRecordCounts(data));
+    jsonCounts.total = getBackupCountsTotal(jsonCounts);
+    const localBackupSummary = normalizeJsonBackupExportSummary(config.lastJsonBackupSummary);
+    const localImportSummary = normalizeJsonBackupImportSummary(config.lastJsonImportSummary);
+    const localTimestamp = parseComparableTimestamp(localActivity?.ts || identity.updatedAt || appData.metadata?.updatedAt);
+    const jsonTimestamp = parseComparableTimestamp(jsonActivity?.ts || backupDate || metadataPreview?.exportedAt);
+    const modules = getJsonComparisonModules();
+    const rows = modules.map((module) => ({
+      ...module,
+      local: Number(localCounts[module.key]) || 0,
+      json: Number(jsonCounts[module.key]) || 0,
+      difference: formatCountDifference(localCounts[module.key], jsonCounts[module.key])
+    }));
+
+    return {
+      local: {
+        deviceName: identity.deviceName,
+        deviceId: identity.deviceId,
+        lastActivity: localActivity,
+        lastActivityText: getComparisonActivityText(localActivity, 'Sin actividad local registrada.'),
+        lastBackupText: localBackupSummary
+          ? buildActivityDetail([localBackupSummary.sourceDeviceName, localBackupSummary.exportedAtDisplay || formatDateTime(localBackupSummary.exportedAt)])
+          : 'No se ha exportado JSON desde este equipo.',
+        lastImportText: localImportSummary
+          ? buildActivityDetail([localImportSummary.modeLabel, localImportSummary.sourceDeviceName, localImportSummary.importedAtDisplay || formatDateTime(localImportSummary.importedAt)])
+          : formatDateTimeOrText(config.lastImportAt, 'No se ha importado JSON en este equipo.'),
+        counts: localCounts,
+        timestamp: localTimestamp
+      },
+      json: {
+        deviceName: cleanText(metadataPreview?.sourceDeviceName) || (hasMetadata ? 'Equipo no identificado' : 'Respaldo sin metadata de origen'),
+        deviceId: cleanText(metadataPreview?.sourceDeviceId),
+        exportedAt: cleanText(metadataPreview?.exportedAt || backupDate),
+        exportedAtDisplay: cleanText(metadataPreview?.exportedAtDisplay) || formatDateTime(backupDate),
+        lastActivity: jsonActivity,
+        lastActivityText: getComparisonActivityText(jsonActivity, hasMetadata ? 'No incluida.' : 'Respaldo sin metadata de origen.'),
+        counts: jsonCounts,
+        backupVersion: cleanText(metadataPreview?.backupVersion) || '',
+        hasMetadata: Boolean(hasMetadata),
+        timestamp: jsonTimestamp
+      },
+      rows,
+      recency: buildJsonRecencyIndicator(localTimestamp, jsonTimestamp)
+    };
+  }
+
+  function buildJsonImportSummary(preview, selectedMode, fileName) {
+    const identity = normalizeDeviceIdentity(appDeviceIdentity);
+    const origin = preview?.metadata || {};
+    const importedAt = nowIso();
+    const exportedAt = cleanText(origin.exportedAt || preview?.backupDate);
+    return normalizeJsonBackupImportSummary({
+      importedAt,
+      importedAtDisplay: formatDateTime(importedAt),
+      targetDeviceId: identity.deviceId,
+      targetDeviceName: identity.deviceName,
+      sourceDeviceId: cleanText(origin.sourceDeviceId),
+      sourceDeviceName: cleanText(origin.sourceDeviceName) || (preview?.hasMetadata ? 'Equipo no identificado' : 'Respaldo sin metadata de origen'),
+      mode: selectedMode,
+      modeLabel: selectedMode === 'replace' ? 'Reemplazar' : 'Fusionar',
+      fileName,
+      exportedAt,
+      exportedAtDisplay: cleanText(origin.exportedAtDisplay) || formatDateTime(exportedAt),
+      counts: preview?.counts,
+      lastActivity: normalizeActivitySummary(origin.lastActivity)
+    });
+  }
+
+  function renderLastBackupSummaryCard(summary) {
+    const normalized = normalizeJsonBackupExportSummary(summary);
+    if (!normalized) {
+      return `
+        <div class="status-item device-backup-summary">
+          <strong>Último respaldo JSON exportado</strong>
+          <span>No se ha exportado JSON desde este equipo.</span>
+        </div>
+      `;
+    }
+    const originLine = buildActivityDetail([
+      normalized.sourceDeviceName,
+      normalized.exportedAtDisplay || formatDateTime(normalized.exportedAt)
+    ]);
+    const lastActivity = normalized.lastActivity;
+    const lastActivityText = lastActivity
+      ? (lastActivity.detail || buildActivityDetail([lastActivity.module, lastActivity.action, lastActivity.entityRef]))
+      : 'Sin última actividad incluida.';
+    return `
+      <div class="status-item device-backup-summary">
+        <strong>Último respaldo JSON exportado</strong>
+        <span>${escapeHtml(originLine || 'Origen no identificado')}</span>
+        <small>Incluye: ${escapeHtml(formatBackupCountsSummary(normalized.counts))}</small>
+        <small>Última actividad incluida: ${escapeHtml(lastActivityText)}</small>
+      </div>
+    `;
+  }
+
+  function extractActivityLogFromJsonBackup(raw) {
+    if (!isPlainObject(raw)) return [];
+    const registros = isPlainObject(raw.registros) ? raw.registros : {};
+    const direct = Array.isArray(raw.bitacora) ? raw.bitacora : [];
+    const nested = Array.isArray(registros.bitacora) ? registros.bitacora : [];
+    const metadataActivity = normalizeActivitySummary(raw.metadata?.lastActivity || raw.metadata?.ultimaActividad);
+    const combined = [...nested, ...direct];
+    if (metadataActivity) combined.push(metadataActivity);
+    const seen = new Set();
+    return combined
+      .map((entry) => normalizeActivityEntry({ ...entry, source: cleanText(entry?.source || entry?.origen || 'importado') || 'importado' }))
+      .filter((entry) => {
+        const key = cleanText(entry.id) || [entry.ts, entry.deviceId, entry.module, entry.action, entry.detail].join('|');
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, ACTIVITY_LOG_MAX_ENTRIES);
+  }
+
+  function mergeImportedActivityLog(entries = []) {
+    const incoming = (Array.isArray(entries) ? entries : []).map((entry) => normalizeActivityEntry({ ...entry, source: cleanText(entry.source || 'importado') || 'importado' }));
+    if (!incoming.length) return { added: 0, skipped: 0 };
+    const current = getRecentActivityEntries(ACTIVITY_LOG_MAX_ENTRIES);
+    const seen = new Set(current.map((entry) => cleanText(entry.id) || [entry.ts, entry.deviceId, entry.module, entry.action, entry.detail].join('|')));
+    const toAdd = incoming.filter((entry) => {
+      const key = cleanText(entry.id) || [entry.ts, entry.deviceId, entry.module, entry.action, entry.detail].join('|');
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (toAdd.length) saveActivityLog([...toAdd, ...current]);
+    return { added: toAdd.length, skipped: incoming.length - toAdd.length };
   }
 
   function createInitialData() {
@@ -425,7 +943,9 @@
       diasAlertaVencimiento: 7,
       backupModeNote: 'JSON es respaldo y traslado manual, no sincronización automática.',
       lastBackupAt: '',
+      lastJsonBackupSummary: null,
       lastImportAt: '',
+      lastJsonImportSummary: null,
       pwaLastSearchAt: '',
       pwaLastUpdateAt: '',
       updatedAt: timestamp
@@ -451,7 +971,9 @@
       excelReferencia: cleanText(source.excelReferencia || base.excelReferencia) || '0000- CONTROL.xlsx',
       diasAlertaVencimiento: Number.isNaN(alertDays) ? base.diasAlertaVencimiento : alertDays,
       lastBackupAt: cleanText(source.lastBackupAt),
+      lastJsonBackupSummary: normalizeJsonBackupExportSummary(source.lastJsonBackupSummary),
       lastImportAt: cleanText(source.lastImportAt),
+      lastJsonImportSummary: normalizeJsonBackupImportSummary(source.lastJsonImportSummary),
       pwaLastSearchAt: cleanText(source.pwaLastSearchAt),
       pwaLastUpdateAt: cleanText(source.pwaLastUpdateAt),
       updatedAt: source.updatedAt || nowIso()
@@ -1490,6 +2012,8 @@
   }
 
   let appData = loadData();
+  let appDeviceIdentity = loadDeviceIdentity();
+  let appActivityLog = loadActivityLog();
 
   function getCurrentRole() {
     const role = appData?.configuracion?.currentRole;
@@ -5176,6 +5700,15 @@
     ventasState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${venta.numeroDocumento}. Saldo recalculado sin crear cobro.`;
     ventasState.messageType = 'success';
     saveData(appData);
+    registerActivity({
+      module: 'Ventas / OC',
+      action: 'Ajuste registrado',
+      entityType: 'Ajuste cliente',
+      entityRef: venta.numeroDocumento,
+      amount: ajuste.monto,
+      detail: buildActivityDetail(['Ajuste cliente registrado', venta.numeroDocumento, ajuste.tipo, formatMoney(ajuste.monto)]),
+      source: 'local'
+    });
     renderRoute();
   }
 
@@ -5301,6 +5834,15 @@
     openAccordionGroupForRecord('ventas', savedRecord);
     ventasState.messageType = 'success';
     saveData(appData);
+    registerActivity({
+      module: 'Ventas / OC',
+      action: existingRecord ? 'Editado' : 'Creado',
+      entityType: 'OC',
+      entityRef: newRecord.numeroDocumento,
+      amount: newRecord.ventaNetaAjustada || newRecord.total || newRecord.ventaNetaOriginal,
+      detail: buildActivityDetail([existingRecord ? 'OC editada' : 'OC creada', newRecord.numeroDocumento, formatMoney(newRecord.ventaNetaAjustada || newRecord.total || newRecord.ventaNetaOriginal)]),
+      source: 'local'
+    });
     renderRoute();
   }
 
@@ -6060,6 +6602,15 @@
     cobrosState.editingId = null;
     cobrosState.messageType = 'success';
     saveData(appData);
+    registerActivity({
+      module: 'Cobros',
+      action: existingRecord ? 'Editado' : 'Creado',
+      entityType: 'Cobro',
+      entityRef: `OC ${newRecord.numeroDocumento}`,
+      amount: newRecord.montoCobrado,
+      detail: buildActivityDetail([existingRecord ? 'Cobro editado' : 'Cobro registrado', `OC ${newRecord.numeroDocumento}`, formatMoney(newRecord.montoCobrado)]),
+      source: 'local'
+    });
     renderRoute();
   }
 
@@ -6759,6 +7310,26 @@
     if (syncResult.pago) openAccordionGroupForRecord('pagos', syncResult.pago);
     proveedoresState.messageType = 'success';
     saveData(appData);
+    registerActivity({
+      module: 'Proveedores / Compras',
+      action: existingRecord ? 'Editado' : 'Creado',
+      entityType: 'Compra',
+      entityRef: newRecord.facturaReferencia,
+      amount: newRecord.totalAjustado || newRecord.totalCompra,
+      detail: buildActivityDetail([existingRecord ? 'Compra editada' : 'Compra registrada', newRecord.facturaReferencia, formatMoney(newRecord.totalAjustado || newRecord.totalCompra)]),
+      source: 'local'
+    });
+    if (syncResult.pago && (syncResult.action === 'created' || syncResult.action === 'updated')) {
+      registerActivity({
+        module: 'Pagos',
+        action: syncResult.action === 'created' ? 'Creado' : 'Editado',
+        entityType: 'Pago automático',
+        entityRef: newRecord.facturaReferencia,
+        amount: syncResult.pago.montoPagado,
+        detail: buildActivityDetail(['Pago automático de contado', newRecord.facturaReferencia, formatMoney(syncResult.pago.montoPagado)]),
+        source: 'sistema'
+      });
+    }
     renderRoute();
   }
 
@@ -6891,6 +7462,15 @@
     if (syncResult.action === 'updated') proveedoresState.message += ' Pago automático de contado sincronizado defensivamente.';
     proveedoresState.messageType = 'success';
     saveData(appData);
+    registerActivity({
+      module: 'Proveedores / Compras',
+      action: 'Ajuste registrado',
+      entityType: 'Ajuste proveedor',
+      entityRef: compra.facturaReferencia,
+      amount: ajuste.monto,
+      detail: buildActivityDetail(['Ajuste proveedor registrado', compra.facturaReferencia, ajuste.tipo, formatMoney(ajuste.monto)]),
+      source: 'local'
+    });
     renderRoute();
   }
 
@@ -7532,6 +8112,15 @@
     pagosState.editingId = null;
     pagosState.messageType = 'success';
     saveData(appData);
+    registerActivity({
+      module: 'Pagos',
+      action: existingRecord ? 'Editado' : 'Creado',
+      entityType: 'Pago',
+      entityRef: newRecord.facturaReferencia,
+      amount: newRecord.montoPagado,
+      detail: buildActivityDetail([existingRecord ? 'Pago editado' : 'Pago registrado', newRecord.facturaReferencia, formatMoney(newRecord.montoPagado)]),
+      source: 'local'
+    });
     renderRoute();
   }
 
@@ -7928,6 +8517,15 @@
     openAccordionGroupForRecord('gastos', newRecord);
     gastosState.messageType = 'success';
     saveData(appData);
+    registerActivity({
+      module: 'Gastos',
+      action: existingRecord ? 'Editado' : 'Creado',
+      entityType: 'Gasto',
+      entityRef: newRecord.tipoGastoNombre || newRecord.tipoGastoId,
+      amount: newRecord.monto,
+      detail: buildActivityDetail([existingRecord ? 'Gasto editado' : 'Gasto registrado', newRecord.tipoGastoNombre || 'Gasto', formatMoney(newRecord.monto)]),
+      source: 'local'
+    });
     renderRoute();
   }
 
@@ -7986,7 +8584,7 @@
     const currentRole = getCurrentRoleDefinition();
     const counts = getJsonRecordCounts(appData);
     const preview = jsonBackupState.preview;
-    const hasPreview = Boolean(preview && jsonBackupState.payload);
+    const hasPreview = Boolean(preview);
     const canExport = canCurrentRole('exportJson');
     const canImport = canCurrentRole('importJson');
     const canConfig = canCurrentRole('changeConfig');
@@ -7995,15 +8593,20 @@
         <label class="form-field">
           <span>Modo de importación JSON</span>
           <select data-json-import-mode>
-            <option value="merge">Fusionar con datos actuales evitando duplicados por ID y claves naturales</option>
-            <option value="replace">Reemplazar datos actuales por el respaldo validado</option>
+            <option value="merge">Fusionar</option>
+            <option value="replace">Reemplazar</option>
           </select>
         </label>
-        <p class="notice">Reemplazar borra la base local actual y carga la del JSON. Fusionar agrega lo faltante sin duplicar lo evidente. No es magia, pero se le acerca con casco.</p>
+        <div class="json-mode-guidance">
+          <div class="status-item"><strong>Fusionar</strong><span>Conserva los datos actuales y agrega registros faltantes evitando duplicados. No garantiza actualizar versiones editadas de registros ya existentes.</span></div>
+          <div class="status-item is-danger-soft"><strong>Reemplazar</strong><span>Reemplaza la base local por el contenido del JSON. Puede perder datos locales que no estén dentro del respaldo.</span></div>
+        </div>
       `
       : `
         <input type="hidden" data-json-import-mode value="replace" />
-        <p class="notice">La base operativa está vacía. El JSON validado puede cargarse como base inicial.</p>
+        <div class="json-mode-guidance">
+          <div class="status-item is-danger-soft"><strong>Reemplazar</strong><span>La base operativa está vacía. El JSON validado puede cargarse como base inicial, reemplazando el contenido local vacío.</span></div>
+        </div>
       `;
 
     return `
@@ -8094,6 +8697,8 @@
 
           ${renderPwaUpdateCard(config)}
 
+          ${renderDeviceIdentityCard(config)}
+
           <article class="panel-card config-card full-span">
             <div class="section-title-row">
               <div>
@@ -8161,6 +8766,100 @@
     `;
   }
 
+  function renderDeviceIdentityCard(config) {
+    const identity = normalizeDeviceIdentity(appDeviceIdentity);
+    const lastActivity = normalizeActivitySummary(identity.lastActivity);
+    const lastImportAt = cleanText(config?.lastImportAt);
+    const lastActivityText = lastActivity
+      ? buildActivityDetail([
+          `${lastActivity.deviceName || identity.deviceName} · ${lastActivity.tsVisible || formatDateTime(lastActivity.ts)}`,
+          lastActivity.detail || buildActivityDetail([lastActivity.module, lastActivity.action, lastActivity.entityRef])
+        ])
+      : 'Sin actividad registrada todavía.';
+
+    return `
+      <article class="panel-card config-card full-span device-identity-card">
+        <div class="section-title-row">
+          <div>
+            <span class="eyebrow mini">Equipo local</span>
+            <h2>Identidad del equipo</h2>
+          </div>
+        </div>
+        <p class="notice">Nombra este dispositivo para reconocer desde dónde trabajas. Esta identidad vive solo en este equipo y no cambia ventas, cobros, Excel ni la base de negocio.</p>
+        <form class="config-form device-identity-form" data-device-identity-form novalidate>
+          <div class="form-grid device-identity-grid">
+            <label class="form-field">
+              <span>Nombre de este equipo</span>
+              <input type="text" name="deviceName" value="${escapeHtml(identity.deviceName)}" placeholder="Laptop, iPad, iMac oficina..." autocomplete="off" />
+            </label>
+            <div class="device-id-box" aria-label="Referencia interna del equipo">
+              <span>ID interno</span>
+              <strong>${escapeHtml(getShortDeviceId(identity.deviceId))}</strong>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="card-action">Guardar identidad</button>
+          </div>
+        </form>
+        <div class="import-summary-grid compact-summary device-summary-grid">
+          <div class="status-item"><strong>Equipo actual</strong><span>${escapeHtml(identity.deviceName)}</span></div>
+          <div class="status-item"><strong>ID interno</strong><span>${escapeHtml(getShortDeviceId(identity.deviceId))}</span></div>
+          <div class="status-item device-last-activity"><strong>Última actividad local</strong><span>${escapeHtml(lastActivityText)}</span></div>
+          ${renderLastBackupSummaryCard(config?.lastJsonBackupSummary)}
+          ${renderLastImportSummaryCard(config?.lastJsonImportSummary, lastImportAt)}
+          <div class="status-item"><strong>Creada</strong><span>${escapeHtml(formatDateTime(identity.createdAt))}</span></div>
+        </div>
+        ${renderActivityLogList()}
+      </article>
+    `;
+  }
+
+  function renderActivityLogList() {
+    const entries = getRecentActivityEntries(20);
+    const headers = `
+      <th>Fecha</th>
+      <th>Equipo</th>
+      <th>Módulo</th>
+      <th>Acción</th>
+      <th>Detalle</th>
+    `;
+    const rows = entries.length
+      ? entries.map((entry) => `
+        <tr class="compact-record-row">
+          <td><span class="compact-primary">${escapeHtml(entry.tsVisible || formatDateTime(entry.ts))}</span><small>${escapeHtml(entry.source)}</small></td>
+          <td><span>${escapeHtml(entry.deviceName)}</span><small>${escapeHtml(getShortDeviceId(entry.deviceId))}</small></td>
+          <td><span>${escapeHtml(entry.module)}</span></td>
+          <td><span>${escapeHtml(entry.action)}</span><small>${escapeHtml(entry.entityType)}</small></td>
+          <td><span>${escapeHtml(entry.detail)}</span>${entry.entityRef ? `<small>${escapeHtml(entry.entityRef)}</small>` : ''}</td>
+        </tr>
+      `).join('')
+      : `
+        <tr class="compact-record-row">
+          <td colspan="5"><span class="compact-primary">La bitácora registrará actividades nuevas desde esta versión.</span><small>No se reconstruye historial pasado.</small></td>
+        </tr>
+      `;
+
+    return `
+      <div class="activity-log-section">
+        <div class="compact-title-row">
+          <div>
+            <span class="eyebrow mini">Bitácora local</span>
+            <h3>Últimas actividades</h3>
+          </div>
+          <span class="compact-note">Últimas ${entries.length || 0} actividades</span>
+        </div>
+        ${renderOperationalTableShell({
+          shellClass: 'activity-log-scroll-shell',
+          wrapClass: 'activity-log-table-wrap',
+          ariaLabel: 'Últimas actividades locales por equipo',
+          tableClass: 'activity-log-table',
+          headers,
+          rows
+        })}
+      </div>
+    `;
+  }
+
   function renderPwaUpdateCard(config) {
     const swSupported = typeof navigator !== 'undefined' && 'serviceWorker' in navigator;
     const isStandalone = Boolean(
@@ -8202,6 +8901,78 @@
     `;
   }
 
+  function renderJsonComparisonTable(comparison) {
+    const rows = Array.isArray(comparison?.rows) ? comparison.rows : [];
+    const headers = `
+      <th>Módulo</th>
+      <th>Local</th>
+      <th>JSON</th>
+      <th>Diferencia</th>
+    `;
+    const bodyRows = rows.length
+      ? rows.map((row) => `
+        <tr class="compact-record-row">
+          <td><span class="compact-primary">${escapeHtml(row.label)}</span></td>
+          <td><span>${escapeHtml(row.local)}</span></td>
+          <td><span>${escapeHtml(row.json)}</span></td>
+          <td><span>${escapeHtml(row.difference)}</span></td>
+        </tr>
+      `).join('')
+      : `
+        <tr class="compact-record-row">
+          <td colspan="4"><span class="compact-primary">No hay conteos comparables.</span><small>El JSON puede ser antiguo o incompatible.</small></td>
+        </tr>
+      `;
+    return renderOperationalTableShell({
+      shellClass: 'json-comparison-scroll-shell',
+      wrapClass: 'json-comparison-table-wrap',
+      ariaLabel: 'Conteos comparados entre base local y JSON seleccionado',
+      tableClass: 'json-comparison-table',
+      headers,
+      rows: bodyRows
+    });
+  }
+
+  function renderJsonImportComparison(comparison) {
+    if (!comparison) return '';
+    const recencyClass = comparison.recency?.status === 'json-newer'
+      ? 'is-info'
+      : (comparison.recency?.status === 'local-newer' ? 'is-warning' : 'is-neutral');
+    const jsonMetadataWarning = comparison.json?.hasMetadata
+      ? ''
+      : '<p class="notice">Este respaldo no contiene metadata de origen. Puede ser un respaldo anterior.</p>';
+    return `
+      <section class="json-comparison-section" aria-label="Comparación antes de importar">
+        <div class="compact-title-row">
+          <div>
+            <span class="eyebrow mini">Comparación antes de importar</span>
+            <h3>Base local vs JSON seleccionado</h3>
+          </div>
+          <span class="state-pill ${escapeHtml(recencyClass)}">${escapeHtml(comparison.recency?.title || 'Comparación')}</span>
+        </div>
+        <div class="json-recency-alert ${escapeHtml(recencyClass)}">
+          <strong>${escapeHtml(comparison.recency?.message || 'No hay suficiente metadata para determinar cuál base es más reciente.')}</strong>
+          <span>Esta advertencia solo informa. No sincroniza, no decide ganadores y no modifica registros existentes por fecha.</span>
+        </div>
+        <div class="import-summary-grid compact-summary json-compare-grid">
+          <div class="status-item"><strong>Base local</strong><span>${escapeHtml(comparison.local.deviceName)}</span><small>${escapeHtml(getShortDeviceId(comparison.local.deviceId))}</small></div>
+          <div class="status-item"><strong>Última actividad local</strong><span>${escapeHtml(comparison.local.lastActivityText)}</span></div>
+          <div class="status-item"><strong>Último respaldo exportado</strong><span>${escapeHtml(comparison.local.lastBackupText)}</span></div>
+          <div class="status-item"><strong>Última importación</strong><span>${escapeHtml(comparison.local.lastImportText)}</span></div>
+        </div>
+        <div class="import-summary-grid compact-summary json-compare-grid">
+          <div class="status-item"><strong>JSON seleccionado</strong><span>${escapeHtml(comparison.json.deviceName)}</span><small>${escapeHtml(getShortDeviceId(comparison.json.deviceId))}</small></div>
+          <div class="status-item"><strong>Fecha de exportación</strong><span>${escapeHtml(comparison.json.exportedAtDisplay || formatDateTime(comparison.json.exportedAt))}</span></div>
+          <div class="status-item"><strong>Última actividad incluida</strong><span>${escapeHtml(comparison.json.lastActivityText)}</span></div>
+          <div class="status-item"><strong>Versión de respaldo</strong><span>${escapeHtml(comparison.json.backupVersion || (comparison.json.hasMetadata ? '—' : 'Respaldo sin metadata de origen'))}</span></div>
+        </div>
+        ${jsonMetadataWarning}
+        <h3>Conteos comparativos por módulo</h3>
+        ${renderJsonComparisonTable(comparison)}
+      </section>
+    `;
+  }
+
   function renderJsonPreview(preview, modeOptions, canImport) {
     const errorBlock = preview.errors?.length
       ? `<ul class="import-warning-list is-error-list">${preview.errors.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
@@ -8209,27 +8980,49 @@
     const warningBlock = preview.warnings?.length
       ? `<ul class="import-warning-list">${preview.warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
       : '<p class="muted-text">Sin advertencias fuertes.</p>';
+    const origin = preview.metadata || {};
+    const lastActivity = normalizeActivitySummary(origin.lastActivity);
+    const lastActivityText = lastActivity
+      ? (lastActivity.detail || buildActivityDetail([lastActivity.module, lastActivity.action, lastActivity.entityRef]))
+      : 'No incluida.';
+    const metadataBadge = preview.hasMetadata
+      ? 'Metadata de origen detectada'
+      : 'Respaldo sin metadata de origen';
 
     return `
       <div class="json-preview-card">
         <div class="import-summary-grid">
           <div class="status-item"><strong>Estado</strong><span>${preview.isValid ? 'Válido' : 'Bloqueado'}</span></div>
           <div class="status-item"><strong>App</strong><span>${escapeHtml(preview.appName || '—')}</span></div>
-          <div class="status-item"><strong>Versión</strong><span>${escapeHtml(preview.schemaVersion || '—')}</span></div>
+          <div class="status-item"><strong>Schema</strong><span>${escapeHtml(preview.schemaVersion || '—')}</span></div>
+          <div class="status-item"><strong>Backup</strong><span>${escapeHtml(origin.backupVersion || '—')}</span></div>
           <div class="status-item"><strong>Fecha respaldo</strong><span>${escapeHtml(formatDateTime(preview.backupDate))}</span></div>
-          <div class="status-item"><strong>Archivo</strong><span>${escapeHtml(jsonBackupState.fileName || '—')}</span></div>
           <div class="status-item"><strong>Total</strong><span>${preview.counts.total}</span></div>
         </div>
+
+        <h3>Metadata de origen</h3>
+        <div class="import-summary-grid compact-summary json-origin-grid">
+          <div class="status-item"><strong>Origen</strong><span>${escapeHtml(origin.sourceDeviceName || metadataBadge)}</span></div>
+          <div class="status-item"><strong>ID equipo</strong><span>${escapeHtml(getShortDeviceId(origin.sourceDeviceId))}</span></div>
+          <div class="status-item"><strong>Exportado</strong><span>${escapeHtml(origin.exportedAtDisplay || formatDateTime(preview.backupDate))}</span></div>
+          <div class="status-item json-last-activity"><strong>Última actividad</strong><span>${escapeHtml(lastActivityText)}</span></div>
+          <div class="status-item"><strong>Archivo</strong><span>${escapeHtml(jsonBackupState.fileName || '—')}</span></div>
+          <div class="status-item"><strong>Formato</strong><span>${escapeHtml(preview.hasMetadata ? `Backup v${origin.backupVersion || '—'}` : 'Antiguo compatible')}</span></div>
+        </div>
+        ${preview.hasMetadata ? '' : '<p class="notice">Respaldo sin metadata de origen. Se puede importar si la estructura es compatible; simplemente no trae brújula, pero sí mapa.</p>'}
+
+        ${renderJsonImportComparison(preview.comparison)}
 
         <h3>Conteo detectado</h3>
         <div class="import-summary-grid compact-summary">
           <div class="status-item"><strong>Ventas</strong><span>${preview.counts.ventas}</span></div>
           <div class="status-item"><strong>Cobros</strong><span>${preview.counts.cobros}</span></div>
-          <div class="status-item"><strong>Compras/prov.</strong><span>${preview.counts.comprasProveedores}</span></div>
+          <div class="status-item"><strong>Compras</strong><span>${preview.counts.comprasProveedores}</span></div>
           <div class="status-item"><strong>Pagos</strong><span>${preview.counts.pagosProveedores}</span></div>
           <div class="status-item"><strong>Gastos</strong><span>${preview.counts.gastos}</span></div>
-          <div class="status-item"><strong>Ajustes clientes</strong><span>${preview.counts.ajustesClientes || 0}</span></div>
-          <div class="status-item"><strong>Ajustes prov.</strong><span>${preview.counts.ajustesProveedores || 0}</span></div>
+          <div class="status-item"><strong>Bitácora</strong><span>${preview.counts.bitacora || 0}</span></div>
+          <div class="status-item"><strong>Ajustes CL</strong><span>${preview.counts.ajustesClientes || 0}</span></div>
+          <div class="status-item"><strong>Ajustes PR</strong><span>${preview.counts.ajustesProveedores || 0}</span></div>
           <div class="status-item"><strong>Catálogos</strong><span>${preview.counts.catalogos}</span></div>
           <div class="status-item"><strong>Cierres</strong><span>${preview.counts.cierresMensuales}</span></div>
         </div>
@@ -8250,29 +9043,39 @@
     `;
   }
 
-  function getJsonRecordCounts(dataSource) {
+  function getJsonRecordCounts(dataSource, activityEntries = null) {
     const data = isPlainObject(dataSource) ? dataSource : {};
     const catalogos = CATALOGS.reduce((sum, catalog) => sum + (Array.isArray(data[catalog.id]) ? data[catalog.id].length : 0), 0);
-    const counts = {
+    const comprasProveedores = Array.isArray(data.comprasProveedores) ? data.comprasProveedores.length : 0;
+    const pagosProveedores = Array.isArray(data.pagosProveedores) ? data.pagosProveedores.length : 0;
+    const cierresMensuales = Array.isArray(data.cierresMensuales) ? data.cierresMensuales.length : 0;
+    const bitacora = Array.isArray(activityEntries)
+      ? activityEntries.length
+      : (Array.isArray(data.bitacora) ? data.bitacora.length : 0);
+    const counts = normalizeBackupCounts({
       catalogos,
       ventas: Array.isArray(data.ventas) ? data.ventas.length : 0,
       cobros: Array.isArray(data.cobros) ? data.cobros.length : 0,
-      comprasProveedores: Array.isArray(data.comprasProveedores) ? data.comprasProveedores.length : 0,
-      pagosProveedores: Array.isArray(data.pagosProveedores) ? data.pagosProveedores.length : 0,
+      comprasProveedores,
+      pagosProveedores,
       gastos: Array.isArray(data.gastos) ? data.gastos.length : 0,
-      cierresMensuales: Array.isArray(data.cierresMensuales) ? data.cierresMensuales.length : 0,
+      cierresMensuales,
       exportacionesExcel: Array.isArray(data.exportacionesExcel) ? data.exportacionesExcel.length : 0,
       ajustesClientes: Array.isArray(data.ventas) ? data.ventas.reduce((sum, venta) => sum + normalizeVentaAjustesList(venta?.ajustes).length, 0) : 0,
-      ajustesProveedores: Array.isArray(data.comprasProveedores) ? data.comprasProveedores.reduce((sum, compra) => sum + normalizeCompraProveedorAjustesList(compra?.ajustes).length, 0) : 0
-    };
-    counts.total = Object.values(counts).reduce((sum, value) => sum + value, 0);
+      ajustesProveedores: Array.isArray(data.comprasProveedores) ? data.comprasProveedores.reduce((sum, compra) => sum + normalizeCompraProveedorAjustesList(compra?.ajustes).length, 0) : 0,
+      bitacora
+    });
+    counts.total = getBackupCountsTotal(counts);
     return counts;
   }
 
-  function buildJsonBackupPayload() {
+  function buildJsonBackupPayload(exportOptions = {}) {
     const snapshot = normalizeData(appData);
-    const exportedAt = nowIso();
-    const counts = getJsonRecordCounts(snapshot);
+    const exportedAt = cleanText(exportOptions.exportedAt) || nowIso();
+    const identity = normalizeDeviceIdentity(appDeviceIdentity);
+    const activityEntries = getRecentActivityEntries(ACTIVITY_LOG_MAX_ENTRIES);
+    const lastActivity = normalizeActivitySummary(activityEntries[0] || identity.lastActivity);
+    const counts = getJsonRecordCounts(snapshot, activityEntries);
     const catalogos = CATALOGS.reduce((acc, catalog) => {
       acc[catalog.id] = snapshot[catalog.id] || [];
       return acc;
@@ -8281,16 +9084,24 @@
     return {
       metadata: {
         appName: APP_NAME,
+        backupVersion: 2,
         appVersion: APP_VERSION,
         schemaVersion: SCHEMA_VERSION,
         exportedAt,
+        exportedAtDisplay: formatDateTime(exportedAt),
         fechaExportacion: exportedAt,
+        sourceDeviceId: identity.deviceId,
+        sourceDeviceName: identity.deviceName,
+        fileName: cleanText(exportOptions.fileName),
+        lastActivity,
+        counts,
         recordCounts: counts,
         source: 'KSA PRÁCTIKA respaldo JSON manual'
       },
       appName: APP_NAME,
       schemaVersion: SCHEMA_VERSION,
       fechaExportacion: exportedAt,
+      exportedAt,
       registros: {
         catalogos,
         ventas: snapshot.ventas || [],
@@ -8301,7 +9112,8 @@
         cierres: snapshot.cierresMensuales || [],
         cierresMensuales: snapshot.cierresMensuales || [],
         exportacionesExcel: snapshot.exportacionesExcel || [],
-        configuracion: normalizeConfiguracion(snapshot.configuracion)
+        configuracion: normalizeConfiguracion(snapshot.configuracion),
+        bitacora: activityEntries
       }
     };
   }
@@ -8314,14 +9126,25 @@
       return;
     }
 
-    const payload = buildJsonBackupPayload();
+    const exportedAt = nowIso();
+    const dateStamp = new Date(exportedAt).toISOString().slice(0, 16).replace(/[-:T]/g, '');
+    const fileName = `KSA_PRACTIKA_respaldo_${dateStamp}.json`;
+    registerActivity({
+      module: 'JSON',
+      action: 'Exportado',
+      entityType: 'Respaldo JSON',
+      entityRef: fileName,
+      detail: buildActivityDetail(['JSON exportado', fileName]),
+      source: 'local'
+    });
+
+    const payload = buildJsonBackupPayload({ exportedAt, fileName });
     const json = JSON.stringify(payload, null, 2);
     const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
-    const dateStamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
     anchor.href = url;
-    anchor.download = `KSA_PRACTIKA_respaldo_${dateStamp}.json`;
+    anchor.download = fileName;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
@@ -8330,9 +9153,18 @@
     appData.configuracion = {
       ...normalizeConfiguracion(appData.configuracion),
       lastBackupAt: payload.fechaExportacion,
+      lastJsonBackupSummary: normalizeJsonBackupExportSummary({
+        exportedAt: payload.metadata.exportedAt,
+        exportedAtDisplay: payload.metadata.exportedAtDisplay,
+        sourceDeviceId: payload.metadata.sourceDeviceId,
+        sourceDeviceName: payload.metadata.sourceDeviceName,
+        fileName,
+        counts: payload.metadata.counts,
+        lastActivity: payload.metadata.lastActivity
+      }),
       updatedAt: nowIso()
     };
-    configState.message = 'Respaldo JSON exportado y fecha de último respaldo actualizada.';
+    configState.message = 'Respaldo JSON exportado con metadata de origen y fecha de último respaldo actualizada.';
     configState.messageType = 'success';
     saveData(appData);
     renderRoute();
@@ -8352,6 +9184,7 @@
       isProcessing: true,
       preview: null,
       payload: null,
+      activityLog: [],
       message: 'Leyendo respaldo JSON...',
       messageType: 'success'
     };
@@ -8366,6 +9199,7 @@
         isProcessing: false,
         preview: result.preview,
         payload: result.data,
+        activityLog: result.activityLog || [],
         message: result.preview.isValid
           ? 'JSON validado. Revisa la vista previa antes de importar.'
           : 'JSON bloqueado por errores de validación.',
@@ -8377,6 +9211,7 @@
         isProcessing: false,
         preview: null,
         payload: null,
+        activityLog: [],
         message: error instanceof SyntaxError ? 'El archivo no contiene JSON válido.' : (error.message || 'No se pudo leer el JSON seleccionado.'),
         messageType: 'error'
       };
@@ -8391,18 +9226,29 @@
     if (!isPlainObject(raw)) errors.push('La raíz del archivo debe ser un objeto JSON.');
 
     const metadata = isPlainObject(raw?.metadata) ? raw.metadata : null;
-    if (!metadata) errors.push('Falta metadata del respaldo.');
+    if (!metadata) warnings.push('Respaldo sin metadata de origen. Se acepta si la estructura es compatible.');
 
     const appName = cleanText(raw?.appName || metadata?.appName || raw?.registros?.configuracion?.appName || raw?.configuracion?.appName);
     const schemaVersion = cleanText(raw?.schemaVersion || metadata?.schemaVersion || raw?.registros?.configuracion?.schemaVersion || raw?.configuracion?.schemaVersion);
     const backupDate = cleanText(raw?.fechaExportacion || raw?.exportedAt || metadata?.exportedAt || metadata?.fechaExportacion || metadata?.updatedAt || raw?.metadata?.createdAt);
+    const activityLog = extractActivityLogFromJsonBackup(raw);
+    const metadataCounts = normalizeBackupCounts(metadata?.counts || metadata?.recordCounts || {});
+    const metadataPreview = {
+      backupVersion: cleanText(metadata?.backupVersion) || '',
+      exportedAt: backupDate,
+      exportedAtDisplay: cleanText(metadata?.exportedAtDisplay || metadata?.fechaExportacionVisible) || (backupDate ? formatDateTime(backupDate) : ''),
+      sourceDeviceId: cleanText(metadata?.sourceDeviceId || metadata?.deviceId),
+      sourceDeviceName: cleanText(metadata?.sourceDeviceName || metadata?.deviceName || metadata?.equipo),
+      lastActivity: normalizeActivitySummary(metadata?.lastActivity || metadata?.ultimaActividad),
+      counts: metadataCounts
+    };
 
     const extracted = extractDataFromJsonBackup(raw);
     if (!extracted.data) errors.push('No se encontró estructura compatible de registros.');
     if (appName && appName !== APP_NAME) warnings.push(`El appName del archivo es “${appName}”; se acepta solo si la estructura es compatible con KSA PRÁCTIKA.`);
     if (!appName && extracted.data) warnings.push('El respaldo no trae appName explícito; se validó por estructura compatible.');
-    if (!schemaVersion) errors.push('Falta schemaVersion del respaldo.');
-    if (!backupDate) errors.push('Falta fecha de respaldo/exportación.');
+    if (!schemaVersion) warnings.push('El respaldo no trae schemaVersion explícito; se intentará normalizar con el schema actual.');
+    if (!backupDate) warnings.push('El respaldo no trae fecha de exportación; se validará por estructura compatible.');
 
     const data = extracted.data || {};
     [...CATALOGS.map((catalog) => catalog.id), 'ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'cierresMensuales'].forEach((key) => {
@@ -8419,7 +9265,7 @@
         importedFromBackupAt: backupDate
       }
     });
-    const counts = getJsonRecordCounts(data);
+    const counts = getJsonRecordCounts(data, activityLog);
     if (counts.total <= 0) warnings.push('El respaldo no contiene registros operativos; puede ser una base vacía.');
     if (schemaVersion && schemaVersion !== SCHEMA_VERSION) warnings.push(`Schema del archivo: ${schemaVersion}. Schema actual: ${SCHEMA_VERSION}. Se intentará normalizar.`);
     const banksWithoutType = Array.isArray(data.cuentasBancos)
@@ -8429,16 +9275,27 @@
     const totalAjustesImportados = (counts.ajustesClientes || 0) + (counts.ajustesProveedores || 0);
     if (totalAjustesImportados > 0) warnings.push(`Se detectaron ${totalAjustesImportados} ajuste(s)/nota(s); se importarán ligados a su documento original y no como cobros/pagos.`);
 
+    const comparison = buildJsonImportComparison({
+      data,
+      metadataPreview,
+      counts,
+      backupDate,
+      hasMetadata: Boolean(metadata)
+    });
+
     const preview = {
       isValid: errors.length === 0,
+      hasMetadata: Boolean(metadata),
       appName: appName || APP_NAME,
-      schemaVersion,
+      schemaVersion: schemaVersion || SCHEMA_VERSION,
       backupDate,
+      metadata: metadataPreview,
       counts,
+      comparison,
       errors,
       warnings
     };
-    return { preview, data: normalized };
+    return { preview, data: normalized, activityLog };
   }
 
   function extractDataFromJsonBackup(raw) {
@@ -8511,14 +9368,38 @@
       if (!ok) return;
     }
 
+    const fileName = jsonBackupState.fileName;
+    const preview = jsonBackupState.preview;
+    const importSummary = buildJsonImportSummary(preview, selectedMode, fileName);
+    const incomingActivityLog = Array.isArray(jsonBackupState.activityLog) ? jsonBackupState.activityLog : [];
     const result = applyJsonBackupPayload(jsonBackupState.payload, selectedMode);
+    const activityImportResult = mergeImportedActivityLog(incomingActivityLog);
+    appData.configuracion = {
+      ...normalizeConfiguracion(appData.configuracion),
+      lastImportAt: importSummary.importedAt || nowIso(),
+      lastJsonImportSummary: importSummary,
+      updatedAt: nowIso()
+    };
     saveData(appData);
     jsonBackupState.preview = null;
     jsonBackupState.payload = null;
+    jsonBackupState.activityLog = [];
     jsonBackupState.message = selectedMode === 'replace'
-      ? `Importación JSON completada por reemplazo. Registros cargados: ${result.loaded.total}.`
-      : `Importación JSON completada por fusión. Agregados: ${result.added.total}. Duplicados omitidos: ${result.skipped}.`;
+      ? `Importación JSON completada por reemplazo. Registros cargados: ${result.loaded.total}. Bitácora nueva: ${activityImportResult.added}.`
+      : `Importación JSON completada por fusión. Agregados: ${result.added.total}. Duplicados omitidos: ${result.skipped}. Bitácora nueva: ${activityImportResult.added}.`;
     jsonBackupState.messageType = 'success';
+    const originName = importSummary.sourceDeviceName || 'Origen no identificado';
+    const exportedText = importSummary.exportedAtDisplay || formatDateTime(importSummary.exportedAt);
+    registerActivity({
+      module: 'JSON',
+      action: 'Importado',
+      entityType: 'Respaldo JSON',
+      entityRef: fileName,
+      detail: selectedMode === 'replace'
+        ? buildActivityDetail(['JSON importado por reemplazo', fileName, originName, exportedText ? `Exportado ${exportedText}` : '', formatBackupCountsSummary(importSummary.counts), `${result.loaded.total} registros`])
+        : buildActivityDetail(['JSON importado por fusión', fileName, originName, exportedText ? `Exportado ${exportedText}` : '', formatBackupCountsSummary(importSummary.counts), `${result.added.total} agregados`, `${result.skipped} duplicados omitidos`]),
+      source: 'importado'
+    });
     renderRoute();
   }
 
@@ -8732,6 +9613,7 @@
       isProcessing: false,
       preview: null,
       payload: null,
+      activityLog: [],
       message: null,
       messageType: 'success'
     };
@@ -8764,6 +9646,28 @@
     configState.message = 'Configuración general actualizada.';
     configState.messageType = 'success';
     saveData(appData);
+    renderRoute();
+  }
+
+  function updateDeviceIdentityFromForm(form) {
+    const formData = new FormData(form);
+    const deviceName = cleanText(formData.get('deviceName'));
+    if (!deviceName) {
+      configState.message = 'El nombre de este equipo no puede quedar vacío.';
+      configState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+
+    const timestamp = nowIso();
+    saveDeviceIdentity({
+      ...appDeviceIdentity,
+      deviceName,
+      updatedAt: timestamp
+    });
+
+    configState.message = `Identidad del equipo guardada: ${deviceName}.`;
+    configState.messageType = 'success';
     renderRoute();
   }
 
@@ -9347,6 +10251,14 @@
       });
       appData.exportacionesExcel = [record, ...getExcelExports()];
       saveData(appData);
+      registerActivity({
+        module: 'Excel / Cierre',
+        action: 'Exportado',
+        entityType: 'Excel',
+        entityRef: result.fileName,
+        detail: buildActivityDetail(['Excel exportado', periodo, result.fileName]),
+        source: 'local'
+      });
       excelExportState.message = `Excel exportado: ${result.fileName}. Hojas: ${result.hojas.join(', ')}.`;
       excelExportState.messageType = 'success';
       cierreMensualState.month = month;
@@ -9418,6 +10330,14 @@
 
     appData.cierresMensuales = [cierre, ...getCierresMensuales()];
     saveData(appData);
+    registerActivity({
+      module: 'Excel / Cierre',
+      action: 'Cierre mensual',
+      entityType: 'Cierre',
+      entityRef: periodo,
+      detail: buildActivityDetail(['Cierre mensual registrado', getMonthLabel(month), year, lastExport.nombreArchivo]),
+      source: 'sistema'
+    });
     cierreMensualState.message = `Cierre mensual registrado para ${getMonthLabel(month)} ${year}.`;
     cierreMensualState.messageType = 'success';
     renderRoute();
@@ -11245,6 +12165,13 @@ ${rowsXml}
           cierreMensualState.message = null;
           renderRoute();
         });
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-device-identity-form]').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        updateDeviceIdentityFromForm(form);
       });
     });
 

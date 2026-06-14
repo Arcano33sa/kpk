@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_21_post12_mora_excel_grid_flexible';
+const CACHE_VERSION = 'v0_17_25_post12_identidad_equipo_etapa4_comparador_json';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

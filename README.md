@@ -1,3 +1,18 @@
+# KSA PRÁCTIKA — Identidad de equipo Etapa 4/4: Comparador JSON antes de importar
+
+- Antes de confirmar una importación JSON se muestra “Comparación antes de importar” con Base local vs JSON seleccionado.
+- La comparación incluye equipo actual, equipo origen, última actividad local, última actividad incluida, último respaldo exportado, última importación, fecha de exportación, versión de respaldo y conteos por módulo.
+- Se agregó tabla compacta con Local / JSON / Diferencia para OC/Ventas, Cobros, Compras/Proveedores, Pagos, Gastos, Cierres, Catálogos y Bitácora.
+- Se muestra advertencia informativa cuando el JSON parece más reciente, cuando la base local parece más reciente o cuando no se puede determinar.
+- Fusionar y Reemplazar conservan la lógica anterior; solo se agregan textos claros de riesgo/alcance.
+- Al importar correctamente se registra bitácora con modo usado, origen, fecha de exportación y conteos básicos; al cancelar no registra importación.
+- Se actualiza el resumen local de última importación JSON con equipo origen, modo, conteos y última actividad del JSON.
+- JSON antiguos sin metadata siguen importando y muestran advertencia de respaldo anterior/sin metadata.
+- No se modifican cálculos, Excel, fórmulas, saldos, mora, cierres, catálogos ni estructura de negocio.
+- Versión/cache PWA actualizado a `0.17.25-post12-identidad-equipo-etapa4-comparador-json`.
+
+---
+
 # KSA PRÁCTIKA — Post12 Ventas / OC: layout ajuste derecha
 
 - Se reacomodó visualmente Ventas / OC en pantallas anchas: Crear venta / OC queda a la izquierda y, a la derecha, OC registradas arriba con Registrar ajuste debajo.
