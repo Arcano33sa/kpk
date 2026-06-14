@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.29-post12-bdatos-etapa1-copiar-articulo';
+  const APP_VERSION = '0.17.30-post12-bdatos-etapa1-acciones-iconos';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -5573,9 +5573,9 @@
         <td class="amount-cell"><span>${escapeHtml(formatMoney(record.precio))}</span></td>
         <td class="actions-cell">
           <div class="record-actions compact-row-actions">
-            <button type="button" class="secondary-action compact" data-bdatos-copy="${escapeHtml(record.id)}">Copiar</button>
-            <button type="button" class="secondary-action compact" data-bdatos-edit="${escapeHtml(record.id)}">Editar</button>
-            <button type="button" class="danger-action compact" data-bdatos-delete="${escapeHtml(record.id)}">Borrar</button>
+            <button type="button" class="secondary-action compact bdatos-icon-action" data-bdatos-copy="${escapeHtml(record.id)}" aria-label="Copiar artículo" title="Copiar artículo"><span aria-hidden="true">📋</span></button>
+            <button type="button" class="secondary-action compact bdatos-icon-action" data-bdatos-edit="${escapeHtml(record.id)}" aria-label="Editar artículo" title="Editar artículo"><span aria-hidden="true">✏️</span></button>
+            <button type="button" class="danger-action compact bdatos-icon-action" data-bdatos-delete="${escapeHtml(record.id)}" aria-label="Borrar artículo" title="Borrar artículo"><span aria-hidden="true">🗑️</span></button>
           </div>
         </td>
       </tr>

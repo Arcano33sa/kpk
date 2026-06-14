@@ -4481,6 +4481,36 @@ body {
   width: 18%;
 }
 
+.operational-table-bdatos .actions-cell {
+  width: 122px;
+}
+
+.operational-table-bdatos .compact-row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  gap: 6px;
+  width: 100%;
+}
+
+.operational-table-bdatos .bdatos-icon-action {
+  width: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  font-size: 1rem;
+}
+
+.operational-table-bdatos .record-actions > .bdatos-icon-action {
+  flex: 0 0 36px;
+}
+
+
 @media (max-width: 920px) {
   .bdatos-layout {
     grid-template-columns: 1fr;
