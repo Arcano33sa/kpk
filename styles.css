@@ -4420,3 +4420,63 @@ body {
   background: #e2e8f0;
   color: #475569;
 }
+
+
+/* Etapa 1/2 — Bdatos informativo */
+.bdatos-shell {
+  display: grid;
+  gap: 16px;
+}
+
+.bdatos-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.78fr) minmax(0, 1.22fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.bdatos-form-card,
+.bdatos-list-card,
+.bdatos-search-card {
+  min-width: 0;
+}
+
+.bdatos-search-card {
+  padding: 16px;
+}
+
+.bdatos-search-field {
+  max-width: 680px;
+}
+
+.operational-table-bdatos {
+  min-width: 760px;
+}
+
+.bdatos-col-codigo {
+  width: 22%;
+}
+
+.bdatos-col-descripcion {
+  width: 43%;
+}
+
+.bdatos-col-precio {
+  width: 17%;
+}
+
+.bdatos-col-acciones {
+  width: 18%;
+}
+
+@media (max-width: 920px) {
+  .bdatos-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .operational-table-bdatos {
+    min-width: 700px;
+  }
+}

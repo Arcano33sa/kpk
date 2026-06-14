@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.25-post12-identidad-equipo-etapa4-comparador-json';
+  const APP_VERSION = '0.17.27-post12-bdatos-etapa2-excel-integrado';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -78,6 +78,14 @@
       placeholder: 'Administra las listas maestras que alimentarán ventas, cobros, compras, pagos y gastos.'
     },
     {
+      id: 'bdatos',
+      icon: 'BD',
+      title: 'Bdatos',
+      short: 'Bdatos',
+      description: 'Base informativa de artículos con código, descripción y precio, sin conexión operativa con ventas ni cálculos.',
+      placeholder: 'Administra artículos informativos sin alimentar OC, compras, cobros, pagos, gastos, tablero, Excel ni cálculos.'
+    },
+    {
       id: 'excel',
       icon: 'XL',
       title: 'Excel / Cierre',
@@ -110,6 +118,7 @@
     'tiposGasto',
     'metodosPago',
     'cuentasBancos',
+    'bdatos',
     'ventas',
     'cobros',
     'comprasProveedores',
@@ -209,6 +218,656 @@
     ]
   };
 
+  const BDATOS_INITIAL_SEED_VERSION = 'jcg-2026-06-14';
+  const BDATOS_INITIAL_UPDATED_AT = '2026-06-14T16:38:00-06:00';
+  const BDATOS_INITIAL_ARTICLES = [
+  {
+    "codigo": "383409",
+    "descripcion": "Balde plástico c/tapa 17 litros",
+    "precio": 150.0
+  },
+  {
+    "codigo": "18020",
+    "descripcion": "Bolso Pañalero",
+    "precio": 370.0
+  },
+  {
+    "codigo": "785072080883",
+    "descripcion": "Bolso Plastico Pokemon",
+    "precio": 75.0
+  },
+  {
+    "codigo": "370884",
+    "descripcion": "Bolso Tela de Galleta 25X18CM Diseños Unisex",
+    "precio": 13.0
+  },
+  {
+    "codigo": "368274",
+    "descripcion": "Botella Plastica 750 ML",
+    "precio": 75.0
+  },
+  {
+    "codigo": "7453086701805",
+    "descripcion": "Buzo Escolar de Adulto S-M-L",
+    "precio": 250.0
+  },
+  {
+    "codigo": "745307300318",
+    "descripcion": "Buzo Escolar Juvenil 8-16",
+    "precio": 200.0
+  },
+  {
+    "codigo": "745308654473",
+    "descripcion": "Buzos Escolares Infrantil 2-7",
+    "precio": 180.0
+  },
+  {
+    "codigo": "7453086322222",
+    "descripcion": "Calcetas Blancas Altas 3 Piezas Leomene",
+    "precio": 90.0
+  },
+  {
+    "codigo": "7453074843210",
+    "descripcion": "Calcetas Blancas Altas 3 Piezas Shadia School",
+    "precio": 75.0
+  },
+  {
+    "codigo": "0000001082302",
+    "descripcion": "Calcetas P/ Niñas Caladas Altas",
+    "precio": 50.0
+  },
+  {
+    "codigo": "350078",
+    "descripcion": "Canasta Acero Porta Papas",
+    "precio": 166.0
+  },
+  {
+    "codigo": "000000147125",
+    "descripcion": "Cenicero de Vidrio(MM)",
+    "precio": 70.0
+  },
+  {
+    "codigo": "0000000135856",
+    "descripcion": "Chinela de Baño P/Hombre Nesser Sport (Mauro)",
+    "precio": 140.0
+  },
+  {
+    "codigo": "9312",
+    "descripcion": "Chinela de Baño para Señora Tulip (Mauro)",
+    "precio": 120.0
+  },
+  {
+    "codigo": "0000001032024",
+    "descripcion": "Chinela P/ Niña Gardenia 11579",
+    "precio": 120.0
+  },
+  {
+    "codigo": "0000000135986",
+    "descripcion": "Chinela P/Señora Shiseldo 27838 (Mauro)",
+    "precio": 150.0
+  },
+  {
+    "codigo": "0000000267502",
+    "descripcion": "Chinela para Hombre Boltio (Mauro)",
+    "precio": 220.0
+  },
+  {
+    "codigo": "0000000267557",
+    "descripcion": "Chinela para Niño BKS (Mauro)",
+    "precio": 150.0
+  },
+  {
+    "codigo": "0000000135894",
+    "descripcion": "Chinela para Señora Layla 3325 (Mauro)",
+    "precio": 130.0
+  },
+  {
+    "codigo": "000000267663",
+    "descripcion": "Chinelas Gardenia para Niñas (1227)",
+    "precio": 190.0
+  },
+  {
+    "codigo": "7450030238042",
+    "descripcion": "Chinelas P/Niña Disney Princesa",
+    "precio": 140.0
+  },
+  {
+    "codigo": "745003023922",
+    "descripcion": "Chinelas P/Niño Disney Disney Pixar",
+    "precio": 115.0
+  },
+  {
+    "codigo": "7450030237854",
+    "descripcion": "Chinelas P/Niño Disney Lasser Blast",
+    "precio": 120.0
+  },
+  {
+    "codigo": "0000001065978",
+    "descripcion": "Cojin",
+    "precio": 270.0
+  },
+  {
+    "codigo": "0000001060331",
+    "descripcion": "Colador Plastico",
+    "precio": 35.0
+  },
+  {
+    "codigo": "0000000166089",
+    "descripcion": "Container Plastico P/Microwave",
+    "precio": 110.0
+  },
+  {
+    "codigo": "18026",
+    "descripcion": "Contenedores Plasticos Multiusos 4PZS",
+    "precio": 170.0
+  },
+  {
+    "codigo": "0000001044003",
+    "descripcion": "Copa Champagne",
+    "precio": 75.0
+  },
+  {
+    "codigo": "0000001032031",
+    "descripcion": "Copa P/ Tequila",
+    "precio": 42.0
+  },
+  {
+    "codigo": "0000000147446",
+    "descripcion": "Copa P/Trago Mauro Medina",
+    "precio": 27.0
+  },
+  {
+    "codigo": "0000000208192",
+    "descripcion": "Cortina de Baño Doble",
+    "precio": 200.0
+  },
+  {
+    "codigo": "0000001032048",
+    "descripcion": "Cortina de Baño Kennedy",
+    "precio": 165.0
+  },
+  {
+    "codigo": "320792",
+    "descripcion": "Cuchara Melamina P Sopa",
+    "precio": 15.0
+  },
+  {
+    "codigo": "306764",
+    "descripcion": "Cuchara Metalica P/ Comedor",
+    "precio": 35.0
+  },
+  {
+    "codigo": "000000390309",
+    "descripcion": "Cuchillo de Metal P/Mesa (Mauro Medina)",
+    "precio": 35.0
+  },
+  {
+    "codigo": "0000000838801",
+    "descripcion": "Cuchillo Metal Mundial American #10",
+    "precio": 80.0
+  },
+  {
+    "codigo": "0000000838818",
+    "descripcion": "Cuchillo Metal Mundial American #12",
+    "precio": 85.0
+  },
+  {
+    "codigo": "0000000838795",
+    "descripcion": "Cuchillo Metal Mundial American #7",
+    "precio": 70.0
+  },
+  {
+    "codigo": "0000000147484",
+    "descripcion": "Ensaladera de Vidrio Peq",
+    "precio": 50.0
+  },
+  {
+    "codigo": "000000147477",
+    "descripcion": "Ensaladera Vidrio Grande",
+    "precio": 85.0
+  },
+  {
+    "codigo": "0000000862509",
+    "descripcion": "Envase Plastico C/Tapa Mega",
+    "precio": 25.0
+  },
+  {
+    "codigo": "0000000999205",
+    "descripcion": "Estuche Plastico P/ Cubiertos",
+    "precio": 140.0
+  },
+  {
+    "codigo": "0000000435499",
+    "descripcion": "Frasco Azucarero Vidrio Di-14421",
+    "precio": 90.0
+  },
+  {
+    "codigo": "18058",
+    "descripcion": "Hacha C/ Mango para Picar",
+    "precio": 155.0
+  },
+  {
+    "codigo": "0000000039550",
+    "descripcion": "Individual para Comedor",
+    "precio": 220.0
+  },
+  {
+    "codigo": "0000001063806",
+    "descripcion": "Jabonera C/ Tapa",
+    "precio": 30.0
+  },
+  {
+    "codigo": "0000001032055",
+    "descripcion": "Jarra Cervecera",
+    "precio": 55.0
+  },
+  {
+    "codigo": "00000026023",
+    "descripcion": "Lazo Grande Prensapelo de Colores Surtidos",
+    "precio": 55.0
+  },
+  {
+    "codigo": "000000435260",
+    "descripcion": "Mantel Damasco P/Comedor",
+    "precio": 170.0
+  },
+  {
+    "codigo": "0000001082326",
+    "descripcion": "Media Calcetin P/ Niña ( Juvenil) Alpina ( 4-10)",
+    "precio": 30.0
+  },
+  {
+    "codigo": "0000000402309",
+    "descripcion": "Pana Sopera Mediana Melamina",
+    "precio": 50.0
+  },
+  {
+    "codigo": "000000402279",
+    "descripcion": "Panita Sopera Melamina P/Bebe Looney Tunes",
+    "precio": 35.0
+  },
+  {
+    "codigo": "0000001063875",
+    "descripcion": "Pañuelos Colores Surtidos 3 PZS Picalini",
+    "precio": 150.0
+  },
+  {
+    "codigo": "0000001032017",
+    "descripcion": "Perchas Plasticas Set 10 PZAS",
+    "precio": 65.0
+  },
+  {
+    "codigo": "370651",
+    "descripcion": "Perol # 9. Capacidad entre 10 y 14 LIB",
+    "precio": 610.0
+  },
+  {
+    "codigo": "0000001032352",
+    "descripcion": "Pichel de Plastico C/ Vasos",
+    "precio": 115.0
+  },
+  {
+    "codigo": "000000188418",
+    "descripcion": "Pichel de Vidrio con Tapa",
+    "precio": 140.0
+  },
+  {
+    "codigo": "0000000147040",
+    "descripcion": "Pichel Plastico C/Tapa(MM)",
+    "precio": 60.0
+  },
+  {
+    "codigo": "0000001030280",
+    "descripcion": "Pinza Grande P/ Cocina",
+    "precio": 50.0
+  },
+  {
+    "codigo": "332469",
+    "descripcion": "Pinza Grande P/ Cocina",
+    "precio": 65.0
+  },
+  {
+    "codigo": "0000001030297",
+    "descripcion": "Pinza Mediana P/ Cocina",
+    "precio": 45.0
+  },
+  {
+    "codigo": "333206",
+    "descripcion": "Plato de Melamina Delux",
+    "precio": 130.0
+  },
+  {
+    "codigo": "320409",
+    "descripcion": "Plato de Melamina para Cafetin",
+    "precio": 65.0
+  },
+  {
+    "codigo": "000000050173",
+    "descripcion": "Plato de Porcelana No. 10",
+    "precio": 60.0
+  },
+  {
+    "codigo": "320791",
+    "descripcion": "Plato Melamina Jumbo",
+    "precio": 85.0
+  },
+  {
+    "codigo": "18072",
+    "descripcion": "Plato Melamine # 9",
+    "precio": 50.0
+  },
+  {
+    "codigo": "0000000146999",
+    "descripcion": "Plato Melamine #10 Mauro Medina",
+    "precio": 55.0
+  },
+  {
+    "codigo": "0000001044034",
+    "descripcion": "Plato Melamine Niño",
+    "precio": 45.0
+  },
+  {
+    "codigo": "0000000188296",
+    "descripcion": "Pocillo de Porcelana Grande",
+    "precio": 55.0
+  },
+  {
+    "codigo": "000000147057",
+    "descripcion": "Pocillo Melamina Colores (MM)",
+    "precio": 35.0
+  },
+  {
+    "codigo": "000000147071",
+    "descripcion": "Pocillo Melamina P/Niño (MM)",
+    "precio": 35.0
+  },
+  {
+    "codigo": "7450041463259",
+    "descripcion": "Pocillo Porcelana Decorado Portobello",
+    "precio": 70.0
+  },
+  {
+    "codigo": "00000026017",
+    "descripcion": "Prensapelo C/ Piedras Variados",
+    "precio": 50.0
+  },
+  {
+    "codigo": "00000026020",
+    "descripcion": "Prensapelo de Colores Variados",
+    "precio": 50.0
+  },
+  {
+    "codigo": "00000026021",
+    "descripcion": "Prensapelo de Colores Variados",
+    "precio": 50.0
+  },
+  {
+    "codigo": "00000026016",
+    "descripcion": "Prensapelo de Metal Surtido",
+    "precio": 27.0
+  },
+  {
+    "codigo": "00000026019",
+    "descripcion": "Prensapelo de Perlas y Piedras Variado",
+    "precio": 52.0
+  },
+  {
+    "codigo": "00000026022",
+    "descripcion": "Prensapelo Metal/Perlas Variados",
+    "precio": 50.0
+  },
+  {
+    "codigo": "00000026018",
+    "descripcion": "Prensapelo Perlas Variado",
+    "precio": 50.0
+  },
+  {
+    "codigo": "5019854506199",
+    "descripcion": "Prensaropa Carvation ( Bolsa de 50 Unidades)",
+    "precio": 65.0
+  },
+  {
+    "codigo": "7453051912205",
+    "descripcion": "Protector Plastico P/ Mesa",
+    "precio": 135.0
+  },
+  {
+    "codigo": "7453076208499",
+    "descripcion": "Rayador Multiple Usos",
+    "precio": 120.0
+  },
+  {
+    "codigo": "0000001010015",
+    "descripcion": "Rebanador de Vegetales",
+    "precio": 110.0
+  },
+  {
+    "codigo": "0000000999182",
+    "descripcion": "Recipiente Plastico Pequeño",
+    "precio": 35.0
+  },
+  {
+    "codigo": "7453046529241",
+    "descripcion": "Sanadalia P/ Hombre Playera",
+    "precio": 240.0
+  },
+  {
+    "codigo": "000000135795",
+    "descripcion": "Sandalia Neser Club (Mauro) 9622",
+    "precio": 140.0
+  },
+  {
+    "codigo": "7453066830192",
+    "descripcion": "Sandalia P/ Hombre 2SURF",
+    "precio": 300.0
+  },
+  {
+    "codigo": "0000001030310",
+    "descripcion": "Sandalia P/ Señora Surf",
+    "precio": 360.0
+  },
+  {
+    "codigo": "7453037621350",
+    "descripcion": "Sandalia P/Niños Boltio",
+    "precio": 240.0
+  },
+  {
+    "codigo": "0000000147330",
+    "descripcion": "Sandalia P/Sra. Exessy No.808017",
+    "precio": 120.0
+  },
+  {
+    "codigo": "0000000135955",
+    "descripcion": "Sandalia para Niña Gardenia 11758 (Mauro)",
+    "precio": 240.0
+  },
+  {
+    "codigo": "0000000135887",
+    "descripcion": "Sandalia para Niño Tico Fun (Mauro)",
+    "precio": 115.0
+  },
+  {
+    "codigo": "000000135870",
+    "descripcion": "Sandalia para Señora Gardenia 11573 (Mauro)",
+    "precio": 250.0
+  },
+  {
+    "codigo": "000000370448",
+    "descripcion": "Sandalia Tiko Fun Talla 28-34 P/Niño REF 888",
+    "precio": 150.0
+  },
+  {
+    "codigo": "0000001043983",
+    "descripcion": "Set de Taza C/ Plato de Vidrio Rose",
+    "precio": 260.0
+  },
+  {
+    "codigo": "0000001109481",
+    "descripcion": "Set de Tazas de Cristal para Cafe 3S",
+    "precio": 140.0
+  },
+  {
+    "codigo": "0000000402217",
+    "descripcion": "Set de Tazas P/Cafe C/Plato de Vidrio Tulip",
+    "precio": 290.0
+  },
+  {
+    "codigo": "0000001043976",
+    "descripcion": "Set Tazas Mug",
+    "precio": 170.0
+  },
+  {
+    "codigo": "7453007046299",
+    "descripcion": "Sukasa Deluxe For The Bath",
+    "precio": 120.0
+  },
+  {
+    "codigo": "000000188487",
+    "descripcion": "Tabla para Picar Carne",
+    "precio": 90.0
+  },
+  {
+    "codigo": "18098",
+    "descripcion": "Tabla para Picar Kitchen Pro 2404",
+    "precio": 140.0
+  },
+  {
+    "codigo": "751689080080",
+    "descripcion": "Talquera Jannette 120 GR",
+    "precio": 120.0
+  },
+  {
+    "codigo": "0000001032086",
+    "descripcion": "Taza C/ Escudilla Porcelana",
+    "precio": 70.0
+  },
+  {
+    "codigo": "0000001032079",
+    "descripcion": "Taza C/ Plato Porcelana Grande",
+    "precio": 75.0
+  },
+  {
+    "codigo": "0000001032376",
+    "descripcion": "Taza C/ Plato Porcelana Lisa",
+    "precio": 75.0
+  },
+  {
+    "codigo": "0000001109467",
+    "descripcion": "Taza de Vidrio para Cafe",
+    "precio": 40.0
+  },
+  {
+    "codigo": "00000020722",
+    "descripcion": "Taza Grande de Vidrio para Cafe",
+    "precio": 50.0
+  },
+  {
+    "codigo": "18104",
+    "descripcion": "Taza para Cafe",
+    "precio": 35.0
+  },
+  {
+    "codigo": "0000000212830",
+    "descripcion": "Taza para Ensalada (Fpm-258)",
+    "precio": 60.0
+  },
+  {
+    "codigo": "7453056340713",
+    "descripcion": "Taza Porcelana Variada",
+    "precio": 35.0
+  },
+  {
+    "codigo": "0000000147088",
+    "descripcion": "Taza Sopera Melamina(MM)",
+    "precio": 65.0
+  },
+  {
+    "codigo": "0000000392402",
+    "descripcion": "Taza Sopera Melamine P/Niño (Mauro M)",
+    "precio": 50.0
+  },
+  {
+    "codigo": "0000000147521",
+    "descripcion": "Taza Sopera Porcelana No.12",
+    "precio": 75.0
+  },
+  {
+    "codigo": "0000000907262",
+    "descripcion": "Tazon P/Consume Porcelana MM",
+    "precio": 70.0
+  },
+  {
+    "codigo": "0000000390286",
+    "descripcion": "Tenedor de Metal (Mauro Medina)",
+    "precio": 35.0
+  },
+  {
+    "codigo": "333200",
+    "descripcion": "Termo Plastico Mediano",
+    "precio": 35.0
+  },
+  {
+    "codigo": "7629923247113",
+    "descripcion": "Termo Plastico P/ Niños",
+    "precio": 85.0
+  },
+  {
+    "codigo": "7401093810737",
+    "descripcion": "Toalla Palm Springs",
+    "precio": 195.0
+  },
+  {
+    "codigo": "0000000343497",
+    "descripcion": "Toalla Princess Collection Algodon 30X60",
+    "precio": 190.0
+  },
+  {
+    "codigo": "0000000435369",
+    "descripcion": "Toallas P/Lavamanos Colores Surtidos",
+    "precio": 85.0
+  },
+  {
+    "codigo": "0000000188364",
+    "descripcion": "Vaso Acrilico 14 ONZ",
+    "precio": 45.0
+  },
+  {
+    "codigo": "8779393531812",
+    "descripcion": "Vaso C/ Boquilla",
+    "precio": 115.0
+  },
+  {
+    "codigo": "0000000147408",
+    "descripcion": "Vaso Canaleta 16 ONZ",
+    "precio": 60.0
+  },
+  {
+    "codigo": "18120",
+    "descripcion": "Vaso de Vidrio 12 Onzas",
+    "precio": 50.0
+  },
+  {
+    "codigo": "18121",
+    "descripcion": "Vaso de Vidrio 14 Onzas (Mauro M)",
+    "precio": 55.0
+  },
+  {
+    "codigo": "18125",
+    "descripcion": "Vaso de Vidrio Karaman Pasabahce 16 ONZ.",
+    "precio": 55.0
+  },
+  {
+    "codigo": "0000000188142",
+    "descripcion": "Vaso de Vidrio Sylvana 16 ONZ.",
+    "precio": 52.0
+  },
+  {
+    "codigo": "18124",
+    "descripcion": "Vaso Rock Topaz 16 ONZ",
+    "precio": 65.0
+  }
+];
+
 
   const ROLE_DEFINITIONS = {
     administrador: {
@@ -240,6 +899,7 @@
     ['pagos', 'pagos'],
     ['gastos', 'gastos'],
     ['catalogos', 'catalogos'],
+    ['bdatos', 'bdatos'],
     ['excel', 'excel'],
     ['respaldo', 'respaldo'],
     ['configuracion', 'configuracion']
@@ -250,6 +910,13 @@
 
   let catalogState = {
     activeCatalogId: 'clientes',
+    editingId: null,
+    message: null,
+    messageType: 'success'
+  };
+
+  let bdatosState = {
+    search: '',
     editingId: null,
     message: null,
     messageType: 'success'
@@ -583,6 +1250,7 @@
       pagos: Number.isNaN(pagos) ? 0 : pagos,
       gastos: safeNumber(raw.gastos),
       catalogos: safeNumber(raw.catalogos),
+      bdatos: safeNumber(raw.bdatos || raw.Bdatos),
       cierresMensuales: Number.isNaN(cierres) ? 0 : cierres,
       cierres: Number.isNaN(cierres) ? 0 : cierres,
       exportacionesExcel: safeNumber(raw.exportacionesExcel),
@@ -600,6 +1268,7 @@
       + normalized.pagosProveedores
       + normalized.gastos
       + normalized.catalogos
+      + normalized.bdatos
       + normalized.cierresMensuales
       + normalized.exportacionesExcel
       + normalized.ajustesClientes
@@ -615,6 +1284,7 @@
       `${normalized.comprasProveedores} compras`,
       `${normalized.pagosProveedores} pagos`,
       `${normalized.gastos} gastos`,
+      `${normalized.bdatos} Bdatos`,
       `${normalized.bitacora} bitácora`
     ];
     return parts.join(', ');
@@ -907,6 +1577,8 @@
       tiposGasto: [],
       metodosPago: [],
       cuentasBancos: [],
+      bdatos: buildInitialBdatosRecords(BDATOS_INITIAL_UPDATED_AT),
+      bdatosUpdatedAt: BDATOS_INITIAL_UPDATED_AT,
       ventas: [],
       cobros: [],
       comprasProveedores: [],
@@ -920,7 +1592,9 @@
         appVersion: APP_VERSION,
         schemaVersion: SCHEMA_VERSION,
         createdAt: timestamp,
-        updatedAt: timestamp
+        updatedAt: timestamp,
+        bdatosSeedVersion: BDATOS_INITIAL_SEED_VERSION,
+        bdatosSeededAt: BDATOS_INITIAL_UPDATED_AT
       }
     };
 
@@ -993,6 +1667,9 @@
       normalized[catalog.id] = normalized[catalog.id].map((record) => normalizeCatalogRecord(record, catalog));
     });
 
+    normalized.bdatos = normalizeBdatosList(source.bdatos || source.Bdatos || normalized.bdatos);
+    normalized.bdatosUpdatedAt = cleanText(source.bdatosUpdatedAt || source.bdatosLastUpdatedAt || source.bdatosMeta?.updatedAt || normalized.bdatosUpdatedAt);
+
     normalized.cobros = normalized.cobros.map((record) => normalizeCobroRecord(record));
     normalized.pagosProveedores = normalized.pagosProveedores.map((record) => normalizePagoProveedorRecord(record));
     normalized.gastos = normalized.gastos.map((record) => normalizeGastoRecord(record));
@@ -1017,6 +1694,28 @@
       updatedAt: nowIso()
     };
 
+    return normalized;
+  }
+
+  function applyInitialBdatosSeedIfNeeded(normalized, source = {}) {
+    const sourceMetadata = isPlainObject(source?.metadata) ? source.metadata : {};
+    const alreadySeeded = cleanText(sourceMetadata.bdatosSeedVersion) === BDATOS_INITIAL_SEED_VERSION;
+    if (alreadySeeded || (Array.isArray(normalized.bdatos) && normalized.bdatos.length > 0)) {
+      normalized.metadata = {
+        ...(isPlainObject(normalized.metadata) ? normalized.metadata : {}),
+        bdatosSeedVersion: sourceMetadata.bdatosSeedVersion || normalized.metadata?.bdatosSeedVersion || '',
+        bdatosSeededAt: sourceMetadata.bdatosSeededAt || normalized.metadata?.bdatosSeededAt || ''
+      };
+      return normalized;
+    }
+
+    normalized.bdatos = buildInitialBdatosRecords(BDATOS_INITIAL_UPDATED_AT);
+    normalized.bdatosUpdatedAt = BDATOS_INITIAL_UPDATED_AT;
+    normalized.metadata = {
+      ...(isPlainObject(normalized.metadata) ? normalized.metadata : {}),
+      bdatosSeedVersion: BDATOS_INITIAL_SEED_VERSION,
+      bdatosSeededAt: BDATOS_INITIAL_UPDATED_AT
+    };
     return normalized;
   }
 
@@ -1983,7 +2682,7 @@
         return initial;
       }
       const parsed = JSON.parse(raw);
-      const normalized = normalizeData(parsed);
+      const normalized = applyInitialBdatosSeedIfNeeded(normalizeData(parsed), parsed);
       saveData(normalized);
       return normalized;
     } catch (error) {
@@ -2364,6 +3063,7 @@
 
     if (route === 'home') {
       catalogState.message = null;
+      bdatosState.message = null;
       ventasState.message = null;
       cobrosState.message = null;
       proveedoresState.message = null;
@@ -2379,12 +3079,21 @@
       gastosState.message = null;
       viewRoot.innerHTML = renderResumenTablero();
     } else if (route === 'catalogos') {
+      bdatosState.message = null;
       ventasState.message = null;
       cobrosState.message = null;
       proveedoresState.message = null;
       pagosState.message = null;
       gastosState.message = null;
       viewRoot.innerHTML = renderCatalogos();
+    } else if (route === 'bdatos') {
+      catalogState.message = null;
+      ventasState.message = null;
+      cobrosState.message = null;
+      proveedoresState.message = null;
+      pagosState.message = null;
+      gastosState.message = null;
+      viewRoot.innerHTML = renderBdatos();
     } else if (route === 'mora') {
       catalogState.message = null;
       ventasState.message = null;
@@ -4659,6 +5368,387 @@
     }, { r1: 0, r2: 0, r3: 0, r4: 0 });
   }
 
+
+  function normalizeBdatosRecord(record) {
+    const raw = isPlainObject(record) ? record : {};
+    const timestamp = nowIso();
+    const parsedPrice = parseMoney(raw.precio);
+    return {
+      id: cleanText(raw.id) || generateId('bd'),
+      codigo: cleanText(raw.codigo || raw.Codigo || raw.código || raw.Código),
+      descripcion: cleanText(raw.descripcion || raw.Descripcion || raw.descripción || raw.Descripción),
+      precio: Number.isFinite(parsedPrice) ? roundMoney(parsedPrice) : 0,
+      createdAt: cleanText(raw.createdAt) || cleanText(raw.fechaCreacion) || timestamp,
+      updatedAt: cleanText(raw.updatedAt) || cleanText(raw.fechaActualizacion) || cleanText(raw.createdAt) || timestamp
+    };
+  }
+
+  function sortBdatosRecords(records) {
+    return (Array.isArray(records) ? records : [])
+      .map((record) => normalizeBdatosRecord(record))
+      .sort((a, b) => a.descripcion.localeCompare(b.descripcion, 'es', { sensitivity: 'base' }) || a.codigo.localeCompare(b.codigo, 'es', { sensitivity: 'base' }));
+  }
+
+  function normalizeBdatosList(records) {
+    return sortBdatosRecords(records).filter((record) => record.codigo || record.descripcion);
+  }
+
+  function getInitialBdatosSeedId(codigo, index = 0) {
+    const safeCode = cleanText(codigo)
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    return `bd-jcg-${safeCode || (index + 1)}`;
+  }
+
+  function buildInitialBdatosRecords(timestamp = BDATOS_INITIAL_UPDATED_AT) {
+    return sortBdatosRecords(BDATOS_INITIAL_ARTICLES.map((record, index) => normalizeBdatosRecord({
+      id: getInitialBdatosSeedId(record.codigo, index),
+      codigo: record.codigo,
+      descripcion: record.descripcion,
+      precio: record.precio,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    })));
+  }
+
+  function getBdatosRecords() {
+    appData.bdatos = normalizeBdatosList(appData.bdatos);
+    return appData.bdatos;
+  }
+
+  function getBdatosSearchQuery() {
+    return normalizeKeyForCompare(bdatosState.search || '');
+  }
+
+  function getFilteredBdatosRecords(records = getBdatosRecords()) {
+    const query = getBdatosSearchQuery();
+    if (!query) return sortBdatosRecords(records);
+    return sortBdatosRecords(records).filter((record) => {
+      const haystack = `${normalizeKeyForCompare(record.codigo)} ${normalizeKeyForCompare(record.descripcion)}`;
+      return haystack.includes(query);
+    });
+  }
+
+  function getBdatosLastUpdatedLabel() {
+    return formatDateTimeOrText(appData.bdatosUpdatedAt, 'Sin actualizaciones');
+  }
+
+  function renderBdatos() {
+    const allRecords = getBdatosRecords();
+    const filteredRecords = getFilteredBdatosRecords(allRecords);
+    const editingRecord = bdatosState.editingId ? allRecords.find((record) => record.id === bdatosState.editingId) : null;
+
+    return `
+      <section class="hero bdatos-hero">
+        <div>
+          <span class="eyebrow">Módulo activo</span>
+          <h1>Bdatos</h1>
+          <p class="lead">Base informativa de artículos. Código, descripción y precio: directo al grano, sin meter la cuchara en ventas, compras ni cálculos.</p>
+        </div>
+        <aside class="hero-status" aria-label="Resumen de Bdatos">
+          <h3>Resumen</h3>
+          <div class="status-grid">
+            <div class="status-item"><strong>Artículos</strong><span>${allRecords.length}</span></div>
+            <div class="status-item"><strong>Filtrados</strong><span data-bdatos-visible-count>${filteredRecords.length}</span></div>
+            <div class="status-item wide"><strong>Última actualización</strong><span>${escapeHtml(getBdatosLastUpdatedLabel())}</span></div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="bdatos-shell">
+        ${bdatosState.message ? `<div class="form-message ${bdatosState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(bdatosState.message)}</div>` : ''}
+
+        <article class="panel-card bdatos-search-card">
+          <label class="form-field bdatos-search-field">
+            <span>Buscar</span>
+            <input type="search" value="${escapeHtml(bdatosState.search || '')}" placeholder="Buscar por código o descripción..." autocomplete="off" data-bdatos-search />
+          </label>
+        </article>
+
+        <div class="bdatos-layout">
+          <article class="panel-card bdatos-form-card">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Nuevo artículo</span>
+                <h2>Agregar artículo</h2>
+              </div>
+            </div>
+            <p class="muted-text">Este formulario solo crea artículos nuevos. La edición se hace en ventana modal para evitar cruces raros.</p>
+            ${renderBdatosForm(null, 'create')}
+          </article>
+
+          <article class="panel-card bdatos-list-card">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Listado</span>
+                <h2>Artículos</h2>
+              </div>
+              <div class="count-pill"><span data-bdatos-visible-count>${filteredRecords.length}</span> / ${allRecords.length} registros</div>
+            </div>
+            ${renderBdatosList(filteredRecords, allRecords.length)}
+          </article>
+        </div>
+        ${editingRecord ? renderEditModal(getBdatosModalId(), 'Editar artículo', 'Modifica Código, Descripción y Precio sin usar el formulario de ingreso.', renderBdatosForm(editingRecord, 'edit')) : ''}
+      </section>
+    `;
+  }
+
+  function renderBdatosForm(record, mode = 'create') {
+    const isEdit = mode === 'edit';
+    return `
+      <form class="catalog-form bdatos-form" ${isEdit ? 'data-bdatos-edit-form' : 'data-bdatos-create-form'} novalidate>
+        <input type="hidden" name="id" value="${escapeHtml(record?.id || '')}" />
+        <label class="form-field">
+          <span>Código <span class="required-dot" aria-label="obligatorio">*</span></span>
+          <input type="text" name="codigo" value="${escapeHtml(record?.codigo || '')}" placeholder="Ej. ART-001" required autocomplete="off" />
+        </label>
+        <label class="form-field">
+          <span>Descripción <span class="required-dot" aria-label="obligatorio">*</span></span>
+          <input type="text" name="descripcion" value="${escapeHtml(record?.descripcion || '')}" placeholder="Descripción del artículo" required autocomplete="off" />
+        </label>
+        <label class="form-field">
+          <span>Precio <span class="required-dot" aria-label="obligatorio">*</span></span>
+          <input type="number" name="precio" value="${escapeHtml(record ? String(roundMoney(record.precio)) : '')}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required autocomplete="off" />
+        </label>
+        <div class="form-actions">
+          <button type="submit" class="card-action">${isEdit ? 'Guardar cambios' : 'Agregar artículo'}</button>
+          <button type="button" class="secondary-action" ${isEdit ? 'data-bdatos-edit-cancel' : 'data-bdatos-clear'}>${isEdit ? 'Cancelar' : 'Limpiar'}</button>
+        </div>
+      </form>
+    `;
+  }
+
+  function renderBdatosList(records, totalCount) {
+    if (!totalCount) {
+      return `
+        <div class="empty-state">
+          <strong>No hay artículos todavía.</strong>
+          <p>Agrega el primer artículo con Código, Descripción y Precio.</p>
+        </div>
+      `;
+    }
+
+    if (!records.length) {
+      return `
+        <div class="empty-state" data-bdatos-empty-filter>
+          <strong>No hay coincidencias.</strong>
+          <p>Prueba con otro código o descripción. La búsqueda filtra, no borra datos.</p>
+        </div>
+      `;
+    }
+
+    const rows = records.map((record) => renderBdatosRow(record)).join('');
+    return renderOperationalTableShell({
+      shellClass: 'bdatos-scroll-shell',
+      wrapClass: 'bdatos-table-wrap',
+      ariaLabel: 'Listado de artículos de Bdatos',
+      tableClass: 'operational-table-bdatos',
+      colgroup: `
+        <colgroup>
+          <col class="bdatos-col-codigo">
+          <col class="bdatos-col-descripcion">
+          <col class="bdatos-col-precio">
+          <col class="bdatos-col-acciones">
+        </colgroup>
+      `,
+      headers: `
+        <th>Código</th>
+        <th>Descripción</th>
+        <th>Precio</th>
+        <th>Acciones</th>
+      `,
+      rows
+    });
+  }
+
+  function renderBdatosRow(record) {
+    const searchText = `${normalizeKeyForCompare(record.codigo)} ${normalizeKeyForCompare(record.descripcion)}`;
+    return `
+      <tr class="compact-record-row" data-bdatos-row data-bdatos-search-text="${escapeHtml(searchText)}">
+        <td><span class="compact-primary">${escapeHtml(record.codigo || '—')}</span></td>
+        <td><span>${escapeHtml(record.descripcion || '—')}</span></td>
+        <td class="amount-cell"><span>${escapeHtml(formatMoney(record.precio))}</span></td>
+        <td class="actions-cell">
+          <div class="record-actions compact-row-actions">
+            <button type="button" class="secondary-action compact" data-bdatos-edit="${escapeHtml(record.id)}">Editar</button>
+            <button type="button" class="danger-action compact" data-bdatos-delete="${escapeHtml(record.id)}">Borrar</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  function readBdatosForm(form) {
+    const formData = new FormData(form);
+    const precioRaw = cleanText(formData.get('precio'));
+    return {
+      id: cleanText(formData.get('id')),
+      codigo: cleanText(formData.get('codigo')),
+      descripcion: cleanText(formData.get('descripcion')),
+      precioRaw,
+      precio: parseMoney(precioRaw)
+    };
+  }
+
+  function validateBdatosPayload(payload, currentId = '') {
+    if (!payload.codigo) return 'Código es obligatorio.';
+    if (!payload.descripcion) return 'Descripción es obligatoria.';
+    if (!payload.precioRaw) return 'Precio es obligatorio.';
+    if (!Number.isFinite(payload.precio) || payload.precio < 0) return 'Precio debe ser un número válido.';
+    const duplicate = getBdatosRecords().find((record) => record.id !== currentId && cleanText(record.codigo) === payload.codigo);
+    if (duplicate) return `Ya existe un artículo con el código “${payload.codigo}”.`;
+    return '';
+  }
+
+  function saveBdatosCreate(form) {
+    const payload = readBdatosForm(form);
+    const validationError = validateBdatosPayload(payload);
+    if (validationError) {
+      bdatosState.message = validationError;
+      bdatosState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+
+    const timestamp = nowIso();
+    const record = normalizeBdatosRecord({
+      id: generateId('bd'),
+      codigo: payload.codigo,
+      descripcion: payload.descripcion,
+      precio: payload.precio,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    appData.bdatos = sortBdatosRecords([record, ...getBdatosRecords()]);
+    appData.bdatosUpdatedAt = timestamp;
+    bdatosState.editingId = null;
+    bdatosState.message = `Artículo “${record.descripcion}” agregado.`;
+    bdatosState.messageType = 'success';
+    saveData(appData);
+    registerActivity({
+      module: 'Bdatos',
+      action: 'Agregado',
+      entityType: 'Artículo',
+      entityRef: record.codigo,
+      amount: record.precio,
+      detail: buildActivityDetail(['Artículo agregado', record.codigo, record.descripcion, formatMoney(record.precio)]),
+      source: 'local'
+    });
+    renderRoute({ preserveScroll: true });
+  }
+
+  function saveBdatosEdit(form) {
+    const payload = readBdatosForm(form);
+    const currentId = payload.id || bdatosState.editingId;
+    const existing = getBdatosRecords().find((record) => record.id === currentId);
+    if (!existing) {
+      bdatosState.message = 'No se encontró el artículo para editar.';
+      bdatosState.messageType = 'error';
+      bdatosState.editingId = null;
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+
+    const validationError = validateBdatosPayload(payload, currentId);
+    if (validationError) {
+      bdatosState.message = validationError;
+      bdatosState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+
+    const timestamp = nowIso();
+    const updated = normalizeBdatosRecord({
+      ...existing,
+      codigo: payload.codigo,
+      descripcion: payload.descripcion,
+      precio: payload.precio,
+      updatedAt: timestamp
+    });
+    appData.bdatos = sortBdatosRecords(getBdatosRecords().map((record) => record.id === currentId ? updated : record));
+    appData.bdatosUpdatedAt = timestamp;
+    bdatosState.editingId = null;
+    bdatosState.message = `Artículo “${updated.descripcion}” actualizado.`;
+    bdatosState.messageType = 'success';
+    saveData(appData);
+    registerActivity({
+      module: 'Bdatos',
+      action: 'Actualizado',
+      entityType: 'Artículo',
+      entityRef: updated.codigo,
+      amount: updated.precio,
+      detail: buildActivityDetail(['Artículo actualizado', updated.codigo, updated.descripcion, formatMoney(updated.precio)]),
+      source: 'local'
+    });
+    renderRoute({ preserveScroll: true });
+  }
+
+  function editBdatosRecord(recordId) {
+    const record = getBdatosRecords().find((item) => item.id === recordId);
+    if (!record) return;
+    bdatosState.editingId = record.id;
+    bdatosState.message = null;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function deleteBdatosRecord(recordId) {
+    const record = getBdatosRecords().find((item) => item.id === recordId);
+    if (!record) return;
+    const ok = window.confirm(`Vas a borrar el artículo ${record.codigo} — ${record.descripcion}. Esta acción no toca ventas, compras ni cálculos. ¿Continuar?`);
+    if (!ok) return;
+
+    const timestamp = nowIso();
+    appData.bdatos = sortBdatosRecords(getBdatosRecords().filter((item) => item.id !== recordId));
+    appData.bdatosUpdatedAt = timestamp;
+    bdatosState.editingId = null;
+    bdatosState.message = `Artículo “${record.descripcion}” borrado.`;
+    bdatosState.messageType = 'success';
+    saveData(appData);
+    registerActivity({
+      module: 'Bdatos',
+      action: 'Borrado',
+      entityType: 'Artículo',
+      entityRef: record.codigo,
+      amount: record.precio,
+      detail: buildActivityDetail(['Artículo borrado', record.codigo, record.descripcion]),
+      source: 'local'
+    });
+    renderRoute({ preserveScroll: true });
+  }
+
+  function clearBdatosCreateForm() {
+    bdatosState.message = null;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function clearBdatosEdit() {
+    bdatosState.editingId = null;
+    bdatosState.message = null;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function setupBdatosSearch() {
+    const search = viewRoot.querySelector('[data-bdatos-search]');
+    if (!search) return;
+    const applyFilter = () => {
+      const query = normalizeKeyForCompare(search.value);
+      bdatosState.search = search.value;
+      let visible = 0;
+      viewRoot.querySelectorAll('[data-bdatos-row]').forEach((row) => {
+        const text = row.getAttribute('data-bdatos-search-text') || '';
+        const shouldShow = !query || text.includes(query);
+        row.hidden = !shouldShow;
+        if (shouldShow) visible += 1;
+      });
+      viewRoot.querySelectorAll('[data-bdatos-visible-count]').forEach((item) => { item.textContent = String(visible); });
+    };
+    search.addEventListener('input', applyFilter);
+    applyFilter();
+  }
+
   function renderCatalogos() {
     const activeCatalog = getActiveCatalog();
     const records = getCatalogRecords(activeCatalog.id);
@@ -4919,6 +6009,7 @@
   }
 
   function getCatalogModalId() { return 'catalog'; }
+  function getBdatosModalId() { return 'bdatos'; }
   function getVentaModalId() { return 'venta'; }
   function getCompraModalId() { return 'compra'; }
   function getCobroModalId() { return 'cobro'; }
@@ -9020,6 +10111,7 @@
           <div class="status-item"><strong>Compras</strong><span>${preview.counts.comprasProveedores}</span></div>
           <div class="status-item"><strong>Pagos</strong><span>${preview.counts.pagosProveedores}</span></div>
           <div class="status-item"><strong>Gastos</strong><span>${preview.counts.gastos}</span></div>
+          <div class="status-item"><strong>Bdatos</strong><span>${preview.counts.bdatos || 0}</span></div>
           <div class="status-item"><strong>Bitácora</strong><span>${preview.counts.bitacora || 0}</span></div>
           <div class="status-item"><strong>Ajustes CL</strong><span>${preview.counts.ajustesClientes || 0}</span></div>
           <div class="status-item"><strong>Ajustes PR</strong><span>${preview.counts.ajustesProveedores || 0}</span></div>
@@ -9059,6 +10151,7 @@
       comprasProveedores,
       pagosProveedores,
       gastos: Array.isArray(data.gastos) ? data.gastos.length : 0,
+      bdatos: Array.isArray(data.bdatos) ? data.bdatos.length : 0,
       cierresMensuales,
       exportacionesExcel: Array.isArray(data.exportacionesExcel) ? data.exportacionesExcel.length : 0,
       ajustesClientes: Array.isArray(data.ventas) ? data.ventas.reduce((sum, venta) => sum + normalizeVentaAjustesList(venta?.ajustes).length, 0) : 0,
@@ -9109,6 +10202,8 @@
         comprasProveedores: snapshot.comprasProveedores || [],
         pagosProveedores: snapshot.pagosProveedores || [],
         gastos: snapshot.gastos || [],
+        bdatos: snapshot.bdatos || [],
+        bdatosUpdatedAt: snapshot.bdatosUpdatedAt || '',
         cierres: snapshot.cierresMensuales || [],
         cierresMensuales: snapshot.cierresMensuales || [],
         exportacionesExcel: snapshot.exportacionesExcel || [],
@@ -9316,6 +10411,8 @@
           comprasProveedores: registros.comprasProveedores || registros.proveedoresCompras || registros.compras || [],
           pagosProveedores: registros.pagosProveedores || registros.pagos || [],
           gastos: registros.gastos,
+          bdatos: registros.bdatos || registros.Bdatos || [],
+          bdatosUpdatedAt: registros.bdatosUpdatedAt || registros.bdatosLastUpdatedAt || '',
           cierresMensuales: registros.cierresMensuales || registros.cierres || [],
           exportacionesExcel: registros.exportacionesExcel || [],
           configuracion: registros.configuracion || raw.configuracion || {}
@@ -9338,6 +10435,8 @@
         comprasProveedores: raw.comprasProveedores,
         pagosProveedores: raw.pagosProveedores,
         gastos: raw.gastos,
+        bdatos: raw.bdatos || raw.Bdatos || [],
+        bdatosUpdatedAt: raw.bdatosUpdatedAt || raw.bdatosLastUpdatedAt || '',
         cierresMensuales: raw.cierresMensuales || [],
         exportacionesExcel: raw.exportacionesExcel || [],
         configuracion: raw.configuracion || {}
@@ -9430,7 +10529,7 @@
     const idMaps = buildCatalogMergeMaps(target, incoming, timestamp);
     const ventaIdMap = new Map();
     const compraIdMap = new Map();
-    const added = { catalogos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, cierresMensuales: 0, exportacionesExcel: 0, total: 0 };
+    const added = { catalogos: 0, bdatos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, cierresMensuales: 0, exportacionesExcel: 0, total: 0 };
     let skipped = 0;
 
     CATALOGS.forEach((catalog) => {
@@ -9533,6 +10632,18 @@
       added.gastos += 1;
     });
 
+    incoming.bdatos.forEach((articulo) => {
+      const normalized = normalizeBdatosRecord({ ...articulo, updatedAt: articulo.updatedAt || timestamp });
+      const existing = target.bdatos.find((item) => item.id === normalized.id || cleanText(item.codigo) === cleanText(normalized.codigo));
+      if (existing) {
+        skipped += 1;
+        return;
+      }
+      target.bdatos = sortBdatosRecords([normalized, ...target.bdatos]);
+      added.bdatos += 1;
+    });
+    if (added.bdatos > 0) target.bdatosUpdatedAt = timestamp;
+
     incoming.cierresMensuales.forEach((cierre) => {
       const normalized = normalizeCierreMensualRecord(cierre);
       const id = cleanText(normalized.id || normalized.periodo || '');
@@ -9559,7 +10670,7 @@
 
     target.ventas = recalculateVentasWithCobros(target.ventas, target.cobros);
     target.comprasProveedores = recalculateComprasProveedoresWithPagos(target.comprasProveedores, target.pagosProveedores);
-    added.total = added.catalogos + added.ventas + added.cobros + added.comprasProveedores + added.pagosProveedores + added.gastos + added.cierresMensuales + added.exportacionesExcel;
+    added.total = added.catalogos + added.bdatos + added.ventas + added.cobros + added.comprasProveedores + added.pagosProveedores + added.gastos + added.cierresMensuales + added.exportacionesExcel;
     appData = normalizeData({
       ...target,
       configuracion: {
@@ -11650,6 +12761,7 @@ ${rowsXml}
       pagos: ['proveedores', 'comprasProveedores', 'pagosProveedores', 'metodosPago', 'cuentasBancos'],
       gastos: ['tiposGasto', 'metodosPago', 'cuentasBancos', 'gastos'],
       catalogos: ['clientes', 'sucursales', 'proveedores', 'tiposGasto', 'metodosPago', 'cuentasBancos'],
+      bdatos: ['bdatos'],
       excel: ['ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos'],
       respaldo: DATA_KEYS,
       configuracion: ['cierresMensuales']
@@ -11884,6 +12996,7 @@ ${rowsXml}
   function closeEditModal(modalId) {
     const id = cleanText(modalId);
     if (id === getCatalogModalId()) clearCatalogForm();
+    else if (id === getBdatosModalId()) clearBdatosEdit();
     else if (id === getVentaModalId()) clearVentaForm();
     else if (id === getCompraModalId()) clearCompraProveedorForm();
     else if (id === getCobroModalId()) clearCobroForm();
@@ -11946,6 +13059,38 @@ ${rowsXml}
     viewRoot.querySelectorAll('[data-catalog-toggle]').forEach((button) => {
       button.addEventListener('click', () => toggleCatalogRecord(button.dataset.catalogToggle));
     });
+
+    viewRoot.querySelectorAll('[data-bdatos-create-form]').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveBdatosCreate(form);
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-bdatos-edit-form]').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveBdatosEdit(form);
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-bdatos-clear]').forEach((button) => {
+      button.addEventListener('click', clearBdatosCreateForm);
+    });
+
+    viewRoot.querySelectorAll('[data-bdatos-edit-cancel]').forEach((button) => {
+      button.addEventListener('click', clearBdatosEdit);
+    });
+
+    viewRoot.querySelectorAll('[data-bdatos-edit]').forEach((button) => {
+      button.addEventListener('click', () => editBdatosRecord(button.dataset.bdatosEdit));
+    });
+
+    viewRoot.querySelectorAll('[data-bdatos-delete]').forEach((button) => {
+      button.addEventListener('click', () => deleteBdatosRecord(button.dataset.bdatosDelete));
+    });
+
+    setupBdatosSearch();
 
     viewRoot.querySelectorAll('[data-venta-form]').forEach((form) => {
       setupVentaLiveCalculations(form);
