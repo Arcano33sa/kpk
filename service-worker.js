@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_33_post12_resumen_filtros_compactos';
+const CACHE_VERSION = 'v0_17_35_post12_compactacion_visual_etapa2';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

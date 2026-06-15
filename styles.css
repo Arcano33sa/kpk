@@ -4683,3 +4683,1131 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* Etapa 1/2 — KSA PRÁCTIKA: compactación visual global segura */
+:where(.resumen-shell,
+  .ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .mora-shell) {
+  gap: 12px;
+}
+
+:where(.resumen-hero,
+  .ventas-hero,
+  .cobros-hero,
+  .proveedores-hero,
+  .pagos-hero,
+  .gastos-hero) {
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+:where(.resumen-hero,
+  .ventas-hero,
+  .cobros-hero,
+  .proveedores-hero,
+  .pagos-hero,
+  .gastos-hero) .hero-status {
+  padding: 12px 13px;
+  border-radius: 18px;
+}
+
+:where(.resumen-hero,
+  .ventas-hero,
+  .cobros-hero,
+  .proveedores-hero,
+  .pagos-hero,
+  .gastos-hero) .status-grid {
+  gap: 7px;
+}
+
+:where(.resumen-hero,
+  .ventas-hero,
+  .cobros-hero,
+  .proveedores-hero,
+  .pagos-hero,
+  .gastos-hero) .status-item {
+  padding: 8px 9px;
+  border-radius: 12px;
+}
+
+:where(.resumen-hero,
+  .ventas-hero,
+  .cobros-hero,
+  .proveedores-hero,
+  .pagos-hero,
+  .gastos-hero) .status-item strong {
+  font-size: 0.68rem;
+  line-height: 1.12;
+}
+
+:where(.resumen-hero,
+  .ventas-hero,
+  .cobros-hero,
+  .proveedores-hero,
+  .pagos-hero,
+  .gastos-hero) .status-item span {
+  margin-top: 1px;
+  font-size: 0.92rem;
+  line-height: 1.14;
+}
+
+:where(.resumen-shell,
+  .ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .mora-shell) :where(.panel-card,
+  .placeholder-card,
+  .catalog-warning,
+  .formula-card,
+  .mora-card,
+  .history-card,
+  .alert-card,
+  .mini-list-card,
+  .import-card,
+  .json-comparison-section,
+  .contado-payment-block,
+  .facturas-block,
+  .logistica-block) {
+  padding: 12px 13px;
+  border-radius: 16px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) :where(.venta-card,
+  .cobro-card,
+  .compra-card,
+  .pago-card,
+  .gasto-card) {
+  padding: 12px;
+  border-radius: 16px;
+}
+
+:where(.resumen-shell,
+  .ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .mora-shell) .section-title-row {
+  gap: 9px;
+  margin-bottom: 8px;
+}
+
+:where(.resumen-shell,
+  .ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .mora-shell) .section-title-row h2 {
+  font-size: clamp(1.22rem, 2vw, 1.72rem);
+  line-height: 1.04;
+}
+
+:where(.resumen-shell,
+  .ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .mora-shell) .eyebrow.mini {
+  padding: 4px 8px;
+  font-size: 0.64rem;
+}
+
+:where(.resumen-shell,
+  .ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .mora-shell) .muted-text {
+  margin-bottom: 10px;
+  font-size: 0.9rem;
+  line-height: 1.34;
+}
+
+:where(.ventas-layout,
+  .cobros-layout,
+  .compras-layout,
+  .pagos-layout,
+  .gastos-layout,
+  .ventas-left-column,
+  .ventas-right-column,
+  .compras-form-stack,
+  .ventas-form-stack,
+  .mora-shell,
+  .historial-compact-grid,
+  .periodos-cierre-panel) {
+  gap: 12px;
+}
+
+:where(.ventas-layout,
+  .cobros-layout,
+  .compras-layout,
+  .pagos-layout,
+  .gastos-layout) {
+  grid-template-columns: minmax(280px, 0.76fr) minmax(0, 1.24fr);
+}
+
+.ventas-layout {
+  grid-template-columns: minmax(320px, 0.82fr) minmax(0, 1.18fr);
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .mora-shell) .metric-grid,
+.resumen-metrics {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 148px), 1fr));
+  gap: 9px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .mora-shell) .metric-card,
+.resumen-metrics .metric-card {
+  min-height: 86px;
+  padding: 11px 12px;
+  border-radius: 15px;
+  display: grid;
+  align-content: center;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .mora-shell) .metric-card span,
+.resumen-metrics .metric-card span {
+  font-size: 0.72rem;
+  line-height: 1.13;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .mora-shell) .metric-card strong,
+.resumen-metrics .metric-card strong {
+  margin-top: 3px;
+  font-size: clamp(0.98rem, 1.32vw, 1.18rem);
+  line-height: 1.13;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) :where(.venta-form,
+  .cobro-form,
+  .compra-form,
+  .pago-form,
+  .gasto-form,
+  .ajuste-form,
+  .period-form) {
+  gap: 11px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 10px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .form-field {
+  gap: 4px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .form-field span {
+  font-size: 0.78rem;
+  line-height: 1.12;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .form-field input,
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .form-field select,
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .form-field textarea {
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  line-height: 1.2;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .form-field textarea {
+  min-height: 76px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) :where(.facturas-mass-field textarea) {
+  min-height: 76px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .resumen-shell,
+  .mora-shell) .form-actions,
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .resumen-shell,
+  .mora-shell) .record-actions {
+  gap: 8px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .resumen-shell,
+  .mora-shell) :where(.card-action,
+  .secondary-action,
+  .danger-action) {
+  min-height: 42px;
+  padding: 8px 13px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .resumen-shell,
+  .mora-shell) :where(.card-action.compact,
+  .secondary-action.compact,
+  .danger-action.compact,
+  .compact) {
+  min-height: 36px;
+  padding: 7px 10px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .formula-card {
+  gap: 9px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .formula-card > strong {
+  margin-bottom: 7px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .formula-grid {
+  gap: 6px 10px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) :where(.venta-detail-grid,
+  .cobro-detail-grid,
+  .compra-detail-grid,
+  .pago-detail-grid,
+  .gasto-detail-grid,
+  .mora-detail-grid,
+  .logistica-display-grid) {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 132px), 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) :where(.venta-detail-grid div,
+  .cobro-detail-grid div,
+  .compra-detail-grid div,
+  .pago-detail-grid div,
+  .gasto-detail-grid div,
+  .mora-detail-grid div,
+  .logistica-display-grid div) {
+  padding: 8px 9px;
+  border-radius: 12px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) :where(.venta-card-head,
+  .facturas-head,
+  .periodo-cierre-head) {
+  gap: 9px;
+  margin-bottom: 8px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) :where(.ventas-list,
+  .cobros-list,
+  .compras-list,
+  .pagos-list,
+  .gastos-list,
+  .entity-accordion-list) {
+  gap: 9px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) :where(.entity-accordion-toggle) {
+  min-height: 42px;
+  padding: 8px 12px;
+  gap: 8px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .entity-accordion-panel {
+  padding: 10px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .entity-accordion-count {
+  padding: 4px 8px;
+  font-size: 0.72rem;
+}
+
+.resumen-two-columns,
+.mora-two-columns {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 12px;
+}
+
+.resumen-list,
+.mora-list,
+.historial-grid,
+.alert-grid,
+.alert-detail-grid {
+  gap: 9px;
+}
+
+.resumen-row-card,
+.range-pill,
+.periodos-cierre-summary div,
+.cierre-status-card,
+.period-ready-alert,
+.period-card-action {
+  padding: 9px 10px;
+  border-radius: 13px;
+}
+
+.resumen-mini-grid,
+.resumen-mini-grid.provider-grid,
+.range-summary,
+.periodos-cierre-summary {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 126px), 1fr));
+  gap: 8px;
+}
+
+.resumen-mini-grid div {
+  padding: 8px;
+}
+
+:where(.resumen-shell,
+  .ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .mora-shell) .form-message {
+  padding: 10px 12px;
+  border-radius: 14px;
+}
+
+:where(.resumen-shell,
+  .ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .mora-shell) .notice {
+  padding: 10px 12px;
+  border-radius: 13px;
+}
+
+:where(.resumen-shell,
+  .ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .mora-shell) :where(.count-pill,
+  .state-pill,
+  .badge,
+  .filter-help span) {
+  padding-block: 4px;
+}
+
+:where(.resumen-shell,
+  .ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .mora-shell) .operational-table th,
+:where(.resumen-shell,
+  .ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell,
+  .mora-shell) .operational-table td,
+.resumen-compact-table th,
+.resumen-compact-table td,
+.mora-compact-table th,
+.mora-compact-table td,
+.historial-compact-table th,
+.historial-compact-table td,
+.periodo-blocking-table th,
+.periodo-blocking-table td,
+.closing-compact-table th,
+.closing-compact-table td {
+  padding: 6px 8px;
+}
+
+@media (max-width: 1100px) {
+  :where(.ventas-layout,
+    .cobros-layout,
+    .compras-layout,
+    .pagos-layout,
+    .gastos-layout) {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 621px) and (max-width: 900px) {
+  .resumen-two-columns,
+  .mora-two-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell,
+    .gastos-shell,
+    .mora-shell) .metric-grid,
+  .resumen-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  :where(.resumen-hero,
+    .ventas-hero,
+    .cobros-hero,
+    .proveedores-hero,
+    .pagos-hero,
+    .gastos-hero) {
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell,
+    .gastos-shell,
+    .mora-shell) .metric-grid,
+  .resumen-metrics,
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell,
+    .gastos-shell) .form-grid,
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell,
+    .gastos-shell) :where(.venta-detail-grid,
+    .cobro-detail-grid,
+    .compra-detail-grid,
+    .pago-detail-grid,
+    .gasto-detail-grid,
+    .mora-detail-grid,
+    .logistica-display-grid),
+  .resumen-two-columns,
+  .mora-two-columns,
+  .resumen-mini-grid,
+  .resumen-mini-grid.provider-grid,
+  .range-summary,
+  .periodos-cierre-summary {
+    grid-template-columns: 1fr;
+  }
+
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell,
+    .gastos-shell,
+    .resumen-shell,
+    .mora-shell) .section-title-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell,
+    .gastos-shell) .form-field input,
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell,
+    .gastos-shell) .form-field select,
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell,
+    .gastos-shell) .form-field textarea {
+    min-height: 42px;
+  }
+}
+
+
+/* Etapa 2/2 — compactación específica por módulo y pendiente en Proveedores */
+:where(.resumen-hero,
+  .ventas-hero,
+  .cobros-hero,
+  .proveedores-hero,
+  .pagos-hero,
+  .gastos-hero) {
+  gap: 14px;
+  margin-bottom: 14px;
+  padding-block: 14px;
+}
+
+:where(.resumen-hero,
+  .ventas-hero,
+  .cobros-hero,
+  .proveedores-hero,
+  .pagos-hero,
+  .gastos-hero) .lead {
+  max-width: 78ch;
+  margin-top: 6px;
+  line-height: 1.38;
+}
+
+:where(.resumen-hero,
+  .ventas-hero,
+  .cobros-hero,
+  .proveedores-hero,
+  .pagos-hero,
+  .gastos-hero) .hero-status {
+  padding: 12px;
+  gap: 8px;
+}
+
+:where(.resumen-hero,
+  .ventas-hero,
+  .cobros-hero,
+  .proveedores-hero,
+  .pagos-hero,
+  .gastos-hero) .status-grid {
+  gap: 7px;
+}
+
+:where(.resumen-hero,
+  .ventas-hero,
+  .cobros-hero,
+  .proveedores-hero,
+  .pagos-hero,
+  .gastos-hero) .status-item {
+  padding: 8px 9px;
+  border-radius: 12px;
+}
+
+.resumen-shell,
+.ventas-shell,
+.cobros-shell,
+.proveedores-shell,
+.pagos-shell,
+.gastos-shell {
+  gap: 11px;
+}
+
+.resumen-filter-panel,
+:where(.venta-form-card,
+  .venta-list-card,
+  .cobro-form-card,
+  .cobro-list-card,
+  .compra-form-card,
+  .compra-ajuste-card,
+  .compra-list-card,
+  .pago-form-card,
+  .pago-list-card,
+  .gasto-form-card,
+  .gasto-list-card) {
+  padding: 13px;
+  border-radius: 17px;
+}
+
+.resumen-filter-panel .section-title-row,
+:where(.venta-form-card,
+  .venta-list-card,
+  .cobro-form-card,
+  .cobro-list-card,
+  .compra-form-card,
+  .compra-ajuste-card,
+  .compra-list-card,
+  .pago-form-card,
+  .pago-list-card,
+  .gasto-form-card,
+  .gasto-list-card) .section-title-row {
+  margin-bottom: 8px;
+  gap: 8px;
+}
+
+.resumen-filter-panel h2,
+:where(.venta-form-card,
+  .venta-list-card,
+  .cobro-form-card,
+  .cobro-list-card,
+  .compra-form-card,
+  .compra-ajuste-card,
+  .compra-list-card,
+  .pago-form-card,
+  .pago-list-card,
+  .gasto-form-card,
+  .gasto-list-card) h2 {
+  line-height: 1.08;
+}
+
+:where(.venta-form-card,
+  .cobro-form-card,
+  .compra-form-card,
+  .compra-ajuste-card,
+  .pago-form-card,
+  .gasto-form-card) > .muted-text {
+  margin: -2px 0 8px;
+  line-height: 1.32;
+}
+
+.resumen-filter-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 138px), 1fr));
+  gap: 8px;
+}
+
+.resumen-filter-actions {
+  min-width: 0;
+}
+
+.resumen-filter-buttons {
+  gap: 6px;
+}
+
+.filter-help {
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.filter-help span {
+  font-size: 0.72rem;
+  line-height: 1.15;
+}
+
+.resumen-metrics,
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .metric-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 132px), 1fr));
+  gap: 8px;
+}
+
+.resumen-metrics .metric-card,
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .metric-card {
+  min-height: 76px;
+  padding: 9px 10px;
+  border-radius: 14px;
+}
+
+.resumen-metrics .metric-card small,
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .metric-card small {
+  margin-top: 2px;
+  line-height: 1.16;
+}
+
+:where(.ventas-layout,
+  .cobros-layout,
+  .compras-layout,
+  .pagos-layout,
+  .gastos-layout) {
+  gap: 12px;
+}
+
+.ventas-layout,
+.cobros-layout,
+.compras-layout,
+.pagos-layout,
+.gastos-layout {
+  align-items: start;
+}
+
+:where(.venta-form,
+  .cobro-form,
+  .compra-form,
+  .pago-form,
+  .gasto-form,
+  .ajuste-form) {
+  gap: 9px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 136px), 1fr));
+  gap: 8px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .form-field input,
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .form-field select,
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .form-field textarea {
+  min-height: 38px;
+  padding: 7px 9px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .form-field textarea,
+:where(.ventas-shell,
+  .proveedores-shell) .facturas-mass-field textarea {
+  min-height: 64px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .formula-card {
+  padding: 10px;
+  border-radius: 14px;
+  gap: 7px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .formula-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 118px), 1fr));
+  gap: 5px 8px;
+}
+
+.cobro-summary .formula-grid,
+.pago-summary .formula-grid,
+.ajuste-preview .formula-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 124px), 1fr));
+}
+
+:where(.cobro-summary,
+  .pago-summary) b,
+:where(.cobro-summary,
+  .pago-summary) span {
+  line-height: 1.18;
+}
+
+.contado-payment-block {
+  gap: 8px;
+  padding: 10px;
+}
+
+.facturas-fieldset,
+.logistica-block,
+.contado-payment-block,
+.compact-summary,
+.resumen-row-card,
+.range-pill,
+.periodos-cierre-summary div,
+.cierre-status-card,
+.period-ready-alert,
+.period-card-action {
+  border-radius: 13px;
+}
+
+.facturas-fieldset,
+.logistica-block {
+  padding: 10px;
+}
+
+.facturas-list,
+.logistica-display-grid {
+  gap: 7px;
+}
+
+.entity-accordion-toggle.has-pending-indicator {
+  grid-template-columns: auto minmax(0, 1fr) minmax(112px, auto) auto;
+}
+
+.entity-accordion-pending {
+  justify-self: center;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(185, 135, 43, 0.28);
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: rgba(255, 248, 234, 0.94);
+  color: var(--accent-dark);
+  font-size: 0.74rem;
+  font-weight: 950;
+  line-height: 1.08;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.entity-accordion-pending .pending-short {
+  display: none;
+}
+
+.proveedores-shell .entity-accordion-name {
+  overflow-wrap: anywhere;
+}
+
+.proveedores-shell .entity-accordion-count {
+  justify-self: end;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .entity-accordion-toggle {
+  min-height: 39px;
+  padding: 7px 10px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .entity-accordion-panel {
+  padding: 8px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .operational-table th,
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .operational-table td {
+  padding: 5px 7px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) .compact-row-actions {
+  gap: 5px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell,
+  .gastos-shell) :where(.card-action.compact,
+  .secondary-action.compact,
+  .danger-action.compact,
+  .operational-table .compact) {
+  min-height: 32px;
+  padding: 6px 8px;
+  font-size: 0.74rem;
+}
+
+.search-field {
+  margin-bottom: 8px;
+}
+
+.gastos-shell .gasto-form textarea[name="observacion"] {
+  min-height: 58px;
+}
+
+@media (min-width: 901px) {
+  .cobro-summary .formula-grid,
+  .pago-summary .formula-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .compra-form .formula-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .entity-accordion-toggle.has-pending-indicator {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .entity-accordion-pending {
+    justify-self: start;
+    grid-column: 2;
+    grid-row: 2;
+    font-size: 0.72rem;
+    padding: 3px 7px;
+  }
+
+  .entity-accordion-toggle.has-pending-indicator .entity-accordion-count {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+
+  .entity-accordion-pending .pending-full {
+    display: none;
+  }
+
+  .entity-accordion-pending .pending-short {
+    display: inline;
+  }
+}
+
+@media (max-width: 620px) {
+  .resumen-filter-panel,
+  :where(.venta-form-card,
+    .venta-list-card,
+    .cobro-form-card,
+    .cobro-list-card,
+    .compra-form-card,
+    .compra-ajuste-card,
+    .compra-list-card,
+    .pago-form-card,
+    .pago-list-card,
+    .gasto-form-card,
+    .gasto-list-card) {
+    padding: 11px;
+  }
+
+  .entity-accordion-toggle.has-pending-indicator {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .entity-accordion-pending,
+  .entity-accordion-toggle.has-pending-indicator .entity-accordion-count {
+    grid-column: 2;
+    grid-row: auto;
+    justify-self: start;
+  }
+
+  .entity-accordion-pending {
+    max-width: 100%;
+  }
+
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell,
+    .gastos-shell) .form-field input,
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell,
+    .gastos-shell) .form-field select,
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell,
+    .gastos-shell) .form-field textarea {
+    min-height: 40px;
+  }
+}

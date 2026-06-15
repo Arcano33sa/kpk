@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.32-post12-json-nombre-equipo-fecha';
+  const APP_VERSION = '0.17.35-post12-compactacion-visual-etapa2';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -7491,17 +7491,36 @@
     if (!exists) state.openGroupKey = '';
   }
 
+  function renderComprasAccordionPending(records) {
+    const source = Array.isArray(records) ? records : [];
+    const pendingTotal = source.reduce((total, item) => {
+      const recalculated = recalculateCompraProveedorWithPagos(item, appData.pagosProveedores);
+      const record = normalizeCompraProveedorRecord(recalculated);
+      if (!record.activo) return total;
+      return roundMoney(total + Math.max(0, Number(record.saldoPorPagar) || 0));
+    }, 0);
+    const amount = formatMoney(pendingTotal);
+    return `
+      <span class="entity-accordion-pending" title="Pendiente: ${escapeHtml(amount)}">
+        <span class="pending-full">Pendiente: ${escapeHtml(amount)}</span>
+        <span class="pending-short">Pend.: ${escapeHtml(amount)}</span>
+      </span>
+    `;
+  }
+
   function renderAccordionGroups({ module, groups, openGroupKey, renderOpenGroup }) {
     if (!groups.length) return '';
     return `
       <div class="entity-accordion-list" data-accordion-list="${escapeHtml(module)}">
         ${groups.map((group) => {
           const isOpen = group.key === openGroupKey;
+          const pendingIndicator = module === 'compras' ? renderComprasAccordionPending(group.records) : '';
           return `
             <section class="entity-accordion-item ${isOpen ? 'is-open' : ''}" data-accordion-item="${escapeHtml(module)}" data-accordion-search="${escapeHtml(group.searchText)}">
-              <button type="button" class="entity-accordion-toggle" data-accordion-toggle data-accordion-module="${escapeHtml(module)}" data-accordion-key="${escapeHtml(group.key)}" aria-expanded="${isOpen ? 'true' : 'false'}">
+              <button type="button" class="entity-accordion-toggle ${pendingIndicator ? 'has-pending-indicator' : ''}" data-accordion-toggle data-accordion-module="${escapeHtml(module)}" data-accordion-key="${escapeHtml(group.key)}" aria-expanded="${isOpen ? 'true' : 'false'}">
                 <span class="entity-accordion-chevron" aria-hidden="true">${isOpen ? '▾' : '▸'}</span>
                 <span class="entity-accordion-name">${escapeHtml(group.label)}</span>
+                ${pendingIndicator}
                 <span class="entity-accordion-count">${group.records.length} ${group.records.length === 1 ? 'registro' : 'registros'}</span>
               </button>
               ${isOpen ? `<div class="entity-accordion-panel">${renderOpenGroup(group)}</div>` : ''}
