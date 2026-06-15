@@ -4529,3 +4529,157 @@ body {
     min-width: 700px;
   }
 }
+
+/* Etapa 1/1 — Resumen: filtros compactos y rango Desde/Hasta liberable */
+.resumen-hero {
+  gap: 14px;
+  align-items: stretch;
+  margin-bottom: 16px;
+}
+
+.resumen-hero .lead {
+  margin-bottom: 0;
+}
+
+.resumen-hero .hero-status {
+  width: min(420px, 100%);
+  padding: 12px;
+  border-radius: 18px;
+}
+
+.resumen-hero .hero-status h3 {
+  margin-bottom: 6px;
+  font-size: 0.96rem;
+}
+
+.resumen-hero .status-grid {
+  gap: 6px;
+}
+
+.resumen-hero .status-item {
+  padding: 8px 9px;
+  border-radius: 12px;
+}
+
+.resumen-hero .status-item strong {
+  font-size: 0.68rem;
+  line-height: 1.1;
+}
+
+.resumen-hero .status-item span {
+  margin-top: 1px;
+  font-size: 0.92rem;
+  line-height: 1.12;
+  overflow-wrap: anywhere;
+}
+
+.resumen-filter-panel {
+  padding: 13px 14px;
+}
+
+.resumen-filter-panel .section-title-row {
+  margin-bottom: 4px;
+}
+
+.resumen-filter-panel .section-title-row h2 {
+  margin-bottom: 0;
+  font-size: clamp(1.24rem, 2vw, 1.7rem);
+}
+
+.resumen-filter-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 142px), 1fr));
+  gap: 8px;
+  align-items: end;
+  margin-top: 8px;
+}
+
+.resumen-filter-grid .form-field {
+  gap: 4px;
+  min-width: 0;
+}
+
+.resumen-filter-grid .form-field span {
+  font-size: 0.72rem;
+  line-height: 1.12;
+}
+
+.resumen-filter-grid .form-field input,
+.resumen-filter-grid .form-field select {
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-size: 0.88rem;
+}
+
+.resumen-filter-actions {
+  align-self: stretch;
+}
+
+.resumen-filter-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.resumen-filter-buttons .secondary-action.compact {
+  min-height: 40px;
+  width: 100%;
+  padding: 8px 9px;
+  border-radius: 12px;
+  line-height: 1.1;
+  white-space: normal;
+}
+
+.filter-help {
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.filter-help span {
+  padding: 5px 8px;
+  font-size: 0.66rem;
+  line-height: 1.18;
+}
+
+@media (min-width: 981px) {
+  .resumen-hero {
+    grid-template-columns: minmax(0, 1fr) minmax(330px, 420px);
+  }
+}
+
+@media (min-width: 760px) and (max-width: 980px) {
+  .resumen-filter-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 621px) and (max-width: 759px) {
+  .resumen-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .resumen-hero .status-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .resumen-filter-panel {
+    padding: 12px;
+  }
+
+  .resumen-filter-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .resumen-filter-buttons {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 420px) {
+  .resumen-hero .status-grid {
+    grid-template-columns: 1fr;
+  }
+}

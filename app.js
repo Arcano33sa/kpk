@@ -3449,7 +3449,6 @@
               <span class="eyebrow mini">Filtros</span>
               <h2>Filtros operativos</h2>
             </div>
-            <button type="button" class="secondary-action compact" data-resumen-clear>Limpiar filtros</button>
           </div>
           <div class="resumen-filter-grid">
             <label class="form-field">
@@ -3518,6 +3517,13 @@
                 ${metodosActivos.map((metodo) => `<option value="${escapeHtml(metodo.id)}" ${filters.metodoPagoId === metodo.id ? 'selected' : ''}>${escapeHtml(metodo.nombre || 'Método sin nombre')}</option>`).join('')}
               </select>
             </label>
+            <div class="form-field resumen-filter-actions">
+              <span>Acciones</span>
+              <div class="resumen-filter-buttons">
+                <button type="button" class="secondary-action compact" data-resumen-clear-dates>Quitar fechas</button>
+                <button type="button" class="secondary-action compact" data-resumen-clear>Limpiar filtros</button>
+              </div>
+            </div>
           </div>
           <div class="filter-help">
             <span>Rango de fechas manda sobre Mes/Año.</span>
@@ -4579,19 +4585,29 @@
     });
   }
 
-  function updateResumenFiltersFromForm(form) {
+  function updateResumenFiltersFromForm(form, options = {}) {
     const formData = new FormData(form);
+    const clearDates = Boolean(options.clearDates);
     resumenState = normalizeResumenFilters({
       month: formData.get('month'),
       year: formData.get('year'),
-      dateFrom: formData.get('dateFrom'),
-      dateTo: formData.get('dateTo'),
+      dateFrom: clearDates ? '' : formData.get('dateFrom'),
+      dateTo: clearDates ? '' : formData.get('dateTo'),
       clienteId: formData.get('clienteId'),
       proveedorId: formData.get('proveedorId'),
       sucursalId: formData.get('sucursalId'),
       estado: formData.get('estado'),
       mora: formData.get('mora'),
       metodoPagoId: formData.get('metodoPagoId')
+    });
+    renderRoute();
+  }
+
+  function clearResumenDateFilters() {
+    resumenState = normalizeResumenFilters({
+      ...resumenState,
+      dateFrom: '',
+      dateTo: ''
     });
     renderRoute();
   }
@@ -13155,7 +13171,14 @@ ${rowsXml}
         event.preventDefault();
         updateResumenFiltersFromForm(form);
       });
-      form.addEventListener('change', () => updateResumenFiltersFromForm(form));
+      form.addEventListener('change', (event) => {
+        const fieldName = event.target?.name || '';
+        updateResumenFiltersFromForm(form, { clearDates: fieldName === 'month' || fieldName === 'year' });
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-resumen-clear-dates]').forEach((button) => {
+      button.addEventListener('click', clearResumenDateFilters);
     });
 
     viewRoot.querySelectorAll('[data-resumen-clear]').forEach((button) => {

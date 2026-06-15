@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_32_post12_json_nombre_equipo_fecha';
+const CACHE_VERSION = 'v0_17_33_post12_resumen_filtros_compactos';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
