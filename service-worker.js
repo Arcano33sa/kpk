@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_36_post12_metadata_json_aplicado_menu';
+const CACHE_VERSION = 'v0_17_37_post12_resumen_tablas_compactas';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

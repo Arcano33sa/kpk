@@ -5811,3 +5811,117 @@ body {
     min-height: 40px;
   }
 }
+
+/* Post12 — Resumen compacto: períodos, gastos y venta por sucursal */
+.resumen-periodos-cierre-table {
+  min-width: 880px;
+}
+
+.resumen-gastos-tipo-table {
+  min-width: 460px;
+}
+
+.resumen-venta-sucursal-table {
+  min-width: 720px;
+}
+
+.resumen-periodos-cierre-shell,
+.resumen-gastos-tipo-shell,
+.resumen-venta-sucursal-shell {
+  margin-top: 0;
+}
+
+.resumen-periodo-row.is-pending td:first-child {
+  border-left: 4px solid #b91c1c;
+}
+
+.resumen-periodo-row.is-ready td:first-child {
+  border-left: 4px solid #15803d;
+}
+
+.resumen-periodo-row.is-closed td:first-child {
+  border-left: 4px solid #475569;
+}
+
+.resumen-compact-state,
+.resumen-compact-detail-hint {
+  white-space: nowrap;
+}
+
+.resumen-compact-detail-hint span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.resumen-periodo-detail-row td {
+  background: rgba(255, 248, 234, 0.45);
+  border-top: 0;
+}
+
+.resumen-periodo-detail-cell {
+  padding: 6px 9px 9px !important;
+}
+
+.resumen-periodo-compact-detail {
+  min-width: 0;
+  border-top: 0;
+  padding-top: 0;
+}
+
+.resumen-periodo-compact-detail summary {
+  min-height: 30px;
+  padding: 6px 10px;
+  font-size: 0.76rem;
+}
+
+.resumen-periodo-compact-detail .periodo-detail-wrap {
+  margin-top: 10px;
+}
+
+.resumen-periodo-compact-action {
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.resumen-periodos-cierre-table .periodo-cierre-status {
+  min-height: 26px;
+  padding: 4px 8px;
+  font-size: 0.7rem !important;
+}
+
+.resumen-periodos-cierre-table .periodo-cierre-status.is-pending {
+  border-color: rgba(185, 28, 28, 0.28);
+  color: #7f1d1d !important;
+  background: rgba(254, 226, 226, 0.72);
+}
+
+.resumen-periodos-cierre-table .periodo-cierre-status.is-ready {
+  border-color: rgba(21, 128, 61, 0.28);
+  color: #14532d !important;
+  background: rgba(220, 252, 231, 0.72);
+}
+
+.resumen-periodos-cierre-table .periodo-cierre-status.is-closed {
+  border-color: rgba(71, 85, 105, 0.28);
+  color: #334155 !important;
+  background: rgba(241, 245, 249, 0.86);
+}
+
+@media (max-width: 760px) {
+  .resumen-periodos-cierre-table {
+    min-width: 820px;
+  }
+
+  .resumen-gastos-tipo-table {
+    min-width: 420px;
+  }
+
+  .resumen-venta-sucursal-table {
+    min-width: 660px;
+  }
+
+  .resumen-periodo-compact-detail .periodo-detail-wrap {
+    grid-template-columns: 1fr;
+  }
+}

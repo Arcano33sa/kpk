@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.36-post12-metadata-json-aplicado-menu';
+  const APP_VERSION = '0.17.37-post12-resumen-tablas-compactas';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -4268,11 +4268,72 @@
             <div><span>Listos</span><strong>${readyCount}</strong></div>
             <div><span>Cerrados</span><strong>${closedCount}</strong></div>
           </div>
-          <div class="resumen-list periodos-cierre-list">
-            ${data.items.map((item) => renderPeriodoCierreItem(item)).join('')}
-          </div>
+          ${renderPeriodosCierreCompactTable(data.items)}
         ` : renderMoraEmptyState('No hay períodos pendientes de cierre.', 'Cuando existan OC o compras con saldo pendiente, aparecerán aquí por período de origen.')}
       </section>
+    `;
+  }
+
+  function renderPeriodosCierreCompactTable(items) {
+    const rows = items.map((item) => renderPeriodoCierreCompactRows(item)).join('');
+    return renderOperationalTableShell({
+      shellClass: 'resumen-compact-scroll-shell resumen-periodos-cierre-shell',
+      wrapClass: 'resumen-compact-table-wrap',
+      ariaLabel: 'Períodos pendientes de cierre en líneas compactas',
+      tableClass: 'resumen-compact-table resumen-periodos-cierre-table',
+      colgroup: `
+        <colgroup>
+          <col class="resumen-col-periodo">
+          <col class="resumen-col-estado">
+          <col class="resumen-col-money">
+          <col class="resumen-col-money">
+          <col class="resumen-col-bloqueo">
+          <col class="resumen-col-documentos">
+          <col class="resumen-col-detalle">
+        </colgroup>
+      `,
+      headers: `
+        <th>Período</th>
+        <th>Estado</th>
+        <th class="amount-cell">Clientes</th>
+        <th class="amount-cell">Proveedores</th>
+        <th>Bloqueo</th>
+        <th>Docs</th>
+        <th>Detalle</th>
+      `,
+      rows
+    });
+  }
+
+  function renderPeriodoCierreCompactRows(item) {
+    const statusClass = item.estado === 'Pendiente de cierre' ? 'is-pending' : item.estado === 'Listo para cierre' ? 'is-ready' : 'is-closed';
+    const detailCount = item.clientesDetalle.length + item.proveedoresDetalle.length;
+    const detailLabel = detailCount ? `Ver detalle (${detailCount})` : 'Ver detalle';
+    const documentCount = item.documentosClientes + item.documentosProveedores;
+    return `
+      <tr class="compact-record-row resumen-compact-row resumen-periodo-row ${statusClass}">
+        <td class="resumen-compact-text"><span title="${escapeHtml(item.label)}">${escapeHtml(item.label)}</span></td>
+        <td class="resumen-compact-state"><span class="periodo-cierre-status ${statusClass}">${escapeHtml(item.estado)}</span></td>
+        <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.saldoClientes))}</span></td>
+        <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.saldoProveedores))}</span></td>
+        <td class="resumen-compact-text"><span title="${escapeHtml(item.bloqueo)}">${escapeHtml(item.bloqueo)}</span></td>
+        <td class="resumen-compact-count"><span>${documentCount}</span></td>
+        <td class="resumen-compact-detail-hint"><span>${detailCount ? `${detailCount} doc.` : 'Sin saldo'}</span></td>
+      </tr>
+      <tr class="resumen-periodo-detail-row ${statusClass}">
+        <td colspan="7" class="resumen-periodo-detail-cell">
+          <details class="periodo-cierre-detail resumen-periodo-compact-detail">
+            <summary>${escapeHtml(detailLabel)}</summary>
+            ${item.estado === 'Listo para cierre' ? `
+              <div class="period-card-action resumen-periodo-compact-action">
+                <span>${escapeHtml(item.label)} ya está listo para cierre. Exporta el Excel del período y ciérralo cuando corresponda.</span>
+                <button type="button" class="secondary-action compact" data-go="excel">Ir a cierre</button>
+              </div>
+            ` : ''}
+            ${renderPeriodoCierreDetail(item)}
+          </details>
+        </td>
+      </tr>
     `;
   }
 
@@ -4496,34 +4557,70 @@
 
   function renderResumenGastosPorTipo(items) {
     if (!items.length) return renderMoraEmptyState('Sin gastos en el período.', 'Los gastos no anulados aparecerán agrupados por tipo.');
-    return `
-      <div class="resumen-list">
-        ${items.map((item) => `
-          <article class="resumen-row-card">
-            <div><strong>${escapeHtml(item.tipo)}</strong><span>${item.cantidad} registro${item.cantidad === 1 ? '' : 's'}</span></div>
-            <b>${escapeHtml(formatMoney(item.total))}</b>
-          </article>
-        `).join('')}
-      </div>
-    `;
+    const rows = items.map((item) => `
+      <tr class="compact-record-row resumen-compact-row">
+        <td class="resumen-compact-text"><span title="${escapeHtml(item.tipo)}">${escapeHtml(item.tipo)}</span></td>
+        <td class="resumen-compact-count"><span>${escapeHtml(String(item.cantidad || 0))}</span></td>
+        <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.total))}</span></td>
+      </tr>
+    `).join('');
+
+    return renderOperationalTableShell({
+      shellClass: 'resumen-compact-scroll-shell resumen-gastos-tipo-shell',
+      wrapClass: 'resumen-compact-table-wrap',
+      ariaLabel: 'Gastos por tipo en líneas compactas',
+      tableClass: 'resumen-compact-table resumen-gastos-tipo-table',
+      colgroup: `
+        <colgroup>
+          <col class="resumen-col-tipo">
+          <col class="resumen-col-documentos">
+          <col class="resumen-col-money">
+        </colgroup>
+      `,
+      headers: `
+        <th>Tipo</th>
+        <th>Registros</th>
+        <th class="amount-cell">Total</th>
+      `,
+      rows
+    });
   }
 
   function renderResumenVentaPorSucursal(items) {
     if (!items.length) return renderMoraEmptyState('Sin venta por sucursal.', 'Cuando existan OC, cobros o cartera filtrada, aparecerán aquí por sucursal.');
-    return `
-      <div class="resumen-list">
-        ${items.map((item) => `
-          <article class="resumen-row-card stacked">
-            <div class="resumen-row-head"><strong>${escapeHtml(item.sucursal)}</strong><span>${item.documentos} OC originada${item.documentos === 1 ? '' : 's'}</span></div>
-            <div class="resumen-mini-grid">
-              <div><span>Venta ajustada</span><strong>${escapeHtml(formatMoney(item.totalVendido))}</strong></div>
-              <div><span>Cobrado</span><strong>${escapeHtml(formatMoney(item.totalCobrado))}</strong></div>
-              <div><span>Saldo</span><strong>${escapeHtml(formatMoney(item.saldoPorCobrar))}</strong></div>
-            </div>
-          </article>
-        `).join('')}
-      </div>
-    `;
+    const rows = items.map((item) => `
+      <tr class="compact-record-row resumen-compact-row">
+        <td class="resumen-compact-text"><span title="${escapeHtml(item.sucursal)}">${escapeHtml(item.sucursal)}</span></td>
+        <td class="resumen-compact-count"><span>${escapeHtml(String(item.documentos || 0))}</span></td>
+        <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.totalVendido))}</span></td>
+        <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.totalCobrado))}</span></td>
+        <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.saldoPorCobrar))}</span></td>
+      </tr>
+    `).join('');
+
+    return renderOperationalTableShell({
+      shellClass: 'resumen-compact-scroll-shell resumen-venta-sucursal-shell',
+      wrapClass: 'resumen-compact-table-wrap',
+      ariaLabel: 'Venta por sucursal en líneas compactas',
+      tableClass: 'resumen-compact-table resumen-venta-sucursal-table',
+      colgroup: `
+        <colgroup>
+          <col class="resumen-col-sucursal">
+          <col class="resumen-col-documentos">
+          <col class="resumen-col-money">
+          <col class="resumen-col-money">
+          <col class="resumen-col-money">
+        </colgroup>
+      `,
+      headers: `
+        <th>Sucursal</th>
+        <th>OC</th>
+        <th class="amount-cell">Venta</th>
+        <th class="amount-cell">Cobrado</th>
+        <th class="amount-cell">Saldo</th>
+      `,
+      rows
+    });
   }
 
   function renderResumenSaldosProveedor(items) {
