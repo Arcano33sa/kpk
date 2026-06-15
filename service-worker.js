@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_30_post12_bdatos_etapa1_acciones_iconos';
+const CACHE_VERSION = 'v0_17_31_post12_bdatos_acciones_iconos_ajuste';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

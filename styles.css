@@ -4482,16 +4482,19 @@ body {
 }
 
 .operational-table-bdatos .actions-cell {
-  width: 122px;
+  width: 142px;
+  padding-left: 4px;
+  padding-right: 20px;
 }
 
 .operational-table-bdatos .compact-row-actions {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   flex-wrap: nowrap;
   gap: 6px;
   width: 100%;
+  max-width: 120px;
 }
 
 .operational-table-bdatos .bdatos-icon-action {
