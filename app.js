@@ -2,11 +2,12 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.31-post12-bdatos-acciones-iconos-ajuste';
+  const APP_VERSION = '0.17.32-post12-json-nombre-equipo-fecha';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
   const ACTIVITY_LOG_STORAGE_KEY = 'KSA_PRACTIKA_ACTIVITY_LOG_v1';
+  const JSON_EXPORT_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_JSON_EXPORT_SEQUENCE_v1';
   const ACTIVITY_LOG_MAX_ENTRIES = 300;
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
   const COMPRA_AJUSTE_TYPES = ['Faltante', 'Devolución', 'Rebaja', 'Nota de crédito', 'Corrección'];
@@ -1801,6 +1802,61 @@
 
   function cleanText(value) {
     return String(value ?? '').replace(/\s+/g, ' ').trim();
+  }
+
+  function sanitizeFileNameSegment(value, fallback = 'Equipo sin nombre') {
+    const sanitized = cleanText(value)
+      .replace(/[\/\\:*?"<>|]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return sanitized || fallback;
+  }
+
+  function formatJsonExportDateStamp(value) {
+    const date = value instanceof Date ? value : new Date(value || Date.now());
+    const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
+    const day = String(safeDate.getDate()).padStart(2, '0');
+    const month = String(safeDate.getMonth() + 1).padStart(2, '0');
+    const year = String(safeDate.getFullYear());
+    return `${day}${month}${year}`;
+  }
+
+  function getJsonExportSequence() {
+    try {
+      const raw = localStorage.getItem(JSON_EXPORT_SEQUENCE_STORAGE_KEY);
+      const parsed = Number.parseInt(raw, 10);
+      return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo leer el consecutivo local de exportación JSON.', error);
+      return 0;
+    }
+  }
+
+  function saveJsonExportSequence(value) {
+    try {
+      const numeric = Number.parseInt(value, 10);
+      const safeValue = Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+      localStorage.setItem(JSON_EXPORT_SEQUENCE_STORAGE_KEY, String(safeValue));
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo guardar el consecutivo local de exportación JSON.', error);
+    }
+  }
+
+  function formatJsonExportSequence(value) {
+    const numeric = Number.parseInt(value, 10);
+    const safeValue = Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+    return String(safeValue).padStart(4, '0');
+  }
+
+  function buildJsonExportFileName(exportedAt) {
+    const sequence = getJsonExportSequence();
+    const rawDeviceName = cleanText(appDeviceIdentity?.deviceName);
+    const deviceName = sanitizeFileNameSegment(rawDeviceName === 'Este equipo' ? '' : rawDeviceName, 'Equipo sin nombre');
+    const dateStamp = formatJsonExportDateStamp(exportedAt);
+    return {
+      fileName: `${formatJsonExportSequence(sequence)}- ${deviceName} ${dateStamp}.json`,
+      sequence
+    };
   }
 
   function roundMoney(value) {
@@ -10292,8 +10348,7 @@
     }
 
     const exportedAt = nowIso();
-    const dateStamp = new Date(exportedAt).toISOString().slice(0, 16).replace(/[-:T]/g, '');
-    const fileName = `KSA_PRACTIKA_respaldo_${dateStamp}.json`;
+    const { fileName, sequence } = buildJsonExportFileName(exportedAt);
     registerActivity({
       module: 'JSON',
       action: 'Exportado',
@@ -10314,6 +10369,7 @@
     anchor.click();
     anchor.remove();
     URL.revokeObjectURL(url);
+    saveJsonExportSequence(sequence + 1);
 
     appData.configuracion = {
       ...normalizeConfiguracion(appData.configuracion),
