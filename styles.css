@@ -5925,3 +5925,107 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+
+/* Etapa 1/1 — Resumen: scrollbars superiores fijas en tablas compactas */
+.resumen-periodos-cierre-shell,
+.resumen-gastos-tipo-shell,
+.resumen-venta-sucursal-shell,
+.periodo-blocking-clientes-shell,
+.periodo-blocking-proveedores-shell {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: visible;
+}
+
+.resumen-periodos-cierre-shell .operational-top-scroll,
+.resumen-gastos-tipo-shell .operational-top-scroll,
+.resumen-venta-sucursal-shell .operational-top-scroll,
+.periodo-blocking-clientes-shell .operational-top-scroll,
+.periodo-blocking-proveedores-shell .operational-top-scroll {
+  position: sticky;
+  top: calc(var(--topbar-height) + var(--safe-top) + 8px);
+  z-index: 28;
+  display: block;
+  height: 18px;
+  min-height: 18px;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: thin;
+}
+
+.resumen-periodos-cierre-shell .resumen-compact-table-wrap,
+.resumen-gastos-tipo-shell .resumen-compact-table-wrap,
+.resumen-venta-sucursal-shell .resumen-compact-table-wrap,
+.periodo-blocking-clientes-shell .periodo-blocking-table-wrap,
+.periodo-blocking-proveedores-shell .periodo-blocking-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable both-edges;
+}
+
+.resumen-periodos-cierre-shell .operational-table-wrap,
+.resumen-gastos-tipo-shell .operational-table-wrap,
+.resumen-venta-sucursal-shell .operational-table-wrap,
+.periodo-blocking-clientes-shell .operational-table-wrap,
+.periodo-blocking-proveedores-shell .operational-table-wrap {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.resumen-periodos-cierre-shell.is-not-scrollable .operational-top-scroll,
+.resumen-gastos-tipo-shell.is-not-scrollable .operational-top-scroll,
+.resumen-venta-sucursal-shell.is-not-scrollable .operational-top-scroll,
+.periodo-blocking-clientes-shell.is-not-scrollable .operational-top-scroll,
+.periodo-blocking-proveedores-shell.is-not-scrollable .operational-top-scroll {
+  display: none;
+}
+
+.resumen-panel,
+.periodos-cierre-panel,
+.resumen-periodo-detail-cell,
+.resumen-periodo-compact-detail,
+.periodo-blocking-detail-wrap,
+.periodo-blocking-section {
+  max-width: 100%;
+  min-width: 0;
+}
+
+html,
+body,
+.app-shell,
+#viewRoot,
+#mainContent {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+@supports (overflow: clip) {
+  html,
+  body {
+    overflow-x: clip;
+  }
+}
+
+@media (max-width: 760px) {
+  .resumen-periodos-cierre-shell .operational-top-scroll,
+  .resumen-gastos-tipo-shell .operational-top-scroll,
+  .resumen-venta-sucursal-shell .operational-top-scroll,
+  .periodo-blocking-clientes-shell .operational-top-scroll,
+  .periodo-blocking-proveedores-shell .operational-top-scroll {
+    top: calc(var(--topbar-height) + var(--safe-top) + 6px);
+    height: 20px;
+    min-height: 20px;
+  }
+}

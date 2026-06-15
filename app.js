@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.37-post12-resumen-tablas-compactas';
+  const APP_VERSION = '0.17.38-post12-resumen-scrollbars-fijas';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -3349,7 +3349,9 @@
       topScroll.addEventListener('scroll', syncFromTop, { passive: true });
       tableScroll.addEventListener('scroll', syncFromTable, { passive: true });
       const scheduleRefresh = () => schedule(refresh);
-      shell.closest('details')?.addEventListener('toggle', scheduleRefresh, { passive: true });
+      const detailAncestors = Array.from(shell.closest('section, article, .panel-card, #viewRoot')?.querySelectorAll('details') || [])
+        .filter((detail) => detail.contains(shell));
+      detailAncestors.forEach((detail) => detail.addEventListener('toggle', scheduleRefresh, { passive: true }));
       if ('ResizeObserver' in window) {
         const observer = new ResizeObserver(scheduleRefresh);
         observer.observe(shell);
