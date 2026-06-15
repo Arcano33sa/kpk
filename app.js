@@ -2,12 +2,13 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.35-post12-compactacion-visual-etapa2';
+  const APP_VERSION = '0.17.36-post12-metadata-json-aplicado-menu';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
   const ACTIVITY_LOG_STORAGE_KEY = 'KSA_PRACTIKA_ACTIVITY_LOG_v1';
   const JSON_EXPORT_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_JSON_EXPORT_SEQUENCE_v1';
+  const JSON_APPLIED_STORAGE_KEY = 'KSA_PRACTIKA_LAST_JSON_APPLIED_v1';
   const ACTIVITY_LOG_MAX_ENTRIES = 300;
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
   const COMPRA_AJUSTE_TYPES = ['Faltante', 'Devolución', 'Rebaja', 'Nota de crédito', 'Corrección'];
@@ -1112,6 +1113,64 @@
 
   function formatDateTimeOrText(iso, fallbackText) {
     return cleanText(iso) ? formatDateTime(iso) : fallbackText;
+  }
+
+  function normalizeJsonAppliedMetadata(metadata) {
+    const raw = isPlainObject(metadata) ? metadata : {};
+    const appliedAt = cleanText(raw.appliedAt || raw.importedAt || raw.fechaAplicacion || raw.createdAt);
+    const fileName = cleanText(raw.fileName || raw.nombreArchivo || raw.jsonFileName);
+    const deviceName = cleanText(raw.deviceName || raw.targetDeviceName || raw.equipo);
+    const deviceId = cleanText(raw.deviceId || raw.targetDeviceId || raw.equipoId);
+    if (!fileName && !appliedAt) return null;
+    return {
+      fileName: fileName || 'Respaldo JSON aplicado',
+      appliedAt,
+      appliedAtDisplay: cleanText(raw.appliedAtDisplay || raw.fechaAplicacionVisible) || (appliedAt ? formatDateTime(appliedAt) : ''),
+      deviceId,
+      deviceName
+    };
+  }
+
+  function loadJsonAppliedMetadata() {
+    try {
+      const raw = localStorage.getItem(JSON_APPLIED_STORAGE_KEY);
+      return raw ? normalizeJsonAppliedMetadata(JSON.parse(raw)) : null;
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo leer la metadata local de JSON aplicado.', error);
+      return null;
+    }
+  }
+
+  function saveJsonAppliedMetadata(fileName, appliedAt = nowIso()) {
+    try {
+      const identity = normalizeDeviceIdentity(appDeviceIdentity);
+      const normalized = normalizeJsonAppliedMetadata({
+        fileName,
+        appliedAt,
+        appliedAtDisplay: formatDateTime(appliedAt),
+        deviceId: identity.deviceId,
+        deviceName: identity.deviceName
+      });
+      if (!normalized) return null;
+      localStorage.setItem(JSON_APPLIED_STORAGE_KEY, JSON.stringify(normalized));
+      return normalized;
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: la importación terminó, pero no se pudo guardar la metadata local de JSON aplicado.', error);
+      return null;
+    }
+  }
+
+  function renderJsonAppliedMetadataRows() {
+    const applied = loadJsonAppliedMetadata();
+    const identity = normalizeDeviceIdentity(appDeviceIdentity);
+    const fileName = applied?.fileName || 'Sin JSON aplicado';
+    const appliedAt = applied?.appliedAtDisplay || (applied?.appliedAt ? formatDateTime(applied.appliedAt) : '—');
+    const deviceName = applied?.deviceName || identity.deviceName || 'Este equipo';
+    return `
+      <dt>JSON aplicado</dt><dd class="json-applied-file">${escapeHtml(fileName)}</dd>
+      <dt>Aplicado el</dt><dd>${escapeHtml(appliedAt)}</dd>
+      <dt>Equipo</dt><dd>${escapeHtml(deviceName)}</dd>
+    `;
   }
 
   function normalizeActivitySummary(summary) {
@@ -3314,6 +3373,7 @@
     const totalBuckets = DATA_KEYS.length;
     const totalRecords = DATA_KEYS.reduce((sum, key) => sum + appData[key].length, 0);
     const catalogRecords = CATALOGS.reduce((sum, catalog) => sum + appData[catalog.id].length, 0);
+    const jsonAppliedRows = renderJsonAppliedMetadataRows();
     const cards = MODULES.map((module) => `
       <article class="module-card">
         <div class="module-icon" aria-hidden="true">${escapeHtml(module.icon)}</div>
@@ -3360,6 +3420,7 @@
             <dt>App</dt><dd>${escapeHtml(appData.metadata.appName)}</dd>
             <dt>Versión</dt><dd>${escapeHtml(appData.metadata.appVersion)}</dd>
             <dt>Schema</dt><dd>${escapeHtml(appData.metadata.schemaVersion)}</dd>
+            ${jsonAppliedRows}
             <dt>Creado</dt><dd>${escapeHtml(formatDateTime(appData.metadata.createdAt))}</dd>
             <dt>Actualizado</dt><dd>${escapeHtml(formatDateTime(appData.metadata.updatedAt))}</dd>
           </dl>
@@ -10641,6 +10702,7 @@
       updatedAt: nowIso()
     };
     saveData(appData);
+    saveJsonAppliedMetadata(fileName, importSummary.importedAt || nowIso());
     jsonBackupState.preview = null;
     jsonBackupState.payload = null;
     jsonBackupState.activityLog = [];
