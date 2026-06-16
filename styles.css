@@ -6029,3 +6029,144 @@ body,
     min-height: 20px;
   }
 }
+
+/* Etapa 2/2 — Configuración: JSON importados con última operación */
+.json-import-history-card {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.json-import-history-card .compact-title-row {
+  align-items: end;
+  gap: 10px;
+}
+
+.json-import-history-card .compact-notice {
+  margin-bottom: 10px;
+}
+
+.json-import-history-scroll-shell {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: visible;
+}
+
+.json-import-history-scroll-shell .operational-top-scroll {
+  position: sticky;
+  top: calc(var(--topbar-height) + var(--safe-top) + 8px);
+  z-index: 28;
+  display: block;
+  height: 18px;
+  min-height: 18px;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: thin;
+}
+
+.json-import-history-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable both-edges;
+}
+
+.json-import-history-scroll-shell .operational-table-wrap {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.json-import-history-scroll-shell.is-not-scrollable .operational-top-scroll {
+  display: none;
+}
+
+.json-import-history-table {
+  min-width: 1360px;
+  table-layout: auto;
+  font-size: 0.8rem;
+}
+
+.json-import-history-table th,
+.json-import-history-table td {
+  padding: 7px 9px;
+}
+
+.json-import-history-table th:nth-child(1),
+.json-import-history-table td:nth-child(1) {
+  min-width: 230px;
+}
+
+.json-import-history-table th:nth-child(2),
+.json-import-history-table td:nth-child(2) {
+  min-width: 145px;
+}
+
+.json-import-history-table th:nth-child(3),
+.json-import-history-table td:nth-child(3) {
+  min-width: 175px;
+}
+
+.json-import-history-table th:nth-child(4),
+.json-import-history-table td:nth-child(4) {
+  min-width: 110px;
+}
+
+.json-import-history-table th:nth-child(5),
+.json-import-history-table td:nth-child(5) {
+  min-width: 320px;
+}
+
+.json-import-history-table th:nth-child(6),
+.json-import-history-table td:nth-child(6) {
+  min-width: 175px;
+}
+
+.json-import-history-table th:nth-child(7),
+.json-import-history-table td:nth-child(7) {
+  min-width: 190px;
+}
+
+.json-import-history-table td > span,
+.json-import-history-table td small,
+.json-import-history-table .compact-primary {
+  max-width: none;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.json-import-history-table .json-import-file span {
+  font-weight: 850;
+  color: var(--ink);
+}
+
+.json-import-history-table .json-import-operation span {
+  font-weight: 850;
+  color: var(--ink);
+}
+
+.json-import-history-table .json-import-operation small {
+  display: block;
+  line-height: 1.25;
+}
+
+@media (max-width: 760px) {
+  .json-import-history-scroll-shell .operational-top-scroll {
+    top: calc(var(--topbar-height) + var(--safe-top) + 6px);
+    height: 20px;
+    min-height: 20px;
+  }
+
+  .json-import-history-card .compact-title-row {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+}

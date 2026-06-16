@@ -2,13 +2,15 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.38-post12-resumen-scrollbars-fijas';
+  const APP_VERSION = '0.17.40-post12-config-json-importados-ultima-operacion';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
   const ACTIVITY_LOG_STORAGE_KEY = 'KSA_PRACTIKA_ACTIVITY_LOG_v1';
   const JSON_EXPORT_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_JSON_EXPORT_SEQUENCE_v1';
   const JSON_APPLIED_STORAGE_KEY = 'KSA_PRACTIKA_LAST_JSON_APPLIED_v1';
+  const JSON_IMPORT_HISTORY_STORAGE_KEY = 'KSA_PRACTIKA_JSON_IMPORT_HISTORY_v1';
+  const JSON_IMPORT_HISTORY_MAX_ENTRIES = 80;
   const ACTIVITY_LOG_MAX_ENTRIES = 300;
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
   const COMPRA_AJUSTE_TYPES = ['Faltante', 'Devolución', 'Rebaja', 'Nota de crédito', 'Corrección'];
@@ -1158,6 +1160,360 @@
       console.warn('KSA PRÁCTIKA: la importación terminó, pero no se pudo guardar la metadata local de JSON aplicado.', error);
       return null;
     }
+  }
+
+
+  function formatJsonImportHistoryDate(iso) {
+    const cleanIso = cleanText(iso);
+    if (!cleanIso) return '—';
+    const date = new Date(cleanIso);
+    if (Number.isNaN(date.getTime())) return '—';
+    return new Intl.DateTimeFormat('es-NI', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    }).format(date);
+  }
+
+  function formatJsonImportHistoryTime(iso) {
+    const cleanIso = cleanText(iso);
+    if (!cleanIso) return '—';
+    const date = new Date(cleanIso);
+    if (Number.isNaN(date.getTime())) return '—';
+    return new Intl.DateTimeFormat('es-NI', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(date);
+  }
+
+  function normalizeJsonImportHistoryResult(result) {
+    const value = cleanText(result).toLocaleLowerCase('es-NI');
+    if (!value) return 'Importado correctamente';
+    if (value.includes('advert')) return 'Importado con advertencias';
+    if (value.includes('fall')) return 'Fallido';
+    if (value.includes('correct') || value.includes('success') || value.includes('ok')) return 'Importado correctamente';
+    return cleanText(result);
+  }
+
+  function buildJsonImportOperationTimestamp(raw = {}) {
+    if (!isPlainObject(raw)) return '';
+    const direct = cleanText(
+      raw.ts
+      || raw.at
+      || raw.fechaHora
+      || raw.fechaOperacion
+      || raw.dateTime
+      || raw.datetime
+      || raw.createdAt
+      || raw.updatedAt
+    );
+    if (direct) return direct;
+    const datePart = cleanText(raw.fecha || raw.date || raw.dia);
+    const timePart = cleanText(raw.hora || raw.time);
+    if (!datePart) return '';
+    const normalizedTime = timePart
+      ? (timePart.length === 5 ? `${timePart}:00` : timePart)
+      : '00:00:00';
+    const isoDate = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (isoDate) return `${datePart}T${normalizedTime}`;
+    const slashDate = datePart.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (slashDate) {
+      const [, day, month, year] = slashDate;
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${normalizedTime}`;
+    }
+    return buildActivityDetail([datePart, timePart]);
+  }
+
+  function formatJsonImportOperationDateTime(value) {
+    const text = cleanText(value);
+    if (!text) return 'No disponible';
+    const formatted = formatDateTime(text);
+    return formatted && formatted !== '—' ? formatted : text;
+  }
+
+  function buildJsonImportOperationLabel(activity = {}) {
+    const raw = isPlainObject(activity) ? activity : {};
+    const moduleName = cleanText(raw.module || raw.modulo);
+    const action = cleanText(raw.action || raw.accion);
+    const entityType = cleanText(raw.entityType || raw.tipoEntidad);
+    const detail = cleanText(raw.detail || raw.detalle);
+    const moduleKey = moduleName.toLocaleLowerCase('es-NI');
+    const actionKey = action.toLocaleLowerCase('es-NI');
+    if (detail) {
+      const firstDetail = detail.split('·').map((part) => cleanText(part)).filter(Boolean)[0];
+      if (firstDetail) return firstDetail;
+    }
+    if (moduleKey.includes('venta') || moduleKey.includes('oc')) {
+      if (actionKey.includes('ajuste')) return 'Ajuste aplicado';
+      if (actionKey.includes('cread')) return 'OC creada';
+      if (actionKey.includes('edit')) return 'OC editada';
+    }
+    if (moduleKey.includes('cobro')) {
+      if (actionKey.includes('edit')) return 'Cobro editado';
+      if (actionKey.includes('cread') || actionKey.includes('registr')) return 'Cobro registrado';
+    }
+    if (moduleKey.includes('proveedor') || moduleKey.includes('compra')) {
+      if (actionKey.includes('ajuste')) return 'Ajuste aplicado';
+      if (actionKey.includes('edit')) return 'Compra editada';
+      if (actionKey.includes('cread') || actionKey.includes('registr')) return 'Compra registrada';
+    }
+    if (moduleKey.includes('pago')) {
+      if (actionKey.includes('edit')) return 'Pago a proveedor editado';
+      if (actionKey.includes('cread') || actionKey.includes('registr')) return 'Pago a proveedor registrado';
+    }
+    if (moduleKey.includes('gasto')) {
+      if (actionKey.includes('edit')) return 'Gasto editado';
+      if (actionKey.includes('cread') || actionKey.includes('registr')) return 'Gasto registrado';
+    }
+    if (moduleKey.includes('cierre')) return action || 'Cierre mensual realizado';
+    if (moduleKey.includes('catálogo') || moduleKey.includes('catalogo')) return action || 'Catálogo actualizado';
+    if (moduleKey.includes('json')) return action ? `JSON ${action.toLocaleLowerCase('es-NI')}` : 'JSON / respaldo';
+    if (moduleKey.includes('bdatos')) return action ? `Bdatos ${action.toLocaleLowerCase('es-NI')}` : 'Bdatos actualizado';
+    return buildActivityDetail([entityType, action]) || action || moduleName || 'No disponible';
+  }
+
+  function normalizeJsonImportLastOperation(operation) {
+    const raw = isPlainObject(operation) ? operation : {};
+    const timestamp = buildJsonImportOperationTimestamp(raw);
+    const rawModuleName = cleanText(raw.module || raw.modulo);
+    const action = cleanText(raw.action || raw.accion);
+    const entityRef = cleanText(raw.entityRef || raw.referencia);
+    const amountValue = Number(raw.amount ?? raw.monto);
+    const amountText = Number.isFinite(amountValue) ? formatMoney(amountValue) : '';
+    const deviceName = cleanText(raw.deviceName || raw.equipo);
+    const rawDetail = cleanText(raw.detail || raw.detalle);
+    const detail = rawDetail || buildActivityDetail([entityRef, amountText, deviceName]);
+    if (!timestamp && !rawModuleName && !action && !entityRef && !amountText && !deviceName && !rawDetail) return null;
+    const label = buildJsonImportOperationLabel({ ...raw, module: rawModuleName, action, detail: rawDetail });
+    return {
+      label: label || 'No disponible',
+      at: timestamp,
+      atDisplay: cleanText(raw.tsVisible || raw.fechaVisible || raw.atDisplay || raw.fechaHoraVisible) || formatJsonImportOperationDateTime(timestamp),
+      module: rawModuleName || 'No disponible',
+      action: action || '',
+      detail: detail || 'No disponible',
+      deviceName: deviceName || '',
+      entityRef,
+      comparableTs: parseComparableTimestamp(timestamp)
+    };
+  }
+
+  function getJsonBackupBitacoraEntries(raw) {
+    if (!isPlainObject(raw)) return [];
+    const registros = isPlainObject(raw.registros) ? raw.registros : {};
+    const direct = Array.isArray(raw.bitacora) ? raw.bitacora : [];
+    const nested = Array.isArray(registros.bitacora) ? registros.bitacora : [];
+    return [...nested, ...direct];
+  }
+
+  function pickLatestJsonImportOperation(entries = []) {
+    const normalized = (Array.isArray(entries) ? entries : [])
+      .map((entry, index) => {
+        const operation = normalizeJsonImportLastOperation(entry);
+        return operation ? { ...operation, __index: index } : null;
+      })
+      .filter(Boolean);
+    if (!normalized.length) return null;
+    normalized.sort((a, b) => {
+      if (b.comparableTs !== a.comparableTs) return b.comparableTs - a.comparableTs;
+      const textCompare = String(b.at || '').localeCompare(String(a.at || ''));
+      if (textCompare !== 0) return textCompare;
+      return a.__index - b.__index;
+    });
+    const { __index, comparableTs, ...cleanOperation } = normalized[0];
+    return cleanOperation;
+  }
+
+  function detectLastOperationFromJsonBackup(raw) {
+    if (!isPlainObject(raw)) return null;
+    const latestFromLog = pickLatestJsonImportOperation(getJsonBackupBitacoraEntries(raw));
+    if (latestFromLog) return { ...latestFromLog, source: 'bitacora' };
+    const metadata = isPlainObject(raw.metadata) ? raw.metadata : {};
+    const metadataActivity = metadata.lastActivity
+      || metadata.ultimaActividad
+      || metadata.jsonLastActivity
+      || metadata.ultimaActividadJson
+      || null;
+    const latestFromMetadata = normalizeJsonImportLastOperation(metadataActivity);
+    return latestFromMetadata ? { ...latestFromMetadata, source: 'metadata' } : null;
+  }
+
+  function normalizeJsonImportHistoryEntry(entry) {
+    const raw = isPlainObject(entry) ? entry : {};
+    const importedAt = cleanText(raw.importedAt || raw.fechaImportacion || raw.createdAt);
+    const fileName = cleanText(raw.fileName || raw.nombreArchivo || raw.jsonFileName);
+    const sourceDeviceName = cleanText(raw.sourceDeviceName || raw.equipoOrigen || raw.deviceName);
+    const targetDeviceName = cleanText(raw.targetDeviceName || raw.equipoReceptor || raw.localDeviceName);
+    const mode = cleanText(raw.mode || raw.modo);
+    const modeLabel = cleanText(raw.modeLabel || raw.modoVisible) || (mode === 'replace' ? 'Reemplazar' : (mode === 'merge' ? 'Fusionar' : 'No disponible'));
+    const rawResult = cleanText(raw.result || raw.resultado);
+    const lastOperation = normalizeJsonImportLastOperation(
+      raw.lastOperation
+      || raw.ultimaOperacion
+      || raw.jsonLastOperation
+      || raw.ultimaOperacionJson
+      || {
+        ts: raw.lastOperationAt || raw.ultimaOperacionFechaHora || raw.fechaHoraOperacion,
+        tsVisible: raw.lastOperationAtDisplay || raw.ultimaOperacionVisible,
+        module: raw.lastOperationModule || raw.moduloOperacion,
+        action: raw.lastOperationAction || raw.accionOperacion,
+        detail: raw.lastOperationDetail || raw.detalleOperacion,
+        deviceName: raw.lastOperationDeviceName || raw.equipoOperacion,
+        entityRef: raw.lastOperationEntityRef || raw.referenciaOperacion,
+        amount: raw.lastOperationAmount || raw.montoOperacion
+      }
+    );
+    if (!fileName && !importedAt && !sourceDeviceName && !targetDeviceName && !mode && !rawResult && !lastOperation) return null;
+    const result = rawResult ? normalizeJsonImportHistoryResult(rawResult) : 'Importado correctamente';
+    return {
+      id: cleanText(raw.id) || generateId('jsonimp'),
+      fileName: fileName || 'No disponible',
+      importedAt,
+      importDate: cleanText(raw.importDate || raw.fecha) || formatJsonImportHistoryDate(importedAt),
+      importTime: cleanText(raw.importTime || raw.hora) || formatJsonImportHistoryTime(importedAt),
+      sourceDeviceId: cleanText(raw.sourceDeviceId || raw.equipoOrigenId),
+      sourceDeviceName: sourceDeviceName || 'No disponible',
+      targetDeviceId: cleanText(raw.targetDeviceId || raw.equipoReceptorId || raw.localDeviceId),
+      targetDeviceName: targetDeviceName || 'No configurado',
+      mode: mode || '',
+      modeLabel,
+      lastOperation: lastOperation || {
+        label: 'No disponible',
+        at: '',
+        atDisplay: 'No disponible',
+        module: 'No disponible',
+        action: '',
+        detail: 'No disponible',
+        deviceName: '',
+        entityRef: ''
+      },
+      result,
+      createdAt: importedAt || cleanText(raw.createdAt) || nowIso()
+    };
+  }
+
+  function loadJsonImportHistory() {
+    try {
+      const raw = localStorage.getItem(JSON_IMPORT_HISTORY_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return (Array.isArray(parsed) ? parsed : [])
+        .map((entry) => normalizeJsonImportHistoryEntry(entry))
+        .filter(Boolean)
+        .sort((a, b) => String(b.importedAt || b.createdAt).localeCompare(String(a.importedAt || a.createdAt)))
+        .slice(0, JSON_IMPORT_HISTORY_MAX_ENTRIES);
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo leer el historial local de JSON importados.', error);
+      return [];
+    }
+  }
+
+  function saveJsonImportHistory(entries) {
+    try {
+      const normalized = (Array.isArray(entries) ? entries : [])
+        .map((entry) => normalizeJsonImportHistoryEntry(entry))
+        .filter(Boolean)
+        .sort((a, b) => String(b.importedAt || b.createdAt).localeCompare(String(a.importedAt || a.createdAt)))
+        .slice(0, JSON_IMPORT_HISTORY_MAX_ENTRIES);
+      localStorage.setItem(JSON_IMPORT_HISTORY_STORAGE_KEY, JSON.stringify(normalized));
+      return normalized;
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo guardar el historial local de JSON importados.', error);
+      return loadJsonImportHistory();
+    }
+  }
+
+  function appendJsonImportHistoryEntry(entry) {
+    const normalized = normalizeJsonImportHistoryEntry(entry);
+    if (!normalized) return null;
+    const current = loadJsonImportHistory();
+    saveJsonImportHistory([normalized, ...current]);
+    return normalized;
+  }
+
+  function buildJsonImportHistoryEntry(importSummary, preview, resultLabel) {
+    const identity = normalizeDeviceIdentity(appDeviceIdentity);
+    const hasOriginMetadata = Boolean(preview?.hasMetadata);
+    const sourceName = hasOriginMetadata
+      ? cleanText(preview?.metadata?.sourceDeviceName || importSummary?.sourceDeviceName || 'Equipo no identificado')
+      : '';
+    const mode = cleanText(importSummary?.mode);
+    return normalizeJsonImportHistoryEntry({
+      id: generateId('jsonimp'),
+      fileName: cleanText(importSummary?.fileName || jsonBackupState.fileName) || 'No disponible',
+      importedAt: cleanText(importSummary?.importedAt) || nowIso(),
+      sourceDeviceId: hasOriginMetadata ? cleanText(preview?.metadata?.sourceDeviceId || importSummary?.sourceDeviceId) : '',
+      sourceDeviceName: sourceName,
+      targetDeviceId: identity.deviceId,
+      targetDeviceName: cleanText(identity.deviceName) || 'Este dispositivo',
+      mode,
+      modeLabel: cleanText(importSummary?.modeLabel) || (mode === 'replace' ? 'Reemplazar' : (mode === 'merge' ? 'Fusionar' : 'No disponible')),
+      lastOperation: preview?.lastJsonOperation || importSummary?.lastActivity || null,
+      result: resultLabel
+    });
+  }
+
+  function renderJsonImportHistoryList() {
+    const entries = loadJsonImportHistory();
+    const headers = `
+      <th>JSON importado</th>
+      <th>Importado</th>
+      <th>Origen</th>
+      <th>Modo</th>
+      <th>Última operación</th>
+      <th>Fecha/Hora operación</th>
+      <th>Resultado</th>
+    `;
+    const rows = entries.length
+      ? entries.map((entry) => {
+        const lastOperation = normalizeJsonImportLastOperation(entry.lastOperation) || entry.lastOperation;
+        const operationLabel = cleanText(lastOperation?.label) || 'No disponible';
+        const operationModule = cleanText(lastOperation?.module);
+        const operationDetail = cleanText(lastOperation?.detail);
+        const operationDevice = cleanText(lastOperation?.deviceName);
+        const operationMeta = buildActivityDetail([
+          operationModule !== 'No disponible' ? operationModule : '',
+          operationDetail !== 'No disponible' ? operationDetail : '',
+          operationDevice ? `Equipo: ${operationDevice}` : ''
+        ]);
+        return `
+        <tr class="compact-record-row json-import-history-row">
+          <td class="json-import-file"><span title="${escapeHtml(entry.fileName)}">${escapeHtml(entry.fileName)}</span></td>
+          <td><span>${escapeHtml(entry.importDate || formatJsonImportHistoryDate(entry.importedAt))}</span><small>${escapeHtml(entry.importTime || formatJsonImportHistoryTime(entry.importedAt))}</small></td>
+          <td><span title="${escapeHtml(entry.sourceDeviceName)}">${escapeHtml(entry.sourceDeviceName || 'No disponible')}</span>${entry.sourceDeviceId ? `<small>${escapeHtml(getShortDeviceId(entry.sourceDeviceId))}</small>` : ''}</td>
+          <td><span>${escapeHtml(entry.modeLabel || 'No disponible')}</span></td>
+          <td class="json-import-operation"><span title="${escapeHtml(operationLabel)}">${escapeHtml(operationLabel)}</span>${operationMeta ? `<small title="${escapeHtml(operationMeta)}">${escapeHtml(operationMeta)}</small>` : ''}</td>
+          <td><span>${escapeHtml(cleanText(lastOperation?.atDisplay) || formatJsonImportOperationDateTime(lastOperation?.at))}</span></td>
+          <td><span>${escapeHtml(entry.result || 'Importado correctamente')}</span></td>
+        </tr>
+      `;
+      }).join('')
+      : `
+        <tr class="compact-record-row">
+          <td colspan="7"><span class="compact-primary">Todavía no hay JSON importados en este dispositivo.</span><small>El historial empezará a registrar importaciones confirmadas desde esta versión.</small></td>
+        </tr>
+      `;
+
+    return `
+      <article class="panel-card config-card full-span json-import-history-card">
+        <div class="section-title-row compact-title-row">
+          <div>
+            <span class="eyebrow mini">JSON / Importaciones</span>
+            <h2>JSON importados</h2>
+          </div>
+          <span class="compact-note">${entries.length || 0} registro${entries.length === 1 ? '' : 's'}</span>
+        </div>
+        <p class="notice compact-notice">Historial local informativo de respaldos JSON importados en este dispositivo. No modifica datos de negocio, cálculos, Excel ni Bdatos.</p>
+        ${renderOperationalTableShell({
+          shellClass: 'json-import-history-scroll-shell',
+          wrapClass: 'json-import-history-table-wrap',
+          ariaLabel: 'Historial local de JSON importados',
+          tableClass: 'json-import-history-table',
+          headers,
+          rows
+        })}
+      </article>
+    `;
   }
 
   function renderJsonAppliedMetadataRows() {
@@ -10156,6 +10512,8 @@
             `}
           </article>
 
+          ${renderJsonImportHistoryList()}
+
           <article class="panel-card config-card full-span">
             <div class="section-title-row">
               <div>
@@ -10648,6 +11006,7 @@
     const schemaVersion = cleanText(raw?.schemaVersion || metadata?.schemaVersion || raw?.registros?.configuracion?.schemaVersion || raw?.configuracion?.schemaVersion);
     const backupDate = cleanText(raw?.fechaExportacion || raw?.exportedAt || metadata?.exportedAt || metadata?.fechaExportacion || metadata?.updatedAt || raw?.metadata?.createdAt);
     const activityLog = extractActivityLogFromJsonBackup(raw);
+    const lastJsonOperation = detectLastOperationFromJsonBackup(raw);
     const metadataCounts = normalizeBackupCounts(metadata?.counts || metadata?.recordCounts || {});
     const metadataPreview = {
       backupVersion: cleanText(metadata?.backupVersion) || '',
@@ -10706,6 +11065,7 @@
       schemaVersion: schemaVersion || SCHEMA_VERSION,
       backupDate,
       metadata: metadataPreview,
+      lastJsonOperation,
       counts,
       comparison,
       errors,
@@ -10802,6 +11162,11 @@
     };
     saveData(appData);
     saveJsonAppliedMetadata(fileName, importSummary.importedAt || nowIso());
+    appendJsonImportHistoryEntry(buildJsonImportHistoryEntry(
+      importSummary,
+      preview,
+      Array.isArray(preview?.warnings) && preview.warnings.length ? 'Importado con advertencias' : 'Importado correctamente'
+    ));
     jsonBackupState.preview = null;
     jsonBackupState.payload = null;
     jsonBackupState.activityLog = [];
