@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.40-post12-config-json-importados-ultima-operacion';
+  const APP_VERSION = '0.17.41-post12-config-json-importados-tipo-operacion';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1232,45 +1232,35 @@
     return formatted && formatted !== '—' ? formatted : text;
   }
 
-  function buildJsonImportOperationLabel(activity = {}) {
+  function classifyJsonImportOperationType(activity = {}) {
     const raw = isPlainObject(activity) ? activity : {};
     const moduleName = cleanText(raw.module || raw.modulo);
     const action = cleanText(raw.action || raw.accion);
     const entityType = cleanText(raw.entityType || raw.tipoEntidad);
     const detail = cleanText(raw.detail || raw.detalle);
-    const moduleKey = moduleName.toLocaleLowerCase('es-NI');
-    const actionKey = action.toLocaleLowerCase('es-NI');
-    if (detail) {
-      const firstDetail = detail.split('·').map((part) => cleanText(part)).filter(Boolean)[0];
-      if (firstDetail) return firstDetail;
-    }
-    if (moduleKey.includes('venta') || moduleKey.includes('oc')) {
-      if (actionKey.includes('ajuste')) return 'Ajuste aplicado';
-      if (actionKey.includes('cread')) return 'OC creada';
-      if (actionKey.includes('edit')) return 'OC editada';
-    }
-    if (moduleKey.includes('cobro')) {
-      if (actionKey.includes('edit')) return 'Cobro editado';
-      if (actionKey.includes('cread') || actionKey.includes('registr')) return 'Cobro registrado';
-    }
-    if (moduleKey.includes('proveedor') || moduleKey.includes('compra')) {
-      if (actionKey.includes('ajuste')) return 'Ajuste aplicado';
-      if (actionKey.includes('edit')) return 'Compra editada';
-      if (actionKey.includes('cread') || actionKey.includes('registr')) return 'Compra registrada';
-    }
-    if (moduleKey.includes('pago')) {
-      if (actionKey.includes('edit')) return 'Pago a proveedor editado';
-      if (actionKey.includes('cread') || actionKey.includes('registr')) return 'Pago a proveedor registrado';
-    }
-    if (moduleKey.includes('gasto')) {
-      if (actionKey.includes('edit')) return 'Gasto editado';
-      if (actionKey.includes('cread') || actionKey.includes('registr')) return 'Gasto registrado';
-    }
-    if (moduleKey.includes('cierre')) return action || 'Cierre mensual realizado';
-    if (moduleKey.includes('catálogo') || moduleKey.includes('catalogo')) return action || 'Catálogo actualizado';
-    if (moduleKey.includes('json')) return action ? `JSON ${action.toLocaleLowerCase('es-NI')}` : 'JSON / respaldo';
-    if (moduleKey.includes('bdatos')) return action ? `Bdatos ${action.toLocaleLowerCase('es-NI')}` : 'Bdatos actualizado';
-    return buildActivityDetail([entityType, action]) || action || moduleName || 'No disponible';
+    const joinedKey = [moduleName, action, entityType, detail]
+      .join(' ')
+      .toLocaleLowerCase('es-NI')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+
+    if (joinedKey.includes('ajuste') || joinedKey.includes('nota')) return 'Ajustes / notas';
+    if (joinedKey.includes('cobro')) return 'Cobros';
+    if (joinedKey.includes('pago')) return 'Pagos';
+    if (joinedKey.includes('proveedor') || joinedKey.includes('compra')) return 'Proveedores / Compras';
+    if (joinedKey.includes('venta') || joinedKey.includes('oc ' ) || joinedKey.includes(' oc') || joinedKey === 'oc') return 'Ventas / OC';
+    if (joinedKey.includes('gasto')) return 'Gastos';
+    if (joinedKey.includes('cierre')) return 'Cierres';
+    if (joinedKey.includes('catalogo') || joinedKey.includes('categoria') || joinedKey.includes('cliente') || joinedKey.includes('sucursal')) return 'Catálogos';
+    if (joinedKey.includes('configuracion') || joinedKey.includes('config')) return 'Configuración';
+    if (joinedKey.includes('json') || joinedKey.includes('respaldo')) return 'JSON / Respaldo';
+    if (joinedKey.includes('bdatos') || joinedKey.includes('articulo')) return 'Bdatos';
+    if (joinedKey.includes('excel')) return 'Excel';
+    return moduleName || entityType || action || 'No disponible';
+  }
+
+  function buildJsonImportOperationLabel(activity = {}) {
+    return classifyJsonImportOperationType(activity);
   }
 
   function normalizeJsonImportLastOperation(operation) {
@@ -1283,7 +1273,7 @@
     const amountText = Number.isFinite(amountValue) ? formatMoney(amountValue) : '';
     const deviceName = cleanText(raw.deviceName || raw.equipo);
     const rawDetail = cleanText(raw.detail || raw.detalle);
-    const detail = rawDetail || buildActivityDetail([entityRef, amountText, deviceName]);
+    const detail = rawDetail || buildActivityDetail([action, entityRef, amountText, deviceName]);
     if (!timestamp && !rawModuleName && !action && !entityRef && !amountText && !deviceName && !rawDetail) return null;
     const label = buildJsonImportOperationLabel({ ...raw, module: rawModuleName, action, detail: rawDetail });
     return {
@@ -1472,8 +1462,8 @@
         const operationDetail = cleanText(lastOperation?.detail);
         const operationDevice = cleanText(lastOperation?.deviceName);
         const operationMeta = buildActivityDetail([
-          operationModule !== 'No disponible' ? operationModule : '',
           operationDetail !== 'No disponible' ? operationDetail : '',
+          operationModule && operationModule !== 'No disponible' && operationModule !== operationLabel ? `Módulo: ${operationModule}` : '',
           operationDevice ? `Equipo: ${operationDevice}` : ''
         ]);
         return `
