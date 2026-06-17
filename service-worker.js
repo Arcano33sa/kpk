@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_43_post12_referencia_teclado_numerico';
+const CACHE_VERSION = 'v0_17_44_post12_bitacora_desplegable';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

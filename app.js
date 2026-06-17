@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.43-post12-referencia-teclado-numerico';
+  const APP_VERSION = '0.17.44-post12-bitacora-desplegable';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -10576,6 +10576,10 @@
 
   function renderActivityLogList() {
     const entries = getRecentActivityEntries(20);
+    const totalEntries = (Array.isArray(appActivityLog) ? appActivityLog : loadActivityLog()).length;
+    const activityCountText = totalEntries > entries.length
+      ? `Últimas ${entries.length || 0} de ${totalEntries} actividades`
+      : `Últimas ${entries.length || 0} actividades`;
     const headers = `
       <th>Fecha</th>
       <th>Equipo</th>
@@ -10600,23 +10604,26 @@
       `;
 
     return `
-      <div class="activity-log-section">
-        <div class="compact-title-row">
-          <div>
+      <details class="activity-log-section activity-log-disclosure entity-accordion-item">
+        <summary class="entity-accordion-toggle activity-log-toggle" aria-label="Abrir o cerrar Bitácora local">
+          <span class="entity-accordion-chevron activity-log-chevron" aria-hidden="true"></span>
+          <span class="entity-accordion-name activity-log-title">
             <span class="eyebrow mini">Bitácora local</span>
-            <h3>Últimas actividades</h3>
-          </div>
-          <span class="compact-note">Últimas ${entries.length || 0} actividades</span>
+            <strong>Últimas actividades</strong>
+          </span>
+          <span class="entity-accordion-count">${escapeHtml(activityCountText)}</span>
+        </summary>
+        <div class="entity-accordion-panel activity-log-panel">
+          ${renderOperationalTableShell({
+            shellClass: 'activity-log-scroll-shell',
+            wrapClass: 'activity-log-table-wrap',
+            ariaLabel: 'Últimas actividades locales por equipo',
+            tableClass: 'activity-log-table',
+            headers,
+            rows
+          })}
         </div>
-        ${renderOperationalTableShell({
-          shellClass: 'activity-log-scroll-shell',
-          wrapClass: 'activity-log-table-wrap',
-          ariaLabel: 'Últimas actividades locales por equipo',
-          tableClass: 'activity-log-table',
-          headers,
-          rows
-        })}
-      </div>
+      </details>
     `;
   }
 

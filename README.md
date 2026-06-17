@@ -3,7 +3,7 @@
 - En Proveedores / Compras, el campo Referencia conserva `type="text"` y ahora usa `inputmode="numeric"` para abrir teclado numérico en iPad/celular.
 - El valor sigue guardándose como texto, sin convertir a número y sin eliminar ceros iniciales.
 - No se modifican cálculos, saldos, mora, cierres, Excel, JSON operativo, Bdatos, catálogos ni estructura de almacenamiento.
-- Versión/cache PWA actualizado a `0.17.43-post12-referencia-teclado-numerico`.
+- Versión/cache PWA actualizado a `0.17.44-post12-bitacora-desplegable`.
 
 ---
 

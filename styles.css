@@ -6170,3 +6170,119 @@ body,
     grid-template-columns: 1fr;
   }
 }
+
+/* Etapa 1/1 — Configuración: Bitácora local desplegable con scroll interno */
+.activity-log-disclosure {
+  display: block;
+  margin-top: 18px;
+  overflow: visible;
+}
+
+.activity-log-disclosure > summary {
+  list-style: none;
+}
+
+.activity-log-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.activity-log-toggle {
+  user-select: none;
+}
+
+.activity-log-disclosure[open] .activity-log-toggle {
+  border-radius: 18px 18px 0 0;
+  background: linear-gradient(180deg, #fff8ea, #fff2d6);
+}
+
+.activity-log-chevron::before {
+  content: '▸';
+}
+
+.activity-log-disclosure[open] .activity-log-chevron::before {
+  content: '▾';
+}
+
+.activity-log-title {
+  display: grid;
+  gap: 2px;
+}
+
+.activity-log-title strong {
+  font-size: 1rem;
+  line-height: 1.15;
+}
+
+.activity-log-panel {
+  padding: 12px;
+}
+
+.activity-log-scroll-shell {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: visible;
+}
+
+.activity-log-scroll-shell .operational-top-scroll {
+  position: sticky;
+  top: calc(var(--topbar-height) + var(--safe-top) + 8px);
+  z-index: 28;
+  display: block;
+  height: 18px;
+  min-height: 18px;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: thin;
+}
+
+.activity-log-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  max-height: min(420px, 64vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable both-edges;
+}
+
+.activity-log-table-wrap thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+
+.activity-log-scroll-shell .operational-table-wrap {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.activity-log-scroll-shell.is-not-scrollable .operational-top-scroll {
+  display: none;
+}
+
+@media (max-width: 620px) {
+  .activity-log-toggle {
+    min-height: 46px;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .activity-log-toggle .entity-accordion-count {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .activity-log-panel {
+    padding: 10px;
+  }
+
+  .activity-log-table-wrap {
+    max-height: min(360px, 58vh);
+  }
+}
