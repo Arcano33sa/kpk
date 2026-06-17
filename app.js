@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.42-post12-json-consecutivo-confirmado';
+  const APP_VERSION = '0.17.43-post12-referencia-teclado-numerico';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -8674,7 +8674,7 @@
           </label>
           <label class="form-field">
             <span>Referencia <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="text" name="facturaReferencia" value="${escapeHtml(facturaReferencia)}" placeholder="Ej. FAC-001 / REF-001" required autocomplete="off" />
+            <input type="text" name="facturaReferencia" value="${escapeHtml(facturaReferencia)}" placeholder="Ej. FAC-001 / REF-001" required inputmode="numeric" autocomplete="off" />
           </label>
           <label class="form-field">
             <span>Fecha compra <span class="required-dot" aria-label="obligatorio">*</span></span>
