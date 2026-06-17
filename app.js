@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.41-post12-config-json-importados-tipo-operacion';
+  const APP_VERSION = '0.17.42-post12-json-consecutivo-confirmado';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -10831,6 +10831,44 @@
     return counts;
   }
 
+  async function saveJsonBackupBlob(blob, fileName) {
+    if (typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function') {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: fileName,
+          types: [
+            {
+              description: 'Respaldo JSON de KSA PRÁCTIKA',
+              accept: { 'application/json': ['.json'] }
+            }
+          ]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        return { saved: true, method: 'file-picker' };
+      } catch (error) {
+        if (error && (error.name === 'AbortError' || error.name === 'NotAllowedError')) {
+          return { saved: false, cancelled: true, method: 'file-picker' };
+        }
+        throw error;
+      }
+    }
+
+    const confirmed = typeof window === 'undefined' || window.confirm('Se preparará el respaldo JSON para guardar/descargar. El consecutivo avanzará solo al confirmar esta acción final. ¿Continuar?');
+    if (!confirmed) return { saved: false, cancelled: true, method: 'download-fallback' };
+
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    return { saved: true, method: 'download-fallback' };
+  }
+
   function buildJsonBackupPayload(exportOptions = {}) {
     const snapshot = normalizeData(appData);
     const exportedAt = cleanText(exportOptions.exportedAt) || nowIso();
@@ -10882,7 +10920,7 @@
     };
   }
 
-  function exportJsonBackup() {
+  async function exportJsonBackup() {
     if (!canCurrentRole('exportJson')) {
       configState.message = 'Solo Administrador puede exportar respaldos JSON.';
       configState.messageType = 'error';
@@ -10892,7 +10930,28 @@
 
     const exportedAt = nowIso();
     const { fileName, sequence } = buildJsonExportFileName(exportedAt);
-    registerActivity({
+    const payload = buildJsonBackupPayload({ exportedAt, fileName });
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+
+    try {
+      const saveResult = await saveJsonBackupBlob(blob, fileName);
+      if (!saveResult.saved) {
+        configState.message = 'Exportación JSON cancelada. El consecutivo no cambió.';
+        configState.messageType = 'info';
+        renderRoute();
+        return;
+      }
+    } catch (error) {
+      console.error('KSA PRÁCTIKA: error al guardar respaldo JSON.', error);
+      configState.message = 'No se pudo guardar/exportar el JSON. El consecutivo no cambió.';
+      configState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+
+    saveJsonExportSequence(sequence + 1);
+    const exportActivity = registerActivity({
       module: 'JSON',
       action: 'Exportado',
       entityType: 'Respaldo JSON',
@@ -10900,19 +10959,6 @@
       detail: buildActivityDetail(['JSON exportado', fileName]),
       source: 'local'
     });
-
-    const payload = buildJsonBackupPayload({ exportedAt, fileName });
-    const json = JSON.stringify(payload, null, 2);
-    const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = fileName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
-    saveJsonExportSequence(sequence + 1);
 
     appData.configuracion = {
       ...normalizeConfiguracion(appData.configuracion),
@@ -10924,11 +10970,11 @@
         sourceDeviceName: payload.metadata.sourceDeviceName,
         fileName,
         counts: payload.metadata.counts,
-        lastActivity: payload.metadata.lastActivity
+        lastActivity: normalizeActivitySummary(exportActivity || payload.metadata.lastActivity)
       }),
       updatedAt: nowIso()
     };
-    configState.message = 'Respaldo JSON exportado con metadata de origen y fecha de último respaldo actualizada.';
+    configState.message = `Respaldo JSON exportado: ${fileName}. El próximo consecutivo será ${formatJsonExportSequence(sequence + 1)}.`;
     configState.messageType = 'success';
     saveData(appData);
     renderRoute();

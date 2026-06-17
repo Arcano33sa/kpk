@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_41_post12_config_json_importados_tipo_operacion';
+const CACHE_VERSION = 'v0_17_42_post12_json_consecutivo_confirmado';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
