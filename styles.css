@@ -6349,3 +6349,30 @@ body,
     width: 100%;
   }
 }
+
+
+/* Post12 ajuste — Total compra visible junto a Calcular */
+.proveedores-shell .compra-total-field {
+  min-width: 0;
+}
+
+.proveedores-shell .compra-total-action-row input[data-compra-total-input] {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (min-width: 621px) {
+  .proveedores-shell .compra-total-field {
+    grid-column: span 2;
+  }
+
+  .proveedores-shell .input-action-row.compra-total-action-row {
+    grid-template-columns: minmax(11rem, 1fr) max-content;
+  }
+}
+
+@media (max-width: 620px) {
+  .proveedores-shell .compra-total-field {
+    grid-column: 1 / -1;
+  }
+}
