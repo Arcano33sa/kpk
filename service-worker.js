@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_44_post12_bitacora_desplegable';
+const CACHE_VERSION = 'v0_17_45_post12_proveedores_calculadora_facturas';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

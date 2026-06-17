@@ -6286,3 +6286,66 @@ body,
     max-height: min(360px, 58vh);
   }
 }
+
+/* Post12 Proveedores — Calculadora auxiliar + facturas relacionadas */
+.input-action-row.compra-total-action-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.compra-total-action-row .secondary-action.compact {
+  align-self: stretch;
+  padding-inline: 12px;
+  white-space: nowrap;
+}
+
+.facturas-proveedor-block {
+  margin-top: 4px;
+}
+
+.compra-calculator-modal {
+  width: min(620px, 100%);
+}
+
+.compra-calculator-body {
+  display: grid;
+  gap: 14px;
+}
+
+.calculator-lines {
+  display: grid;
+  gap: 10px;
+}
+
+.calculator-line-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.calculator-line-row .form-field {
+  margin: 0;
+}
+
+.calculator-line-actions {
+  justify-content: flex-start;
+}
+
+.compra-calculator-total {
+  margin: 0;
+}
+
+@media (max-width: 560px) {
+  .input-action-row.compra-total-action-row,
+  .calculator-line-row {
+    grid-template-columns: 1fr;
+  }
+
+  .compra-total-action-row .secondary-action.compact,
+  .calculator-line-row .danger-action.compact {
+    width: 100%;
+  }
+}

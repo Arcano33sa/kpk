@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.44-post12-bitacora-desplegable';
+  const APP_VERSION = '0.17.45-post12-proveedores-calculadora-facturas';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -2574,6 +2574,84 @@
     return list.map((factura) => factura.numero).join(', ');
   }
 
+  function splitFacturasProveedorText(value) {
+    const text = String(value ?? '').trim();
+    if (!text) return [];
+    return text
+      .split(/[\s,.;\n\r]+/u)
+      .map((token) => cleanFacturaVentaNumero(token))
+      .filter(Boolean);
+  }
+
+  function normalizeFacturasProveedorFromText(value) {
+    return splitFacturasProveedorText(value).map((numero) => ({ numero }));
+  }
+
+  function normalizeFacturaProveedorRecord(record) {
+    const raw = isPlainObject(record) ? record : {};
+    const directValue = typeof record === 'string' || typeof record === 'number' ? record : '';
+    const numero = cleanFacturaVentaNumero(directValue || raw.numero || raw.numeroFactura || raw.factura || raw.documento || raw.referencia || raw.value);
+    if (!numero) return null;
+    return {
+      id: cleanText(raw.id) || generateId('facturaProveedor'),
+      numero
+    };
+  }
+
+  function normalizeFacturasProveedorList(value) {
+    let source = value;
+    if (typeof source === 'string') {
+      const trimmed = source.trim();
+      if (!trimmed) return [];
+      const looksLikeJsonCollection = /^[\[{]/u.test(trimmed);
+      if (looksLikeJsonCollection) {
+        try {
+          source = JSON.parse(trimmed);
+        } catch (_) {
+          source = normalizeFacturasProveedorFromText(trimmed);
+        }
+      } else {
+        source = normalizeFacturasProveedorFromText(trimmed);
+      }
+    }
+    if (typeof source === 'number') source = normalizeFacturasProveedorFromText(String(source));
+    if (typeof source === 'string') source = normalizeFacturasProveedorFromText(source);
+    if (isPlainObject(source)) source = [source];
+    if (!Array.isArray(source)) return [];
+    const seen = new Set();
+    return source
+      .map((item) => normalizeFacturaProveedorRecord(item))
+      .filter(Boolean)
+      .filter((item) => {
+        const key = normalizeNameForCompare(item.numero);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }
+
+  function normalizeCompraProveedorFacturasFromRaw(raw) {
+    const source = isPlainObject(raw) ? raw : {};
+    return normalizeFacturasProveedorList(source.facturasRelacionadas || source.facturasProveedor || source.facturasCompra || source.facturasRelacionadasProveedor || source.documentosRelacionados || []);
+  }
+
+  function formatFacturasProveedorInput(facturas) {
+    return normalizeFacturasProveedorList(facturas).map((factura) => factura.numero).join(', ');
+  }
+
+  function formatFacturasProveedorResumen(facturas) {
+    const list = normalizeFacturasProveedorList(facturas);
+    if (!list.length) return 'Sin facturas relacionadas';
+    return list.map((factura) => factura.numero).join(', ');
+  }
+
+  function formatFacturasProveedorCompact(facturas) {
+    const list = normalizeFacturasProveedorList(facturas);
+    if (!list.length) return '';
+    if (list.length <= 3) return `Facturas: ${list.map((factura) => factura.numero).join(', ')}`;
+    return `Facturas: ${list.length} registradas`;
+  }
+
   function normalizeBooleanField(value, fallback = false) {
     if (typeof value === 'boolean') return value;
     const normalized = cleanText(value)
@@ -2786,6 +2864,7 @@
       proveedorId: cleanText(raw.proveedorId),
       proveedorNombre: cleanText(raw.proveedorNombre || raw.proveedor),
       facturaReferencia: cleanText(raw.facturaReferencia || raw.factura || raw.referencia || raw.documento),
+      facturasRelacionadas: normalizeCompraProveedorFacturasFromRaw(raw),
       fechaCompra,
       diasCredito: safeDiasCredito,
       fechaVencimiento,
@@ -2808,6 +2887,7 @@
     return {
       ...base,
       totalCompra: calculations.totalCompra,
+      facturasRelacionadas: normalizeFacturasProveedorList(base.facturasRelacionadas),
       ajustes: base.ajustes,
       totalAjustes: calculations.totalAjustes,
       totalAjustado: calculations.totalAjustado,
@@ -5670,6 +5750,7 @@
     const proveedor = getCatalogRecordById('proveedores', compra.proveedorId);
     const searchable = normalizeNameForCompare(`${compra.facturaReferencia} ${proveedor?.nombre || compra.proveedorNombre || ''} ${compra.estado}`);
     const entries = getCompraHistoryEntries(compra);
+    const facturasRelacionadas = normalizeFacturasProveedorList(compra.facturasRelacionadas);
     return `
       <article class="history-card" data-mora-search-card data-search-text="${escapeHtml(searchable)}">
         <div class="venta-card-head">
@@ -5687,6 +5768,7 @@
           <div><span>Pagado</span><strong>${escapeHtml(formatMoney(compra.totalPagado))}</strong></div>
           <div><span>Saldo actual</span><strong>${escapeHtml(formatMoney(compra.saldoPorPagar))}</strong></div>
           <div><span>Vencimiento</span><strong>${escapeHtml(formatDate(compra.fechaVencimiento))}</strong></div>
+          <div><span>Facturas</span><strong>${escapeHtml(facturasRelacionadas.length ? String(facturasRelacionadas.length) : '0')}</strong></div>
         </div>
         <div class="timeline">${entries.map((entry) => renderTimelineEntry(entry)).join('')}</div>
         <div class="record-actions"><button type="button" class="secondary-action compact" data-history-compra="${escapeHtml(compra.id)}">Ampliar historial</button></div>
@@ -5762,7 +5844,8 @@
         { label: 'Ajustado', value: formatMoney(compra.totalAjustado) },
         { label: 'Pagado', value: formatMoney(compra.totalPagado) },
         { label: 'Saldo actual', value: formatMoney(compra.saldoPorPagar) },
-        { label: 'Vencimiento', value: formatDate(compra.fechaVencimiento) }
+        { label: 'Vencimiento', value: formatDate(compra.fechaVencimiento) },
+        { label: 'Facturas relacionadas', value: formatFacturasProveedorResumen(compra.facturasRelacionadas) }
       ],
       entries: getCompraHistoryEntries(compra)
     };
@@ -5832,6 +5915,15 @@
         statusClass: 'is-info'
       }
     ];
+    const facturasProveedor = normalizeFacturasProveedorList(compra.facturasRelacionadas);
+    if (facturasProveedor.length) {
+      entries.push({
+        date: formatDate(compra.fechaCompra),
+        title: 'Facturas relacionadas',
+        detail: formatFacturasProveedorResumen(facturasProveedor),
+        statusClass: 'is-info'
+      });
+    }
     if (compra.updatedAt && compra.updatedAt !== compra.createdAt) {
       entries.push({
         date: formatDateTime(compra.updatedAt),
@@ -8659,6 +8751,7 @@
     const calculations = getCompraProveedorCalculations(previewSource);
     const facturaReferencia = record?.facturaReferencia || cleanText(draft.facturaReferencia);
     const totalCompraValue = record ? record.totalCompra : draft.totalCompra;
+    const facturasSource = record || draft;
     const observacion = record?.observacion || cleanText(draft.observacion);
 
     return `
@@ -8688,9 +8781,12 @@
             <span>Fecha vencimiento <span class="required-dot" aria-label="obligatorio">*</span></span>
             <input type="date" name="fechaVencimiento" value="${escapeHtml(fechaVencimiento)}" required data-compra-due ${isContado ? 'readonly' : ''} />
           </label>
-          <label class="form-field">
+          <label class="form-field compra-total-field">
             <span>Total compra/deuda C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="totalCompra" value="${escapeHtml(formatNumberInput(totalCompraValue))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-compra-calc />
+            <div class="input-action-row compra-total-action-row">
+              <input type="number" name="totalCompra" value="${escapeHtml(formatNumberInput(totalCompraValue))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-compra-calc data-compra-total-input />
+              <button type="button" class="secondary-action compact" data-compra-calculator-open>Calcular</button>
+            </div>
           </label>
         </div>
 
@@ -8705,6 +8801,8 @@
           </div>
         </div>
 
+        ${renderCompraFacturasRelacionadasBlock(facturasSource)}
+
         ${renderCompraContadoPaymentBlock(record || draft, selectedProveedorId, isContado)}
 
         <label class="form-field">
@@ -8716,7 +8814,67 @@
           <button type="submit" class="card-action" ${missingProviders ? 'disabled' : ''}>${record ? 'Guardar cambios' : 'Guardar compra/deuda'}</button>
           <button type="button" class="secondary-action" data-compra-clear>${record ? 'Cancelar' : 'Limpiar'}</button>
         </div>
+        ${renderCompraTotalCalculatorModal()}
       </form>
+    `;
+  }
+
+  function renderCompraFacturasRelacionadasBlock(record) {
+    const facturas = normalizeFacturasProveedorList(record?.facturasRelacionadas || []);
+    const facturasText = formatFacturasProveedorInput(facturas);
+    return `
+        <section class="facturas-block facturas-proveedor-block" data-facturas-proveedor-block>
+          <input type="hidden" name="facturasRelacionadasJson" data-facturas-proveedor-json value="${escapeHtml(JSON.stringify(facturas))}" />
+          <div class="facturas-head">
+            <div>
+              <span class="eyebrow mini">Respaldo de compra</span>
+              <h3>Facturas relacionadas</h3>
+            </div>
+            <span class="count-pill" data-facturas-proveedor-count>${facturas.length} factura${facturas.length === 1 ? '' : 's'}</span>
+          </div>
+          <p class="muted-text compact-note">Captura una o varias facturas que respaldan esta misma compra/deuda. Son referencia documental: sin monto individual y sin crear pagos.</p>
+          <label class="form-field facturas-mass-field">
+            <span>Números de factura</span>
+            <textarea name="facturasRelacionadasTexto" data-facturas-proveedor-mass rows="3" placeholder="000145, 000146, 000147" autocomplete="off" inputmode="numeric">${escapeHtml(facturasText)}</textarea>
+          </label>
+          <p class="compact-note">Separa varias facturas por espacio, coma, punto, punto y coma o salto de línea. Se conservan ceros iniciales.</p>
+          <div class="facturas-preview" data-facturas-proveedor-preview>${facturas.length ? `Facturas detectadas: ${escapeHtml(formatFacturasProveedorResumen(facturas))}` : 'Facturas detectadas: ninguna'}</div>
+          <p class="compact-note facturas-message" data-facturas-proveedor-message aria-live="polite"></p>
+        </section>
+    `;
+  }
+
+  function renderCompraTotalCalculatorModal() {
+    return `
+      <div class="modal-backdrop compra-calculator-backdrop is-hidden" data-compra-calculator-modal role="presentation">
+        <section class="edit-modal compra-calculator-modal" role="dialog" aria-modal="true" aria-labelledby="compra-calculator-title">
+          <header class="edit-modal-header">
+            <div>
+              <span class="eyebrow mini">Auxiliar</span>
+              <h2 id="compra-calculator-title">Calculadora de Total compra</h2>
+              <p>Suma montos de facturas y usa el resultado sin guardar la compra todavía.</p>
+            </div>
+            <button type="button" class="modal-close" data-compra-calculator-close aria-label="Cerrar calculadora">×</button>
+          </header>
+          <div class="edit-modal-body compra-calculator-body">
+            <div class="calculator-lines" data-compra-calculator-rows></div>
+            <div class="record-actions calculator-line-actions">
+              <button type="button" class="secondary-action compact" data-compra-calculator-add>Agregar línea</button>
+              <button type="button" class="secondary-action compact" data-compra-calculator-clear>Limpiar</button>
+            </div>
+            <div class="formula-card compra-calculator-total" aria-live="polite">
+              <strong>Total calculado</strong>
+              <div class="formula-grid">
+                <span>Suma</span><b data-compra-calculator-total>${escapeHtml(formatMoney(0))}</b>
+              </div>
+            </div>
+            <div class="form-actions">
+              <button type="button" class="card-action" data-compra-calculator-use>Usar total</button>
+              <button type="button" class="secondary-action" data-compra-calculator-cancel>Cancelar</button>
+            </div>
+          </div>
+        </section>
+      </div>
     `;
   }
 
@@ -8834,11 +8992,13 @@
     const proveedor = getCatalogRecordById('proveedores', record.proveedorId);
     const estadoClass = getEstadoClass(record.estado);
     const proveedorNombre = proveedor?.nombre || record.proveedorNombre || 'Proveedor no encontrado';
+    const facturasRelacionadas = normalizeFacturasProveedorList(record.facturasRelacionadas);
+    const facturasCompact = formatFacturasProveedorCompact(facturasRelacionadas);
 
     const ajustesRow = renderCompraAjustesCompactRow(record, 10);
     return `
       <tr class="compact-record-row compra-row ${record.activo ? 'is-active' : 'is-inactive'}">
-        <td data-label="Referencia"><span class="compact-primary">${escapeHtml(record.facturaReferencia || 'Sin referencia')}</span></td>
+        <td data-label="Referencia"><span class="compact-primary">${escapeHtml(record.facturaReferencia || 'Sin referencia')}</span>${facturasCompact ? `<small>${escapeHtml(facturasCompact)}</small>` : ''}</td>
         <td data-label="Compra"><span>${escapeHtml(formatDate(record.fechaCompra))}</span></td>
         <td data-label="Vence"><span>${escapeHtml(formatDate(record.fechaVencimiento))}</span></td>
         <td data-label="Original" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.totalCompra))}</span></td>
@@ -8940,6 +9100,7 @@
       proveedorId,
       proveedorNombre: proveedor?.nombre || existingRecord?.proveedorNombre || '',
       facturaReferencia: cleanText(formData.get('facturaReferencia')),
+      facturasRelacionadas: syncCompraFacturasRelacionadasToHidden(form),
       fechaCompra,
       diasCredito,
       fechaVencimiento,
@@ -8962,6 +9123,7 @@
       ...base,
       diasCredito: Number.isNaN(base.diasCredito) ? 0 : base.diasCredito,
       totalCompra: Number.isNaN(base.totalCompra) ? 0 : base.totalCompra,
+      facturasRelacionadas: normalizeFacturasProveedorList(base.facturasRelacionadas),
       ajustes: normalizeCompraProveedorAjustesList(base.ajustes),
       totalAjustes: calculations.totalAjustes,
       totalAjustado: calculations.totalAjustado,
@@ -9003,6 +9165,17 @@
     return '';
   }
 
+  function syncCompraFacturasRelacionadasToHidden(form) {
+    const block = form?.querySelector?.('[data-facturas-proveedor-block]');
+    if (!block) return [];
+    const hidden = block.querySelector('[data-facturas-proveedor-json]');
+    const massInput = block.querySelector('[data-facturas-proveedor-mass]');
+    const source = massInput ? massInput.value : (hidden?.value || '');
+    const list = normalizeFacturasProveedorList(source);
+    if (hidden) hidden.value = JSON.stringify(list);
+    return list;
+  }
+
   function buildCompraDraftFromForm(form) {
     const formData = new FormData(form);
     const proveedorId = cleanText(formData.get('proveedorId'));
@@ -9017,6 +9190,7 @@
       diasCredito: Number.isNaN(diasCredito) ? 0 : diasCredito,
       fechaVencimiento: isContado ? fechaCompra : (toDateInputValue(formData.get('fechaVencimiento')) || addDaysToDate(fechaCompra, Number.isNaN(diasCredito) ? 0 : diasCredito) || fechaCompra),
       totalCompra: cleanText(formData.get('totalCompra')),
+      facturasRelacionadas: syncCompraFacturasRelacionadasToHidden(form),
       condicionPagoSnapshot: terms.condicionPago,
       metodoPagoContadoId: isContado ? cleanText(formData.get('metodoPagoContadoId')) : '',
       bancoPagoContadoId: isContado ? cleanText(formData.get('bancoPagoContadoId')) : '',
@@ -9318,6 +9492,8 @@
   function setupCompraProveedorLiveCalculations(form) {
     updateCompraProveedorPreviewFromForm(form, false);
     setupCompraContadoPaymentBlock(form);
+    setupCompraFacturasRelacionadasForm(form);
+    setupCompraTotalCalculator(form);
 
     form.querySelectorAll('[data-compra-calc]').forEach((input) => {
       input.addEventListener('input', () => updateCompraProveedorPreviewFromForm(form, false));
@@ -9330,6 +9506,147 @@
     form.querySelector('[data-compra-provider]')?.addEventListener('change', () => applyCompraPaymentTermsSuggestion(form));
     form.querySelector('[data-compra-date]')?.addEventListener('change', () => updateCompraProveedorPreviewFromForm(form, true));
     form.querySelector('[data-compra-days]')?.addEventListener('input', () => updateCompraProveedorPreviewFromForm(form, true));
+  }
+
+  function setupCompraFacturasRelacionadasForm(form) {
+    const block = form.querySelector('[data-facturas-proveedor-block]');
+    if (!block) return;
+    const hidden = block.querySelector('[data-facturas-proveedor-json]');
+    const massInput = block.querySelector('[data-facturas-proveedor-mass]');
+    const countNode = block.querySelector('[data-facturas-proveedor-count]');
+    const previewNode = block.querySelector('[data-facturas-proveedor-preview]');
+    const messageNode = block.querySelector('[data-facturas-proveedor-message]');
+    if (!massInput) return;
+
+    const showMessage = (message, isError = false) => {
+      if (!messageNode) return;
+      messageNode.textContent = message || '';
+      messageNode.classList.toggle('is-error', Boolean(isError));
+    };
+
+    const sync = () => {
+      const list = normalizeFacturasProveedorList(massInput.value);
+      if (hidden) hidden.value = JSON.stringify(list);
+      if (countNode) countNode.textContent = `${list.length} factura${list.length === 1 ? '' : 's'}`;
+      if (previewNode) previewNode.textContent = list.length ? `Facturas detectadas: ${formatFacturasProveedorResumen(list)}` : 'Facturas detectadas: ninguna';
+      return list;
+    };
+
+    const current = normalizeFacturasProveedorList(hidden?.value || []);
+    massInput.value = formatFacturasProveedorInput(current);
+    sync();
+
+    massInput.addEventListener('input', () => {
+      sync();
+      showMessage('', false);
+    });
+    massInput.addEventListener('blur', () => {
+      const list = sync();
+      massInput.value = formatFacturasProveedorInput(list);
+      sync();
+    });
+  }
+
+  function setupCompraTotalCalculator(form) {
+    const openButton = form.querySelector('[data-compra-calculator-open]');
+    const modal = form.querySelector('[data-compra-calculator-modal]');
+    const rowsNode = form.querySelector('[data-compra-calculator-rows]');
+    const totalNode = form.querySelector('[data-compra-calculator-total]');
+    const totalInput = form.querySelector('[data-compra-total-input]');
+    if (!openButton || !modal || !rowsNode || !totalInput) return;
+
+    const getValues = () => Array.from(rowsNode.querySelectorAll('[data-compra-calculator-input]')).map((input) => input.value);
+
+    const calculateTotal = () => getValues().reduce((sum, value) => {
+      const amount = parseMoney(value);
+      return roundMoney(sum + (Number.isNaN(amount) ? 0 : amount));
+    }, 0);
+
+    const updateTotal = () => {
+      const total = calculateTotal();
+      if (totalNode) totalNode.textContent = formatMoney(total);
+      return total;
+    };
+
+    const renumberRows = () => {
+      rowsNode.querySelectorAll('[data-compra-calculator-row]').forEach((row, index) => {
+        const label = row.querySelector('[data-compra-calculator-label]');
+        if (label) label.textContent = `Monto ${index + 1}`;
+        const removeButton = row.querySelector('[data-compra-calculator-remove]');
+        if (removeButton) removeButton.disabled = rowsNode.querySelectorAll('[data-compra-calculator-row]').length <= 1;
+      });
+    };
+
+    const addRow = (value = '') => {
+      const row = document.createElement('div');
+      row.className = 'calculator-line-row';
+      row.setAttribute('data-compra-calculator-row', '1');
+      row.innerHTML = `
+        <label class="form-field calculator-line-field">
+          <span data-compra-calculator-label>Monto</span>
+          <input type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" data-compra-calculator-input />
+        </label>
+        <button type="button" class="danger-action compact" data-compra-calculator-remove>Quitar</button>
+      `;
+      const input = row.querySelector('[data-compra-calculator-input]');
+      input.value = cleanText(value);
+      input.addEventListener('input', updateTotal);
+      row.querySelector('[data-compra-calculator-remove]')?.addEventListener('click', () => {
+        if (rowsNode.querySelectorAll('[data-compra-calculator-row]').length <= 1) {
+          input.value = '';
+          updateTotal();
+          return;
+        }
+        row.remove();
+        renumberRows();
+        updateTotal();
+      });
+      rowsNode.appendChild(row);
+      renumberRows();
+      updateTotal();
+      return input;
+    };
+
+    const resetRows = (values = ['', '']) => {
+      rowsNode.innerHTML = '';
+      const safeValues = Array.isArray(values) && values.length ? values : [''];
+      safeValues.forEach((value) => addRow(value));
+      renumberRows();
+      updateTotal();
+    };
+
+    const closeModal = () => {
+      modal.classList.add('is-hidden');
+    };
+
+    openButton.addEventListener('click', () => {
+      const currentRows = getValues().filter((value) => cleanText(value));
+      resetRows(currentRows.length ? currentRows : ['', '']);
+      modal.classList.remove('is-hidden');
+      rowsNode.querySelector('[data-compra-calculator-input]')?.focus();
+    });
+
+    form.querySelector('[data-compra-calculator-add]')?.addEventListener('click', () => {
+      const input = addRow('');
+      input.focus();
+    });
+
+    form.querySelector('[data-compra-calculator-clear]')?.addEventListener('click', () => resetRows(['', '']));
+    form.querySelector('[data-compra-calculator-cancel]')?.addEventListener('click', closeModal);
+    form.querySelector('[data-compra-calculator-close]')?.addEventListener('click', closeModal);
+    modal.addEventListener('click', (event) => {
+      if (event.target === modal) closeModal();
+    });
+
+    form.querySelector('[data-compra-calculator-use]')?.addEventListener('click', () => {
+      const total = updateTotal();
+      totalInput.value = formatNumberInput(total);
+      totalInput.dispatchEvent(new Event('input', { bubbles: true }));
+      updateCompraProveedorPreviewFromForm(form, false);
+      closeModal();
+    });
+
+    resetRows(['', '']);
   }
 
   function applyCompraPaymentTermsSuggestion(form) {
