@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.45-post12-proveedores-calculadora-facturas';
+  const APP_VERSION = '0.17.47-post12-proveedores-facturas-sin-referencia-visible';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -54,8 +54,8 @@
       icon: '◫',
       title: 'Proveedores / Compras',
       short: 'Proveedores',
-      description: 'Registro de compras, facturas, referencias, vencimientos, saldos por pagar y estado automático consistente.',
-      placeholder: 'Proveedores / Compras registra deudas con saldo por pagar, vencimiento, pagos ligados y mora por factura/referencia.'
+      description: 'Registro de compras, facturas relacionadas, vencimientos, saldos por pagar y estado automático consistente.',
+      placeholder: 'Proveedores / Compras registra deudas con saldo por pagar, vencimiento, pagos ligados y mora por compra/factura.'
     },
     {
       id: 'pagos',
@@ -2652,6 +2652,28 @@
     return `Facturas: ${list.length} registradas`;
   }
 
+
+  function getCompraProveedorFacturaReferenciaValue(facturas, fallback = '') {
+    const list = normalizeFacturasProveedorList(facturas);
+    if (list.length) return cleanText(list[0].numero);
+    return cleanText(fallback);
+  }
+
+  function getCompraProveedorReferenciaDocumental(record) {
+    const raw = isPlainObject(record) ? record : {};
+    const list = normalizeFacturasProveedorList(raw.facturasRelacionadas);
+    if (list.length) return list.map((factura) => factura.numero).join(', ');
+    return cleanText(raw.facturaReferencia) || 'Sin facturas relacionadas';
+  }
+
+  function getCompraProveedorReferenciaCompacta(record) {
+    const raw = isPlainObject(record) ? record : {};
+    const list = normalizeFacturasProveedorList(raw.facturasRelacionadas);
+    if (list.length <= 3 && list.length > 0) return list.map((factura) => factura.numero).join(', ');
+    if (list.length > 3) return `${list.length} facturas relacionadas`;
+    return cleanText(raw.facturaReferencia) || 'Sin facturas relacionadas';
+  }
+
   function normalizeBooleanField(value, fallback = false) {
     if (typeof value === 'boolean') return value;
     const normalized = cleanText(value)
@@ -4889,7 +4911,7 @@
       `,
       headers: `
         <th>Proveedor</th>
-        <th>Referencia</th>
+        <th>Facturas</th>
         <th>Origen</th>
         <th>Vence</th>
         <th>Mora</th>
@@ -5748,15 +5770,16 @@
 
   function renderCompraHistoryCard(compra) {
     const proveedor = getCatalogRecordById('proveedores', compra.proveedorId);
-    const searchable = normalizeNameForCompare(`${compra.facturaReferencia} ${proveedor?.nombre || compra.proveedorNombre || ''} ${compra.estado}`);
+    const referenciaDocumental = getCompraProveedorReferenciaDocumental(compra);
+    const searchable = normalizeNameForCompare(`${referenciaDocumental} ${compra.facturaReferencia} ${proveedor?.nombre || compra.proveedorNombre || ''} ${compra.estado}`);
     const entries = getCompraHistoryEntries(compra);
     const facturasRelacionadas = normalizeFacturasProveedorList(compra.facturasRelacionadas);
     return `
       <article class="history-card" data-mora-search-card data-search-text="${escapeHtml(searchable)}">
         <div class="venta-card-head">
           <div>
-            <span class="eyebrow mini">Referencia</span>
-            <h3>${escapeHtml(compra.facturaReferencia || 'Sin referencia')}</h3>
+            <span class="eyebrow mini">Facturas</span>
+            <h3>${escapeHtml(referenciaDocumental)}</h3>
           </div>
           <span class="state-pill ${getEstadoClass(compra.estado)}">${escapeHtml(compra.estado)}</span>
         </div>
@@ -5910,7 +5933,7 @@
     const entries = [
       {
         date: formatDateTime(compra.createdAt),
-        title: 'Referencia creada',
+        title: 'Compra/deuda creada',
         detail: `Original ${formatMoney(compra.totalCompra)}. Ajustado ${formatMoney(compra.totalAjustado)}. Vence el ${formatDate(compra.fechaVencimiento)}.`,
         statusClass: 'is-info'
       }
@@ -8570,7 +8593,7 @@
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Proveedores / Compras</h1>
-          <p class="lead">Registra deudas, facturas o referencias de proveedor con fecha de compra, vencimiento, saldo por pagar y estado automático básico. Es cartera por pagar sin circo contable: orden, fecha, monto y listo.</p>
+          <p class="lead">Registra deudas y facturas relacionadas de proveedor con fecha de compra, vencimiento, saldo por pagar y estado automático básico. Es cartera por pagar sin circo contable: orden, fecha, monto y listo.</p>
         </div>
         <aside class="hero-status" aria-label="Resumen de proveedores y compras">
           <h3>Totales básicos</h3>
@@ -8635,7 +8658,7 @@
             ${renderComprasProveedoresList(compras)}
           </article>
         </div>
-        ${editingRecord ? renderEditModal(getCompraModalId(), 'Editar compra / deuda', 'Actualiza la factura o referencia sin borrar pagos ligados ni historial.', renderCompraProveedorForm(editingRecord, proveedoresActivos, missingProviders)) : ''}
+        ${editingRecord ? renderEditModal(getCompraModalId(), 'Editar compra / deuda', 'Actualiza las facturas relacionadas sin borrar pagos ligados ni historial.', renderCompraProveedorForm(editingRecord, proveedoresActivos, missingProviders)) : ''}
       </section>
     `;
   }
@@ -8680,12 +8703,12 @@
             </select>
           </label>
           <label class="form-field">
-            <span>Referencia <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <span>Facturas relacionadas <span class="required-dot" aria-label="obligatorio">*</span></span>
             <select name="compraProveedorId" required data-ajuste-compra>
-              <option value="">Seleccionar factura</option>
+              <option value="">Seleccionar compra/deuda</option>
               ${compras.map((compra) => {
                 const proveedor = getCatalogRecordById('proveedores', compra.proveedorId);
-                const label = `${proveedor?.nombre || compra.proveedorNombre || 'Proveedor'} · ${compra.facturaReferencia || 'Sin referencia'} · Saldo ${formatMoney(compra.saldoPorPagar)}`;
+                const label = `${proveedor?.nombre || compra.proveedorNombre || 'Proveedor'} · ${getCompraProveedorReferenciaCompacta(compra)} · Saldo ${formatMoney(compra.saldoPorPagar)}`;
                 return `<option value="${escapeHtml(compra.id)}" data-provider-id="${escapeHtml(compra.proveedorId)}" ${compra.id === selectedCompra.id ? 'selected' : ''}>${escapeHtml(label)}</option>`;
               }).join('')}
             </select>
@@ -8722,7 +8745,7 @@
   function renderAjustePreview(compraRecord) {
     const compra = normalizeCompraProveedorRecord(compraRecord || {});
     return `
-      <strong>${escapeHtml(compra.facturaReferencia || 'Factura sin referencia')}</strong>
+      <strong>${escapeHtml(getCompraProveedorReferenciaCompacta(compra))}</strong>
       <div class="formula-grid">
         <span>Original</span><b>${escapeHtml(formatMoney(compra.totalCompra))}</b>
         <span>Ajustes actuales</span><b>${compra.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(compra.totalAjustes))}</b>
@@ -8765,10 +8788,7 @@
               ${proveedoresActivos.map((proveedor) => `<option value="${escapeHtml(proveedor.id)}" ${proveedor.id === selectedProveedorId ? 'selected' : ''}>${escapeHtml(proveedor.nombre || 'Proveedor sin nombre')} · ${escapeHtml(formatPaymentTermsLabel(proveedor))}</option>`).join('')}
             </select>
           </label>
-          <label class="form-field">
-            <span>Referencia <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="text" name="facturaReferencia" value="${escapeHtml(facturaReferencia)}" placeholder="Ej. FAC-001 / REF-001" required inputmode="numeric" autocomplete="off" />
-          </label>
+          <input type="hidden" name="facturaReferencia" value="${escapeHtml(facturaReferencia)}" />
           <label class="form-field">
             <span>Fecha compra <span class="required-dot" aria-label="obligatorio">*</span></span>
             <input type="date" name="fechaCompra" value="${escapeHtml(fechaCompra)}" required data-compra-date />
@@ -8820,7 +8840,9 @@
   }
 
   function renderCompraFacturasRelacionadasBlock(record) {
-    const facturas = normalizeFacturasProveedorList(record?.facturasRelacionadas || []);
+    const legacyReferencia = cleanText(record?.facturaReferencia);
+    const storedFacturas = normalizeFacturasProveedorList(record?.facturasRelacionadas || []);
+    const facturas = storedFacturas.length ? storedFacturas : normalizeFacturasProveedorList(legacyReferencia ? legacyReferencia : []);
     const facturasText = formatFacturasProveedorInput(facturas);
     return `
         <section class="facturas-block facturas-proveedor-block" data-facturas-proveedor-block>
@@ -8937,7 +8959,7 @@
       return `
         <div class="empty-state">
           <strong>No hay compras/deudas registradas todavía.</strong>
-          <p>Guarda la primera factura o referencia de proveedor para comenzar a controlar cuentas por pagar.</p>
+          <p>Guarda la primera factura relacionada del proveedor para comenzar a controlar cuentas por pagar.</p>
         </div>
       `;
     }
@@ -8960,7 +8982,7 @@
       ariaLabel: groupLabel ? `Compras y deudas registradas de ${groupLabel}` : 'Compras y deudas registradas',
       tableClass: 'operational-table-compras',
       headers: `
-        <th>Referencia</th>
+        <th>Facturas</th>
         <th>Compra</th>
         <th>Vence</th>
         <th class="amount-cell">Original</th>
@@ -8994,11 +9016,12 @@
     const proveedorNombre = proveedor?.nombre || record.proveedorNombre || 'Proveedor no encontrado';
     const facturasRelacionadas = normalizeFacturasProveedorList(record.facturasRelacionadas);
     const facturasCompact = formatFacturasProveedorCompact(facturasRelacionadas);
+    const referenciaDocumental = getCompraProveedorReferenciaDocumental(record);
 
     const ajustesRow = renderCompraAjustesCompactRow(record, 10);
     return `
       <tr class="compact-record-row compra-row ${record.activo ? 'is-active' : 'is-inactive'}">
-        <td data-label="Referencia"><span class="compact-primary">${escapeHtml(record.facturaReferencia || 'Sin referencia')}</span>${facturasCompact ? `<small>${escapeHtml(facturasCompact)}</small>` : ''}</td>
+        <td data-label="Facturas"><span class="compact-primary">${escapeHtml(referenciaDocumental)}</span>${facturasCompact && facturasRelacionadas.length > 3 ? `<small>${escapeHtml(facturasCompact)}</small>` : ''}</td>
         <td data-label="Compra"><span>${escapeHtml(formatDate(record.fechaCompra))}</span></td>
         <td data-label="Vence"><span>${escapeHtml(formatDate(record.fechaVencimiento))}</span></td>
         <td data-label="Original" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.totalCompra))}</span></td>
@@ -9092,6 +9115,8 @@
     const bancoPagoContadoId = isContado ? cleanText(formData.get('bancoPagoContadoId')) : '';
     const bancoPagoContado = bancoPagoContadoId ? getCatalogRecordById('cuentasBancos', bancoPagoContadoId) : null;
     const totalCompra = parseMoney(formData.get('totalCompra'));
+    const facturasRelacionadas = syncCompraFacturasRelacionadasToHidden(form);
+    const facturaReferencia = getCompraProveedorFacturaReferenciaValue(facturasRelacionadas, formData.get('facturaReferencia') || existingRecord?.facturaReferencia || '');
     const manualPagado = existingRecord?.id ? calculateManualPagadoForCompra(existingRecord.id, appData.pagosProveedores) : 0;
     const expectedPagado = isContado ? (Number.isNaN(totalCompra) ? 0 : totalCompra) : manualPagado;
     const base = {
@@ -9099,8 +9124,8 @@
       id: existingRecord?.id || generateId('compraProveedor'),
       proveedorId,
       proveedorNombre: proveedor?.nombre || existingRecord?.proveedorNombre || '',
-      facturaReferencia: cleanText(formData.get('facturaReferencia')),
-      facturasRelacionadas: syncCompraFacturasRelacionadasToHidden(form),
+      facturaReferencia,
+      facturasRelacionadas,
       fechaCompra,
       diasCredito,
       fechaVencimiento,
@@ -9151,7 +9176,7 @@
 
   function validateCompraProveedorRecord(record, existingRecord = null) {
     if (!record.proveedorId || !getActiveCatalogRecords('proveedores').some((proveedor) => proveedor.id === record.proveedorId)) return 'Selecciona un proveedor activo desde Catálogos.';
-    if (!record.facturaReferencia) return 'La referencia es obligatoria.';
+    if (!normalizeFacturasProveedorList(record.facturasRelacionadas).length) return 'Ingresa al menos una factura relacionada.';
     if (!record.fechaCompra) return 'La fecha de compra es obligatoria.';
     if (!record.fechaVencimiento) return 'La fecha de vencimiento es obligatoria.';
     if (Number.isNaN(parsePositiveInteger(record.diasCredito))) return 'Días de crédito debe ser cero o un número entero positivo.';
@@ -9183,14 +9208,15 @@
     const isContado = proveedorId && terms.condicionPago === 'Contado';
     const fechaCompra = toDateInputValue(formData.get('fechaCompra')) || todayInputValue();
     const diasCredito = isContado ? 0 : parsePositiveInteger(formData.get('diasCredito'));
+    const facturasRelacionadas = syncCompraFacturasRelacionadasToHidden(form);
     return {
       proveedorId,
-      facturaReferencia: cleanText(formData.get('facturaReferencia')),
+      facturaReferencia: getCompraProveedorFacturaReferenciaValue(facturasRelacionadas, formData.get('facturaReferencia')),
       fechaCompra,
       diasCredito: Number.isNaN(diasCredito) ? 0 : diasCredito,
       fechaVencimiento: isContado ? fechaCompra : (toDateInputValue(formData.get('fechaVencimiento')) || addDaysToDate(fechaCompra, Number.isNaN(diasCredito) ? 0 : diasCredito) || fechaCompra),
       totalCompra: cleanText(formData.get('totalCompra')),
-      facturasRelacionadas: syncCompraFacturasRelacionadasToHidden(form),
+      facturasRelacionadas,
       condicionPagoSnapshot: terms.condicionPago,
       metodoPagoContadoId: isContado ? cleanText(formData.get('metodoPagoContadoId')) : '',
       bancoPagoContadoId: isContado ? cleanText(formData.get('bancoPagoContadoId')) : '',
@@ -9216,24 +9242,25 @@
 
     if (!warnIfClosedPeriod(newRecord.fechaCompra, existingRecord ? 'Actualizar esta compra/deuda' : 'Crear esta compra/deuda')) return;
 
+    const compraRefLabel = getCompraProveedorReferenciaCompacta(newRecord);
     let syncResult = { action: 'none', pago: null };
     if (existingRecord) {
       appData.comprasProveedores = records.map((record) => record.id === existingId ? newRecord : record);
       syncResult = syncAutoPagoCompraContado(newRecord);
       proveedoresState.quickCapture = null;
-      proveedoresState.message = `Compra/deuda ${newRecord.facturaReferencia} actualizada.`;
+      proveedoresState.message = `Compra/deuda ${compraRefLabel} actualizada.`;
     } else {
       appData.comprasProveedores = [newRecord, ...records];
       syncResult = syncAutoPagoCompraContado(newRecord);
       proveedoresState.quickCapture = buildCompraQuickCaptureFromSavedRecord(newRecord);
-      proveedoresState.message = `Compra/deuda ${newRecord.facturaReferencia} guardada. Lista la siguiente factura del mismo proveedor y fecha.`;
+      proveedoresState.message = `Compra/deuda ${compraRefLabel} guardada. Lista la siguiente compra/deuda del mismo proveedor y fecha.`;
     }
 
     if (newRecord.condicionPagoSnapshot === 'Contado') {
-      if (syncResult.action === 'created') proveedoresState.message = `Compra de contado ${newRecord.facturaReferencia} guardada y pago automático aplicado.`;
-      if (syncResult.action === 'updated') proveedoresState.message = `Compra de contado ${newRecord.facturaReferencia} actualizada y pago automático sincronizado.`;
+      if (syncResult.action === 'created') proveedoresState.message = `Compra de contado ${compraRefLabel} guardada y pago automático aplicado.`;
+      if (syncResult.action === 'updated') proveedoresState.message = `Compra de contado ${compraRefLabel} actualizada y pago automático sincronizado.`;
     } else if (syncResult.action === 'annulled') {
-      proveedoresState.message = `Compra/deuda ${newRecord.facturaReferencia} actualizada; pago automático anterior quedó anulado.`;
+      proveedoresState.message = `Compra/deuda ${compraRefLabel} actualizada; pago automático anterior quedó anulado.`;
     }
 
     proveedoresState.editingId = null;
@@ -9246,9 +9273,9 @@
       module: 'Proveedores / Compras',
       action: existingRecord ? 'Editado' : 'Creado',
       entityType: 'Compra',
-      entityRef: newRecord.facturaReferencia,
+      entityRef: compraRefLabel,
       amount: newRecord.totalAjustado || newRecord.totalCompra,
-      detail: buildActivityDetail([existingRecord ? 'Compra editada' : 'Compra registrada', newRecord.facturaReferencia, formatMoney(newRecord.totalAjustado || newRecord.totalCompra)]),
+      detail: buildActivityDetail([existingRecord ? 'Compra editada' : 'Compra registrada', compraRefLabel, formatMoney(newRecord.totalAjustado || newRecord.totalCompra)]),
       source: 'local'
     });
     if (syncResult.pago && (syncResult.action === 'created' || syncResult.action === 'updated')) {
@@ -9256,9 +9283,9 @@
         module: 'Pagos',
         action: syncResult.action === 'created' ? 'Creado' : 'Editado',
         entityType: 'Pago automático',
-        entityRef: newRecord.facturaReferencia,
+        entityRef: compraRefLabel,
         amount: syncResult.pago.montoPagado,
-        detail: buildActivityDetail(['Pago automático de contado', newRecord.facturaReferencia, formatMoney(syncResult.pago.montoPagado)]),
+        detail: buildActivityDetail(['Pago automático de contado', compraRefLabel, formatMoney(syncResult.pago.montoPagado)]),
         source: 'sistema'
       });
     }
@@ -9848,7 +9875,7 @@
               </div>
               <div class="count-pill">${visiblePagos.length} registros</div>
             </div>
-            ${focusCompra ? `<div class="filter-chip"><span>Filtrando ${escapeHtml(focusCompra.facturaReferencia || 'Sin referencia')}</span><button type="button" class="secondary-action compact" data-pago-clear-focus>Ver todos</button></div>` : ''}
+            ${focusCompra ? `<div class="filter-chip"><span>Filtrando ${escapeHtml(getCompraProveedorReferenciaCompacta(focusCompra))}</span><button type="button" class="secondary-action compact" data-pago-clear-focus>Ver todos</button></div>` : ''}
             <label class="form-field search-field">
               <span>Buscar por proveedor o factura</span>
               <input type="search" placeholder="Ej. proveedor o FAC-001" data-pago-search autocomplete="off" />
@@ -9863,7 +9890,7 @@
 
   function renderPagosWarning(comprasDisponibles, metodosActivos, cuentasActivas) {
     const missing = [];
-    if (!comprasDisponibles.length) missing.push('facturas/referencias con saldo por pagar');
+    if (!comprasDisponibles.length) missing.push('compras/deudas con saldo por pagar');
     if (!metodosActivos.length) missing.push('métodos de pago activos');
     if (!missing.length) return '';
     return `
@@ -9886,12 +9913,12 @@
       <form class="pago-form" data-pago-form novalidate>
         <div class="form-grid">
           <label class="form-field full-span">
-            <span>Referencia <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <span>Compra / facturas <span class="required-dot" aria-label="obligatorio">*</span></span>
             <select name="compraProveedorId" required data-pago-compra ${!comprasDisponibles.length ? 'disabled' : ''}>
               ${comprasDisponibles.length ? '' : '<option value="">No hay facturas con saldo</option>'}
               ${comprasDisponibles.map((compra) => {
                 const compraProveedor = getCatalogRecordById('proveedores', compra.proveedorId);
-                return `<option value="${escapeHtml(compra.id)}" ${compra.id === selectedCompra?.id ? 'selected' : ''}>${escapeHtml(compra.facturaReferencia || 'Sin referencia')} · ${escapeHtml(compraProveedor?.nombre || compra.proveedorNombre || 'Proveedor')} · saldo ${escapeHtml(formatMoney(compra.saldoPorPagar))}</option>`;
+                return `<option value="${escapeHtml(compra.id)}" ${compra.id === selectedCompra?.id ? 'selected' : ''}>${escapeHtml(getCompraProveedorReferenciaCompacta(compra))} · ${escapeHtml(compraProveedor?.nombre || compra.proveedorNombre || 'Proveedor')} · saldo ${escapeHtml(formatMoney(compra.saldoPorPagar))}</option>`;
               }).join('')}
             </select>
           </label>
@@ -9938,8 +9965,8 @@
         <input type="hidden" name="compraProveedorId" value="${escapeHtml(record.compraProveedorId)}" />
         <div class="form-grid">
           <label class="form-field full-span">
-            <span>Referencia ligada</span>
-            <input type="text" value="${escapeHtml(record.facturaReferencia || compra?.facturaReferencia || 'Sin referencia')}" disabled />
+            <span>Compra / facturas ligadas</span>
+            <input type="text" value="${escapeHtml(compra ? getCompraProveedorReferenciaCompacta(compra) : (record.facturaReferencia || 'Sin facturas relacionadas'))}" disabled />
           </label>
           <label class="form-field">
             <span>Fecha real de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
@@ -9959,7 +9986,7 @@
           ${renderPaymentBankField(cuentasActivas, record, false)}
         </div>
         ${compra ? renderSelectedCompraPagoSummary(compra, proveedor) : ''}
-        <p class="compact-note">Máximo permitido para esta edición: ${escapeHtml(formatMoney(saldoDisponible))}. El vínculo con la factura/referencia no se cambia para proteger trazabilidad.</p>
+        <p class="compact-note">Máximo permitido para esta edición: ${escapeHtml(formatMoney(saldoDisponible))}. El vínculo con la compra/deuda no se cambia para proteger trazabilidad.</p>
         <label class="form-field">
           <span>Observación</span>
           <textarea name="observacion" rows="3" placeholder="Notas internas del pago">${escapeHtml(record.observacion || '')}</textarea>
@@ -9975,10 +10002,10 @@
   function renderSelectedCompraPagoSummary(compra, proveedor) {
     return `
       <div class="formula-card pago-summary" aria-live="polite">
-        <strong>Referencia seleccionada</strong>
+        <strong>Compra/deuda seleccionada</strong>
         <div class="formula-grid">
           <span>Proveedor</span><b>${escapeHtml(proveedor?.nombre || compra.proveedorNombre || 'Proveedor no encontrado')}</b>
-          <span>Referencia</span><b>${escapeHtml(compra.facturaReferencia || 'Sin referencia')}</b>
+          <span>Facturas</span><b>${escapeHtml(getCompraProveedorReferenciaCompacta(compra))}</b>
           <span>Fecha compra</span><b>${escapeHtml(formatDate(compra.fechaCompra))}</b>
           <span>Vencimiento</span><b>${escapeHtml(formatDate(compra.fechaVencimiento))}</b>
           <span>Total compra/deuda</span><b>${escapeHtml(formatMoney(compra.totalCompra))}</b>
@@ -10018,7 +10045,7 @@
       tableClass: 'operational-table-pagos',
       headers: `
         <th>Fecha</th>
-        <th>Referencia</th>
+        <th>Compra / facturas</th>
         <th class="amount-cell">Monto</th>
         <th>Método</th>
         <th>Banco</th>
@@ -10040,12 +10067,14 @@
 
   function renderPagoProveedorCard(pago) {
     const record = normalizePagoProveedorRecord(pago);
+    const compra = (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : []).map((item) => normalizeCompraProveedorRecord(item)).find((item) => item.id === record.compraProveedorId);
+    const referenciaPago = compra ? getCompraProveedorReferenciaCompacta(compra) : (record.facturaReferencia || '—');
     const estadoClass = record.activo ? 'is-active' : 'is-inactive';
-    const searchable = normalizeNameForCompare(`${record.proveedorNombre} ${record.facturaReferencia} ${record.metodoPagoNombre} ${record.cuentaBancoNombre}`);
+    const searchable = normalizeNameForCompare(`${record.proveedorNombre} ${referenciaPago} ${record.facturaReferencia} ${record.metodoPagoNombre} ${record.cuentaBancoNombre}`);
     return `
       <tr class="compact-record-row pago-row ${record.activo ? 'is-active' : 'is-inactive'}" data-pago-card data-search-text="${escapeHtml(searchable)}">
         <td data-label="Fecha"><span class="compact-primary">${escapeHtml(formatDate(record.fechaPago))}</span></td>
-        <td data-label="Referencia"><span class="compact-primary">${escapeHtml(record.facturaReferencia || '—')}</span></td>
+        <td data-label="Compra / facturas"><span class="compact-primary">${escapeHtml(referenciaPago)}</span></td>
         <td data-label="Monto" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.montoPagado))}</span></td>
         <td data-label="Método"><span>${escapeHtml(record.metodoPagoNombre || '—')}</span></td>
         <td data-label="Banco"><span>${escapeHtml(record.cuentaBancoNombre || '—')}</span></td>

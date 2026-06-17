@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_46_post12_proveedores_total_compra_ancho';
+const CACHE_VERSION = 'v0_17_47_post12_proveedores_facturas_sin_referencia_visible';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

@@ -1,3 +1,15 @@
+# KSA PRÁCTIKA — Post12 Proveedores: Facturas sin Referencia visible
+
+- En Proveedores / Compras se ocultó el campo visible **Referencia** del formulario principal.
+- **Facturas relacionadas** queda como el lugar oficial para registrar una o varias facturas que respaldan la compra/deuda.
+- Para compras nuevas, la referencia interna se genera desde la primera factura relacionada para conservar compatibilidad con pagos, listados, JSON e historial.
+- Compras antiguas con referencia histórica siguen abriendo sin error y muestran esa referencia como factura relacionada al editar si no traían el nuevo campo.
+- Listado de compras muestra la columna **Facturas** de forma compacta, sin ensanchar tarjetas ni crear scroll horizontal general.
+- No se modifican pagos, saldos, mora, cierres, Excel, JSON operativo, metadata JSON, historial de importaciones, comparador ni Bdatos.
+- Versión/cache PWA actualizado a `0.17.47-post12-proveedores-facturas-sin-referencia-visible`.
+
+---
+
 # KSA PRÁCTIKA — Post12 Referencia: teclado numérico
 
 - En Proveedores / Compras, el campo Referencia conserva `type="text"` y ahora usa `inputmode="numeric"` para abrir teclado numérico en iPad/celular.
