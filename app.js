@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.51-post12-cobros-oc-ninguna-facturas';
+  const APP_VERSION = '0.17.52-post12-scrollbars-superiores-permanentes';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -4020,35 +4020,65 @@
 
     const schedule = window.requestAnimationFrame || ((callback) => window.setTimeout(callback, 0));
     const observers = [];
+    const cleanups = [];
     const refreshers = shells.map((shell) => {
       const topScroll = shell.querySelector('[data-operational-top-scroll]');
       const spacer = shell.querySelector('[data-operational-top-spacer]');
+      const visualRail = shell.querySelector('[data-operational-scroll-rail]');
+      const visualThumb = shell.querySelector('[data-operational-scroll-thumb]');
       const tableScroll = shell.querySelector('[data-operational-table-scroll]');
       const table = tableScroll?.querySelector('table');
 
       if (!topScroll || !spacer || !tableScroll || !table) return null;
 
       let isSyncing = false;
+      let dragState = null;
+
+      const getScrollMetrics = () => {
+        const width = Math.max(table.scrollWidth, table.offsetWidth, tableScroll.scrollWidth, tableScroll.clientWidth);
+        const visibleWidth = Math.max(1, tableScroll.clientWidth);
+        const maxScroll = Math.max(0, width - visibleWidth);
+        return { width, visibleWidth, maxScroll, canScroll: maxScroll > 2 };
+      };
+
+      const updateVisualRail = (metrics = getScrollMetrics()) => {
+        if (!visualRail || !visualThumb) return;
+        const trackWidth = Math.max(1, visualRail.clientWidth);
+        const thumbWidth = metrics.canScroll
+          ? Math.max(42, Math.min(trackWidth, Math.round((metrics.visibleWidth / Math.max(metrics.width, 1)) * trackWidth)))
+          : trackWidth;
+        const maxThumbLeft = Math.max(0, trackWidth - thumbWidth);
+        const ratio = metrics.canScroll && metrics.maxScroll ? tableScroll.scrollLeft / metrics.maxScroll : 0;
+        const thumbLeft = Math.round(maxThumbLeft * Math.max(0, Math.min(1, ratio)));
+
+        visualThumb.style.width = `${thumbWidth}px`;
+        visualThumb.style.transform = `translateX(${thumbLeft}px)`;
+        visualRail.classList.toggle('is-scrollable', metrics.canScroll);
+        visualRail.classList.toggle('is-flat', !metrics.canScroll);
+      };
 
       const refresh = () => {
-        const width = Math.max(table.scrollWidth, table.offsetWidth, tableScroll.scrollWidth, tableScroll.clientWidth);
-        spacer.style.width = `${width}px`;
-        const canScroll = width > tableScroll.clientWidth + 2;
-        shell.classList.toggle('is-not-scrollable', !canScroll);
+        const metrics = getScrollMetrics();
+        spacer.style.width = `${metrics.width}px`;
+        shell.classList.toggle('is-not-scrollable', !metrics.canScroll);
+        topScroll.classList.toggle('is-scrollable', metrics.canScroll);
+        topScroll.classList.toggle('is-flat', !metrics.canScroll);
 
-        if (!canScroll) {
+        if (!metrics.canScroll) {
           topScroll.scrollLeft = 0;
           tableScroll.scrollLeft = 0;
-          return;
+        } else {
+          topScroll.scrollLeft = tableScroll.scrollLeft;
         }
 
-        topScroll.scrollLeft = tableScroll.scrollLeft;
+        updateVisualRail(metrics);
       };
 
       const syncFromTop = () => {
         if (isSyncing) return;
         isSyncing = true;
         tableScroll.scrollLeft = topScroll.scrollLeft;
+        updateVisualRail();
         schedule(() => { isSyncing = false; });
       };
 
@@ -4056,20 +4086,88 @@
         if (isSyncing) return;
         isSyncing = true;
         topScroll.scrollLeft = tableScroll.scrollLeft;
+        updateVisualRail();
         schedule(() => { isSyncing = false; });
+      };
+
+      const scrollFromClientX = (clientX, offsetRatio = 0.5) => {
+        if (!visualRail || !visualThumb) return;
+        const metrics = getScrollMetrics();
+        if (!metrics.canScroll) return;
+        const railRect = visualRail.getBoundingClientRect();
+        const thumbWidth = visualThumb.getBoundingClientRect().width || 42;
+        const maxThumbLeft = Math.max(1, railRect.width - thumbWidth);
+        const desiredLeft = clientX - railRect.left - (thumbWidth * offsetRatio);
+        const ratio = Math.max(0, Math.min(1, desiredLeft / maxThumbLeft));
+        const nextScrollLeft = ratio * metrics.maxScroll;
+        tableScroll.scrollLeft = nextScrollLeft;
+        topScroll.scrollLeft = nextScrollLeft;
+        updateVisualRail(metrics);
+      };
+
+      const handleRailPointerDown = (event) => {
+        if (!visualRail || !visualThumb) return;
+        const metrics = getScrollMetrics();
+        if (!metrics.canScroll) return;
+        if (typeof event.button === 'number' && event.button !== 0) return;
+
+        event.preventDefault();
+        const thumbRect = visualThumb.getBoundingClientRect();
+        const clickedThumb = event.target === visualThumb || visualThumb.contains(event.target);
+        const offsetRatio = clickedThumb && thumbRect.width
+          ? Math.max(0, Math.min(1, (event.clientX - thumbRect.left) / thumbRect.width))
+          : 0.5;
+
+        dragState = { pointerId: event.pointerId, offsetRatio };
+        visualRail.classList.add('is-dragging');
+        topScroll.classList.add('is-dragging');
+        visualRail.setPointerCapture?.(event.pointerId);
+        scrollFromClientX(event.clientX, offsetRatio);
+      };
+
+      const handleRailPointerMove = (event) => {
+        if (!dragState || dragState.pointerId !== event.pointerId) return;
+        event.preventDefault();
+        scrollFromClientX(event.clientX, dragState.offsetRatio);
+      };
+
+      const finishRailDrag = (event) => {
+        if (!dragState || dragState.pointerId !== event.pointerId) return;
+        visualRail?.releasePointerCapture?.(event.pointerId);
+        visualRail?.classList.remove('is-dragging');
+        topScroll.classList.remove('is-dragging');
+        dragState = null;
       };
 
       topScroll.addEventListener('scroll', syncFromTop, { passive: true });
       tableScroll.addEventListener('scroll', syncFromTable, { passive: true });
+      cleanups.push(() => topScroll.removeEventListener('scroll', syncFromTop));
+      cleanups.push(() => tableScroll.removeEventListener('scroll', syncFromTable));
+
+      if (visualRail) {
+        visualRail.addEventListener('pointerdown', handleRailPointerDown);
+        visualRail.addEventListener('pointermove', handleRailPointerMove);
+        visualRail.addEventListener('pointerup', finishRailDrag);
+        visualRail.addEventListener('pointercancel', finishRailDrag);
+        cleanups.push(() => visualRail.removeEventListener('pointerdown', handleRailPointerDown));
+        cleanups.push(() => visualRail.removeEventListener('pointermove', handleRailPointerMove));
+        cleanups.push(() => visualRail.removeEventListener('pointerup', finishRailDrag));
+        cleanups.push(() => visualRail.removeEventListener('pointercancel', finishRailDrag));
+      }
+
       const scheduleRefresh = () => schedule(refresh);
       const detailAncestors = Array.from(shell.closest('section, article, .panel-card, #viewRoot')?.querySelectorAll('details') || [])
         .filter((detail) => detail.contains(shell));
-      detailAncestors.forEach((detail) => detail.addEventListener('toggle', scheduleRefresh, { passive: true }));
+      detailAncestors.forEach((detail) => {
+        detail.addEventListener('toggle', scheduleRefresh, { passive: true });
+        cleanups.push(() => detail.removeEventListener('toggle', scheduleRefresh));
+      });
       if ('ResizeObserver' in window) {
         const observer = new ResizeObserver(scheduleRefresh);
         observer.observe(shell);
         observer.observe(tableScroll);
         observer.observe(table);
+        if (visualRail) observer.observe(visualRail);
         observers.push(observer);
       }
       refresh();
@@ -4081,7 +4179,10 @@
 
     operationalScrollbarResizeHandler = () => refreshers.forEach((refresh) => refresh());
     window.addEventListener('resize', operationalScrollbarResizeHandler, { passive: true });
-    operationalScrollbarCleanup = () => observers.forEach((observer) => observer.disconnect());
+    operationalScrollbarCleanup = () => {
+      observers.forEach((observer) => observer.disconnect());
+      cleanups.forEach((cleanup) => cleanup());
+    };
   }
 
   function renderHome() {
@@ -8573,7 +8674,10 @@
   function renderOperationalTableShell({ shellClass, wrapClass, ariaLabel, tableClass, headers, rows, colgroup = '' }) {
     return `
       <div class="operational-scroll-shell ${escapeHtml(shellClass)}" data-operational-scroll-shell>
-        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
+        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true">
+          <div class="operational-scroll-rail" data-operational-scroll-rail><div class="operational-scroll-thumb" data-operational-scroll-thumb></div></div>
+          <div class="operational-top-scroll-spacer" data-operational-top-spacer></div>
+        </div>
         <div class="operational-table-wrap ${escapeHtml(wrapClass)}" role="region" aria-label="${escapeHtml(ariaLabel)}" tabindex="0" data-operational-table-scroll>
           <table class="operational-table ${escapeHtml(tableClass)}">
             ${colgroup || ''}

@@ -385,3 +385,7 @@ Bloques principales:
 - Cobros: al seleccionar una OC, el bloque `OC seleccionada` usa una distribución compacta más clara.
 - Cobros: el bloque muestra `Facturas relacionadas` únicamente con los números de factura, sin fechas.
 - PWA: actualización de versión y cache.
+## 0.17.52-post12-scrollbars-superiores-permanentes
+- Refuerzo visual global de scrollbars superiores permanentes en tablas/listados compactos con scroll horizontal interno.
+- Riel superior visible aun cuando el sistema oculte scrollbars nativos, sincronizado con el contenido y sin scroll horizontal general.
+
