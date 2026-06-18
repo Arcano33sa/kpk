@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.47-post12-proveedores-facturas-sin-referencia-visible';
+  const APP_VERSION = '0.17.48-post12-ventas-fecha-real-envio-editar';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -2348,10 +2348,39 @@
     return formatDateInput(date);
   }
 
+  function isVentaRequiereEnvio(record) {
+    const raw = isPlainObject(record) ? record : {};
+    return normalizeBooleanField(raw.requiereEnvio ?? raw.requiereEnvío ?? raw.envioRequerido ?? raw.envíoRequerido, false);
+  }
+
+  function getVentaLogisticaRecord(record) {
+    const raw = isPlainObject(record) ? record : {};
+    const nested = isPlainObject(raw.logistica) ? raw.logistica : (isPlainObject(raw.envio) ? raw.envio : (isPlainObject(raw.logisticaEnvio) ? raw.logisticaEnvio : {}));
+    return normalizeLogisticaVentaRecord({
+      ...nested,
+      transportista: nested.transportista ?? raw.logisticaTransportista ?? raw.transportista,
+      fechaEmbarque: nested.fechaEmbarque ?? raw.logisticaFechaEmbarque ?? raw.fechaEmbarque,
+      fechaEstimada: nested.fechaEstimada ?? raw.logisticaFechaEstimada ?? raw.fechaEstimada,
+      fechaReal: nested.fechaReal ?? raw.logisticaFechaReal ?? raw.fechaReal ?? raw.fechaLlegadaReal ?? raw.fechaEntregaReal,
+      guia: nested.guia ?? raw.logisticaGuia ?? raw.guia
+    });
+  }
+
   function getVentaCreditBaseDate(record) {
     const raw = isPlainObject(record) ? record : {};
+    if (isVentaRequiereEnvio(raw)) {
+      return toDateInputValue(getVentaLogisticaRecord(raw).fechaReal || '');
+    }
     return toDateInputValue(raw.fechaEntrega || raw.fechaDeEntrega || raw.entrega || raw.fechaRecepcion || raw.fechaRecepción || '')
       || toDateInputValue(raw.fechaOc || raw.fechaOC || raw.fecha || '');
+  }
+
+  function getVentaCreditBaseType(record) {
+    const raw = isPlainObject(record) ? record : {};
+    if (isVentaRequiereEnvio(raw)) {
+      return getVentaLogisticaRecord(raw).fechaReal ? 'Fecha real' : 'Pendiente recepción';
+    }
+    return isVentaCreditBaseEntrega(raw) ? 'Entrega' : 'OC';
   }
 
   function calculateVentaFechaVencimiento(record, diasCredito) {
@@ -2362,7 +2391,7 @@
 
   function isVentaCreditBaseEntrega(record) {
     const raw = isPlainObject(record) ? record : {};
-    return Boolean(toDateInputValue(raw.fechaEntrega || raw.fechaDeEntrega || raw.entrega || raw.fechaRecepcion || raw.fechaRecepción || ''));
+    return !isVentaRequiereEnvio(raw) && Boolean(toDateInputValue(raw.fechaEntrega || raw.fechaDeEntrega || raw.entrega || raw.fechaRecepcion || raw.fechaRecepción || ''));
   }
 
   function isPastVentaDue(record) {
@@ -2722,8 +2751,10 @@
     const safeDiasCredito = Number.isNaN(diasCredito) ? 0 : diasCredito;
     const fechaOc = toDateInputValue(raw.fechaOc || raw.fechaOC || raw.fecha || '');
     const fechaEntrega = toDateInputValue(raw.fechaEntrega || raw.fechaDeEntrega || raw.entrega || raw.fechaRecepcion || raw.fechaRecepción || '');
-    const fechaBaseCredito = getVentaCreditBaseDate({ ...raw, fechaOc, fechaEntrega });
-    const fechaVencimiento = calculateVentaFechaVencimiento({ ...raw, fechaOc, fechaEntrega }, safeDiasCredito);
+    const requiereEnvio = isVentaRequiereEnvio(raw);
+    const logistica = getVentaLogisticaRecord(raw);
+    const fechaBaseCredito = getVentaCreditBaseDate({ ...raw, fechaOc, fechaEntrega, requiereEnvio, logistica });
+    const fechaVencimiento = calculateVentaFechaVencimiento({ ...raw, fechaOc, fechaEntrega, requiereEnvio, logistica }, safeDiasCredito);
     const base = {
       id: raw.id || generateId('venta'),
       numeroDocumento: cleanText(raw.numeroDocumento || raw.numeroOC || raw.numeroOc || raw.documento || raw.oc),
@@ -2732,7 +2763,7 @@
       fechaOc,
       fechaEntrega,
       fechaBaseCredito,
-      fechaBaseCreditoTipo: fechaEntrega ? 'Entrega' : 'OC',
+      fechaBaseCreditoTipo: getVentaCreditBaseType({ ...raw, fechaOc, fechaEntrega, requiereEnvio, logistica }),
       diasCredito: safeDiasCredito,
       fechaVencimiento,
       subtotal: getVentaSubtotalBase(raw),
@@ -2746,8 +2777,8 @@
       totalCobrado: parseMoney(raw.totalCobrado),
       ajustes: normalizeVentaAjustesList(raw.ajustes || raw.ajustesCliente || raw.ajustesClientes || raw.notasCredito || raw.notas || []),
       facturas: normalizeVentaFacturasFromRaw(raw),
-      requiereEnvio: normalizeBooleanField(raw.requiereEnvio ?? raw.requiereEnvío ?? raw.envioRequerido ?? raw.envíoRequerido, false),
-      logistica: normalizeLogisticaVentaRecord(raw.logistica || raw.envio || raw.logisticaEnvio || {}),
+      requiereEnvio,
+      logistica,
       observacion: cleanText(raw.observacion),
       activo: typeof raw.activo === 'boolean' ? raw.activo : raw.estado !== 'Anulado',
       createdAt: raw.createdAt || timestamp,
@@ -7105,8 +7136,11 @@
     const selectedTerms = selectedClienteId ? getCatalogPaymentTerms('clientes', selectedClienteId) : { diasCredito: 0 };
     const draftDias = draft.diasCredito ?? '';
     const diasCredito = record ? (record.diasCredito ?? '') : (draftDias !== '' ? draftDias : (selectedClienteId ? selectedTerms.diasCredito : ''));
-    const fechaBaseCredito = getVentaCreditBaseDate({ fechaOc, fechaEntrega });
-    const fechaVencimiento = calculateVentaFechaVencimiento({ fechaOc, fechaEntrega }, Number(diasCredito) || 0) || addDaysToDate(fechaBaseCredito, Number(diasCredito) || 0);
+    const logisticaSource = record || draft;
+    const requiereEnvio = Boolean(logisticaSource?.requiereEnvio);
+    const logistica = getVentaLogisticaRecord(logisticaSource || {});
+    const fechaBaseCredito = getVentaCreditBaseDate({ fechaOc, fechaEntrega, requiereEnvio, logistica });
+    const fechaVencimiento = calculateVentaFechaVencimiento({ fechaOc, fechaEntrega, requiereEnvio, logistica }, Number(diasCredito) || 0) || addDaysToDate(fechaBaseCredito, Number(diasCredito) || 0);
     const previewSource = record || {
       subtotal: draft.subtotal || draft.montoOc || 0,
       montoOc: draft.subtotal || draft.montoOc || 0,
@@ -7115,7 +7149,6 @@
     };
     const calculations = getVentaCalculations(previewSource);
     const facturasSource = record || draft;
-    const logisticaSource = record || draft;
 
     return `
       <form class="venta-form" data-venta-form data-current-cobrado="${escapeHtml(record?.totalCobrado || 0)}" data-current-ajustes="${escapeHtml(JSON.stringify(record?.ajustes || []))}" novalidate>
@@ -7143,7 +7176,7 @@
               ${sucursalesActivas.map((sucursal) => `<option value="${escapeHtml(sucursal.id)}" ${sucursal.id === selectedSucursalId ? 'selected' : ''}>${escapeHtml(sucursal.nombre || 'Sucursal sin nombre')}</option>`).join('')}
             </select>
           </label>
-          <label class="form-field">
+          <label class="form-field ${requiereEnvio ? 'is-hidden' : ''}" data-venta-delivery-field>
             <span>Fecha de entrega</span>
             <input type="date" name="fechaEntrega" value="${escapeHtml(fechaEntrega)}" data-venta-delivery />
           </label>
@@ -7349,8 +7382,16 @@
     let diasCredito = parsePositiveInteger(diasCreditoRaw);
     if (!diasCreditoRaw && clienteId) diasCredito = terms.diasCredito;
     const fechaEntrega = toDateInputValue(formData.get('fechaEntrega'));
+    const requiereEnvio = formData.get('requiereEnvio') === '1';
+    const logistica = normalizeLogisticaVentaRecord({
+      transportista: formData.get('logisticaTransportista') ?? existingRecord?.logistica?.transportista,
+      fechaEmbarque: formData.get('logisticaFechaEmbarque') ?? existingRecord?.logistica?.fechaEmbarque,
+      fechaEstimada: formData.get('logisticaFechaEstimada') ?? existingRecord?.logistica?.fechaEstimada,
+      fechaReal: formData.get('logisticaFechaReal') ?? existingRecord?.logistica?.fechaReal,
+      guia: formData.get('logisticaGuia') ?? existingRecord?.logistica?.guia
+    });
     const safeDiasCredito = Number.isNaN(diasCredito) ? 0 : diasCredito;
-    const fechaVencimiento = calculateVentaFechaVencimiento({ fechaOc, fechaEntrega }, safeDiasCredito);
+    const fechaVencimiento = calculateVentaFechaVencimiento({ fechaOc, fechaEntrega, requiereEnvio, logistica }, safeDiasCredito);
     const base = {
       ...(existingRecord || {}),
       id: existingRecord?.id || generateId('venta'),
@@ -7359,8 +7400,8 @@
       sucursalId: cleanText(formData.get('sucursalId')),
       fechaOc,
       fechaEntrega,
-      fechaBaseCredito: getVentaCreditBaseDate({ fechaOc, fechaEntrega }),
-      fechaBaseCreditoTipo: fechaEntrega ? 'Entrega' : 'OC',
+      fechaBaseCredito: getVentaCreditBaseDate({ fechaOc, fechaEntrega, requiereEnvio, logistica }),
+      fechaBaseCreditoTipo: getVentaCreditBaseType({ fechaOc, fechaEntrega, requiereEnvio, logistica }),
       diasCredito,
       fechaVencimiento,
       subtotal: parseMoney(formData.get('subtotal') ?? formData.get('montoOc')),
@@ -7371,14 +7412,8 @@
       totalCobrado: existingRecord?.totalCobrado || 0,
       ajustes: normalizeVentaAjustesList(existingRecord?.ajustes || []),
       facturas: syncFacturaRowsToHidden(form),
-      requiereEnvio: formData.get('requiereEnvio') === '1',
-      logistica: normalizeLogisticaVentaRecord({
-        transportista: formData.get('logisticaTransportista') ?? existingRecord?.logistica?.transportista,
-        fechaEmbarque: formData.get('logisticaFechaEmbarque') ?? existingRecord?.logistica?.fechaEmbarque,
-        fechaEstimada: formData.get('logisticaFechaEstimada') ?? existingRecord?.logistica?.fechaEstimada,
-        fechaReal: formData.get('logisticaFechaReal') ?? existingRecord?.logistica?.fechaReal,
-        guia: formData.get('logisticaGuia') ?? existingRecord?.logistica?.guia
-      }),
+      requiereEnvio,
+      logistica,
       observacion: cleanText(formData.get('observacion')),
       activo: typeof existingRecord?.activo === 'boolean' ? existingRecord.activo : true,
       createdAt: existingRecord?.createdAt || timestamp,
@@ -7453,6 +7488,14 @@
     const formData = new FormData(form);
     const fechaOc = toDateInputValue(formData.get('fechaOc')) || todayInputValue();
     const fechaEntrega = toDateInputValue(formData.get('fechaEntrega'));
+    const requiereEnvio = formData.get('requiereEnvio') === '1';
+    const logistica = normalizeLogisticaVentaRecord({
+      transportista: formData.get('logisticaTransportista'),
+      fechaEmbarque: formData.get('logisticaFechaEmbarque'),
+      fechaEstimada: formData.get('logisticaFechaEstimada'),
+      fechaReal: formData.get('logisticaFechaReal'),
+      guia: formData.get('logisticaGuia')
+    });
     const diasCredito = parsePositiveInteger(formData.get('diasCredito'));
     const safeDiasCredito = Number.isNaN(diasCredito) ? 0 : diasCredito;
     return {
@@ -7461,22 +7504,16 @@
       sucursalId: cleanText(formData.get('sucursalId')),
       fechaOc,
       fechaEntrega,
-      fechaBaseCredito: getVentaCreditBaseDate({ fechaOc, fechaEntrega }),
-      fechaBaseCreditoTipo: fechaEntrega ? 'Entrega' : 'OC',
+      fechaBaseCredito: getVentaCreditBaseDate({ fechaOc, fechaEntrega, requiereEnvio, logistica }),
+      fechaBaseCreditoTipo: getVentaCreditBaseType({ fechaOc, fechaEntrega, requiereEnvio, logistica }),
       diasCredito: safeDiasCredito,
-      fechaVencimiento: calculateVentaFechaVencimiento({ fechaOc, fechaEntrega }, safeDiasCredito),
+      fechaVencimiento: calculateVentaFechaVencimiento({ fechaOc, fechaEntrega, requiereEnvio, logistica }, safeDiasCredito),
       subtotal: cleanText(formData.get('subtotal') ?? formData.get('montoOc')),
       montoOc: cleanText(formData.get('subtotal') ?? formData.get('montoOc')),
       descuento: cleanText(formData.get('descuento')),
       facturas: syncFacturaRowsToHidden(form),
-      requiereEnvio: formData.get('requiereEnvio') === '1',
-      logistica: normalizeLogisticaVentaRecord({
-        transportista: formData.get('logisticaTransportista'),
-        fechaEmbarque: formData.get('logisticaFechaEmbarque'),
-        fechaEstimada: formData.get('logisticaFechaEstimada'),
-        fechaReal: formData.get('logisticaFechaReal'),
-        guia: formData.get('logisticaGuia')
-      }),
+      requiereEnvio,
+      logistica,
       observacion: cleanText(formData.get('observacion'))
     };
   }
@@ -7804,10 +7841,15 @@
     if (!block) return;
     const toggle = block.querySelector('[data-logistica-toggle]');
     const panel = block.querySelector('[data-logistica-panel]');
+    const deliveryField = form.querySelector('[data-venta-delivery-field]');
     const updateVisibility = () => {
-      panel?.classList.toggle('is-hidden', !toggle?.checked);
+      const requiresShipping = Boolean(toggle?.checked);
+      panel?.classList.toggle('is-hidden', !requiresShipping);
+      deliveryField?.classList.toggle('is-hidden', requiresShipping);
+      updateVentaPreviewFromForm(form, true);
     };
     toggle?.addEventListener('change', updateVisibility);
+    block.querySelector('[name="logisticaFechaReal"]')?.addEventListener('change', () => updateVentaPreviewFromForm(form, true));
     updateVisibility();
   }
 
@@ -7825,8 +7867,12 @@
       const deliveryInput = form.querySelector('[data-venta-delivery]');
       const daysInput = form.querySelector('[data-venta-days]');
       const dueInput = form.querySelector('[data-venta-due]');
-      const due = calculateVentaFechaVencimiento({ fechaOc: dateInput?.value, fechaEntrega: deliveryInput?.value }, Number.parseInt(daysInput?.value || '0', 10) || 0);
-      if (dueInput && due) dueInput.value = due;
+      const requiereEnvio = Boolean(form.querySelector('[data-logistica-toggle]')?.checked);
+      const logistica = normalizeLogisticaVentaRecord({
+        fechaReal: form.querySelector('[name="logisticaFechaReal"]')?.value || ''
+      });
+      const due = calculateVentaFechaVencimiento({ fechaOc: dateInput?.value, fechaEntrega: deliveryInput?.value, requiereEnvio, logistica }, Number.parseInt(daysInput?.value || '0', 10) || 0);
+      if (dueInput) dueInput.value = due || '';
     }
 
     let currentAjustes = [];
