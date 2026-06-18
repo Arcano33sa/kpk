@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.48-post12-ventas-fecha-real-envio-editar';
+  const APP_VERSION = '0.17.50-post12-ventas-logistica-gasto-automatico';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -2715,20 +2715,58 @@
     return Boolean(fallback);
   }
 
+  function normalizeLogisticaGastoVentaRecord(value) {
+    const raw = isPlainObject(value) ? value : {};
+    const monto = parseMoney(raw.monto ?? raw.importe ?? raw.total ?? raw.valor ?? '');
+    const gastoVinculadoId = cleanText(raw.gastoVinculadoId || raw.gastoId || raw.gastoAutomaticoId || raw.gastoLogisticoId || raw.gastoEnvioId || '');
+    const origenId = cleanText(raw.origenId || raw.ventaId || raw.ocId || raw.documentoId || raw.ventaIdOrigen || '');
+    return {
+      monto: Number.isNaN(monto) ? 0 : monto,
+      metodoPagoId: cleanText(raw.metodoPagoId || raw.metodoId || raw.metodoPagoCodigo || raw.formaPagoId || ''),
+      metodoPagoNombre: cleanText(raw.metodoPagoNombre || raw.metodoPagoTexto || raw.metodoNombre || raw.metodo || raw.metodoPago || raw.formaPago || ''),
+      cuentaBancoId: cleanText(raw.cuentaBancoId || raw.bancoCuentaId || raw.cuentaId || raw.bancoId || ''),
+      cuentaBancoNombre: cleanText(raw.cuentaBancoNombre || raw.bancoCuentaNombre || raw.bancoCuentaTexto || raw.bancoCuenta || raw.cuentaBanco || raw.banco || raw.cuenta || ''),
+      cuentaBancoTipo: normalizeBankType(raw.cuentaBancoTipo || raw.bancoTipo || raw.tipoBanco || raw.bankType || raw.tipoCuentaBanco || ''),
+      observacion: cleanText(raw.observacion || raw.observación || raw.nota || raw.notas || ''),
+      gastoVinculadoId,
+      origen: cleanText(raw.origen || raw.source || ''),
+      origenId
+    };
+  }
+
+  function hasLogisticaGastoVentaData(gasto) {
+    const normalized = normalizeLogisticaGastoVentaRecord(gasto);
+    return Boolean(normalized.monto || normalized.metodoPagoId || normalized.metodoPagoNombre || normalized.cuentaBancoId || normalized.cuentaBancoNombre || normalized.observacion);
+  }
+
   function normalizeLogisticaVentaRecord(value) {
     const raw = isPlainObject(value) ? value : {};
+    const nestedGasto = isPlainObject(raw.gasto) ? raw.gasto : (isPlainObject(raw.gastoEnvio) ? raw.gastoEnvio : {});
     return {
       transportista: cleanText(raw.transportista || raw.transportistaNombre || raw.envioTransportista),
       fechaEmbarque: toDateInputValue(raw.fechaEmbarque || raw.embarque || raw.fechaEnvio || raw.fechaDespacho || ''),
       fechaEstimada: toDateInputValue(raw.fechaEstimada || raw.fechaEstimadaLlegada || raw.fechaEntregaEstimada || ''),
       fechaReal: toDateInputValue(raw.fechaReal || raw.fechaLlegadaReal || raw.fechaEntregaReal || ''),
-      guia: cleanText(raw.guia || raw.guía || raw.numeroGuia || raw.numeroGuía || raw.tracking)
+      guia: cleanText(raw.guia || raw.guía || raw.numeroGuia || raw.numeroGuía || raw.tracking),
+      gasto: normalizeLogisticaGastoVentaRecord({
+        ...nestedGasto,
+        monto: nestedGasto.monto ?? raw.gastoMonto ?? raw.montoGasto ?? raw.logisticaGastoMonto,
+        metodoPagoId: nestedGasto.metodoPagoId ?? raw.gastoMetodoPagoId ?? raw.logisticaGastoMetodoPagoId,
+        metodoPagoNombre: nestedGasto.metodoPagoNombre ?? raw.gastoMetodoPagoNombre ?? raw.logisticaGastoMetodoPagoNombre,
+        cuentaBancoId: nestedGasto.cuentaBancoId ?? raw.gastoCuentaBancoId ?? raw.gastoBancoCuentaId ?? raw.logisticaGastoBancoCuentaId,
+        cuentaBancoNombre: nestedGasto.cuentaBancoNombre ?? raw.gastoCuentaBancoNombre ?? raw.gastoBancoCuentaNombre ?? raw.logisticaGastoBancoCuentaNombre,
+        cuentaBancoTipo: nestedGasto.cuentaBancoTipo ?? raw.gastoCuentaBancoTipo ?? raw.logisticaGastoCuentaBancoTipo,
+        observacion: nestedGasto.observacion ?? raw.gastoObservacion ?? raw.logisticaGastoObservacion,
+        gastoVinculadoId: nestedGasto.gastoVinculadoId ?? raw.gastoVinculadoId ?? raw.gastoLogisticoId ?? raw.gastoEnvioId,
+        origen: nestedGasto.origen ?? raw.gastoOrigen,
+        origenId: nestedGasto.origenId ?? raw.gastoOrigenId ?? raw.ventaIdOrigen
+      })
     };
   }
 
   function hasLogisticaVentaData(logistica) {
     const normalized = normalizeLogisticaVentaRecord(logistica);
-    return Boolean(normalized.transportista || normalized.fechaEmbarque || normalized.fechaEstimada || normalized.fechaReal || normalized.guia);
+    return Boolean(normalized.transportista || normalized.fechaEmbarque || normalized.fechaEstimada || normalized.fechaReal || normalized.guia || hasLogisticaGastoVentaData(normalized.gasto));
   }
 
   function formatLogisticaVentaResumen(record) {
@@ -2991,6 +3029,10 @@
     const anulado = typeof raw.anulado === 'boolean' ? raw.anulado : rawEstado === 'Anulado' || raw.activo === false;
     const activo = typeof raw.activo === 'boolean' ? raw.activo && !anulado : !anulado;
     const monto = parseMoney(raw.monto || raw.importe || raw.valor);
+    const origen = cleanText(raw.origen || raw.source || raw.tipoOrigen || '');
+    const autoGenerado = raw.autoGenerado === true || raw.esAutomatico === true || raw.automatico === true || origen === 'venta_envio';
+    const origenId = cleanText(raw.origenId || raw.ventaId || raw.ocId || raw.documentoId || raw.ventaIdOrigen || raw.gastoLogisticoVentaId || '');
+    const ventaIdOrigen = cleanText(raw.ventaIdOrigen || raw.gastoLogisticoVentaId || raw.ventaOrigenId || '') || (origen === 'venta_envio' ? origenId : '');
 
     return {
       id: raw.id || generateId('gasto'),
@@ -3004,6 +3046,11 @@
       cuentaBancoNombre: cleanText(raw.cuentaBancoNombre || raw.cuentaBanco || raw.banco || raw.cuenta),
       cuentaBancoTipo: normalizeBankType(raw.cuentaBancoTipo || raw.bancoTipo || raw.tipoBanco || raw.bankType || raw.tipoCuentaBanco),
       observacion: cleanText(raw.observacion),
+      origen,
+      origenId,
+      ventaIdOrigen,
+      gastoLogisticoVentaId: cleanText(raw.gastoLogisticoVentaId) || ventaIdOrigen,
+      autoGenerado,
       estado: activo ? 'Registrado' : 'Anulado',
       anulado: !activo,
       activo,
@@ -3267,6 +3314,187 @@
     return { action: 'none', pago: autoPago };
   }
 
+
+  function getTransporteGastoTipoActivo() {
+    return getActiveCatalogRecords('tiposGasto')
+      .find((tipo) => normalizeKeyForCompare(tipo.nombre) === 'transporte') || null;
+  }
+
+  function isAutoGastoLogisticaVentaRecord(record, ventaId = '') {
+    const gasto = normalizeGastoRecord(record);
+    if (!gasto.autoGenerado || gasto.origen !== 'venta_envio') return false;
+    const cleanVentaId = cleanText(ventaId);
+    if (!cleanVentaId) return true;
+    return gasto.origenId === cleanVentaId || gasto.ventaIdOrigen === cleanVentaId || gasto.gastoLogisticoVentaId === cleanVentaId;
+  }
+
+  function findAutoGastoLogisticaVenta(ventaRecordOrId, gastosSource = appData.gastos, includeInactive = false) {
+    const ventaId = cleanText(isPlainObject(ventaRecordOrId) ? ventaRecordOrId.id : ventaRecordOrId);
+    if (!ventaId) return null;
+    const linkedId = isPlainObject(ventaRecordOrId)
+      ? normalizeLogisticaGastoVentaRecord(ventaRecordOrId.logistica?.gasto).gastoVinculadoId
+      : '';
+    const source = Array.isArray(gastosSource) ? gastosSource : [];
+    const normalizedSource = source.map((record) => normalizeGastoRecord(record));
+    if (linkedId) {
+      const linked = normalizedSource.find((gasto) => gasto.id === linkedId && (includeInactive || gasto.activo));
+      if (linked) return linked;
+    }
+    return normalizedSource.find((gasto) => (includeInactive || gasto.activo) && isAutoGastoLogisticaVentaRecord(gasto, ventaId)) || null;
+  }
+
+  function setVentaLogisticaGastoVinculadoId(ventaId, gastoId) {
+    const cleanVentaId = cleanText(ventaId);
+    const cleanGastoId = cleanText(gastoId);
+    if (!cleanVentaId || !Array.isArray(appData.ventas)) return null;
+    let updatedVenta = null;
+    appData.ventas = appData.ventas.map((record) => {
+      if (record.id !== cleanVentaId) return record;
+      const venta = normalizeVentaRecord(record);
+      const logistica = normalizeLogisticaVentaRecord(venta.logistica);
+      const gastoLogistico = normalizeLogisticaGastoVentaRecord({
+        ...logistica.gasto,
+        gastoVinculadoId: cleanGastoId,
+        origen: 'venta_envio',
+        origenId: cleanVentaId
+      });
+      updatedVenta = normalizeVentaRecord({
+        ...venta,
+        logistica: {
+          ...logistica,
+          gasto: gastoLogistico
+        },
+        updatedAt: nowIso()
+      });
+      return updatedVenta;
+    });
+    return updatedVenta;
+  }
+
+  function buildAutoGastoLogisticaVenta(ventaRecord, existingGasto = null) {
+    const venta = normalizeVentaRecord(ventaRecord);
+    const logistica = normalizeLogisticaVentaRecord(venta.logistica);
+    const gastoLogistico = normalizeLogisticaGastoVentaRecord(logistica.gasto);
+    const timestamp = nowIso();
+    const tipoTransporte = getTransporteGastoTipoActivo();
+    const metodo = findPaymentMethodByValue(gastoLogistico.metodoPagoId || gastoLogistico.metodoPagoNombre);
+    const methodValue = metodo?.id || gastoLogistico.metodoPagoId || gastoLogistico.metodoPagoNombre;
+    const requiredBankType = getBankTypeForPaymentMethod(methodValue);
+    const banco = requiredBankType ? getValidBankForPaymentMethod(methodValue, gastoLogistico.cuentaBancoId, existingGasto || gastoLogistico) : null;
+
+    return normalizeGastoRecord({
+      ...(existingGasto || {}),
+      id: existingGasto?.id || gastoLogistico.gastoVinculadoId || generateId('gasto'),
+      fecha: logistica.fechaEmbarque,
+      tipoGastoId: tipoTransporte?.id || existingGasto?.tipoGastoId || '',
+      tipoGastoNombre: tipoTransporte?.nombre || existingGasto?.tipoGastoNombre || 'Transporte',
+      monto: gastoLogistico.monto,
+      metodoPagoId: metodo?.id || '',
+      metodoPagoNombre: metodo?.nombre || '',
+      cuentaBancoId: requiredBankType ? (banco?.id || '') : '',
+      cuentaBancoNombre: requiredBankType ? (banco?.nombre || '') : '',
+      cuentaBancoTipo: requiredBankType ? normalizeBankType(banco?.tipo) : '',
+      observacion: gastoLogistico.observacion,
+      origen: 'venta_envio',
+      origenId: venta.id,
+      ventaIdOrigen: venta.id,
+      gastoLogisticoVentaId: venta.id,
+      autoGenerado: true,
+      activo: true,
+      anulado: false,
+      estado: 'Registrado',
+      createdAt: existingGasto?.createdAt || timestamp,
+      updatedAt: timestamp
+    });
+  }
+
+  function validateAutoGastoLogisticaVenta(ventaRecord, existingGasto = null) {
+    const venta = normalizeVentaRecord(ventaRecord);
+    const logistica = normalizeLogisticaVentaRecord(venta.logistica);
+    const gastoLogistico = normalizeLogisticaGastoVentaRecord(logistica.gasto);
+    if (!venta.activo || !venta.requiereEnvio || gastoLogistico.monto <= 0) return '';
+    if (!logistica.fechaEmbarque) return 'La OC se guardó, pero no se creó el gasto automático: para registrar el gasto se necesita Fecha de embarque.';
+    const tipoTransporte = getTransporteGastoTipoActivo();
+    if (!tipoTransporte) return 'La OC se guardó, pero no se creó el gasto automático: no existe o no está activo el tipo de gasto Transporte.';
+    const metodo = findPaymentMethodByValue(gastoLogistico.metodoPagoId || gastoLogistico.metodoPagoNombre);
+    if (!metodo || !metodo.activo) return 'La OC se guardó, pero no se creó el gasto automático: selecciona un método de pago activo para el gasto de envío.';
+    const bankError = validateBankForPaymentMethod({
+      metodoPagoId: metodo.id,
+      metodoPagoNombre: metodo.nombre,
+      cuentaBancoId: gastoLogistico.cuentaBancoId,
+      cuentaBancoNombre: gastoLogistico.cuentaBancoNombre,
+      cuentaBancoTipo: gastoLogistico.cuentaBancoTipo
+    }, existingGasto || gastoLogistico);
+    if (bankError) return `La OC se guardó, pero no se creó el gasto automático: ${bankError}`;
+    return '';
+  }
+
+  function annulAutoGastoLogisticaVenta(ventaId, motivo = 'Gasto automático de envío anulado por cambio en la logística de la venta.') {
+    const cleanVentaId = cleanText(ventaId);
+    const existingAuto = findAutoGastoLogisticaVenta(cleanVentaId, appData.gastos, true);
+    if (!existingAuto || !existingAuto.activo) return { action: 'none', gasto: existingAuto };
+    appData.gastos = (Array.isArray(appData.gastos) ? appData.gastos : []).map((record) => {
+      if (record.id !== existingAuto.id) return record;
+      return normalizeGastoRecord({
+        ...record,
+        origen: 'venta_envio',
+        origenId: cleanVentaId,
+        ventaIdOrigen: cleanVentaId,
+        gastoLogisticoVentaId: cleanVentaId,
+        autoGenerado: true,
+        activo: false,
+        anulado: true,
+        estado: 'Anulado',
+        observacion: cleanText(record.observacion),
+        updatedAt: nowIso()
+      });
+    });
+    return { action: 'annulled', gasto: normalizeGastoRecord({ ...existingAuto, activo: false, anulado: true, estado: 'Anulado' }), warning: cleanText(motivo) };
+  }
+
+  function syncAutoGastoLogisticaVenta(ventaRecord) {
+    if (!Array.isArray(appData.gastos)) appData.gastos = [];
+    const venta = normalizeVentaRecord(ventaRecord);
+    const logistica = normalizeLogisticaVentaRecord(venta.logistica);
+    const gastoLogistico = normalizeLogisticaGastoVentaRecord(logistica.gasto);
+    const existingAuto = findAutoGastoLogisticaVenta(venta, appData.gastos, true);
+    const shouldHaveAuto = Boolean(venta.activo && venta.requiereEnvio && gastoLogistico.monto > 0);
+
+    if (!shouldHaveAuto) {
+      const result = existingAuto ? annulAutoGastoLogisticaVenta(venta.id) : { action: 'none', gasto: existingAuto };
+      if (existingAuto?.id) setVentaLogisticaGastoVinculadoId(venta.id, existingAuto.id);
+      return result;
+    }
+
+    const validationError = validateAutoGastoLogisticaVenta(venta, existingAuto);
+    if (validationError) {
+      if (existingAuto?.activo) annulAutoGastoLogisticaVenta(venta.id, validationError);
+      if (existingAuto?.id) setVentaLogisticaGastoVinculadoId(venta.id, existingAuto.id);
+      return { action: 'blocked', gasto: existingAuto, warning: validationError };
+    }
+
+    const autoGasto = buildAutoGastoLogisticaVenta(venta, existingAuto);
+    if (existingAuto) {
+      appData.gastos = appData.gastos.map((record) => record.id === existingAuto.id ? autoGasto : record);
+      setVentaLogisticaGastoVinculadoId(venta.id, autoGasto.id);
+      return { action: existingAuto.activo ? 'updated' : 'reactivated', gasto: autoGasto };
+    }
+
+    appData.gastos = [autoGasto, ...appData.gastos];
+    setVentaLogisticaGastoVinculadoId(venta.id, autoGasto.id);
+    return { action: 'created', gasto: autoGasto };
+  }
+
+  function getAutoGastoLogisticaVentaResultMessage(result) {
+    if (!result || result.action === 'none') return '';
+    if (result.warning && result.action === 'blocked') return result.warning;
+    if (result.action === 'created') return 'Gasto automático de envío creado en Gastos.';
+    if (result.action === 'updated') return 'Gasto automático de envío actualizado en Gastos.';
+    if (result.action === 'reactivated') return 'Gasto automático de envío reactivado en Gastos.';
+    if (result.action === 'annulled') return 'Gasto automático de envío anulado/dejado sin efecto.';
+    return '';
+  }
+
   function loadData() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -3499,7 +3727,7 @@
     return catalogId === 'metodosPago' || catalogId === 'cuentasBancos';
   }
 
-  function renderPaymentBankField(bancosActivos, record = {}, disabled = false) {
+  function renderPaymentBankField(bancosActivos, record = {}, disabled = false, options = {}) {
     const selectedMethodId = cleanText(record?.metodoPagoId);
     const selectedMethodName = cleanText(record?.metodoPagoNombre);
     const requiredBankType = getBankTypeForPaymentMethod(selectedMethodId || selectedMethodName);
@@ -3507,12 +3735,16 @@
     const selectedBankId = cleanText(record?.cuentaBancoId);
     const banks = Array.isArray(bancosActivos) ? bancosActivos.filter(isBankCatalogRecord) : [];
     const hasMatchingBanks = requiresBank && banks.some((bank) => bankMatchesType(bank, requiredBankType));
+    const optional = Boolean(options.optional);
+    const alwaysVisible = Boolean(options.alwaysVisible);
+    const fieldLabel = cleanText(options.label) || 'Banco';
+    const selectName = cleanText(options.selectName) || 'cuentaBancoId';
     const isDisabled = Boolean(disabled || !requiresBank || !hasMatchingBanks);
-    const requiredDotClass = requiresBank && hasMatchingBanks ? '' : ' is-hidden';
+    const requiredDotClass = requiresBank && hasMatchingBanks && !optional ? '' : ' is-hidden';
     return `
-      <label class="form-field payment-bank-field${requiresBank ? '' : ' is-hidden'}" data-bank-field>
-        <span>Banco <span class="required-dot${requiredDotClass}" data-bank-required-dot aria-label="obligatorio">*</span></span>
-        <select name="cuentaBancoId" data-bank-select data-bank-base-disabled="${disabled ? 'true' : 'false'}" ${requiresBank && hasMatchingBanks ? 'required' : ''} ${isDisabled ? 'disabled' : ''}>
+      <label class="form-field payment-bank-field${requiresBank || alwaysVisible ? '' : ' is-hidden'}" data-bank-field data-bank-optional="${optional ? 'true' : 'false'}" data-bank-always-visible="${alwaysVisible ? 'true' : 'false'}">
+        <span>${escapeHtml(fieldLabel)} <span class="required-dot${requiredDotClass}" data-bank-required-dot aria-label="obligatorio">*</span></span>
+        <select name="${escapeHtml(selectName)}" data-bank-select data-bank-base-disabled="${disabled ? 'true' : 'false'}" ${requiresBank && hasMatchingBanks && !optional ? 'required' : ''} ${isDisabled ? 'disabled' : ''}>
           <option value="">Seleccionar banco</option>
           ${banks.map((banco) => {
             const bankType = normalizeBankType(banco.tipo);
@@ -3538,6 +3770,8 @@
       const requiredBankType = getBankTypeForPaymentMethod(methodSelect.value);
       const requiresBank = Boolean(requiredBankType);
       const baseDisabled = bankSelect.dataset.bankBaseDisabled === 'true';
+      const optional = bankField.dataset.bankOptional === 'true';
+      const alwaysVisible = bankField.dataset.bankAlwaysVisible === 'true';
       let matchingBanks = 0;
 
       Array.from(bankSelect.options).forEach((option) => {
@@ -3553,10 +3787,10 @@
         bankSelect.value = '';
       }
 
-      bankField.classList.toggle('is-hidden', !requiresBank);
-      bankSelect.required = requiresBank && matchingBanks > 0;
+      bankField.classList.toggle('is-hidden', !(requiresBank || alwaysVisible));
+      bankSelect.required = !optional && requiresBank && matchingBanks > 0;
       bankSelect.disabled = baseDisabled || !requiresBank || matchingBanks === 0;
-      bankRequiredDot?.classList.toggle('is-hidden', !(requiresBank && matchingBanks > 0));
+      bankRequiredDot?.classList.toggle('is-hidden', !(!optional && requiresBank && matchingBanks > 0));
       if (emptyMessage) {
         emptyMessage.textContent = getBankEmptyMessage(requiredBankType);
         emptyMessage.classList.toggle('is-hidden', !(requiresBank && matchingBanks === 0));
@@ -7062,6 +7296,73 @@
     `;
   }
 
+  function buildLogisticaGastoVentaFromForm(formData, existingGasto = null) {
+    const rawMonto = formData.get('logisticaGastoMonto') ?? existingGasto?.monto ?? '';
+    const monto = parseMoney(rawMonto);
+    const metodo = getCatalogRecordById('metodosPago', cleanText(formData.get('logisticaGastoMetodoPagoId')));
+    const methodValue = metodo?.id || metodo?.nombre || formData.get('logisticaGastoMetodoPagoId');
+    const requiredBankType = getBankTypeForPaymentMethod(methodValue);
+    const cuenta = requiredBankType ? getValidBankForPaymentMethod(methodValue, formData.get('logisticaGastoBancoCuentaId'), existingGasto) : null;
+
+    return normalizeLogisticaGastoVentaRecord({
+      ...(isPlainObject(existingGasto) ? existingGasto : {}),
+      monto: Number.isNaN(monto) ? 0 : monto,
+      metodoPagoId: metodo?.id || '',
+      metodoPagoNombre: metodo?.nombre || '',
+      cuentaBancoId: requiredBankType ? (cuenta?.id || '') : '',
+      cuentaBancoNombre: requiredBankType ? (cuenta?.nombre || '') : '',
+      cuentaBancoTipo: requiredBankType ? normalizeBankType(cuenta?.tipo) : '',
+      observacion: formData.get('logisticaGastoObservacion')
+    });
+  }
+
+  function renderLogisticaGastoVentaFields(gasto) {
+    const base = normalizeLogisticaGastoVentaRecord(gasto);
+    const matchedMetodo = base.metodoPagoId ? getCatalogRecordById('metodosPago', base.metodoPagoId) : findPaymentMethodByValue(base.metodoPagoNombre);
+    const matchedBanco = base.cuentaBancoId ? getCatalogRecordById('cuentasBancos', base.cuentaBancoId) : findBankInData(appData, '', base.cuentaBancoNombre);
+    const normalized = normalizeLogisticaGastoVentaRecord({
+      ...base,
+      metodoPagoId: base.metodoPagoId || matchedMetodo?.id || '',
+      metodoPagoNombre: base.metodoPagoNombre || matchedMetodo?.nombre || '',
+      cuentaBancoId: base.cuentaBancoId || matchedBanco?.id || '',
+      cuentaBancoNombre: base.cuentaBancoNombre || matchedBanco?.nombre || '',
+      cuentaBancoTipo: base.cuentaBancoTipo || matchedBanco?.tipo || ''
+    });
+    const metodos = getSelectableCatalogRecords('metodosPago', normalized.metodoPagoId);
+    const cuentas = getSelectableBankRecords(normalized.cuentaBancoId);
+    return `
+      <div class="logistica-gasto-subblock" data-logistica-gasto>
+        <div class="logistica-gasto-head">
+          <strong>Gasto</strong>
+          <small>Opcional; al guardar crea/actualiza un gasto real en Gastos.</small>
+        </div>
+        <div class="form-grid logistica-gasto-grid">
+          <label class="form-field">
+            <span>Monto</span>
+            <input type="number" name="logisticaGastoMonto" value="${escapeHtml(formatNumberInput(normalized.monto))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" />
+          </label>
+          <label class="form-field">
+            <span>Método de pago</span>
+            <select name="logisticaGastoMetodoPagoId" data-payment-method-select>
+              <option value="">Seleccionar método</option>
+              ${metodos.map((metodo) => `<option value="${escapeHtml(metodo.id)}" ${metodo.id === normalized.metodoPagoId ? 'selected' : ''}>${escapeHtml(metodo.nombre || 'Método sin nombre')}${metodo.activo ? '' : ' · inactivo'}</option>`).join('')}
+            </select>
+          </label>
+          ${renderPaymentBankField(cuentas, normalized, false, {
+            optional: true,
+            alwaysVisible: true,
+            label: 'Banco / Cuenta',
+            selectName: 'logisticaGastoBancoCuentaId'
+          })}
+        </div>
+        <label class="form-field">
+          <span>Observación</span>
+          <textarea name="logisticaGastoObservacion" rows="2" placeholder="Observación del gasto">${escapeHtml(normalized.observacion)}</textarea>
+        </label>
+      </div>
+    `;
+  }
+
   function renderLogisticaVentaBlock(record) {
     const requiereEnvio = Boolean(record?.requiereEnvio);
     const logistica = normalizeLogisticaVentaRecord(record?.logistica || {});
@@ -7101,6 +7402,7 @@
               <input type="text" name="logisticaGuia" value="${escapeHtml(logistica.guia)}" placeholder="Número de guía" autocomplete="off" />
             </label>
           </div>
+          ${renderLogisticaGastoVentaFields(logistica.gasto)}
         </div>
       </section>
     `;
@@ -7117,12 +7419,27 @@
       ['Fecha real', formatDate(logistica.fechaReal)],
       ['Guía', logistica.guia || '—']
     ];
+    const gasto = normalizeLogisticaGastoVentaRecord(logistica.gasto);
+    const gastoItems = [
+      ['Monto', gasto.monto ? formatMoney(gasto.monto) : '—'],
+      ['Método', gasto.metodoPagoNombre || '—'],
+      ['Banco / Cuenta', gasto.cuentaBancoNombre || '—'],
+      ['Observación', gasto.observacion || '—']
+    ];
     return `
       <div class="logistica-card-block">
         <strong>Logística / Envío</strong>
         <div class="logistica-display-grid">
           ${items.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join('')}
         </div>
+        ${hasLogisticaGastoVentaData(gasto) ? `
+          <div class="logistica-gasto-display">
+            <strong>Gasto</strong>
+            <div class="logistica-display-grid">
+              ${gastoItems.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join('')}
+            </div>
+          </div>
+        ` : ''}
       </div>
     `;
   }
@@ -7388,7 +7705,8 @@
       fechaEmbarque: formData.get('logisticaFechaEmbarque') ?? existingRecord?.logistica?.fechaEmbarque,
       fechaEstimada: formData.get('logisticaFechaEstimada') ?? existingRecord?.logistica?.fechaEstimada,
       fechaReal: formData.get('logisticaFechaReal') ?? existingRecord?.logistica?.fechaReal,
-      guia: formData.get('logisticaGuia') ?? existingRecord?.logistica?.guia
+      guia: formData.get('logisticaGuia') ?? existingRecord?.logistica?.guia,
+      gasto: buildLogisticaGastoVentaFromForm(formData, existingRecord?.logistica?.gasto)
     });
     const safeDiasCredito = Number.isNaN(diasCredito) ? 0 : diasCredito;
     const fechaVencimiento = calculateVentaFechaVencimiento({ fechaOc, fechaEntrega, requiereEnvio, logistica }, safeDiasCredito);
@@ -7494,7 +7812,8 @@
       fechaEmbarque: formData.get('logisticaFechaEmbarque'),
       fechaEstimada: formData.get('logisticaFechaEstimada'),
       fechaReal: formData.get('logisticaFechaReal'),
-      guia: formData.get('logisticaGuia')
+      guia: formData.get('logisticaGuia'),
+      gasto: buildLogisticaGastoVentaFromForm(formData)
     });
     const diasCredito = parsePositiveInteger(formData.get('diasCredito'));
     const safeDiasCredito = Number.isNaN(diasCredito) ? 0 : diasCredito;
@@ -7720,6 +8039,10 @@
       ventasState.message = `OC ${newRecord.numeroDocumento} guardada. Cliente y Fecha OC quedan listos; selecciona la nueva sucursal para continuar.`;
     }
 
+    const autoGastoResult = syncAutoGastoLogisticaVenta(newRecord);
+    const autoGastoMessage = getAutoGastoLogisticaVentaResultMessage(autoGastoResult);
+    if (autoGastoMessage) ventasState.message = `${ventasState.message} ${autoGastoMessage}`;
+
     ventasState.editingId = null;
     const savedRecord = appData.ventas.find((record) => record.id === newRecord.id) || newRecord;
     openAccordionGroupForRecord('ventas', savedRecord);
@@ -7765,9 +8088,13 @@
       return updated;
     });
 
+    const toggledRecord = appData.ventas.find((item) => item.id === recordId);
+    const autoGastoResult = toggledRecord ? syncAutoGastoLogisticaVenta(toggledRecord) : null;
+    const autoGastoMessage = getAutoGastoLogisticaVentaResultMessage(autoGastoResult);
+
     ventasState.editingId = null;
     ventasState.quickCapture = null;
-    ventasState.message = `OC ${record.numeroDocumento || ''} quedó ${shouldActivate ? 'reactivada' : 'anulada'}.`;
+    ventasState.message = `OC ${record.numeroDocumento || ''} quedó ${shouldActivate ? 'reactivada' : 'anulada'}.${autoGastoMessage ? ` ${autoGastoMessage}` : ''}`;
     ventasState.messageType = 'success';
     saveData(appData);
     renderRoute();
@@ -7850,6 +8177,7 @@
     };
     toggle?.addEventListener('change', updateVisibility);
     block.querySelector('[name="logisticaFechaReal"]')?.addEventListener('change', () => updateVentaPreviewFromForm(form, true));
+    setupPaymentBankField(block);
     updateVisibility();
   }
 

@@ -1,3 +1,10 @@
+# KSA PRÁCTIKA — Post12 Ventas Logística Gasto Automático
+
+- Conecta el bloque Gasto de Logística / Envío con registros reales del módulo Gastos.
+- El gasto automático usa Fecha de embarque, Tipo de gasto = Transporte y vínculo interno con la Venta / OC.
+- Al editar la venta se actualiza el mismo gasto vinculado; si el monto queda en 0 o la venta deja de requerir envío, el gasto se anula/deja sin efecto.
+- Versión/cache PWA actualizado a `0.17.50-post12-ventas-logistica-gasto-automatico`.
+
 # KSA PRÁCTIKA — Post12 Proveedores: Facturas sin Referencia visible
 
 - En Proveedores / Compras se ocultó el campo visible **Referencia** del formulario principal.

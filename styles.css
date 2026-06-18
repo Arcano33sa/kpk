@@ -2513,6 +2513,51 @@ textarea:disabled {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.logistica-gasto-subblock {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(185, 135, 43, 0.22);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.logistica-gasto-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.logistica-gasto-head strong {
+  color: var(--accent-dark);
+  font-size: 0.98rem;
+}
+
+.logistica-gasto-head small {
+  color: var(--muted);
+  font-weight: 800;
+  text-align: right;
+}
+
+.logistica-gasto-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.logistica-gasto-display {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(185, 135, 43, 0.2);
+}
+
+.logistica-gasto-display > strong {
+  color: var(--accent-dark);
+}
+
 .logistica-card-block {
   padding: 11px 12px;
   margin: 4px 0 10px;
@@ -2563,8 +2608,18 @@ textarea:disabled {
   }
 
   .logistica-grid,
+  .logistica-gasto-grid,
   .logistica-display-grid {
     grid-template-columns: 1fr;
+  }
+
+  .logistica-gasto-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .logistica-gasto-head small {
+    text-align: left;
   }
 }
 
