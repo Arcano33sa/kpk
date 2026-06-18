@@ -377,3 +377,11 @@ Bloques principales:
 - Respaldo JSON mantiene `fechaEntrega` en cada Venta / OC mediante normalización; respaldos antiguos sin el campo siguen importando con valor vacío.
 - Importación desde Excel reconoce encabezados compatibles de Fecha entrega para rondas futuras de ida/vuelta.
 - Versión PWA/cache actualizada a `v0_17_17_post12_ventas_fecha_entrega_excel_json_hardening`.
+
+## 0.17.51-post12-cobros-oc-ninguna-facturas
+
+- Cobros: el selector OC inicia con opción `Ninguna` como estado predeterminado.
+- Cobros: con `Ninguna` no se habilitan fecha, monto, método, banco ni cobro completo para evitar cobros accidentales.
+- Cobros: al seleccionar una OC, el bloque `OC seleccionada` usa una distribución compacta más clara.
+- Cobros: el bloque muestra `Facturas relacionadas` únicamente con los números de factura, sin fechas.
+- PWA: actualización de versión y cache.

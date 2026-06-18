@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_50_post12_ventas_logistica_gasto_automatico';
+const CACHE_VERSION = 'v0_17_51_post12_cobros_oc_ninguna_facturas';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

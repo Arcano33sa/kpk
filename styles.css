@@ -6431,3 +6431,139 @@ body,
     grid-column: 1 / -1;
   }
 }
+
+/* Post12 — Cobros: OC Ninguna + resumen limpio con facturas */
+.cobro-summary {
+  display: grid;
+  gap: 10px;
+}
+
+.cobro-summary-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(185, 135, 43, 0.18);
+}
+
+.cobro-summary-head > div:first-child {
+  min-width: 0;
+}
+
+.cobro-summary-head strong {
+  display: block;
+  color: var(--accent-dark);
+  line-height: 1.1;
+}
+
+.cobro-summary-head span,
+.cobro-summary-subtitle {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+}
+
+.cobro-summary-balance {
+  flex: 0 0 auto;
+  min-width: 118px;
+  padding: 7px 10px;
+  border: 1px solid rgba(185, 135, 43, 0.24);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.68);
+  text-align: right;
+}
+
+.cobro-summary-balance span,
+.cobro-summary-balance b {
+  display: block;
+}
+
+.cobro-summary-balance b {
+  color: var(--ink);
+  font-size: 0.98rem;
+  line-height: 1.1;
+}
+
+.cobro-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 132px), 1fr));
+  gap: 7px;
+}
+
+.cobro-summary-item {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.cobro-summary-item span,
+.cobro-summary-item b {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.cobro-summary-item span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.cobro-summary-item b {
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 0.92rem;
+  line-height: 1.12;
+}
+
+.cobro-summary-facturas {
+  display: grid;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.cobro-summary-facturas-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cobro-summary-facturas-list.is-empty {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
+.factura-chip {
+  max-width: 100%;
+  padding: 5px 8px;
+  border: 1px solid rgba(185, 135, 43, 0.25);
+  border-radius: 999px;
+  background: rgba(255, 248, 234, 0.86);
+  color: var(--accent-dark);
+  font-size: 0.82rem;
+  font-weight: 900;
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+
+.cobro-summary-empty {
+  color: var(--muted);
+}
+
+@media (max-width: 620px) {
+  .cobro-summary-head {
+    flex-direction: column;
+  }
+
+  .cobro-summary-balance {
+    width: 100%;
+    text-align: left;
+  }
+}

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.50-post12-ventas-logistica-gasto-automatico';
+  const APP_VERSION = '0.17.51-post12-cobros-oc-ninguna-facturas';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -8239,8 +8239,10 @@
     const visibleCobros = cobrosState.focusVentaId ? cobros.filter((cobro) => cobro.ventaId === cobrosState.focusVentaId) : cobros;
     const focusVenta = cobrosState.focusVentaId ? normalizeVentaRecord(appData.ventas.find((venta) => venta.id === cobrosState.focusVentaId)) : null;
     const totals = getCobrosTotals();
-    const selectedVenta = ventasDisponibles.find((venta) => venta.id === cobrosState.selectedVentaId) || ventasDisponibles[0] || null;
-    if (selectedVenta && cobrosState.selectedVentaId !== selectedVenta.id) cobrosState.selectedVentaId = selectedVenta.id;
+    const selectedVenta = cobrosState.selectedVentaId
+      ? (ventasDisponibles.find((venta) => venta.id === cobrosState.selectedVentaId) || null)
+      : null;
+    if (cobrosState.selectedVentaId && !selectedVenta) cobrosState.selectedVentaId = '';
     const editingRecord = cobrosState.editingId ? getCobrosOrdenados().find((record) => record.id === cobrosState.editingId) : null;
     const modalMetodos = editingRecord ? getSelectableCatalogRecords('metodosPago', editingRecord.metodoPagoId) : metodosActivos;
     const modalCuentas = editingRecord ? getSelectableBankRecords(editingRecord.cuentaBancoId) : cuentasActivas;
@@ -8340,7 +8342,7 @@
           <label class="form-field full-span">
             <span>OC <span class="required-dot" aria-label="obligatorio">*</span></span>
             <select name="ventaId" required data-cobro-venta ${!ventasDisponibles.length ? 'disabled' : ''}>
-              ${ventasDisponibles.length ? '' : '<option value="">No hay OC con saldo</option>'}
+              <option value="" ${selectedVenta ? '' : 'selected'}>${ventasDisponibles.length ? 'Ninguna' : 'No hay OC con saldo'}</option>
               ${ventasDisponibles.map((venta) => {
                 const ventaCliente = getCatalogRecordById('clientes', venta.clienteId);
                 return `<option value="${escapeHtml(venta.id)}" ${venta.id === selectedVenta?.id ? 'selected' : ''}>${escapeHtml(venta.numeroDocumento || 'Sin número')} · ${escapeHtml(ventaCliente?.nombre || 'Cliente')} · saldo ${escapeHtml(formatMoney(venta.saldoPorCobrar))}</option>`;
@@ -8365,7 +8367,7 @@
           ${renderPaymentBankField(cuentasActivas, null, cannotCreate)}
         </div>
 
-        ${selectedVenta ? renderSelectedVentaCobroSummary(selectedVenta, cliente, sucursal) : ''}
+        ${selectedVenta ? renderSelectedVentaCobroSummary(selectedVenta, cliente, sucursal) : renderCobroNoVentaSelectedState()}
 
         <label class="form-field">
           <span>Observación</span>
@@ -8425,22 +8427,64 @@
     `;
   }
 
+  function renderCobroNoVentaSelectedState() {
+    return `
+      <div class="formula-card cobro-summary cobro-summary-empty" aria-live="polite">
+        <strong>OC seleccionada</strong>
+        <p class="compact-note">Ninguna. Selecciona una OC con saldo para habilitar el cobro y ver su detalle.</p>
+      </div>
+    `;
+  }
+
+  function renderSelectedVentaFacturasCobro(facturas) {
+    const list = normalizeFacturasVentaList(facturas);
+    if (!list.length) {
+      return '<div class="cobro-summary-facturas-list is-empty">Sin facturas relacionadas</div>';
+    }
+    return `
+      <div class="cobro-summary-facturas-list">
+        ${list.map((factura) => `<span class="factura-chip">${escapeHtml(factura.numero)}</span>`).join('')}
+      </div>
+    `;
+  }
+
   function renderSelectedVentaCobroSummary(venta, cliente, sucursal) {
     const record = normalizeVentaRecord(venta);
+    const summaryItems = [
+      ['Cliente', cliente?.nombre || 'Cliente no encontrado'],
+      ['Sucursal', sucursal?.nombre || 'Sucursal no encontrada'],
+      ['Fecha OC', formatDate(record.fechaOc)],
+      ['Vencimiento', formatDate(record.fechaVencimiento)],
+      ['Subtotal', formatMoney(record.subtotal)],
+      ['Descuento', formatMoney(record.descuento)],
+      ['Total', formatMoney(record.ventaNetaOriginal)],
+      ['Ajustes / notas', `${record.totalAjustes > 0 ? '-' : ''}${formatMoney(record.totalAjustes)}`],
+      ['Cobrado actual', formatMoney(record.totalCobrado)],
+      ['Saldo actual', formatMoney(record.saldoPorCobrar)]
+    ];
     return `
       <div class="formula-card cobro-summary" aria-live="polite">
-        <strong>OC seleccionada</strong>
-        <div class="formula-grid">
-          <span>Cliente</span><b>${escapeHtml(cliente?.nombre || 'Cliente no encontrado')}</b>
-          <span>Sucursal</span><b>${escapeHtml(sucursal?.nombre || 'Sucursal no encontrada')}</b>
-          <span>Fecha OC</span><b>${escapeHtml(formatDate(record.fechaOc))}</b>
-          <span>Vencimiento</span><b>${escapeHtml(formatDate(record.fechaVencimiento))}</b>
-          <span>Subtotal</span><b>${escapeHtml(formatMoney(record.subtotal))}</b>
-          <span>Descuento</span><b>${escapeHtml(formatMoney(record.descuento))}</b>
-          <span>Total</span><b>${escapeHtml(formatMoney(record.ventaNetaOriginal))}</b>
-          <span>Ajustes / notas</span><b>${record.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(record.totalAjustes))}</b>
-          <span>Cobrado actual</span><b>${escapeHtml(formatMoney(record.totalCobrado))}</b>
-          <span>Saldo actual</span><b>${escapeHtml(formatMoney(record.saldoPorCobrar))}</b>
+        <div class="cobro-summary-head">
+          <div>
+            <strong>OC seleccionada</strong>
+            <span>${escapeHtml(record.numeroDocumento || 'Sin número')}</span>
+          </div>
+          <div class="cobro-summary-balance">
+            <span>Saldo</span>
+            <b>${escapeHtml(formatMoney(record.saldoPorCobrar))}</b>
+          </div>
+        </div>
+        <div class="cobro-summary-grid">
+          ${summaryItems.map(([label, value]) => `
+            <div class="cobro-summary-item">
+              <span>${escapeHtml(label)}</span>
+              <b>${escapeHtml(value)}</b>
+            </div>
+          `).join('')}
+        </div>
+        <div class="cobro-summary-facturas">
+          <span class="cobro-summary-subtitle">Facturas relacionadas</span>
+          ${renderSelectedVentaFacturasCobro(record.facturas)}
         </div>
       </div>
     `;
@@ -8843,7 +8887,7 @@
     }
 
     const venta = appData.ventas.find((record) => record.id === newRecord.ventaId);
-    cobrosState.selectedVentaId = venta?.saldoPorCobrar > 0 ? newRecord.ventaId : '';
+    cobrosState.selectedVentaId = '';
     cobrosState.focusVentaId = newRecord.ventaId;
     openAccordionGroupForRecord('cobros', newRecord);
     cobrosState.editingId = null;
@@ -8921,6 +8965,11 @@
     const cleanVentaId = cleanText(ventaId);
     cobrosState.selectedVentaId = cleanVentaId;
     cobrosState.focusVentaId = cleanVentaId;
+    if (!cleanVentaId) {
+      cobrosState.message = null;
+      renderRoute();
+      return;
+    }
     const existingCobro = getCobrosOrdenados().find((record) => record.ventaId === cleanVentaId);
     if (existingCobro) openAccordionGroupForRecord('cobros', existingCobro);
     cobrosState.message = null;
