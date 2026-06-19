@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.58-post12-retencion-automatica';
+  const APP_VERSION = '0.17.59-post12-bloques-resumen-compactos';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -7520,18 +7520,38 @@
     `;
   }
 
+  function renderFormulaSummaryGrid(items, extraClass = '') {
+    const safeItems = Array.isArray(items) ? items : [];
+    const safeExtraClass = cleanText(extraClass);
+    return `
+      <div class="formula-grid summary-cell-grid${safeExtraClass ? ` ${escapeHtml(safeExtraClass)}` : ''}">
+        ${safeItems.map((item) => {
+          const label = Array.isArray(item) ? item[0] : item?.label;
+          const value = Array.isArray(item) ? item[1] : item?.value;
+          const valueAttrs = Array.isArray(item) ? (item[2] || '') : (item?.valueAttrs || '');
+          return `
+            <div class="summary-cell-item">
+              <span>${escapeHtml(label || '')}</span>
+              <b${valueAttrs ? ` ${valueAttrs}` : ''}>${escapeHtml(value ?? '')}</b>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+
   function renderVentaAjustePreview(ventaRecord) {
     const venta = normalizeVentaRecord(ventaRecord || {});
     return `
       <strong>${escapeHtml(venta.numeroDocumento || 'OC sin número')}</strong>
-      <div class="formula-grid">
-        <span>Subtotal</span><b>${escapeHtml(formatMoney(venta.subtotal))}</b>
-        <span>Descuento</span><b>${escapeHtml(formatMoney(venta.descuento))}</b>
-        <span>Total</span><b>${escapeHtml(formatMoney(venta.ventaNetaOriginal))}</b>
-        <span>Ajustes actuales</span><b>${venta.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(venta.totalAjustes))}</b>
-        <span>Cobrado</span><b>${escapeHtml(formatMoney(venta.totalCobrado))}</b>
-        <span>Saldo disponible</span><b>${escapeHtml(formatMoney(venta.saldoPorCobrar))}</b>
-      </div>
+      ${renderFormulaSummaryGrid([
+        ['Subtotal', formatMoney(venta.subtotal)],
+        ['Descuento', formatMoney(venta.descuento)],
+        ['Total', formatMoney(venta.ventaNetaOriginal)],
+        ['Ajustes actuales', `${venta.totalAjustes > 0 ? '-' : ''}${formatMoney(venta.totalAjustes)}`],
+        ['Cobrado', formatMoney(venta.totalCobrado)],
+        ['Saldo disponible', formatMoney(venta.saldoPorCobrar)]
+      ], 'ajuste-summary-grid')}
     `;
   }
 
@@ -7821,13 +7841,15 @@
 
         <div class="formula-card" aria-live="polite">
           <strong>Subtotal - Descuento = Total</strong>
-          <div class="formula-grid">
-            <span>Total</span><b data-venta-preview-original>${escapeHtml(formatMoney(calculations.ventaNetaOriginal))}</b>
-            <span>Ajustes / notas</span><b data-venta-preview-ajustes>${calculations.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(calculations.totalAjustes))}</b>
-            <span>Total tras ajustes</span><b data-venta-preview-neto>${escapeHtml(formatMoney(calculations.ventaNetaAjustada))}</b>
-            <span>Total cobrado</span><b data-venta-preview-cobrado>${escapeHtml(formatMoney(record?.totalCobrado || 0))}</b>
-            <span>Saldo por cobrar</span><b data-venta-preview-saldo>${escapeHtml(formatMoney(calculations.saldoPorCobrar))}</b>
-          </div>
+          ${renderFormulaSummaryGrid([
+            ['Subtotal', formatMoney(calculations.subtotal), 'data-venta-preview-subtotal'],
+            ['Descuento', formatMoney(calculations.descuento), 'data-venta-preview-descuento'],
+            ['Total', formatMoney(calculations.ventaNetaOriginal), 'data-venta-preview-original'],
+            ['Ajustes / notas', `${calculations.totalAjustes > 0 ? '-' : ''}${formatMoney(calculations.totalAjustes)}`, 'data-venta-preview-ajustes'],
+            ['Total tras ajustes', formatMoney(calculations.ventaNetaAjustada), 'data-venta-preview-neto'],
+            ['Total cobrado', formatMoney(record?.totalCobrado || 0), 'data-venta-preview-cobrado'],
+            ['Saldo por cobrar', formatMoney(calculations.saldoPorCobrar), 'data-venta-preview-saldo']
+          ], 'venta-summary-grid')}
         </div>
 
         ${renderFacturasVentaBlock(facturasSource)}
@@ -8523,11 +8545,15 @@
       ajustes: currentAjustes
     });
 
+    const subtotalNode = form.querySelector('[data-venta-preview-subtotal]');
+    const descuentoNode = form.querySelector('[data-venta-preview-descuento]');
     const originalNode = form.querySelector('[data-venta-preview-original]');
     const ajustesNode = form.querySelector('[data-venta-preview-ajustes]');
     const netoNode = form.querySelector('[data-venta-preview-neto]');
     const cobradoNode = form.querySelector('[data-venta-preview-cobrado]');
     const saldoNode = form.querySelector('[data-venta-preview-saldo]');
+    if (subtotalNode) subtotalNode.textContent = formatMoney(calculations.subtotal);
+    if (descuentoNode) descuentoNode.textContent = formatMoney(calculations.descuento);
     if (originalNode) originalNode.textContent = formatMoney(calculations.ventaNetaOriginal);
     if (ajustesNode) ajustesNode.textContent = `${calculations.totalAjustes > 0 ? '-' : ''}${formatMoney(calculations.totalAjustes)}`;
     if (netoNode) netoNode.textContent = formatMoney(calculations.ventaNetaAjustada);
@@ -9857,13 +9883,13 @@
     const compra = normalizeCompraProveedorRecord(compraRecord || {});
     return `
       <strong>${escapeHtml(getCompraProveedorReferenciaCompacta(compra))}</strong>
-      <div class="formula-grid">
-        <span>Original</span><b>${escapeHtml(formatMoney(compra.totalCompra))}</b>
-        <span>Ajustes actuales</span><b>${compra.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(compra.totalAjustes))}</b>
-        <span>Ajustado</span><b>${escapeHtml(formatMoney(compra.totalAjustado))}</b>
-        <span>Pagado</span><b>${escapeHtml(formatMoney(compra.totalPagado))}</b>
-        <span>Saldo disponible</span><b>${escapeHtml(formatMoney(compra.saldoPorPagar))}</b>
-      </div>
+      ${renderFormulaSummaryGrid([
+        ['Original', formatMoney(compra.totalCompra)],
+        ['Ajustes actuales', `${compra.totalAjustes > 0 ? '-' : ''}${formatMoney(compra.totalAjustes)}`],
+        ['Ajustado', formatMoney(compra.totalAjustado)],
+        ['Pagado', formatMoney(compra.totalPagado)],
+        ['Saldo disponible', formatMoney(compra.saldoPorPagar)]
+      ], 'ajuste-summary-grid')}
     `;
   }
 
@@ -9923,13 +9949,13 @@
 
         <div class="formula-card" aria-live="polite">
           <strong>Saldo por pagar = Ajustado - Pagado</strong>
-          <div class="formula-grid">
-            <span>Original</span><b data-compra-preview-total>${escapeHtml(formatMoney(calculations.totalCompra))}</b>
-            <span>Ajustes / notas</span><b data-compra-preview-ajustes>${calculations.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(calculations.totalAjustes))}</b>
-            <span>Ajustado</span><b data-compra-preview-ajustado>${escapeHtml(formatMoney(calculations.totalAjustado))}</b>
-            <span>Pagado</span><b data-compra-preview-pagado>${escapeHtml(formatMoney(record?.totalPagado || 0))}</b>
-            <span>Saldo por pagar</span><b data-compra-preview-saldo>${escapeHtml(formatMoney(calculations.saldoPorPagar))}</b>
-          </div>
+          ${renderFormulaSummaryGrid([
+            ['Original', formatMoney(calculations.totalCompra), 'data-compra-preview-total'],
+            ['Ajustes / notas', `${calculations.totalAjustes > 0 ? '-' : ''}${formatMoney(calculations.totalAjustes)}`, 'data-compra-preview-ajustes'],
+            ['Ajustado', formatMoney(calculations.totalAjustado), 'data-compra-preview-ajustado'],
+            ['Pagado', formatMoney(record?.totalPagado || 0), 'data-compra-preview-pagado'],
+            ['Saldo por pagar', formatMoney(calculations.saldoPorPagar), 'data-compra-preview-saldo']
+          ], 'compra-summary-grid')}
         </div>
 
         ${renderCompraFacturasRelacionadasBlock(facturasSource)}
@@ -9997,9 +10023,9 @@
             </div>
             <div class="formula-card compra-calculator-total" aria-live="polite">
               <strong>Total calculado</strong>
-              <div class="formula-grid">
-                <span>Suma</span><b data-compra-calculator-total>${escapeHtml(formatMoney(0))}</b>
-              </div>
+              ${renderFormulaSummaryGrid([
+                ['Suma', formatMoney(0), 'data-compra-calculator-total']
+              ], 'calculator-summary-grid')}
             </div>
             <div class="form-actions">
               <button type="button" class="card-action" data-compra-calculator-use>Usar total</button>
@@ -11114,15 +11140,15 @@
     return `
       <div class="formula-card pago-summary" aria-live="polite">
         <strong>Compra/deuda seleccionada</strong>
-        <div class="formula-grid">
-          <span>Proveedor</span><b>${escapeHtml(proveedor?.nombre || compra.proveedorNombre || 'Proveedor no encontrado')}</b>
-          <span>Facturas</span><b>${escapeHtml(getCompraProveedorReferenciaCompacta(compra))}</b>
-          <span>Fecha compra</span><b>${escapeHtml(formatDate(compra.fechaCompra))}</b>
-          <span>Vencimiento</span><b>${escapeHtml(formatDate(compra.fechaVencimiento))}</b>
-          <span>Total compra/deuda</span><b>${escapeHtml(formatMoney(compra.totalCompra))}</b>
-          <span>Pagado actual</span><b>${escapeHtml(formatMoney(compra.totalPagado))}</b>
-          <span>Saldo por pagar actual</span><b>${escapeHtml(formatMoney(compra.saldoPorPagar))}</b>
-        </div>
+        ${renderFormulaSummaryGrid([
+          ['Proveedor', proveedor?.nombre || compra.proveedorNombre || 'Proveedor no encontrado'],
+          ['Facturas', getCompraProveedorReferenciaCompacta(compra)],
+          ['Fecha compra', formatDate(compra.fechaCompra)],
+          ['Vencimiento', formatDate(compra.fechaVencimiento)],
+          ['Total compra/deuda', formatMoney(compra.totalCompra)],
+          ['Pagado actual', formatMoney(compra.totalPagado)],
+          ['Saldo por pagar actual', formatMoney(compra.saldoPorPagar)]
+        ], 'pago-summary-grid')}
       </div>
     `;
   }
