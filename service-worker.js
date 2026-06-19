@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_52_post12_scrollbars_superiores_permanentes';
+const CACHE_VERSION = 'v0_17_54_post12_cobros_oc_completa_factura_referida';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

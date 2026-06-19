@@ -6618,6 +6618,31 @@ body,
   padding-top: 2px;
 }
 
+.cobro-summary-referred {
+  display: inline-grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 0.45rem;
+  max-width: 100%;
+  width: fit-content;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid rgba(122, 22, 29, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.cobro-summary-referred span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.cobro-summary-referred strong {
+  color: var(--accent-dark);
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+
 .cobro-summary-facturas-list {
   display: flex;
   flex-wrap: wrap;
@@ -6657,4 +6682,50 @@ body,
     width: 100%;
     text-align: left;
   }
+}
+
+/* Post12 Cobros: búsqueda por OC o factura relacionada */
+.cobro-oc-search-panel {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.cobro-oc-search-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.cobro-oc-search-controls input {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.cobro-search-results {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.cobro-search-result-note,
+.cobro-search-empty {
+  border: 1px solid var(--line-color, rgba(17, 24, 39, 0.12));
+  border-radius: 0.85rem;
+  background: rgba(255, 255, 255, 0.62);
+  padding: 0.55rem 0.75rem;
+  color: var(--muted-color, #4b5563);
+  font-size: 0.88rem;
+}
+
+.cobro-search-results-shell {
+  margin-top: 0.15rem;
+}
+
+.cobro-search-results-table th,
+.cobro-search-results-table td {
+  white-space: nowrap;
+}
+
+.cobro-search-results-table .secondary-action.compact {
+  min-height: 2rem;
 }

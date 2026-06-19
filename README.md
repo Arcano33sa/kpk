@@ -1,3 +1,21 @@
+# KSA PRÁCTIKA — Post12 Cobros: OC completa y factura referida
+
+- Cobros: al seleccionar resultado por OC o factura, se carga la OC madre completa.
+- OC seleccionada muestra datos compactos, saldo general, estado, todas las facturas relacionadas y Factura referida cuando aplica.
+- La factura referida queda como trazabilidad del cobro sin crear saldo ni documento operativo por factura.
+- No se modifican cálculos, ventas, saldos, compras, pagos, gastos, cierres, Excel, comparador ni Bdatos.
+- Versión/cache PWA actualizado a `0.17.54-post12-cobros-oc-completa-factura-referida`.
+
+---
+
+# KSA PRÁCTIKA — Post12 Cobros: buscar por OC o factura
+
+- Cobros: se agregó búsqueda por OC o factura relacionada, conservando `Ninguna` como valor inicial.
+- La búsqueda muestra resultado(s) compactos con botón `Seleccionar`; no autoselecciona ni crea cobros.
+- La factura relacionada funciona solo como llave para cargar la OC madre; el cobro sigue aplicándose al saldo general de la OC.
+- Se conserva comparación textual para facturas, incluyendo ceros iniciales.
+- Versión/cache PWA actualizado a `0.17.53-post12-cobros-buscar-oc-factura`.
+
 # KSA PRÁCTIKA — Post12 Ventas Logística Gasto Automático
 
 - Conecta el bloque Gasto de Logística / Envío con registros reales del módulo Gastos.
