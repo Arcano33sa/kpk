@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.54-post12-cobros-oc-completa-factura-referida';
+  const APP_VERSION = '0.17.57-post12-resumen-retenciones';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -15,6 +15,7 @@
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
   const COMPRA_AJUSTE_TYPES = ['Faltante', 'Devolución', 'Rebaja', 'Nota de crédito', 'Corrección'];
   const VENTA_AJUSTE_TYPES = ['Quebrado', 'Faltante', 'Devolución', 'Rebaja', 'Nota de crédito', 'Corrección'];
+  const COBRO_TOLERANCE = 0.01;
 
   const MODULES = [
     {
@@ -122,6 +123,7 @@
     'tiposGasto',
     'metodosPago',
     'cuentasBancos',
+    'retenciones',
     'bdatos',
     'ventas',
     'cobros',
@@ -205,6 +207,19 @@
         { name: 'nombre', label: 'Nombre del banco', type: 'text', required: true, placeholder: 'Ej. BAC, Lafise, Banpro' },
         { name: 'tipo', label: 'Tipo', type: 'select', options: BANK_TYPE_OPTIONS, required: true, placeholder: 'Seleccionar tipo' },
         { name: 'observacion', label: 'Observación', type: 'textarea', placeholder: 'Notas internas del banco' }
+      ]
+    },
+    {
+      id: 'retenciones',
+      label: 'Retenciones',
+      singular: 'retención',
+      icon: 'RT',
+      description: 'Conceptos y porcentajes de retención que luego podrán usarse al registrar cobros.',
+      exportExcel: false,
+      fields: [
+        { name: 'nombre', label: 'Nombre / concepto', type: 'text', required: true, placeholder: 'Ej. IR 2%' },
+        { name: 'porcentaje', label: 'Porcentaje', type: 'number', required: true, min: 0, step: '0.01', inputmode: 'decimal', placeholder: '2.00' },
+        { name: 'observacion', label: 'Observación', type: 'textarea', placeholder: 'Ej. Retención aplicada por cliente' }
       ]
     }
   ];
@@ -1985,6 +2000,7 @@
       tiposGasto: [],
       metodosPago: [],
       cuentasBancos: [],
+      retenciones: [],
       bdatos: buildInitialBdatosRecords(BDATOS_INITIAL_UPDATED_AT),
       bdatosUpdatedAt: BDATOS_INITIAL_UPDATED_AT,
       ventas: [],
@@ -2154,6 +2170,10 @@
         }
         return;
       }
+      if (field.name === 'porcentaje') {
+        normalized.porcentaje = normalizeCatalogPercentage(raw.porcentaje ?? raw.porcentajeRetencion ?? raw.tasa ?? raw.percent ?? raw.porcentajeIr);
+        return;
+      }
       if (field.name === 'condicionPago') {
         normalized.condicionPago = normalizePaymentCondition(raw.condicionPago || raw.condicion || raw.condicionDePago || raw.formaPago || raw.tipoPago);
         return;
@@ -2283,6 +2303,36 @@
     if (value === null || value === undefined || value === '') return 0;
     const numeric = Number.parseInt(String(value), 10);
     return Number.isFinite(numeric) && numeric >= 0 ? numeric : Number.NaN;
+  }
+
+  function parseCatalogPercentage(value) {
+    if (value === null || value === undefined || value === '') return Number.NaN;
+    const normalized = String(value).replace(/,/g, '.').trim();
+    if (!normalized) return Number.NaN;
+    const numeric = Number(normalized);
+    return Number.isFinite(numeric) ? numeric : Number.NaN;
+  }
+
+  function normalizeCatalogPercentage(value) {
+    const numeric = parseCatalogPercentage(value);
+    return Number.isFinite(numeric) && numeric >= 0 ? roundMoney(numeric) : 0;
+  }
+
+  function hasMaxTwoDecimalPlaces(value) {
+    const text = String(value ?? '').replace(/,/g, '.').trim();
+    if (!text) return false;
+    const parts = text.split('.');
+    return parts.length <= 2 && (parts[1] || '').length <= 2;
+  }
+
+  function formatPercentageInput(value) {
+    if (value === null || value === undefined || value === '') return '';
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric.toFixed(2) : cleanText(value);
+  }
+
+  function formatPercentageDisplay(value) {
+    return `${formatPercentageInput(value || 0)}%`;
   }
 
   function normalizePaymentCondition(value) {
@@ -2856,7 +2906,32 @@
     const raw = isPlainObject(record) ? record : {};
     const timestamp = nowIso();
     const activo = typeof raw.activo === 'boolean' ? raw.activo : raw.estado !== 'Anulado';
-    const montoCobrado = parseMoney(raw.montoCobrado || raw.monto || raw.importe);
+    const montoRecibidoRaw = parseMoney(raw.montoRecibidoReal ?? raw.montoCobrado ?? raw.monto ?? raw.importe);
+    const montoRecibidoReal = Number.isNaN(montoRecibidoRaw) ? 0 : Math.max(0, montoRecibidoRaw);
+    const retencionFlagRaw = raw.retencionActiva ?? raw.aplicarRetencion ?? raw.retencionAplicada;
+    const retencionFlagText = cleanText(retencionFlagRaw).toLowerCase();
+    const hasExplicitRetencionFlag = typeof retencionFlagRaw === 'boolean' || retencionFlagText !== '';
+    const retencionMontoRaw = parseMoney(raw.retencionMonto ?? raw.montoRetenido ?? raw.montoRetencion ?? raw.retencion ?? raw.deduccionRetencion);
+    const hasRetencionData = Boolean(
+      cleanText(raw.retencionId || raw.retencionConcepto || raw.retencionNombre || raw.conceptoRetencion)
+      || (!Number.isNaN(retencionMontoRaw) && retencionMontoRaw > 0)
+    );
+    const retencionActiva = hasExplicitRetencionFlag
+      ? (typeof retencionFlagRaw === 'boolean'
+        ? retencionFlagRaw
+        : ['1', 'si', 'sí', 'true', 'activo', 'activa', 'aplicada'].includes(retencionFlagText))
+      : hasRetencionData;
+    const retencionMonto = retencionActiva && !Number.isNaN(retencionMontoRaw) ? Math.max(0, retencionMontoRaw) : 0;
+    const retencionPorcentaje = retencionActiva
+      ? normalizeCatalogPercentage(raw.retencionPorcentaje ?? raw.porcentajeRetencion ?? raw.retencionTasa ?? raw.tasaRetencion)
+      : 0;
+    const explicitAppliedSource = raw.montoAplicadoOC ?? raw.montoAplicadoOc ?? raw.totalAplicadoOC ?? raw.totalAplicadoOc ?? raw.montoAplicado ?? raw.totalAplicado;
+    const hasExplicitApplied = explicitAppliedSource !== undefined && explicitAppliedSource !== null && String(explicitAppliedSource).trim() !== '';
+    const explicitApplied = hasExplicitApplied ? parseMoney(explicitAppliedSource) : Number.NaN;
+    const montoAplicadoOC = retencionActiva
+      ? (Number.isNaN(explicitApplied) ? roundMoney(montoRecibidoReal + retencionMonto) : Math.max(0, explicitApplied))
+      : montoRecibidoReal;
+
     return {
       id: raw.id || generateId('cobro'),
       ventaId: cleanText(raw.ventaId || raw.ocId || raw.documentoId),
@@ -2866,7 +2941,14 @@
       sucursalId: cleanText(raw.sucursalId),
       sucursalNombre: cleanText(raw.sucursalNombre || raw.sucursal),
       numeroDocumento: cleanText(raw.numeroDocumento || raw.numeroOC || raw.oc || raw.documento),
-      montoCobrado: Number.isNaN(montoCobrado) ? 0 : montoCobrado,
+      montoCobrado: montoRecibidoReal,
+      montoRecibidoReal,
+      montoAplicadoOC,
+      retencionActiva: Boolean(retencionActiva),
+      retencionId: retencionActiva ? cleanText(raw.retencionId) : '',
+      retencionConcepto: retencionActiva ? cleanText(raw.retencionConcepto || raw.retencionNombre || raw.conceptoRetencion) : '',
+      retencionPorcentaje,
+      retencionMonto,
       metodoPagoId: cleanText(raw.metodoPagoId),
       metodoPagoNombre: cleanText(raw.metodoPagoNombre || raw.metodoPago || raw.metodo),
       cuentaBancoId: cleanText(raw.cuentaBancoId),
@@ -2880,7 +2962,6 @@
       updatedAt: raw.updatedAt || raw.createdAt || timestamp
     };
   }
-
 
   function normalizeCompraProveedorAjusteRecord(record) {
     const raw = isPlainObject(record) ? record : {};
@@ -3115,7 +3196,7 @@
 
   function calculateTotalCobradoForVenta(ventaId, cobrosSource) {
     return getActiveCobrosForVenta(ventaId, cobrosSource)
-      .reduce((sum, cobro) => roundMoney(sum + cobro.montoCobrado), 0);
+      .reduce((sum, cobro) => roundMoney(sum + (Number.isFinite(cobro.montoAplicadoOC) ? cobro.montoAplicadoOC : cobro.montoCobrado)), 0);
   }
 
   function recalculateVentaWithCobros(venta, cobrosSource) {
@@ -4421,6 +4502,7 @@
           <article class="metric-card"><span>Ajustes clientes</span><strong>${summary.totalAjustesClientes > 0 ? '-' : ''}${escapeHtml(formatMoney(summary.totalAjustesClientes || 0))}</strong><small>No son cobros</small></article>
           <article class="metric-card"><span>Total tras ajustes</span><strong>${escapeHtml(formatMoney(summary.totalVendido))}</strong><small>Total - ajustes</small></article>
           <article class="metric-card"><span>Total cobrado clientes</span><strong>${escapeHtml(formatMoney(summary.totalCobradoClientes))}</strong><small>Fecha real de cobro</small></article>
+          <article class="metric-card"><span>Retenciones</span><strong>${escapeHtml(formatMoney(summary.totalRetenciones || 0))}</strong><small>Total del período</small></article>
           <article class="metric-card"><span>Saldo por cobrar</span><strong>${escapeHtml(formatMoney(summary.saldoPorCobrar))}</strong><small>Cartera general</small></article>
           <article class="metric-card"><span>Compras ajustadas</span><strong>${escapeHtml(formatMoney(summary.totalComprasProveedores))}</strong><small>Original ${escapeHtml(formatMoney(summary.totalComprasOriginal || 0))}</small></article>
           <article class="metric-card"><span>Ajustes proveedores</span><strong>${summary.totalAjustesProveedores > 0 ? '-' : ''}${escapeHtml(formatMoney(summary.totalAjustesProveedores || 0))}</strong><small>No son pagos</small></article>
@@ -4450,6 +4532,14 @@
               <div class="count-pill">${summary.ventaPorSucursal.length} sucursales</div>
             </div>
             ${renderResumenVentaPorSucursal(summary.ventaPorSucursal)}
+          </article>
+
+          <article class="panel-card resumen-panel">
+            <div class="section-title-row">
+              <div><span class="eyebrow mini">Cobros</span><h2>Retenciones por concepto</h2></div>
+              <div class="count-pill">${summary.retencionesPorConcepto.length} conceptos</div>
+            </div>
+            ${renderResumenRetencionesPorConcepto(summary.retencionesPorConcepto)}
           </article>
         </section>
 
@@ -4542,6 +4632,8 @@
     const totalAjustesClientes = sumMoney(ventasPeriodo, (venta) => venta.totalAjustes);
     const totalVendido = sumMoney(ventasPeriodo, (venta) => venta.ventaNetaAjustada);
     const totalCobradoClientes = sumMoney(cobrosPeriodo, (cobro) => cobro.montoCobrado);
+    const totalRetenciones = sumMoney(cobrosPeriodo, (cobro) => getCobroRetencionMontoForResumen(cobro));
+    const retencionesPorConcepto = buildRetencionesPorConcepto(cobrosPeriodo);
     const saldoPorCobrar = sumMoney(ventasCartera, (venta) => venta.saldoPorCobrar);
     const totalComprasOriginal = sumMoney(comprasPeriodo, (compra) => compra.totalCompra);
     const totalAjustesProveedores = sumMoney(comprasPeriodo, (compra) => compra.totalAjustes);
@@ -4573,6 +4665,8 @@
       totalVendido,
       ventaNetaAjustada: totalVendido,
       totalCobradoClientes,
+      totalRetenciones,
+      retencionesPorConcepto,
       saldoPorCobrar,
       totalComprasOriginal,
       totalAjustesProveedores,
@@ -5372,6 +5466,62 @@
     return Array.from(groups.values())
       .filter((item) => item.totalAjustado || item.totalPagado || item.saldoPorPagar)
       .sort((a, b) => b.saldoPorPagar - a.saldoPorPagar || b.totalAjustado - a.totalAjustado || a.proveedor.localeCompare(b.proveedor, 'es-NI'));
+  }
+
+  function getCobroRetencionMontoForResumen(cobro) {
+    const monto = parseMoney(cobro?.retencionMonto ?? cobro?.montoRetenido ?? cobro?.montoRetencion ?? cobro?.retencion ?? cobro?.deduccionRetencion);
+    return Number.isNaN(monto) ? 0 : Math.max(0, monto);
+  }
+
+  function getCobroRetencionConceptoForResumen(cobro) {
+    const catalogRecord = cobro?.retencionId ? getCatalogRecordById('retenciones', cobro.retencionId) : null;
+    return cleanText(cobro?.retencionConcepto || cobro?.retencionNombre || cobro?.conceptoRetencion || catalogRecord?.nombre) || 'Sin concepto';
+  }
+
+  function buildRetencionesPorConcepto(cobros) {
+    const groups = new Map();
+    (Array.isArray(cobros) ? cobros : []).forEach((cobro) => {
+      const monto = getCobroRetencionMontoForResumen(cobro);
+      if (monto <= 0) return;
+      const concepto = getCobroRetencionConceptoForResumen(cobro);
+      const key = cleanText(cobro.retencionId) || normalizeNameForCompare(concepto) || 'sin_concepto';
+      const current = groups.get(key) || { key, concepto, monto: 0, cantidad: 0 };
+      current.monto = roundMoney(current.monto + monto);
+      current.cantidad += 1;
+      groups.set(key, current);
+    });
+    return Array.from(groups.values()).sort((a, b) => b.monto - a.monto || a.concepto.localeCompare(b.concepto, 'es-NI'));
+  }
+
+  function renderResumenRetencionesPorConcepto(items) {
+    if (!items.length) return renderMoraEmptyState('Sin retenciones en el período.', 'Las retenciones registradas en Cobros aparecerán agrupadas por concepto.');
+    const rows = items.map((item) => `
+      <tr class="compact-record-row resumen-compact-row">
+        <td class="resumen-compact-text"><span title="${escapeHtml(item.concepto)}">${escapeHtml(item.concepto)}</span></td>
+        <td class="resumen-compact-count"><span>${escapeHtml(String(item.cantidad || 0))}</span></td>
+        <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.monto))}</span></td>
+      </tr>
+    `).join('');
+
+    return renderOperationalTableShell({
+      shellClass: 'resumen-compact-scroll-shell resumen-retenciones-concepto-shell',
+      wrapClass: 'resumen-compact-table-wrap',
+      ariaLabel: 'Retenciones por concepto en líneas compactas',
+      tableClass: 'resumen-compact-table resumen-retenciones-concepto-table',
+      colgroup: `
+        <colgroup>
+          <col class="resumen-col-tipo">
+          <col class="resumen-col-documentos">
+          <col class="resumen-col-money">
+        </colgroup>
+      `,
+      headers: `
+        <th>Concepto</th>
+        <th>Registros</th>
+        <th class="amount-cell">Monto</th>
+      `,
+      rows
+    });
   }
 
   function renderResumenGastosPorTipo(items) {
@@ -7026,7 +7176,9 @@
     }
 
     if (field.type === 'number') {
-      const safeValue = value === '' || value === null || value === undefined ? '' : value;
+      const safeValue = field.name === 'porcentaje'
+        ? formatPercentageInput(value)
+        : (value === '' || value === null || value === undefined ? '' : value);
       const isCreditDaysField = field.name === 'diasCredito';
       const shouldDisableDays = isCreditDaysField && normalizePaymentCondition(record?.condicionPago) !== 'Crédito';
       return `
@@ -7055,6 +7207,8 @@
       `;
     }
 
+    if (catalog.id === 'retenciones') return renderRetencionesCatalogList(catalog, records);
+
     const showType = shouldShowCatalogTypeColumn(catalog, records);
     const rows = records.map((record) => renderCatalogRecord(catalog, record, showType)).join('');
 
@@ -7079,6 +7233,52 @@
       `,
       rows
     });
+  }
+
+  function renderRetencionesCatalogList(catalog, records) {
+    const rows = records.map((record) => renderRetencionCatalogRecord(catalog, record)).join('');
+    return renderOperationalTableShell({
+      shellClass: 'catalog-compact-scroll-shell catalog-retenciones-scroll-shell',
+      wrapClass: 'catalog-compact-table-wrap',
+      ariaLabel: 'Listado compacto de Retenciones',
+      tableClass: 'catalog-compact-table catalog-retenciones-table',
+      colgroup: `
+        <colgroup>
+          <col class="catalog-col-retencion-concepto">
+          <col class="catalog-col-retencion-porcentaje">
+          <col class="catalog-col-retencion-estado">
+          <col class="catalog-col-retencion-observacion">
+          <col class="catalog-col-retencion-acciones">
+        </colgroup>
+      `,
+      headers: `
+        <th>Concepto</th>
+        <th>Porcentaje</th>
+        <th>Estado</th>
+        <th>Observación</th>
+        <th>Acciones</th>
+      `,
+      rows
+    });
+  }
+
+  function renderRetencionCatalogRecord(catalog, record) {
+    const canEdit = canCurrentRole('editCatalogs');
+    const toggleLabel = record.activo ? 'Desactivar' : 'Activar';
+    return `
+      <tr class="compact-record-row catalog-compact-row catalog-retencion-row ${record.activo ? 'is-active' : 'is-inactive'}">
+        <td class="catalog-retencion-concepto"><span title="${escapeHtml(record.nombre || 'Sin concepto')}">${escapeHtml(record.nombre || 'Sin concepto')}</span></td>
+        <td class="catalog-retencion-porcentaje"><span title="${escapeHtml(formatPercentageDisplay(record.porcentaje))}">${escapeHtml(formatPercentageDisplay(record.porcentaje))}</span></td>
+        <td class="catalog-compact-state"><span class="state-pill ${record.activo ? 'is-active' : 'is-inactive'}">${record.activo ? 'Activo' : 'Inactivo'}</span></td>
+        <td class="catalog-retencion-observacion"><span title="${escapeHtml(record.observacion || '—')}">${escapeHtml(record.observacion || '—')}</span></td>
+        <td class="catalog-compact-actions">
+          <div class="record-actions compact-row-actions">
+            ${canEdit ? `<button type="button" class="secondary-action compact" data-catalog-edit="${escapeHtml(record.id)}">Editar</button>` : '<span class="muted-text compact-note">Lectura</span>'}
+            ${canEdit ? `<button type="button" class="${record.activo ? 'danger-action' : 'card-action'} compact" data-catalog-toggle="${escapeHtml(record.id)}">${escapeHtml(toggleLabel)}</button>` : ''}
+          </div>
+        </td>
+      </tr>
+    `;
   }
 
   function shouldShowCatalogTypeColumn(catalog, records) {
@@ -8558,11 +8758,81 @@
     `;
   }
 
+  function getCobroRetencionesForForm(currentId = '') {
+    const selected = cleanText(currentId);
+    return getCatalogRecords('retenciones')
+      .filter((record) => record.activo || (selected && record.id === selected))
+      .map((record) => normalizeCatalogRecord(record, CATALOGS.find((catalog) => catalog.id === 'retenciones')))
+      .sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es', { sensitivity: 'base' }));
+  }
+
+  function formatCobroRetencionPercentage(value) {
+    return `${roundMoney(value).toFixed(2)}%`;
+  }
+
+  function renderCobroRetencionBlock(record, retencionesDisponibles, saldoDisponible = 0, disabled = false) {
+    const normalized = record ? normalizeCobroRecord(record) : {
+      retencionActiva: false,
+      retencionId: '',
+      retencionConcepto: '',
+      retencionPorcentaje: 0,
+      retencionMonto: 0,
+      montoCobrado: 0,
+      montoRecibidoReal: 0,
+      montoAplicadoOC: 0
+    };
+    const retenciones = Array.isArray(retencionesDisponibles) ? retencionesDisponibles : [];
+    const active = Boolean(normalized.retencionActiva);
+    const selectedRetention = retenciones.find((retencion) => retencion.id === normalized.retencionId) || null;
+    const percentage = selectedRetention ? selectedRetention.porcentaje : normalized.retencionPorcentaje;
+    const totalApplied = active ? roundMoney(normalized.montoCobrado + normalized.retencionMonto) : normalized.montoCobrado;
+    const disabledAttr = disabled ? 'disabled' : '';
+    const fieldsHiddenClass = active ? '' : ' is-hidden';
+
+    return `
+      <div class="cobro-retencion-panel full-span" data-cobro-retencion-panel data-cobro-saldo-limite="${escapeHtml(String(roundMoney(saldoDisponible)))}">
+        <label class="checkbox-field compact-toggle">
+          <input type="checkbox" name="retencionActiva" value="1" data-cobro-retencion-toggle ${active ? 'checked' : ''} ${disabledAttr} />
+          <span>Aplicar retención</span>
+        </label>
+        <div class="cobro-retencion-fields${fieldsHiddenClass}" data-cobro-retencion-fields>
+          ${retenciones.length ? `
+            <label class="form-field">
+              <span>Retención / concepto <span class="required-dot" data-cobro-retencion-required-dot aria-label="obligatorio">*</span></span>
+              <select name="retencionId" data-cobro-retencion-select ${active && !disabled ? 'required' : ''} ${!active || disabled ? 'disabled' : ''}>
+                <option value="">Seleccionar retención</option>
+                ${retenciones.map((retencion) => `<option value="${escapeHtml(retencion.id)}" data-retencion-concepto="${escapeHtml(retencion.nombre || '')}" data-retencion-porcentaje="${escapeHtml(String(retencion.porcentaje || 0))}" ${retencion.id === normalized.retencionId ? 'selected' : ''}>${escapeHtml(retencion.nombre || 'Retención sin nombre')} · ${escapeHtml(formatCobroRetencionPercentage(retencion.porcentaje || 0))}${retencion.activo ? '' : ' · inactiva'}</option>`).join('')}
+              </select>
+            </label>
+            <label class="form-field">
+              <span>Porcentaje de referencia</span>
+              <input type="text" value="${escapeHtml(formatCobroRetencionPercentage(percentage || 0))}" data-cobro-retencion-percent readonly ${!active || disabled ? 'disabled' : ''} />
+            </label>
+            <label class="form-field">
+              <span>Monto retenido C$ <span class="required-dot" data-cobro-retencion-monto-dot aria-label="obligatorio">*</span></span>
+              <input type="number" name="retencionMonto" value="${escapeHtml(formatNumberInput(normalized.retencionMonto))}" min="0" max="${escapeHtml(String(roundMoney(saldoDisponible)))}" step="0.01" inputmode="decimal" placeholder="0.00" data-cobro-retencion-monto ${active && !disabled ? 'required' : ''} ${!active || disabled ? 'disabled' : ''} />
+            </label>
+            <label class="form-field">
+              <span>Total aplicado a OC</span>
+              <input type="text" value="${escapeHtml(formatMoney(totalApplied))}" data-cobro-total-aplicado readonly ${!active || disabled ? 'disabled' : ''} />
+            </label>
+            <p class="compact-note full-span" data-cobro-retencion-note>El dinero recibido entra a caja/banco. Recibido real + retención reduce el saldo general de la OC.</p>
+          ` : `
+            <div class="compact-empty-state cobro-retencion-empty" role="status">
+              No hay retenciones activas en Catálogos.
+            </div>
+          `}
+        </div>
+      </div>
+    `;
+  }
+
   function renderCobroForm(selectedVenta, ventasDisponibles, metodosActivos, cuentasActivas, cannotCreate) {
     const cliente = selectedVenta ? getCatalogRecordById('clientes', selectedVenta.clienteId) : null;
     const sucursal = selectedVenta ? getCatalogRecordById('sucursales', selectedVenta.sucursalId) : null;
     const saldo = selectedVenta ? selectedVenta.saldoPorCobrar : 0;
     const facturaReferida = selectedVenta ? cleanText(cobrosState.facturaReferida) : '';
+    const retencionesDisponibles = getCobroRetencionesForForm();
 
     return `
       <form class="cobro-form" data-cobro-form novalidate>
@@ -8584,9 +8854,10 @@
             <input type="date" name="fechaCobro" value="${escapeHtml(todayInputValue())}" required ${cannotCreate ? 'disabled' : ''} />
           </label>
           <label class="form-field">
-            <span>Monto cobrado C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="montoCobrado" min="0.01" max="${escapeHtml(saldo)}" step="0.01" inputmode="decimal" placeholder="0.00" required ${cannotCreate ? 'disabled' : ''} />
+            <span>Monto recibido real C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <input type="number" name="montoCobrado" min="0" max="${escapeHtml(saldo)}" step="0.01" inputmode="decimal" placeholder="0.00" required data-cobro-monto-recibido ${cannotCreate ? 'disabled' : ''} />
           </label>
+          ${renderCobroRetencionBlock(null, retencionesDisponibles, saldo, cannotCreate)}
           <label class="form-field">
             <span>Método de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
             <select name="metodoPagoId" required data-payment-method-select ${!metodosActivos.length || cannotCreate ? 'disabled' : ''}>
@@ -8616,7 +8887,8 @@
     const venta = (Array.isArray(appData.ventas) ? appData.ventas : []).map((item) => normalizeVentaRecord(item)).find((item) => item.id === record.ventaId);
     const cliente = venta ? getCatalogRecordById('clientes', venta.clienteId) : null;
     const sucursal = venta ? getCatalogRecordById('sucursales', venta.sucursalId) : null;
-    const saldoDisponible = venta ? roundMoney(venta.saldoPorCobrar + (record.activo ? record.montoCobrado : 0)) : record.montoCobrado;
+    const saldoDisponible = venta ? roundMoney(venta.saldoPorCobrar + (record.activo ? record.montoAplicadoOC : 0)) : record.montoAplicadoOC;
+    const retencionesDisponibles = getCobroRetencionesForForm(record.retencionId);
     return `
       <form class="cobro-form" data-cobro-form data-cobro-edit-form novalidate>
         <input type="hidden" name="id" value="${escapeHtml(record.id)}" />
@@ -8631,9 +8903,10 @@
             <input type="date" name="fechaCobro" value="${escapeHtml(record.fechaCobro || todayInputValue())}" required />
           </label>
           <label class="form-field">
-            <span>Monto cobrado C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="montoCobrado" value="${escapeHtml(formatNumberInput(record.montoCobrado))}" min="0.01" max="${escapeHtml(saldoDisponible)}" step="0.01" inputmode="decimal" placeholder="0.00" required />
+            <span>Monto recibido real C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <input type="number" name="montoCobrado" value="${escapeHtml(formatNumberInput(record.montoCobrado))}" min="0" max="${escapeHtml(saldoDisponible)}" step="0.01" inputmode="decimal" placeholder="0.00" required data-cobro-monto-recibido />
           </label>
+          ${renderCobroRetencionBlock(record, retencionesDisponibles, saldoDisponible, false)}
           <label class="form-field">
             <span>Método de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
             <select name="metodoPagoId" required data-payment-method-select>
@@ -8644,7 +8917,7 @@
           ${renderPaymentBankField(cuentasActivas, record, false)}
         </div>
         ${venta ? renderSelectedVentaCobroSummary(venta, cliente, sucursal, record.facturaReferida) : ''}
-        <p class="compact-note">Máximo permitido para esta edición: ${escapeHtml(formatMoney(saldoDisponible))}. El vínculo con la OC no se cambia para proteger trazabilidad.</p>
+        <p class="compact-note">Máximo aplicado permitido para esta edición: ${escapeHtml(formatMoney(saldoDisponible))}. El vínculo con la OC no se cambia para proteger trazabilidad.</p>
         <label class="form-field">
           <span>Observación</span>
           <textarea name="observacion" rows="3" placeholder="Notas internas del cobro">${escapeHtml(record.observacion || '')}</textarea>
@@ -8959,7 +9232,9 @@
       headers: `
         <th>Fecha</th>
         <th>OC</th>
-        <th class="amount-cell">Monto</th>
+        <th class="amount-cell">Recibido</th>
+        <th>Retención</th>
+        <th class="amount-cell">Aplicado</th>
         <th>Método</th>
         <th>Banco</th>
         <th>Estado</th>
@@ -8968,7 +9243,9 @@
       rows: cobros.map((cobro) => renderCobroCard(cobro)).join(''),
       colgroup: `
         <col style="width: 92px;">
-        <col style="width: 168px;">
+        <col style="width: 176px;">
+        <col style="width: 118px;">
+        <col style="width: 178px;">
         <col style="width: 118px;">
         <col style="width: 116px;">
         <col style="width: 136px;">
@@ -8981,12 +9258,17 @@
   function renderCobroCard(cobro) {
     const record = normalizeCobroRecord(cobro);
     const estadoClass = record.activo ? 'is-active' : 'is-inactive';
-    const searchable = normalizeNameForCompare(`${record.clienteNombre} ${record.sucursalNombre} ${record.numeroDocumento} ${record.metodoPagoNombre} ${record.cuentaBancoNombre}`);
+    const retentionSummary = record.retencionActiva
+      ? `${record.retencionConcepto || 'Retención'}${record.retencionPorcentaje ? ` ${formatCobroRetencionPercentage(record.retencionPorcentaje)}` : ''} — ${formatMoney(record.retencionMonto)}`
+      : '—';
+    const searchable = normalizeNameForCompare(`${record.clienteNombre} ${record.sucursalNombre} ${record.numeroDocumento} ${record.metodoPagoNombre} ${record.cuentaBancoNombre} ${record.retencionConcepto} ${record.facturaReferida}`);
     return `
       <tr class="compact-record-row cobro-row ${record.activo ? 'is-active' : 'is-inactive'}" data-cobro-card data-search-text="${escapeHtml(searchable)}">
         <td data-label="Fecha"><span class="compact-primary">${escapeHtml(formatDate(record.fechaCobro))}</span></td>
         <td data-label="OC"><span class="compact-primary">${escapeHtml(record.numeroDocumento || 'Sin OC')}</span>${record.sucursalNombre ? `<small>${escapeHtml(record.sucursalNombre)}</small>` : ''}${record.facturaReferida ? `<small>Factura ref.: ${escapeHtml(record.facturaReferida)}</small>` : ''}</td>
-        <td data-label="Monto" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.montoCobrado))}</span></td>
+        <td data-label="Recibido" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.montoCobrado))}</span></td>
+        <td data-label="Retención"><span>${escapeHtml(retentionSummary)}</span></td>
+        <td data-label="Aplicado" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.montoAplicadoOC))}</span></td>
         <td data-label="Método"><span>${escapeHtml(record.metodoPagoNombre || '—')}</span></td>
         <td data-label="Banco"><span>${escapeHtml(record.cuentaBancoNombre || '—')}</span></td>
         <td data-label="Estado"><span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span></td>
@@ -9055,6 +9337,14 @@
     const facturaReferida = cleanText(formData.get('facturaReferida')) || existingRecord?.facturaReferida || '';
     const requiredBankType = getBankTypeForPaymentMethod(methodValue);
     const cuenta = requiredBankType ? getValidBankForPaymentMethod(methodValue, formData.get('cuentaBancoId'), existingRecord) : null;
+    const retencionActiva = Boolean(form.querySelector('[data-cobro-retencion-toggle]')?.checked);
+    const retencionId = retencionActiva ? cleanText(formData.get('retencionId')) : '';
+    const retencion = retencionId ? getCatalogRecordById('retenciones', retencionId) : null;
+    const montoRecibidoReal = parseMoney(formData.get('montoCobrado'));
+    const retencionMontoRaw = retencionActiva ? parseMoney(formData.get('retencionMonto')) : 0;
+    const safeMontoRecibidoReal = Number.isNaN(montoRecibidoReal) ? 0 : Math.max(0, montoRecibidoReal);
+    const safeRetencionMonto = Number.isNaN(retencionMontoRaw) ? 0 : Math.max(0, retencionMontoRaw);
+    const montoAplicadoOC = retencionActiva ? roundMoney(safeMontoRecibidoReal + safeRetencionMonto) : safeMontoRecibidoReal;
 
     return normalizeCobroRecord({
       ...(existingRecord || {}),
@@ -9066,7 +9356,14 @@
       sucursalId: venta?.sucursalId || existingRecord?.sucursalId || '',
       sucursalNombre: sucursal?.nombre || existingRecord?.sucursalNombre || '',
       numeroDocumento: venta?.numeroDocumento || existingRecord?.numeroDocumento || '',
-      montoCobrado: parseMoney(formData.get('montoCobrado')),
+      montoCobrado: safeMontoRecibidoReal,
+      montoRecibidoReal: safeMontoRecibidoReal,
+      montoAplicadoOC,
+      retencionActiva,
+      retencionId,
+      retencionConcepto: retencionActiva ? (retencion?.nombre || existingRecord?.retencionConcepto || '') : '',
+      retencionPorcentaje: retencionActiva ? normalizeCatalogPercentage(retencion?.porcentaje ?? existingRecord?.retencionPorcentaje ?? 0) : 0,
+      retencionMonto: retencionActiva ? safeRetencionMonto : 0,
       metodoPagoId: metodo?.id || existingRecord?.metodoPagoId || '',
       metodoPagoNombre: metodo?.nombre || existingRecord?.metodoPagoNombre || '',
       cuentaBancoId: requiredBankType ? (cuenta?.id || '') : '',
@@ -9084,12 +9381,25 @@
   function validateCobroRecord(record, existingRecord = null) {
     const venta = (Array.isArray(appData.ventas) ? appData.ventas : []).map((item) => normalizeVentaRecord(item)).find((item) => item.id === record.ventaId);
     if (!venta || !venta.activo) return 'Selecciona una OC activa con saldo por cobrar.';
-    const currentAmount = existingRecord && existingRecord.ventaId === record.ventaId && existingRecord.activo !== false ? normalizeCobroRecord(existingRecord).montoCobrado : 0;
-    const saldoPermitido = roundMoney(venta.saldoPorCobrar + currentAmount);
+    const currentApplied = existingRecord && existingRecord.ventaId === record.ventaId && existingRecord.activo !== false
+      ? normalizeCobroRecord(existingRecord).montoAplicadoOC
+      : 0;
+    const saldoPermitido = roundMoney(venta.saldoPorCobrar + currentApplied);
     if (saldoPermitido <= 0) return 'La OC seleccionada no tiene saldo disponible para este cobro.';
     if (!record.fechaCobro) return 'La fecha real de cobro es obligatoria.';
-    if (Number.isNaN(parseMoney(record.montoCobrado)) || record.montoCobrado <= 0) return 'El monto cobrado debe ser mayor que cero.';
-    if (record.montoCobrado > saldoPermitido) return `El cobro no puede superar el saldo permitido de ${formatMoney(saldoPermitido)}.`;
+    if (record.montoCobrado < 0) return 'El monto recibido real no puede ser negativo.';
+    if (record.retencionActiva && record.retencionMonto < 0) return 'El monto retenido no puede ser negativo.';
+    if (record.retencionActiva) {
+      const retencionCatalogo = record.retencionId ? getCatalogRecordById('retenciones', record.retencionId) : null;
+      const isExistingRetention = existingRecord && normalizeCobroRecord(existingRecord).retencionId === record.retencionId;
+      if (!retencionCatalogo || (!retencionCatalogo.activo && !isExistingRetention)) return 'Selecciona una retención activa de Catálogos.';
+      if (!record.retencionConcepto) return 'La retención seleccionada no tiene concepto válido.';
+      if (record.montoAplicadoOC <= 0) return 'El total aplicado a la OC debe ser mayor que cero.';
+      if (record.montoAplicadoOC - saldoPermitido > COBRO_TOLERANCE) return `El total aplicado a la OC no puede superar el saldo permitido de ${formatMoney(saldoPermitido)}.`;
+    } else {
+      if (Number.isNaN(parseMoney(record.montoCobrado)) || record.montoCobrado <= 0) return 'El monto cobrado debe ser mayor que cero.';
+      if (record.montoCobrado - saldoPermitido > COBRO_TOLERANCE) return `El cobro no puede superar el saldo permitido de ${formatMoney(saldoPermitido)}.`;
+    }
     if (!record.metodoPagoId || !getCatalogRecords('metodosPago').some((item) => item.id === record.metodoPagoId && (item.activo || existingRecord?.metodoPagoId === item.id))) return 'Selecciona un método de pago válido.';
     const bankError = validateBankForPaymentMethod(record, existingRecord);
     if (bankError) return bankError;
@@ -9108,6 +9418,23 @@
       return;
     }
 
+    const rawFormData = new FormData(form);
+    const rawMontoRecibido = parseMoney(rawFormData.get('montoCobrado'));
+    const rawRetencionMonto = parseMoney(rawFormData.get('retencionMonto'));
+    const rawRetencionActiva = Boolean(form.querySelector('[data-cobro-retencion-toggle]')?.checked);
+    if (Number.isNaN(rawMontoRecibido) || rawMontoRecibido < 0) {
+      cobrosState.message = 'El monto recibido real no puede ser negativo ni inválido.';
+      cobrosState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+    if (rawRetencionActiva && (Number.isNaN(rawRetencionMonto) || rawRetencionMonto < 0)) {
+      cobrosState.message = 'El monto retenido no puede ser negativo ni inválido.';
+      cobrosState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+
     const newRecord = buildCobroFromForm(form, existingRecord);
     const validationError = validateCobroRecord(newRecord, existingRecord);
 
@@ -9120,19 +9447,23 @@
 
     if (!warnIfClosedPeriod(newRecord.fechaCobro, existingRecord ? 'Actualizar este cobro' : 'Registrar este cobro')) return;
 
+    const amountSummary = newRecord.retencionActiva
+      ? `${formatMoney(newRecord.montoCobrado)} recibido · ${formatMoney(newRecord.retencionMonto)} retenido · ${formatMoney(newRecord.montoAplicadoOC)} aplicado`
+      : formatMoney(newRecord.montoCobrado);
+
     if (existingRecord) {
       appData.cobros = records.map((record) => record.id === existingId ? newRecord : record);
       recalculateVentaById(existingRecord.ventaId);
       recalculateVentaById(newRecord.ventaId);
-      cobrosState.message = `Cobro actualizado en OC ${newRecord.numeroDocumento}: ${formatMoney(newRecord.montoCobrado)}.`;
+      cobrosState.message = `Cobro actualizado en OC ${newRecord.numeroDocumento}: ${amountSummary}.`;
     } else {
       appData.cobros = [newRecord, ...records];
       recalculateVentaById(newRecord.ventaId);
-      cobrosState.message = `Cobro aplicado a OC ${newRecord.numeroDocumento}: ${formatMoney(newRecord.montoCobrado)}.`;
+      cobrosState.message = `Cobro aplicado a OC ${newRecord.numeroDocumento}: ${amountSummary}.`;
     }
 
-    const venta = appData.ventas.find((record) => record.id === newRecord.ventaId);
     cobrosState.selectedVentaId = '';
+    cobrosState.facturaReferida = '';
     cobrosState.focusVentaId = newRecord.ventaId;
     openAccordionGroupForRecord('cobros', newRecord);
     cobrosState.editingId = null;
@@ -9144,7 +9475,14 @@
       entityType: 'Cobro',
       entityRef: `OC ${newRecord.numeroDocumento}`,
       amount: newRecord.montoCobrado,
-      detail: buildActivityDetail([existingRecord ? 'Cobro editado' : 'Cobro registrado', `OC ${newRecord.numeroDocumento}`, newRecord.facturaReferida ? `Factura ref. ${newRecord.facturaReferida}` : '', formatMoney(newRecord.montoCobrado)]),
+      detail: buildActivityDetail([
+        existingRecord ? 'Cobro editado' : 'Cobro registrado',
+        `OC ${newRecord.numeroDocumento}`,
+        newRecord.facturaReferida ? `Factura ref. ${newRecord.facturaReferida}` : '',
+        newRecord.retencionActiva ? `Retención ${newRecord.retencionConcepto}: ${formatMoney(newRecord.retencionMonto)}` : '',
+        `Recibido ${formatMoney(newRecord.montoCobrado)}`,
+        newRecord.retencionActiva ? `Aplicado a OC ${formatMoney(newRecord.montoAplicadoOC)}` : ''
+      ]),
       source: 'local'
     });
     renderRoute();
@@ -9250,7 +9588,65 @@
   function fillCobroFullAmount(form, ventaId) {
     const venta = appData.ventas.map((record) => normalizeVentaRecord(record)).find((record) => record.id === ventaId);
     const amountInput = form.querySelector('input[name="montoCobrado"]');
-    if (venta && amountInput) amountInput.value = String(venta.saldoPorCobrar);
+    const retentionToggle = form.querySelector('[data-cobro-retencion-toggle]');
+    const retentionInput = form.querySelector('[data-cobro-retencion-monto]');
+    const retentionActive = Boolean(retentionToggle?.checked);
+    const retentionAmount = retentionActive ? parseMoney(retentionInput?.value || 0) : 0;
+    if (venta && amountInput) {
+      const receivedAmount = retentionActive ? Math.max(0, roundMoney(venta.saldoPorCobrar - (Number.isNaN(retentionAmount) ? 0 : retentionAmount))) : venta.saldoPorCobrar;
+      amountInput.value = String(receivedAmount);
+      amountInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+
+  function setupCobroRetencionForm(form) {
+    const panel = form.querySelector('[data-cobro-retencion-panel]');
+    if (!panel) return;
+    const toggle = panel.querySelector('[data-cobro-retencion-toggle]');
+    const fields = panel.querySelector('[data-cobro-retencion-fields]');
+    const select = panel.querySelector('[data-cobro-retencion-select]');
+    const percentInput = panel.querySelector('[data-cobro-retencion-percent]');
+    const retentionInput = panel.querySelector('[data-cobro-retencion-monto]');
+    const totalInput = panel.querySelector('[data-cobro-total-aplicado]');
+    const amountInput = form.querySelector('[data-cobro-monto-recibido]');
+    if (!toggle || !fields) return;
+
+    const setRetentionFieldsState = () => {
+      const active = Boolean(toggle.checked);
+      fields.classList.toggle('is-hidden', !active);
+      if (select) {
+        select.disabled = !active;
+        select.required = active;
+      }
+      if (percentInput) percentInput.disabled = !active;
+      if (retentionInput) {
+        retentionInput.disabled = !active;
+        retentionInput.required = active;
+      }
+      if (totalInput) totalInput.disabled = !active;
+      updateRetentionPreview();
+    };
+
+    const updatePercent = () => {
+      if (!percentInput || !select) return;
+      const option = select.selectedOptions && select.selectedOptions[0];
+      const percentage = parseMoney(option?.dataset?.retencionPorcentaje || 0);
+      percentInput.value = formatCobroRetencionPercentage(Number.isNaN(percentage) ? 0 : percentage);
+    };
+
+    const updateRetentionPreview = () => {
+      updatePercent();
+      const received = parseMoney(amountInput?.value || 0);
+      const retained = toggle.checked ? parseMoney(retentionInput?.value || 0) : 0;
+      const total = roundMoney((Number.isNaN(received) ? 0 : received) + (Number.isNaN(retained) ? 0 : retained));
+      if (totalInput) totalInput.value = formatMoney(total);
+    };
+
+    toggle.addEventListener('change', setRetentionFieldsState);
+    select?.addEventListener('change', updateRetentionPreview);
+    retentionInput?.addEventListener('input', updateRetentionPreview);
+    amountInput?.addEventListener('input', updateRetentionPreview);
+    setRetentionFieldsState();
   }
 
   function setupAccordionSearch(searchSelector, module, rowSelector) {
@@ -12170,6 +12566,7 @@
           tiposGasto: Array.isArray(catalogos.tiposGasto) ? catalogos.tiposGasto : registros.tiposGasto,
           metodosPago: Array.isArray(catalogos.metodosPago) ? catalogos.metodosPago : registros.metodosPago,
           cuentasBancos: Array.isArray(catalogos.cuentasBancos) ? catalogos.cuentasBancos : registros.cuentasBancos,
+          retenciones: Array.isArray(catalogos.retenciones) ? catalogos.retenciones : (Array.isArray(registros.retenciones) ? registros.retenciones : []),
           ventas: registros.ventas,
           cobros: registros.cobros,
           comprasProveedores: registros.comprasProveedores || registros.proveedoresCompras || registros.compras || [],
@@ -12194,6 +12591,7 @@
         tiposGasto: raw.tiposGasto,
         metodosPago: raw.metodosPago,
         cuentasBancos: raw.cuentasBancos,
+        retenciones: Array.isArray(raw.retenciones) ? raw.retenciones : [],
         ventas: raw.ventas,
         cobros: raw.cobros,
         comprasProveedores: raw.comprasProveedores,
@@ -12354,6 +12752,7 @@
         sucursalId: idMaps.sucursales.get(cobro.sucursalId) || cobro.sucursalId,
         metodoPagoId: idMaps.metodosPago.get(cobro.metodoPagoId) || cobro.metodoPagoId,
         cuentaBancoId: idMaps.cuentasBancos.get(cobro.cuentaBancoId) || cobro.cuentaBancoId,
+        retencionId: idMaps.retenciones.get(cobro.retencionId) || cobro.retencionId,
         updatedAt: cobro.updatedAt || timestamp
       });
       const existing = target.cobros.find((item) => item.id === remapped.id || getCobroDuplicateKey(item) === getCobroDuplicateKey(remapped));
@@ -13453,7 +13852,7 @@
 
   function buildCatalogosSheet() {
     const rows = [[xlsxTitle('Catálogos')], [xlsxLabel('Exportado'), xlsxText(formatDateTime(nowIso()))], []];
-    CATALOGS.forEach((catalog) => {
+    CATALOGS.filter((catalog) => catalog.exportExcel !== false).forEach((catalog) => {
       rows.push([xlsxSubtitle(catalog.label)]);
       const headers = ['Nombre', 'Estado'];
       if (catalog.id === 'clientes') headers.splice(1, 0, 'Código', 'Condición de pago', 'Días de crédito');
@@ -14518,6 +14917,7 @@ ${rowsXml}
     }
     if (catalog.id === 'metodosPago') return 'Método simple';
     if (catalog.id === 'cuentasBancos') return `Tipo: ${getBankTypeDisplay(record)}`;
+    if (catalog.id === 'retenciones') return `Porcentaje: ${formatPercentageDisplay(record.porcentaje)}`;
     return '';
   }
 
@@ -14526,11 +14926,11 @@ ${rowsXml}
       resumen: DATA_KEYS,
       mora: ['ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'clientes', 'sucursales', 'proveedores'],
       ventas: ['clientes', 'sucursales', 'ventas', 'cobros'],
-      cobros: ['clientes', 'ventas', 'cobros', 'metodosPago', 'cuentasBancos'],
+      cobros: ['clientes', 'ventas', 'cobros', 'metodosPago', 'cuentasBancos', 'retenciones'],
       proveedores: ['proveedores', 'comprasProveedores', 'pagosProveedores'],
       pagos: ['proveedores', 'comprasProveedores', 'pagosProveedores', 'metodosPago', 'cuentasBancos'],
       gastos: ['tiposGasto', 'metodosPago', 'cuentasBancos', 'gastos'],
-      catalogos: ['clientes', 'sucursales', 'proveedores', 'tiposGasto', 'metodosPago', 'cuentasBancos'],
+      catalogos: ['clientes', 'sucursales', 'proveedores', 'tiposGasto', 'metodosPago', 'cuentasBancos', 'retenciones'],
       bdatos: ['bdatos'],
       excel: ['ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos'],
       respaldo: DATA_KEYS,
@@ -14620,6 +15020,15 @@ ${rowsXml}
       return 'Selecciona un tipo válido para el banco: Transferencia, Depósito o Tarjeta.';
     }
 
+    if (catalog.id === 'retenciones') {
+      const rawPercentage = cleanText(record.porcentaje);
+      const numericPercentage = parseCatalogPercentage(rawPercentage);
+      if (!rawPercentage) return 'El porcentaje de la retención es obligatorio.';
+      if (!Number.isFinite(numericPercentage) || numericPercentage < 0) return 'El porcentaje debe ser numérico y mayor o igual a 0.';
+      if (!hasMaxTwoDecimalPlaces(rawPercentage)) return 'El porcentaje permite máximo 2 decimales.';
+      record.porcentaje = roundMoney(numericPercentage);
+    }
+
     if (isPaymentTermsCatalog(catalog.id)) {
       const terms = normalizePaymentTermsFields(record);
       if (!['Contado', 'Crédito'].includes(terms.condicionPago)) return 'Selecciona una condición de pago válida.';
@@ -14661,11 +15070,13 @@ ${rowsXml}
       return;
     }
 
+    const recordToSave = catalog.id === 'retenciones' ? normalizeCatalogRecord(newRecord, catalog) : newRecord;
+
     if (existingRecord) {
-      appData[catalog.id] = records.map((record) => record.id === existingId ? newRecord : record);
+      appData[catalog.id] = records.map((record) => record.id === existingId ? recordToSave : record);
       catalogState.message = `${catalog.label}: registro actualizado.`;
     } else {
-      appData[catalog.id] = [newRecord, ...records];
+      appData[catalog.id] = [recordToSave, ...records];
       catalogState.message = `${catalog.label}: registro agregado.`;
     }
 
@@ -14920,6 +15331,7 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-cobro-form]').forEach((form) => {
       setupPaymentBankField(form);
+      setupCobroRetencionForm(form);
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         saveCobroRecord(form);

@@ -1,10 +1,30 @@
+# KSA PRÁCTIKA — Post12 Resumen Retenciones
+
+Cambios principales de esta entrega:
+- Resumen agrega métrica superior “Retenciones” con el total del período filtrado.
+- Resumen agrega bloque compacto “Retenciones por concepto”, agrupado desde Cobros.
+- Las retenciones se filtran por fecha real de cobro y no se mezclan con gastos, utilidad, venta neta ni saldos.
+- Versión/cache PWA actualizado a `0.17.57-post12-resumen-retenciones`.
+
+# KSA PRÁCTIKA — Post12 Cobros: Retenciones desde Catálogos
+
+- Cobros permite aplicar retención opcional desde Catálogos → Retenciones.
+- El monto recibido real queda como dinero de caja/banco; recibido real + retención se aplica al saldo general de la OC.
+- Se guardan snapshots de concepto, porcentaje, monto retenido, monto recibido real y monto aplicado a OC.
+- El historial de cobros muestra retención compacta y mantiene búsqueda/selección por OC o factura relacionada.
+- No se modifican venta neta, facturas relacionadas, compras, proveedores, pagos, gastos, Resumen, cierres, Excel, comparador ni Bdatos.
+- Versión/cache PWA actualizado a `0.17.56-post12-cobros-retenciones`.
+
+---
+
 # KSA PRÁCTIKA — Post12 Cobros: OC completa y factura referida
 
 - Cobros: al seleccionar resultado por OC o factura, se carga la OC madre completa.
 - OC seleccionada muestra datos compactos, saldo general, estado, todas las facturas relacionadas y Factura referida cuando aplica.
 - La factura referida queda como trazabilidad del cobro sin crear saldo ni documento operativo por factura.
 - No se modifican cálculos, ventas, saldos, compras, pagos, gastos, cierres, Excel, comparador ni Bdatos.
-- Versión/cache PWA actualizado a `0.17.54-post12-cobros-oc-completa-factura-referida`.
+- Versión/cache PWA actualizado a `0.17.55-post12-retenciones-catalogo`.
+- Catálogos incorpora la sección Retenciones para administrar conceptos/porcentajes activos e inactivos sin conectar todavía Cobros ni Resumen.
 
 ---
 

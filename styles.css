@@ -6089,6 +6089,7 @@ body {
 .resumen-periodos-cierre-shell .operational-top-scroll,
 .resumen-gastos-tipo-shell .operational-top-scroll,
 .resumen-venta-sucursal-shell .operational-top-scroll,
+.resumen-retenciones-concepto-shell .operational-top-scroll,
 .periodo-blocking-clientes-shell .operational-top-scroll,
 .periodo-blocking-proveedores-shell .operational-top-scroll {
   position: sticky;
@@ -6109,6 +6110,7 @@ body {
 .resumen-periodos-cierre-shell .resumen-compact-table-wrap,
 .resumen-gastos-tipo-shell .resumen-compact-table-wrap,
 .resumen-venta-sucursal-shell .resumen-compact-table-wrap,
+.resumen-retenciones-concepto-shell .resumen-compact-table-wrap,
 .periodo-blocking-clientes-shell .periodo-blocking-table-wrap,
 .periodo-blocking-proveedores-shell .periodo-blocking-table-wrap {
   width: 100%;
@@ -6124,6 +6126,7 @@ body {
 .resumen-periodos-cierre-shell .operational-table-wrap,
 .resumen-gastos-tipo-shell .operational-table-wrap,
 .resumen-venta-sucursal-shell .operational-table-wrap,
+.resumen-retenciones-concepto-shell .operational-table-wrap,
 .periodo-blocking-clientes-shell .operational-table-wrap,
 .periodo-blocking-proveedores-shell .operational-table-wrap {
   border-top-left-radius: 0;
@@ -6133,6 +6136,7 @@ body {
 .resumen-periodos-cierre-shell.is-not-scrollable .operational-top-scroll,
 .resumen-gastos-tipo-shell.is-not-scrollable .operational-top-scroll,
 .resumen-venta-sucursal-shell.is-not-scrollable .operational-top-scroll,
+.resumen-retenciones-concepto-shell.is-not-scrollable .operational-top-scroll,
 .periodo-blocking-clientes-shell.is-not-scrollable .operational-top-scroll,
 .periodo-blocking-proveedores-shell.is-not-scrollable .operational-top-scroll {
   display: block;
@@ -6728,4 +6732,123 @@ body,
 
 .cobro-search-results-table .secondary-action.compact {
   min-height: 2rem;
+}
+
+
+/* Etapa 1/3 — Catálogos / Retenciones */
+.catalog-retenciones-table {
+  min-width: 920px;
+}
+
+.catalog-col-retencion-concepto {
+  min-width: 220px;
+}
+
+.catalog-col-retencion-porcentaje,
+.catalog-col-retencion-estado {
+  min-width: 130px;
+}
+
+.catalog-col-retencion-observacion {
+  min-width: 260px;
+}
+
+.catalog-col-retencion-acciones {
+  min-width: 190px;
+}
+
+.catalog-retencion-concepto span,
+.catalog-retencion-porcentaje span {
+  color: var(--ink);
+  font-weight: 850;
+}
+
+.catalog-retencion-porcentaje,
+.catalog-retencion-estado,
+.catalog-retencion-acciones {
+  white-space: nowrap;
+}
+
+.catalog-retencion-observacion span {
+  color: var(--muted);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+@media (max-width: 620px) {
+  .catalog-retenciones-table {
+    min-width: 880px;
+  }
+}
+
+/* Etapa 2/3 — Cobros / Retenciones */
+.cobro-retencion-panel {
+  display: grid;
+  gap: 0.7rem;
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid rgba(185, 135, 43, 0.24);
+  border-radius: 1rem;
+  background: linear-gradient(180deg, rgba(255, 248, 234, 0.72), rgba(255, 255, 255, 0.78));
+}
+
+.checkbox-field.compact-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid rgba(185, 135, 43, 0.34);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--accent-dark);
+  font-weight: 900;
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-field.compact-toggle input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.cobro-retencion-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.cobro-retencion-fields > .full-span,
+.cobro-retencion-fields > .compact-empty-state {
+  grid-column: 1 / -1;
+}
+
+.cobro-retencion-empty {
+  padding: 0.65rem 0.75rem;
+  border: 1px dashed rgba(185, 135, 43, 0.36);
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--muted);
+  font-weight: 850;
+}
+
+.operational-table-cobros {
+  min-width: 1216px;
+}
+
+@media (max-width: 620px) {
+  .cobro-retencion-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* Etapa 3/3 Retenciones — Resumen */
+.resumen-retenciones-concepto-table {
+  min-width: 560px;
 }
