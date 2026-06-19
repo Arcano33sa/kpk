@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_57_post12_resumen_retenciones';
+const CACHE_VERSION = 'v0_17_58_post12_retencion_automatica';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

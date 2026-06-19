@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.57-post12-resumen-retenciones';
+  const APP_VERSION = '0.17.58-post12-retencion-automatica';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -8770,6 +8770,20 @@
     return `${roundMoney(value).toFixed(2)}%`;
   }
 
+  function calculateCobroRetentionAmounts(montoAplicado, porcentaje) {
+    const appliedRaw = parseMoney(montoAplicado);
+    const montoAplicadoOC = Number.isNaN(appliedRaw) ? 0 : Math.max(0, appliedRaw);
+    const retencionPorcentaje = normalizeCatalogPercentage(porcentaje);
+    const retencionMonto = roundMoney(montoAplicadoOC * retencionPorcentaje / 100);
+    const montoRecibidoReal = roundMoney(Math.max(0, montoAplicadoOC - retencionMonto));
+    return {
+      montoAplicadoOC,
+      retencionPorcentaje,
+      retencionMonto,
+      montoRecibidoReal
+    };
+  }
+
   function renderCobroRetencionBlock(record, retencionesDisponibles, saldoDisponible = 0, disabled = false) {
     const normalized = record ? normalizeCobroRecord(record) : {
       retencionActiva: false,
@@ -8785,7 +8799,13 @@
     const active = Boolean(normalized.retencionActiva);
     const selectedRetention = retenciones.find((retencion) => retencion.id === normalized.retencionId) || null;
     const percentage = selectedRetention ? selectedRetention.porcentaje : normalized.retencionPorcentaje;
-    const totalApplied = active ? roundMoney(normalized.montoCobrado + normalized.retencionMonto) : normalized.montoCobrado;
+    const totalApplied = active ? (normalized.montoAplicadoOC || roundMoney(normalized.montoCobrado + normalized.retencionMonto)) : normalized.montoCobrado;
+    const calculatedRetention = active ? calculateCobroRetentionAmounts(totalApplied, percentage) : {
+      montoAplicadoOC: totalApplied,
+      retencionPorcentaje: 0,
+      retencionMonto: 0,
+      montoRecibidoReal: normalized.montoCobrado
+    };
     const disabledAttr = disabled ? 'disabled' : '';
     const fieldsHiddenClass = active ? '' : ' is-hidden';
 
@@ -8809,14 +8829,18 @@
               <input type="text" value="${escapeHtml(formatCobroRetencionPercentage(percentage || 0))}" data-cobro-retencion-percent readonly ${!active || disabled ? 'disabled' : ''} />
             </label>
             <label class="form-field">
-              <span>Monto retenido C$ <span class="required-dot" data-cobro-retencion-monto-dot aria-label="obligatorio">*</span></span>
-              <input type="number" name="retencionMonto" value="${escapeHtml(formatNumberInput(normalized.retencionMonto))}" min="0" max="${escapeHtml(String(roundMoney(saldoDisponible)))}" step="0.01" inputmode="decimal" placeholder="0.00" data-cobro-retencion-monto ${active && !disabled ? 'required' : ''} ${!active || disabled ? 'disabled' : ''} />
+              <span>Monto retenido C$</span>
+              <input type="number" name="retencionMonto" value="${escapeHtml(formatNumberInput(calculatedRetention.retencionMonto))}" min="0" max="${escapeHtml(String(roundMoney(saldoDisponible)))}" step="0.01" inputmode="decimal" placeholder="0.00" data-cobro-retencion-monto readonly ${!active || disabled ? 'disabled' : ''} />
+            </label>
+            <label class="form-field">
+              <span>Recibido real / caja-banco</span>
+              <input type="text" value="${escapeHtml(formatMoney(calculatedRetention.montoRecibidoReal))}" data-cobro-recibido-real readonly ${!active || disabled ? 'disabled' : ''} />
             </label>
             <label class="form-field">
               <span>Total aplicado a OC</span>
-              <input type="text" value="${escapeHtml(formatMoney(totalApplied))}" data-cobro-total-aplicado readonly ${!active || disabled ? 'disabled' : ''} />
+              <input type="text" value="${escapeHtml(formatMoney(calculatedRetention.montoAplicadoOC))}" data-cobro-total-aplicado readonly ${!active || disabled ? 'disabled' : ''} />
             </label>
-            <p class="compact-note full-span" data-cobro-retencion-note>El dinero recibido entra a caja/banco. Recibido real + retención reduce el saldo general de la OC.</p>
+            <p class="compact-note full-span" data-cobro-retencion-note>El monto aplicado reduce el saldo de la OC. La app calcula automáticamente retención y recibido real.</p>
           ` : `
             <div class="compact-empty-state cobro-retencion-empty" role="status">
               No hay retenciones activas en Catálogos.
@@ -8854,8 +8878,8 @@
             <input type="date" name="fechaCobro" value="${escapeHtml(todayInputValue())}" required ${cannotCreate ? 'disabled' : ''} />
           </label>
           <label class="form-field">
-            <span>Monto recibido real C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="montoCobrado" min="0" max="${escapeHtml(saldo)}" step="0.01" inputmode="decimal" placeholder="0.00" required data-cobro-monto-recibido ${cannotCreate ? 'disabled' : ''} />
+            <span>Monto a aplicar a OC C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <input type="number" name="montoCobrado" min="0" max="${escapeHtml(saldo)}" step="0.01" inputmode="decimal" placeholder="0.00" required data-cobro-monto-recibido data-cobro-monto-aplicado ${cannotCreate ? 'disabled' : ''} />
           </label>
           ${renderCobroRetencionBlock(null, retencionesDisponibles, saldo, cannotCreate)}
           <label class="form-field">
@@ -8903,8 +8927,8 @@
             <input type="date" name="fechaCobro" value="${escapeHtml(record.fechaCobro || todayInputValue())}" required />
           </label>
           <label class="form-field">
-            <span>Monto recibido real C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="montoCobrado" value="${escapeHtml(formatNumberInput(record.montoCobrado))}" min="0" max="${escapeHtml(saldoDisponible)}" step="0.01" inputmode="decimal" placeholder="0.00" required data-cobro-monto-recibido />
+            <span>Monto a aplicar a OC C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <input type="number" name="montoCobrado" value="${escapeHtml(formatNumberInput(record.retencionActiva ? record.montoAplicadoOC : record.montoCobrado))}" min="0" max="${escapeHtml(saldoDisponible)}" step="0.01" inputmode="decimal" placeholder="0.00" required data-cobro-monto-recibido data-cobro-monto-aplicado />
           </label>
           ${renderCobroRetencionBlock(record, retencionesDisponibles, saldoDisponible, false)}
           <label class="form-field">
@@ -9340,11 +9364,15 @@
     const retencionActiva = Boolean(form.querySelector('[data-cobro-retencion-toggle]')?.checked);
     const retencionId = retencionActiva ? cleanText(formData.get('retencionId')) : '';
     const retencion = retencionId ? getCatalogRecordById('retenciones', retencionId) : null;
-    const montoRecibidoReal = parseMoney(formData.get('montoCobrado'));
-    const retencionMontoRaw = retencionActiva ? parseMoney(formData.get('retencionMonto')) : 0;
-    const safeMontoRecibidoReal = Number.isNaN(montoRecibidoReal) ? 0 : Math.max(0, montoRecibidoReal);
-    const safeRetencionMonto = Number.isNaN(retencionMontoRaw) ? 0 : Math.max(0, retencionMontoRaw);
-    const montoAplicadoOC = retencionActiva ? roundMoney(safeMontoRecibidoReal + safeRetencionMonto) : safeMontoRecibidoReal;
+    const montoAplicarRaw = parseMoney(formData.get('montoCobrado'));
+    const safeMontoAplicar = Number.isNaN(montoAplicarRaw) ? 0 : Math.max(0, montoAplicarRaw);
+    const retencionPorcentaje = retencionActiva ? normalizeCatalogPercentage(retencion?.porcentaje ?? existingRecord?.retencionPorcentaje ?? 0) : 0;
+    const retentionAmounts = retencionActiva
+      ? calculateCobroRetentionAmounts(safeMontoAplicar, retencionPorcentaje)
+      : { montoAplicadoOC: safeMontoAplicar, retencionMonto: 0, montoRecibidoReal: safeMontoAplicar, retencionPorcentaje: 0 };
+    const safeMontoRecibidoReal = retentionAmounts.montoRecibidoReal;
+    const safeRetencionMonto = retentionAmounts.retencionMonto;
+    const montoAplicadoOC = retentionAmounts.montoAplicadoOC;
 
     return normalizeCobroRecord({
       ...(existingRecord || {}),
@@ -9362,7 +9390,7 @@
       retencionActiva,
       retencionId,
       retencionConcepto: retencionActiva ? (retencion?.nombre || existingRecord?.retencionConcepto || '') : '',
-      retencionPorcentaje: retencionActiva ? normalizeCatalogPercentage(retencion?.porcentaje ?? existingRecord?.retencionPorcentaje ?? 0) : 0,
+      retencionPorcentaje: retencionActiva ? retentionAmounts.retencionPorcentaje : 0,
       retencionMonto: retencionActiva ? safeRetencionMonto : 0,
       metodoPagoId: metodo?.id || existingRecord?.metodoPagoId || '',
       metodoPagoNombre: metodo?.nombre || existingRecord?.metodoPagoNombre || '',
@@ -9419,17 +9447,9 @@
     }
 
     const rawFormData = new FormData(form);
-    const rawMontoRecibido = parseMoney(rawFormData.get('montoCobrado'));
-    const rawRetencionMonto = parseMoney(rawFormData.get('retencionMonto'));
-    const rawRetencionActiva = Boolean(form.querySelector('[data-cobro-retencion-toggle]')?.checked);
-    if (Number.isNaN(rawMontoRecibido) || rawMontoRecibido < 0) {
-      cobrosState.message = 'El monto recibido real no puede ser negativo ni inválido.';
-      cobrosState.messageType = 'error';
-      renderRoute();
-      return;
-    }
-    if (rawRetencionActiva && (Number.isNaN(rawRetencionMonto) || rawRetencionMonto < 0)) {
-      cobrosState.message = 'El monto retenido no puede ser negativo ni inválido.';
+    const rawMontoAplicar = parseMoney(rawFormData.get('montoCobrado'));
+    if (Number.isNaN(rawMontoAplicar) || rawMontoAplicar < 0) {
+      cobrosState.message = 'El monto a aplicar a la OC no puede ser negativo ni inválido.';
       cobrosState.messageType = 'error';
       renderRoute();
       return;
@@ -9588,13 +9608,8 @@
   function fillCobroFullAmount(form, ventaId) {
     const venta = appData.ventas.map((record) => normalizeVentaRecord(record)).find((record) => record.id === ventaId);
     const amountInput = form.querySelector('input[name="montoCobrado"]');
-    const retentionToggle = form.querySelector('[data-cobro-retencion-toggle]');
-    const retentionInput = form.querySelector('[data-cobro-retencion-monto]');
-    const retentionActive = Boolean(retentionToggle?.checked);
-    const retentionAmount = retentionActive ? parseMoney(retentionInput?.value || 0) : 0;
     if (venta && amountInput) {
-      const receivedAmount = retentionActive ? Math.max(0, roundMoney(venta.saldoPorCobrar - (Number.isNaN(retentionAmount) ? 0 : retentionAmount))) : venta.saldoPorCobrar;
-      amountInput.value = String(receivedAmount);
+      amountInput.value = String(roundMoney(venta.saldoPorCobrar));
       amountInput.dispatchEvent(new Event('input', { bubbles: true }));
     }
   }
@@ -9607,6 +9622,7 @@
     const select = panel.querySelector('[data-cobro-retencion-select]');
     const percentInput = panel.querySelector('[data-cobro-retencion-percent]');
     const retentionInput = panel.querySelector('[data-cobro-retencion-monto]');
+    const receivedInput = panel.querySelector('[data-cobro-recibido-real]');
     const totalInput = panel.querySelector('[data-cobro-total-aplicado]');
     const amountInput = form.querySelector('[data-cobro-monto-recibido]');
     if (!toggle || !fields) return;
@@ -9621,8 +9637,9 @@
       if (percentInput) percentInput.disabled = !active;
       if (retentionInput) {
         retentionInput.disabled = !active;
-        retentionInput.required = active;
+        retentionInput.required = false;
       }
+      if (receivedInput) receivedInput.disabled = !active;
       if (totalInput) totalInput.disabled = !active;
       updateRetentionPreview();
     };
@@ -9636,15 +9653,19 @@
 
     const updateRetentionPreview = () => {
       updatePercent();
-      const received = parseMoney(amountInput?.value || 0);
-      const retained = toggle.checked ? parseMoney(retentionInput?.value || 0) : 0;
-      const total = roundMoney((Number.isNaN(received) ? 0 : received) + (Number.isNaN(retained) ? 0 : retained));
-      if (totalInput) totalInput.value = formatMoney(total);
+      const option = select?.selectedOptions && select.selectedOptions[0];
+      const percentage = parseMoney(option?.dataset?.retencionPorcentaje || 0);
+      const applied = parseMoney(amountInput?.value || 0);
+      const amounts = toggle.checked
+        ? calculateCobroRetentionAmounts(Number.isNaN(applied) ? 0 : applied, Number.isNaN(percentage) ? 0 : percentage)
+        : { montoAplicadoOC: Number.isNaN(applied) ? 0 : applied, retencionMonto: 0, montoRecibidoReal: Number.isNaN(applied) ? 0 : applied };
+      if (retentionInput) retentionInput.value = formatNumberInput(amounts.retencionMonto);
+      if (receivedInput) receivedInput.value = formatMoney(amounts.montoRecibidoReal);
+      if (totalInput) totalInput.value = formatMoney(amounts.montoAplicadoOC);
     };
 
     toggle.addEventListener('change', setRetentionFieldsState);
     select?.addEventListener('change', updateRetentionPreview);
-    retentionInput?.addEventListener('input', updateRetentionPreview);
     amountInput?.addEventListener('input', updateRetentionPreview);
     setRetentionFieldsState();
   }
