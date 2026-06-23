@@ -2,12 +2,14 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.59-post12-bloques-resumen-compactos';
+  const APP_VERSION = '0.17.61-post12-excel-cierre-oficial';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
   const ACTIVITY_LOG_STORAGE_KEY = 'KSA_PRACTIKA_ACTIVITY_LOG_v1';
   const JSON_EXPORT_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_JSON_EXPORT_SEQUENCE_v1';
+  const EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_EXCEL_CONSULTA_SEQUENCE_v1';
+  const EXCEL_CIERRE_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_EXCEL_CIERRE_SEQUENCE_v1';
   const JSON_APPLIED_STORAGE_KEY = 'KSA_PRACTIKA_LAST_JSON_APPLIED_v1';
   const JSON_IMPORT_HISTORY_STORAGE_KEY = 'KSA_PRACTIKA_JSON_IMPORT_HISTORY_v1';
   const JSON_IMPORT_HISTORY_MAX_ENTRIES = 80;
@@ -13414,7 +13416,8 @@
               </label>
             </div>
             <div class="form-actions">
-              <button type="submit" class="card-action" ${canExportExcel ? '' : 'disabled'}>Exportar Excel .xlsx</button>
+              <button type="button" class="secondary-action" data-excel-consulta-export ${canExportExcel ? '' : 'disabled'}>Exportar Excel de consulta</button>
+              <button type="submit" class="card-action" ${canExportExcel ? '' : 'disabled'}>Exportar Excel de cierre</button>
             </div>
           </form>
           <div class="badge-row">
@@ -13549,6 +13552,101 @@
     return { month, year, periodo: getPeriodKey(month, year) };
   }
 
+  function getExcelConsultaSequence() {
+    try {
+      const raw = window.localStorage.getItem(EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY);
+      const parsed = Number.parseInt(raw || '1', 10);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo leer el consecutivo local de Excel de consulta.', error);
+      return 1;
+    }
+  }
+
+  function saveExcelConsultaSequence(sequence) {
+    try {
+      const safe = Number.isFinite(Number(sequence)) && Number(sequence) > 0 ? Math.floor(Number(sequence)) : 1;
+      window.localStorage.setItem(EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY, String(safe));
+      return true;
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo guardar el consecutivo local de Excel de consulta.', error);
+      return false;
+    }
+  }
+
+  function formatExcelConsultaSequence(sequence) {
+    const safe = Number.isFinite(Number(sequence)) && Number(sequence) > 0 ? Math.floor(Number(sequence)) : 1;
+    return String(safe).padStart(4, '0');
+  }
+
+  function buildExcelConsultaFileName(month, year, sequence) {
+    return `${formatExcelConsultaSequence(sequence)}- Consulta ${getMonthLabel(month)} ${year}.xlsx`;
+  }
+
+  function getExcelCierreSequence() {
+    try {
+      const raw = window.localStorage.getItem(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY);
+      const parsed = Number.parseInt(raw || '1', 10);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo leer el consecutivo local de Excel de cierre.', error);
+      return 1;
+    }
+  }
+
+  function saveExcelCierreSequence(sequence) {
+    try {
+      const safe = Number.isFinite(Number(sequence)) && Number(sequence) > 0 ? Math.floor(Number(sequence)) : 1;
+      window.localStorage.setItem(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY, String(safe));
+      return true;
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo guardar el consecutivo local de Excel de cierre.', error);
+      return false;
+    }
+  }
+
+  function formatExcelCierreSequence(sequence) {
+    const safe = Number.isFinite(Number(sequence)) && Number(sequence) > 0 ? Math.floor(Number(sequence)) : 1;
+    return String(safe).padStart(4, '0');
+  }
+
+  function buildExcelCierreFileName(month, year, sequence) {
+    return `${formatExcelCierreSequence(sequence)}- ${getMonthLabel(month)} ${year}.xlsx`;
+  }
+
+  async function handleExcelConsultaExport(form) {
+    if (!canCurrentRole('exportExcel')) {
+      excelExportState.message = 'Solo Administrador puede exportar Excel.';
+      excelExportState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+
+    const { month, year } = getPeriodFromForm(form);
+    const sequence = getExcelConsultaSequence();
+    const fileName = buildExcelConsultaFileName(month, year, sequence);
+    excelExportState.month = month;
+    excelExportState.year = year;
+    excelExportState.message = 'Generando Excel de consulta...';
+    excelExportState.messageType = 'success';
+    renderRoute();
+
+    try {
+      const result = await exportExcelForPeriod(month, year, { fileName });
+      if (!saveExcelConsultaSequence(sequence + 1)) {
+        throw new Error('El Excel se generó, pero no se pudo avanzar el consecutivo local de consulta.');
+      }
+      excelExportState.message = `Excel de consulta exportado: ${result.fileName}. Próxima consulta: ${formatExcelConsultaSequence(sequence + 1)}.`;
+      excelExportState.messageType = 'success';
+    } catch (error) {
+      console.error('KSA PRÁCTIKA: error al exportar Excel de consulta.', error);
+      excelExportState.message = error.message || 'No se pudo generar el Excel de consulta.';
+      excelExportState.messageType = 'error';
+    }
+
+    renderRoute();
+  }
+
   async function handleExcelExportSubmit(form) {
     if (!canCurrentRole('exportExcel')) {
       excelExportState.message = 'Solo Administrador puede exportar Excel.';
@@ -13558,14 +13656,19 @@
     }
 
     const { month, year, periodo } = getPeriodFromForm(form);
+    const sequence = getExcelCierreSequence();
+    const fileName = buildExcelCierreFileName(month, year, sequence);
     excelExportState.month = month;
     excelExportState.year = year;
-    excelExportState.message = 'Generando Excel del período...';
+    excelExportState.message = 'Generando Excel oficial de cierre...';
     excelExportState.messageType = 'success';
     renderRoute();
 
     try {
-      const result = await exportExcelForPeriod(month, year);
+      const result = await exportExcelForPeriod(month, year, { fileName });
+      if (!saveExcelCierreSequence(sequence + 1)) {
+        throw new Error('El Excel se generó, pero no se pudo avanzar el consecutivo local de cierre.');
+      }
       const record = normalizeExcelExportRecord({
         id: generateId('exportExcel'),
         periodo,
@@ -13586,7 +13689,7 @@
         detail: buildActivityDetail(['Excel exportado', periodo, result.fileName]),
         source: 'local'
       });
-      excelExportState.message = `Excel exportado: ${result.fileName}. Hojas: ${result.hojas.join(', ')}.`;
+      excelExportState.message = `Excel de cierre exportado: ${result.fileName}. Próximo cierre: ${formatExcelCierreSequence(sequence + 1)}. Hojas: ${result.hojas.join(', ')}.`;
       excelExportState.messageType = 'success';
       cierreMensualState.month = month;
       cierreMensualState.year = year;
@@ -13712,11 +13815,11 @@
     return window.confirm(`Advertencia: ${getMonthLabel(month)} ${year} está cerrado desde ${formatDateTime(cierre.fechaHoraCierre)}. ${actionLabel || 'Editar este movimiento'} dejará trazabilidad, pero modifica un período cerrado. ¿Continuar?`);
   }
 
-  async function exportExcelForPeriod(month, year) {
+  async function exportExcelForPeriod(month, year, options = {}) {
     if (typeof window.JSZip === 'undefined') {
       throw new Error('No se encontró JSZip local. La exportación Excel necesita la librería incluida en vendor/jszip.min.js.');
     }
-    const workbook = buildExcelWorkbookForPeriod(month, year);
+    const workbook = buildExcelWorkbookForPeriod(month, year, options);
     const zip = buildXlsxZip(workbook);
     const blob = await zip.generateAsync({
       type: 'blob',
@@ -13739,11 +13842,11 @@
     };
   }
 
-  function buildExcelWorkbookForPeriod(month, year) {
+  function buildExcelWorkbookForPeriod(month, year, options = {}) {
     const summary = buildResumenSummaryForFilters({ month, year });
     const exportedAt = nowIso();
     const label = summary.periodLabel;
-    const fileName = `KSA_PRACTIKA_${year}_${month}_CONTROL.xlsx`;
+    const fileName = cleanText(options.fileName) || `KSA_PRACTIKA_${year}_${month}_CONTROL.xlsx`;
     return {
       fileName,
       exportedAt,
@@ -15546,6 +15649,11 @@ ${rowsXml}
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         handleExcelExportSubmit(form);
+      });
+      form.querySelectorAll('[data-excel-consulta-export]').forEach((button) => {
+        button.addEventListener('click', () => {
+          handleExcelConsultaExport(form);
+        });
       });
     });
 
