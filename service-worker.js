@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_61_post12_excel_cierre_oficial';
+const CACHE_VERSION = 'v0_17_64_post12_notas_etapa3_calendario_json_final';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

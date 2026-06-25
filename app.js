@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.61-post12-excel-cierre-oficial';
+  const APP_VERSION = '0.17.64-post12-notas-etapa3-calendario-json-final';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -12,6 +12,7 @@
   const EXCEL_CIERRE_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_EXCEL_CIERRE_SEQUENCE_v1';
   const JSON_APPLIED_STORAGE_KEY = 'KSA_PRACTIKA_LAST_JSON_APPLIED_v1';
   const JSON_IMPORT_HISTORY_STORAGE_KEY = 'KSA_PRACTIKA_JSON_IMPORT_HISTORY_v1';
+  const NOTES_STORAGE_KEY = 'ksa_notas_v1';
   const JSON_IMPORT_HISTORY_MAX_ENTRIES = 80;
   const ACTIVITY_LOG_MAX_ENTRIES = 300;
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
@@ -75,6 +76,14 @@
       short: 'Gastos',
       description: 'Control práctico de gastos por fecha, tipo, método, banco, estado y observación.',
       placeholder: 'Gastos ya permite crear, editar y anular registros usando tipos, métodos y bancos desde Catálogos.'
+    },
+    {
+      id: 'notas',
+      icon: '✎',
+      title: 'Notas',
+      short: 'Notas',
+      description: 'Apuntes generales, pendientes de registrar y recordatorios operativos sin afectar cálculos ni cierres.',
+      placeholder: 'Notas tendrá apuntes, pendientes de registrar y recordatorios en etapas posteriores.'
     },
     {
       id: 'catalogos',
@@ -919,6 +928,11 @@
     ['proveedores', 'proveedores'],
     ['pagos', 'pagos'],
     ['gastos', 'gastos'],
+    ['notas', 'notas'],
+    ['notas-inicio', 'notas'],
+    ['notas-apuntes', 'notas-apuntes'],
+    ['recordatorios', 'notas-recordatorios'],
+    ['notas-recordatorios', 'notas-recordatorios'],
     ['catalogos', 'catalogos'],
     ['bdatos', 'bdatos'],
     ['excel', 'excel'],
@@ -984,6 +998,18 @@
   let gastosState = {
     editingId: null,
     openGroupKey: '',
+    message: null,
+    messageType: 'success'
+  };
+
+  let notasState = {
+    editingNoteId: null,
+    editingNoteType: '',
+    editingReminderId: null,
+    historyNotasOpen: false,
+    historyRecordatoriosOpen: false,
+    detailType: '',
+    detailId: '',
     message: null,
     messageType: 'success'
   };
@@ -1665,7 +1691,9 @@
     const compras = parsePositiveInteger(raw.comprasProveedores ?? raw.compras ?? raw.proveedores);
     const pagos = parsePositiveInteger(raw.pagosProveedores ?? raw.pagos);
     const cierres = parsePositiveInteger(raw.cierresMensuales ?? raw.cierres);
+    const notas = parsePositiveInteger(raw.notasModulo ?? raw.notas ?? raw.moduloNotas);
     const safeNumber = (value) => Number.isNaN(parsePositiveInteger(value)) ? 0 : parsePositiveInteger(value);
+    const safeNotas = Number.isNaN(notas) ? 0 : notas;
     return {
       ventas: safeNumber(raw.ventas),
       cobros: safeNumber(raw.cobros),
@@ -1679,6 +1707,8 @@
       cierresMensuales: Number.isNaN(cierres) ? 0 : cierres,
       cierres: Number.isNaN(cierres) ? 0 : cierres,
       exportacionesExcel: safeNumber(raw.exportacionesExcel),
+      notasModulo: safeNotas,
+      notas: safeNotas,
       ajustesClientes: safeNumber(raw.ajustesClientes),
       ajustesProveedores: safeNumber(raw.ajustesProveedores),
       bitacora: safeNumber(raw.bitacora)
@@ -1696,6 +1726,7 @@
       + normalized.bdatos
       + normalized.cierresMensuales
       + normalized.exportacionesExcel
+      + normalized.notasModulo
       + normalized.ajustesClientes
       + normalized.ajustesProveedores
       + normalized.bitacora;
@@ -1710,6 +1741,7 @@
       `${normalized.pagosProveedores} pagos`,
       `${normalized.gastos} gastos`,
       `${normalized.bdatos} Bdatos`,
+      `${normalized.notasModulo} Notas`,
       `${normalized.bitacora} bitácora`
     ];
     return parts.join(', ');
@@ -1814,6 +1846,7 @@
       { key: 'gastos', label: 'Gastos' },
       { key: 'cierresMensuales', label: 'Cierres' },
       { key: 'catalogos', label: 'Catálogos' },
+      { key: 'notasModulo', label: 'Notas' },
       { key: 'bitacora', label: 'Bitácora' }
     ];
   }
@@ -3914,7 +3947,8 @@
   function setActiveNav(route) {
     navButtons.forEach((button) => {
       const target = button.dataset.route;
-      const isActive = target === route || (route === 'excel' && target === 'excel') || ((route === 'respaldo' || route === 'configuracion') && target === 'configuracion');
+      const isNotasRoute = target === 'notas' && (route === 'notas' || route === 'notas-apuntes' || route === 'notas-recordatorios');
+      const isActive = target === route || isNotasRoute || (route === 'excel' && target === 'excel') || ((route === 'respaldo' || route === 'configuracion') && target === 'configuracion');
       button.classList.toggle('is-active', isActive);
       button.setAttribute('aria-current', isActive ? 'page' : 'false');
     });
@@ -4051,6 +4085,30 @@
       proveedoresState.message = null;
       pagosState.message = null;
       viewRoot.innerHTML = renderGastos();
+    } else if (route === 'notas') {
+      catalogState.message = null;
+      ventasState.message = null;
+      cobrosState.message = null;
+      proveedoresState.message = null;
+      pagosState.message = null;
+      gastosState.message = null;
+      viewRoot.innerHTML = renderNotasHome();
+    } else if (route === 'notas-apuntes') {
+      catalogState.message = null;
+      ventasState.message = null;
+      cobrosState.message = null;
+      proveedoresState.message = null;
+      pagosState.message = null;
+      gastosState.message = null;
+      viewRoot.innerHTML = renderNotasApuntes();
+    } else if (route === 'notas-recordatorios') {
+      catalogState.message = null;
+      ventasState.message = null;
+      cobrosState.message = null;
+      proveedoresState.message = null;
+      pagosState.message = null;
+      gastosState.message = null;
+      viewRoot.innerHTML = renderNotasRecordatorios();
     } else if (route === 'excel') {
       catalogState.message = null;
       ventasState.message = null;
@@ -4290,7 +4348,7 @@
         <div>
           <span class="eyebrow">Etapa 12 / Excel, cierre y hardening final</span>
           <h1>KSA PRÁCTIKA</h1>
-          <p class="lead">Webapp estática para convertir el control de OC, cobros, proveedores, pagos y gastos en un sistema operativo continuo. Ya tiene menú, navegación fija, Catálogos editables, Ventas / OC, Cobros de clientes, Proveedores / Compras, Pagos a proveedores, Gastos, mora avanzada, alertas, historial por documento, Resumen / Tablero operativo, importación inicial desde Excel, Configuración, roles básicos locales y respaldo JSON validado, exportación Excel y cierre mensual.</p>
+          <p class="lead">Webapp estática para convertir el control de OC, cobros, proveedores, pagos y gastos en un sistema operativo continuo. Ya tiene menú, navegación fija, Catálogos editables, Ventas / OC, Cobros de clientes, Proveedores / Compras, Pagos a proveedores, Gastos, Notas, mora avanzada, alertas, historial por documento, Resumen / Tablero operativo, importación inicial desde Excel, Configuración, roles básicos locales y respaldo JSON validado, exportación Excel y cierre mensual.</p>
         </div>
         <aside class="hero-status" aria-label="Estado inicial de la app">
           <h3>Estado de la app</h3>
@@ -4337,6 +4395,7 @@
             <span class="badge">Proveedores / Compras</span>
             <span class="badge">Pagos a proveedores</span>
             <span class="badge">Gastos</span>
+            <span class="badge">Notas</span>
             <span class="badge">Mora y Alertas</span>
             <span class="badge">Resumen / Tablero</span>
             <span class="badge">Excel / Cierre</span>
@@ -4347,6 +4406,1172 @@
         </article>
       </section>
     `;
+  }
+
+  function createInitialNotasData() {
+    return {
+      version: 1,
+      notas: [],
+      pendientes: [],
+      recordatorios: [],
+      metadata: {
+        createdAt: nowIso(),
+        updatedAt: nowIso()
+      }
+    };
+  }
+
+  function normalizeNotasEstado(value, fallback = 'Pendiente') {
+    const raw = cleanText(value);
+    const normalized = normalizeKeyForCompare(raw);
+    if (normalized === 'cumplido') return 'Cumplido';
+    if (normalized === 'cancelado') return 'Cancelado';
+    if (normalized === 'pendiente') return 'Pendiente';
+    return fallback;
+  }
+
+  function normalizeNotasPrioridad(value) {
+    const raw = cleanText(value);
+    const normalized = normalizeKeyForCompare(raw);
+    if (normalized === 'alta') return 'Alta';
+    if (normalized === 'baja') return 'Baja';
+    return 'Media';
+  }
+
+  function normalizeRecordatorioRelacion(value) {
+    const allowed = ['General', 'Ventas/OC', 'Cobros', 'Proveedores', 'Pagos', 'Gastos', 'Cierre mensual', 'Otro'];
+    const normalized = normalizeKeyForCompare(value || 'General');
+    const match = allowed.find((item) => normalizeKeyForCompare(item) === normalized);
+    return match || 'General';
+  }
+
+  function normalizeNotaGeneralRecord(raw = {}) {
+    const timestamp = nowIso();
+    const estado = normalizeNotasEstado(raw.estado, 'Pendiente');
+    const completedAt = cleanText(raw.completedAt || raw.cumplidoAt || '');
+    const isCompleted = normalizeBooleanField(raw.completed ?? raw.cumplido, false) || estado === 'Cumplido' || Boolean(completedAt);
+    return {
+      id: cleanText(raw.id) || generateId('nota'),
+      tipo: 'nota',
+      fecha: toDateInputValue(raw.fecha) || todayInputValue(),
+      titulo: cleanText(raw.titulo || raw.título || raw.nombre || 'Nota sin título'),
+      prioridad: normalizeNotasPrioridad(raw.prioridad),
+      estado: isCompleted ? 'Cumplido' : estado,
+      observacion: cleanText(raw.observacion || raw.observación || raw.nota || ''),
+      completed: isCompleted,
+      completedAt: isCompleted ? (completedAt || timestamp) : '',
+      createdAt: cleanText(raw.createdAt) || timestamp,
+      updatedAt: cleanText(raw.updatedAt) || cleanText(raw.createdAt) || timestamp
+    };
+  }
+
+  function normalizePendienteRecord(raw = {}) {
+    const timestamp = nowIso();
+    const completedAt = cleanText(raw.completedAt || raw.cumplidoAt || '');
+    const isCompleted = normalizeBooleanField(raw.completed ?? raw.cumplido, false) || normalizeNotasEstado(raw.estado, 'Pendiente') === 'Cumplido' || Boolean(completedAt);
+    return {
+      id: cleanText(raw.id) || generateId('pendiente'),
+      tipo: 'pendiente',
+      monto: roundMoney(parseMoney(raw.monto || raw.total || 0) || 0),
+      metodoPagoId: cleanText(raw.metodoPagoId || raw.metodo || raw.metodoPago || ''),
+      cuentaBancoId: cleanText(raw.cuentaBancoId || raw.banco || raw.cuentaBanco || ''),
+      descripcion: cleanText(raw.descripcion || raw.descripción || raw.observacion || ''),
+      estado: isCompleted ? 'Cumplido' : 'Pendiente',
+      completed: isCompleted,
+      completedAt: isCompleted ? (completedAt || timestamp) : '',
+      createdAt: cleanText(raw.createdAt) || timestamp,
+      updatedAt: cleanText(raw.updatedAt) || cleanText(raw.createdAt) || timestamp
+    };
+  }
+
+  function normalizeRecordatorioRecord(raw = {}) {
+    const timestamp = nowIso();
+    const estado = normalizeNotasEstado(raw.estado, 'Pendiente');
+    const completedAt = cleanText(raw.completedAt || raw.cumplidoAt || '');
+    const isCompleted = normalizeBooleanField(raw.completed ?? raw.cumplido, false) || estado === 'Cumplido' || Boolean(completedAt);
+    return {
+      id: cleanText(raw.id) || generateId('recordatorio'),
+      tipo: 'recordatorio',
+      titulo: cleanText(raw.titulo || raw.título || raw.nombre || 'Recordatorio sin título'),
+      descripcion: cleanText(raw.descripcion || raw.descripción || raw.detalle || ''),
+      fecha: toDateInputValue(raw.fecha || raw.fechaRecordatorio) || '',
+      hora: cleanText(raw.hora || ''),
+      prioridad: normalizeNotasPrioridad(raw.prioridad),
+      estado: isCompleted ? 'Cumplido' : estado,
+      relacion: normalizeRecordatorioRelacion(raw.relacion || raw.relación || raw.modulo || 'General'),
+      observacionFinal: cleanText(raw.observacionFinal || raw.observaciónFinal || raw.observacion || ''),
+      completed: isCompleted,
+      completedAt: isCompleted ? (completedAt || timestamp) : '',
+      createdAt: cleanText(raw.createdAt) || timestamp,
+      updatedAt: cleanText(raw.updatedAt) || cleanText(raw.createdAt) || timestamp
+    };
+  }
+
+  function normalizeNotasData(raw) {
+    const base = createInitialNotasData();
+    const source = isPlainObject(raw) ? raw : {};
+    return {
+      version: 1,
+      notas: Array.isArray(source.notas) ? source.notas.map(normalizeNotaGeneralRecord) : [],
+      pendientes: Array.isArray(source.pendientes) ? source.pendientes.map(normalizePendienteRecord) : [],
+      recordatorios: Array.isArray(source.recordatorios) ? source.recordatorios.map(normalizeRecordatorioRecord) : [],
+      metadata: {
+        ...base.metadata,
+        ...(isPlainObject(source.metadata) ? source.metadata : {}),
+        updatedAt: cleanText(source.metadata?.updatedAt) || nowIso()
+      }
+    };
+  }
+
+  function loadNotasData() {
+    try {
+      const raw = window.localStorage.getItem(NOTES_STORAGE_KEY);
+      const normalized = raw ? normalizeNotasData(JSON.parse(raw)) : createInitialNotasData();
+      saveNotasData(normalized);
+      return normalized;
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo leer el almacenamiento propio de Notas.', error);
+      const initial = createInitialNotasData();
+      saveNotasData(initial);
+      return initial;
+    }
+  }
+
+  function saveNotasData(data) {
+    try {
+      const normalized = normalizeNotasData(data);
+      normalized.metadata = {
+        ...(isPlainObject(normalized.metadata) ? normalized.metadata : {}),
+        updatedAt: nowIso()
+      };
+      window.localStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify(normalized));
+      return normalized;
+    } catch (error) {
+      console.error('KSA PRÁCTIKA: no se pudo guardar el módulo Notas.', error);
+      return normalizeNotasData(data);
+    }
+  }
+
+  function getNotasData() {
+    return loadNotasData();
+  }
+
+
+  function countNotasModuleRecords(data = getNotasData()) {
+    const normalized = normalizeNotasData(data);
+    return normalized.notas.length + normalized.pendientes.length + normalized.recordatorios.length;
+  }
+
+  function cloneNotasModuleData(data = getNotasData()) {
+    return normalizeNotasData(JSON.parse(JSON.stringify(normalizeNotasData(data))));
+  }
+
+  function getNotasBackupFromSource(source) {
+    const raw = isPlainObject(source) ? source : {};
+    const candidate = raw.notasModulo || raw.moduloNotas || raw.notasModule || raw.notesModule;
+    if (isPlainObject(candidate)) return normalizeNotasData(candidate);
+    const nestedNotas = isPlainObject(raw.notas) && (Array.isArray(raw.notas.notas) || Array.isArray(raw.notas.pendientes) || Array.isArray(raw.notas.recordatorios))
+      ? raw.notas
+      : null;
+    if (nestedNotas) return normalizeNotasData(nestedNotas);
+    return null;
+  }
+
+  function mergeNotasModuleData(currentData, incomingData) {
+    const current = normalizeNotasData(currentData);
+    const incoming = normalizeNotasData(incomingData);
+    const mergeById = (localList, incomingList, normalizer) => {
+      const merged = Array.isArray(localList) ? localList.map(normalizer) : [];
+      let addedCount = 0;
+      incomingList.map(normalizer).forEach((record) => {
+        const existingIndex = merged.findIndex((item) => cleanText(item.id) === cleanText(record.id));
+        if (existingIndex >= 0) {
+          merged[existingIndex] = normalizer({ ...merged[existingIndex], ...record, id: merged[existingIndex].id || record.id });
+          return;
+        }
+        merged.unshift(record);
+        addedCount += 1;
+      });
+      return { merged, addedCount };
+    };
+    const notasResult = mergeById(current.notas, incoming.notas, normalizeNotaGeneralRecord);
+    const pendientesResult = mergeById(current.pendientes, incoming.pendientes, normalizePendienteRecord);
+    const recordatoriosResult = mergeById(current.recordatorios, incoming.recordatorios, normalizeRecordatorioRecord);
+    return {
+      data: normalizeNotasData({
+        version: 1,
+        notas: notasResult.merged,
+        pendientes: pendientesResult.merged,
+        recordatorios: recordatoriosResult.merged,
+        metadata: {
+          ...current.metadata,
+          lastMergedAt: nowIso()
+        }
+      }),
+      added: notasResult.addedCount + pendientesResult.addedCount + recordatoriosResult.addedCount,
+      skipped: incoming.notas.length + incoming.pendientes.length + incoming.recordatorios.length - notasResult.addedCount - pendientesResult.addedCount - recordatoriosResult.addedCount
+    };
+  }
+
+  function setNotasMessage(message, type = 'success') {
+    notasState.message = message;
+    notasState.messageType = type;
+  }
+
+  function getNotasPriorityClass(prioridad) {
+    const normalized = normalizeKeyForCompare(prioridad);
+    if (normalized === 'alta') return 'is-high';
+    if (normalized === 'baja') return 'is-low';
+    return 'is-medium';
+  }
+
+  function getRecordatorioVisualClass(record) {
+    if (record.completed || record.estado === 'Cumplido') return 'is-done';
+    if (record.estado === 'Cancelado') return 'is-cancelled';
+    const fecha = toDateInputValue(record.fecha);
+    const today = todayInputValue();
+    if (fecha && fecha < today) return 'is-overdue';
+    if (fecha && fecha === today) return 'is-today';
+    if (fecha && fecha > today) return 'is-upcoming';
+    return 'is-pending';
+  }
+
+  function getRecordatorioVisualLabel(record) {
+    const visual = getRecordatorioVisualClass(record);
+    if (visual === 'is-overdue') return 'Vencido';
+    if (visual === 'is-today') return 'Hoy';
+    if (visual === 'is-upcoming') return 'Próximo';
+    if (visual === 'is-cancelled') return 'Cancelado';
+    if (visual === 'is-done') return 'Cumplido';
+    return 'Pendiente';
+  }
+
+
+  function escapeIcsText(value) {
+    return cleanText(value)
+      .replace(/\\/g, '\\\\')
+      .replace(/;/g, '\\;')
+      .replace(/,/g, '\\,')
+      .replace(/\r?\n/g, '\\n');
+  }
+
+  function foldIcsLine(line) {
+    const text = String(line || '');
+    const chunks = [];
+    let remaining = text;
+    while (remaining.length > 74) {
+      chunks.push(remaining.slice(0, 74));
+      remaining = ` ${remaining.slice(74)}`;
+    }
+    chunks.push(remaining);
+    return chunks.join('\r\n');
+  }
+
+  function formatIcsDate(dateInput) {
+    const safeDate = toDateInputValue(dateInput);
+    return safeDate ? safeDate.replace(/-/g, '') : '';
+  }
+
+  function formatIcsDateTime(dateInput, timeInput) {
+    const datePart = formatIcsDate(dateInput);
+    const rawTime = cleanText(timeInput).match(/^(\d{2}):(\d{2})/);
+    if (!datePart || !rawTime) return '';
+    return `${datePart}T${rawTime[1]}${rawTime[2]}00`;
+  }
+
+  function addMinutesToTimeValue(dateInput, timeInput, minutesToAdd = 30) {
+    const safeDate = toDateInputValue(dateInput);
+    const rawTime = cleanText(timeInput).match(/^(\d{2}):(\d{2})/);
+    if (!safeDate || !rawTime) return '';
+    const [year, month, day] = safeDate.split('-').map(Number);
+    const date = new Date(year, month - 1, day, Number(rawTime[1]), Number(rawTime[2]), 0);
+    if (Number.isNaN(date.getTime())) return '';
+    date.setMinutes(date.getMinutes() + minutesToAdd);
+    return `${formatDateInput(date)}T${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}00`.replace(/-/g, '');
+  }
+
+  function formatIcsTimestamp(value = new Date()) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  }
+
+  function buildRecordatorioIcsEvent(record) {
+    const normalized = normalizeRecordatorioRecord(record);
+    const fecha = toDateInputValue(normalized.fecha);
+    if (!fecha) return '';
+    const hasTime = /^\d{2}:\d{2}/.test(cleanText(normalized.hora));
+    const uid = `${cleanText(normalized.id) || generateId('recordatorio')}@ksa-practika`;
+    const descriptionLines = [
+      `Descripción / detalle: ${normalized.descripcion || '—'}`,
+      `Prioridad: ${normalized.prioridad}`,
+      `Estado: ${normalized.estado}`,
+      `Relación opcional: ${normalized.relacion || 'General'}`,
+      `Observación final: ${normalized.observacionFinal || '—'}`,
+      'Referencia: KSA PRÁCTIKA · Módulo Notas / Recordatorios'
+    ];
+    const lines = [
+      'BEGIN:VEVENT',
+      `UID:${escapeIcsText(uid)}`,
+      `DTSTAMP:${formatIcsTimestamp()}`,
+      `SUMMARY:${escapeIcsText(normalized.titulo || 'Recordatorio KSA PRÁCTIKA')}`,
+      `DESCRIPTION:${escapeIcsText(descriptionLines.join('\n'))}`,
+      `CATEGORIES:${escapeIcsText(['KSA PRÁCTIKA', 'Recordatorio', normalized.prioridad].filter(Boolean).join(','))}`,
+      `X-KSA-PRACTIKA-MODULE:${escapeIcsText('Notas / Recordatorios')}`
+    ];
+    if (hasTime) {
+      lines.push(`DTSTART:${formatIcsDateTime(fecha, normalized.hora)}`);
+      lines.push(`DTEND:${addMinutesToTimeValue(fecha, normalized.hora, 30) || formatIcsDateTime(fecha, normalized.hora)}`);
+    } else {
+      lines.push(`DTSTART;VALUE=DATE:${formatIcsDate(fecha)}`);
+      lines.push(`DTEND;VALUE=DATE:${formatIcsDate(addDaysToDate(fecha, 1))}`);
+    }
+    lines.push('END:VEVENT');
+    return lines.map(foldIcsLine).join('\r\n');
+  }
+
+  function buildRecordatoriosIcsCalendar(records = []) {
+    const events = (Array.isArray(records) ? records : [])
+      .map(buildRecordatorioIcsEvent)
+      .filter(Boolean);
+    if (!events.length) return '';
+    const lines = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH',
+      'PRODID:-//KSA PRACTIKA//Notas Recordatorios//ES',
+      `X-WR-CALNAME:${escapeIcsText('KSA PRÁCTIKA · Recordatorios')}`,
+      ...events,
+      'END:VCALENDAR'
+    ];
+    return `${lines.join('\r\n')}\r\n`;
+  }
+
+  function downloadTextFile(content, fileName, mimeType = 'text/plain;charset=utf-8') {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportRecordatorioToCalendar(id) {
+    const record = getNotasRecordByType('recordatorio', id);
+    if (!record) {
+      setNotasMessage('No se encontró el recordatorio para exportar.', 'error');
+      renderRoute();
+      return;
+    }
+    if (!toDateInputValue(record.fecha)) {
+      setNotasMessage('Este recordatorio no tiene fecha; no se generó calendario.', 'error');
+      renderRoute();
+      return;
+    }
+    const ics = buildRecordatoriosIcsCalendar([record]);
+    if (!ics) {
+      setNotasMessage('No se pudo generar el archivo .ics del recordatorio.', 'error');
+      renderRoute();
+      return;
+    }
+    downloadTextFile(ics, `Recordatorio_KSA_${toDateInputValue(record.fecha)}.ics`, 'text/calendar;charset=utf-8');
+    setNotasMessage('Recordatorio exportado al calendario .ics. Calendario feliz, caos bajo control.');
+    renderRoute();
+  }
+
+  function getExportableRecordatorios(records = []) {
+    return (Array.isArray(records) ? records : [])
+      .map(normalizeRecordatorioRecord)
+      .filter((record) => !record.completed && record.estado === 'Pendiente' && Boolean(toDateInputValue(record.fecha)));
+  }
+
+  function exportAllRecordatoriosToCalendar() {
+    const data = getNotasData();
+    const exportable = getExportableRecordatorios(data.recordatorios);
+    if (!exportable.length) {
+      setNotasMessage('No hay recordatorios pendientes con fecha para exportar.', 'error');
+      renderRoute();
+      return;
+    }
+    const ics = buildRecordatoriosIcsCalendar(exportable);
+    if (!ics) {
+      setNotasMessage('No se generó calendario porque no hay eventos válidos.', 'error');
+      renderRoute();
+      return;
+    }
+    downloadTextFile(ics, 'KSA_Recordatorios_Todos.ics', 'text/calendar;charset=utf-8');
+    setNotasMessage(`Exportación global lista: ${exportable.length} recordatorio(s) pendiente(s) en .ics.`);
+    renderRoute();
+  }
+
+  function getNotasModalId() { return 'notas'; }
+
+  function getNotasRecordByType(type, id, data = getNotasData()) {
+    const safeId = cleanText(id);
+    if (type === 'nota') return data.notas.find((record) => record.id === safeId) || null;
+    if (type === 'pendiente') return data.pendientes.find((record) => record.id === safeId) || null;
+    if (type === 'recordatorio') return data.recordatorios.find((record) => record.id === safeId) || null;
+    return null;
+  }
+
+  function renderNotasHome() {
+    const data = getNotasData();
+    const activeNotas = data.notas.filter((record) => !record.completed && record.estado !== 'Cumplido');
+    const activePendientes = data.pendientes.filter((record) => !record.completed);
+    const activeRecordatorios = data.recordatorios.filter((record) => !record.completed && record.estado !== 'Cumplido');
+    const historicalNotas = data.notas.filter((record) => record.completed || record.estado === 'Cumplido').length + data.pendientes.filter((record) => record.completed).length;
+    const historicalRecordatorios = data.recordatorios.filter((record) => record.completed || record.estado === 'Cumplido').length;
+    return `
+      <section class="hero notas-hero">
+        <div>
+          <span class="eyebrow">Módulo activo</span>
+          <h1>Notas</h1>
+          <p class="lead">Centro rápido para apuntes generales, pendientes de registrar y recordatorios operativos. Guarda aparte de la base de negocio, porque los apuntes no deben disfrazarse de contabilidad.</p>
+        </div>
+        <aside class="hero-status" aria-label="Estado del módulo Notas">
+          <h3>Etapa actual</h3>
+          <div class="status-grid">
+            <div class="status-item"><strong>Activos</strong><span>${activeNotas.length + activePendientes.length + activeRecordatorios.length}</span></div>
+            <div class="status-item"><strong>Históricos</strong><span>${historicalNotas + historicalRecordatorios}</span></div>
+            <div class="status-item"><strong>Storage</strong><span>${escapeHtml(NOTES_STORAGE_KEY)}</span></div>
+            <div class="status-item"><strong>Negocio</strong><span>Intacto</span></div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="card-grid notas-card-grid" aria-label="Secciones internas de Notas">
+        <article class="module-card notas-section-card">
+          <div class="module-icon" aria-hidden="true">✎</div>
+          <h3>Notas</h3>
+          <p>Notas generales y pendientes de registrar. Activos: ${activeNotas.length + activePendientes.length} · Histórico: ${historicalNotas}</p>
+          <button type="button" class="card-action" data-go="notas-apuntes">Entrar</button>
+        </article>
+        <article class="module-card notas-section-card">
+          <div class="module-icon" aria-hidden="true">⏱</div>
+          <h3>Recordatorios</h3>
+          <p>Avisos con fecha, prioridad, estado y relación opcional. Activos: ${activeRecordatorios.length} · Histórico: ${historicalRecordatorios}</p>
+          <button type="button" class="card-action" data-go="notas-recordatorios">Entrar</button>
+        </article>
+      </section>
+
+      <article class="placeholder-card notas-stage-card">
+        <h2>Funcionamiento separado</h2>
+        <p>Notas usa almacenamiento propio del módulo. Pendientes de registrar no crean gastos, no mueven saldos, no afectan Resumen y no bloquean cierres.</p>
+        <p class="notice">Recordatorios ya permite exportación .ics individual/global y Notas queda incluido en el respaldo JSON del proyecto sin tocar datos de negocio.</p>
+        <div class="placeholder-tools notas-icon-toolbar">
+          <button type="button" class="notas-icon-action" data-go="home" title="Volver" aria-label="Volver al Menú principal">←</button>
+        </div>
+      </article>
+    `;
+  }
+
+  function renderNotasApuntes() {
+    const data = getNotasData();
+    const editingNota = notasState.editingNoteType === 'nota' ? getNotasRecordByType('nota', notasState.editingNoteId, data) : null;
+    const editingPendiente = notasState.editingNoteType === 'pendiente' ? getNotasRecordByType('pendiente', notasState.editingNoteId, data) : null;
+    const activeNotas = data.notas.filter((record) => !record.completed && record.estado !== 'Cumplido');
+    const activePendientes = data.pendientes.filter((record) => !record.completed);
+    const historical = [
+      ...data.notas.filter((record) => record.completed || record.estado === 'Cumplido').map((record) => ({ ...record, tipoHistorial: 'Nota general' })),
+      ...data.pendientes.filter((record) => record.completed).map((record) => ({ ...record, tipoHistorial: 'Pendiente de registrar' }))
+    ].sort((a, b) => String(b.completedAt || b.updatedAt || '').localeCompare(String(a.completedAt || a.updatedAt || '')));
+
+    return `
+      <section class="hero notas-hero">
+        <div>
+          <span class="eyebrow">Notas</span>
+          <h1>Notas</h1>
+          <p class="lead">Notas generales y pendientes de registrar. Aquí se apunta; el negocio sigue donde debe estar.</p>
+        </div>
+        <aside class="hero-status" aria-label="Conteo de notas">
+          <h3>Estado</h3>
+          <div class="status-grid">
+            <div class="status-item"><strong>Notas</strong><span>${activeNotas.length}</span></div>
+            <div class="status-item"><strong>Pendientes</strong><span>${activePendientes.length}</span></div>
+            <div class="status-item"><strong>Histórico</strong><span>${historical.length}</span></div>
+            <div class="status-item"><strong>Impacto</strong><span>0 en negocio</span></div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="notas-shell">
+        ${notasState.message ? `<div class="form-message ${notasState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(notasState.message)}</div>` : ''}
+        <div class="notas-top-actions notas-icon-toolbar">
+          <button type="button" class="notas-icon-action" data-go="notas" title="Volver" aria-label="Volver a Notas">←</button>
+        </div>
+
+        <section class="panel-grid notas-form-grid">
+          <article class="panel-card notas-panel">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Nota general</span>
+                <h2>${editingNota ? 'Editar nota' : 'Agregar nota'}</h2>
+              </div>
+            </div>
+            ${renderNotaGeneralForm(editingNota)}
+          </article>
+          <article class="panel-card notas-panel">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Pendiente de registrar</span>
+                <h2>${editingPendiente ? 'Editar pendiente' : 'Agregar pendiente'}</h2>
+              </div>
+            </div>
+            ${renderPendienteForm(editingPendiente)}
+          </article>
+        </section>
+
+        <section class="panel-grid notas-list-grid">
+          <article class="panel-card notas-panel">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Activas</span>
+                <h2>Notas generales</h2>
+              </div>
+            </div>
+            ${renderNotasGeneralesTable(activeNotas)}
+          </article>
+          <article class="panel-card notas-panel">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Operativo</span>
+                <h2>Pendientes de registrar</h2>
+              </div>
+            </div>
+            <p class="notice compact-notice">Estos pendientes no crean gastos reales ni afectan Resumen, cierres, saldos o cálculos.</p>
+            ${renderPendientesTable(activePendientes)}
+          </article>
+        </section>
+
+        <article class="panel-card notas-panel notas-history-panel">
+          <button type="button" class="notas-history-toggle" data-notas-history-toggle="notas" title="Histórico" aria-expanded="${notasState.historyNotasOpen ? 'true' : 'false'}">
+            <span>${notasState.historyNotasOpen ? '▾' : '▸'} Histórico de Notas</span>
+            <strong>${historical.length}</strong>
+          </button>
+          ${notasState.historyNotasOpen ? renderNotasHistoryTable(historical) : ''}
+        </article>
+      </section>
+      ${renderNotasDetailModal(data)}
+    `;
+  }
+
+  function renderNotasRecordatorios() {
+    const data = getNotasData();
+    const editingRecordatorio = notasState.editingReminderId ? getNotasRecordByType('recordatorio', notasState.editingReminderId, data) : null;
+    const activeRecordatorios = data.recordatorios
+      .filter((record) => !record.completed && record.estado !== 'Cumplido')
+      .sort((a, b) => String(a.fecha || '').localeCompare(String(b.fecha || '')) || String(a.hora || '').localeCompare(String(b.hora || '')));
+    const historical = data.recordatorios
+      .filter((record) => record.completed || record.estado === 'Cumplido')
+      .sort((a, b) => String(b.completedAt || b.updatedAt || '').localeCompare(String(a.completedAt || a.updatedAt || '')));
+
+    return `
+      <section class="hero notas-hero">
+        <div>
+          <span class="eyebrow">Recordatorios</span>
+          <h1>Recordatorios</h1>
+          <p class="lead">Avisos con fecha, prioridad y seguimiento. Exporta recordatorios al calendario sin tocar ventas, cobros, gastos ni cierres.</p>
+        </div>
+        <aside class="hero-status" aria-label="Conteo de recordatorios">
+          <h3>Estado</h3>
+          <div class="status-grid">
+            <div class="status-item"><strong>Activos</strong><span>${activeRecordatorios.length}</span></div>
+            <div class="status-item"><strong>Vencidos</strong><span>${activeRecordatorios.filter((record) => getRecordatorioVisualClass(record) === 'is-overdue').length}</span></div>
+            <div class="status-item"><strong>Hoy</strong><span>${activeRecordatorios.filter((record) => getRecordatorioVisualClass(record) === 'is-today').length}</span></div>
+            <div class="status-item"><strong>Histórico</strong><span>${historical.length}</span></div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="notas-shell">
+        ${notasState.message ? `<div class="form-message ${notasState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(notasState.message)}</div>` : ''}
+        <div class="notas-top-actions notas-icon-toolbar">
+          <button type="button" class="notas-icon-action" data-go="notas" title="Volver" aria-label="Volver a Notas">←</button>
+        </div>
+
+        <article class="panel-card notas-panel">
+          <div class="section-title-row">
+            <div>
+              <span class="eyebrow mini">Recordatorio</span>
+              <h2>${editingRecordatorio ? 'Editar recordatorio' : 'Agregar recordatorio'}</h2>
+            </div>
+          </div>
+          ${renderRecordatorioForm(editingRecordatorio)}
+        </article>
+
+        <article class="panel-card notas-panel">
+          <div class="section-title-row">
+            <div>
+              <span class="eyebrow mini">Activos</span>
+              <h2>Recordatorios</h2>
+            </div>
+            <button type="button" class="notas-calendar-global-action" data-recordatorios-calendar-all title="Exportar todos al calendario" aria-label="Exportar todos los recordatorios pendientes al calendario">📅 <span>Exportar todos</span></button>
+          </div>
+          ${renderRecordatoriosTable(activeRecordatorios)}
+        </article>
+
+        <article class="panel-card notas-panel notas-history-panel">
+          <button type="button" class="notas-history-toggle" data-notas-history-toggle="recordatorios" title="Histórico" aria-expanded="${notasState.historyRecordatoriosOpen ? 'true' : 'false'}">
+            <span>${notasState.historyRecordatoriosOpen ? '▾' : '▸'} Histórico de Recordatorios</span>
+            <strong>${historical.length}</strong>
+          </button>
+          ${notasState.historyRecordatoriosOpen ? renderRecordatoriosHistoryTable(historical) : ''}
+        </article>
+      </section>
+      ${renderNotasDetailModal(data)}
+    `;
+  }
+
+  function renderNotaGeneralForm(record = null) {
+    return `
+      <form class="catalog-form" data-nota-general-form>
+        <div class="form-grid">
+          <label class="form-field">
+            <span>Fecha <b class="required-dot">*</b></span>
+            <input type="date" name="fecha" value="${escapeHtml(record?.fecha || todayInputValue())}" required />
+          </label>
+          <label class="form-field">
+            <span>Título <b class="required-dot">*</b></span>
+            <input type="text" name="titulo" value="${escapeHtml(record?.titulo || '')}" placeholder="Ej. Llamar a cliente" required />
+          </label>
+          <label class="form-field">
+            <span>Prioridad</span>
+            <select name="prioridad">
+              ${['Baja', 'Media', 'Alta'].map((item) => `<option value="${item}" ${normalizeNotasPrioridad(record?.prioridad) === item ? 'selected' : ''}>${item}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Estado</span>
+            <select name="estado">
+              ${['Pendiente', 'Cumplido', 'Cancelado'].map((item) => `<option value="${item}" ${normalizeNotasEstado(record?.estado, 'Pendiente') === item ? 'selected' : ''}>${item}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field full-span">
+            <span>Observación</span>
+            <textarea name="observacion" rows="3" placeholder="Apunte general">${escapeHtml(record?.observacion || '')}</textarea>
+          </label>
+        </div>
+        <div class="form-actions notas-icon-toolbar">
+          <button type="submit" class="notas-icon-action" title="${record ? 'Editar' : 'Agregar'}" aria-label="${record ? 'Editar' : 'Agregar'}">${record ? '✎' : '＋'}</button>
+          ${record ? '<button type="button" class="notas-icon-action" data-notas-cancel-edit title="Volver" aria-label="Cancelar edición">←</button>' : ''}
+        </div>
+      </form>
+    `;
+  }
+
+  function renderPendienteForm(record = null) {
+    const metodos = getCatalogRecords('metodosPago');
+    const bancos = getCatalogRecords('cuentasBancos');
+    return `
+      <form class="catalog-form" data-pendiente-form>
+        <div class="form-grid">
+          <label class="form-field">
+            <span>Monto</span>
+            <input type="number" name="monto" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(formatNumberInput(record?.monto || ''))}" placeholder="0.00" />
+          </label>
+          <label class="form-field">
+            <span>Método de pago</span>
+            <select name="metodoPagoId">
+              <option value="">Sin método</option>
+              ${metodos.map((item) => `<option value="${escapeHtml(item.id)}" ${record?.metodoPagoId === item.id ? 'selected' : ''}>${escapeHtml(item.nombre || 'Método sin nombre')}${item.activo ? '' : ' · inactivo'}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Cuenta/Banco</span>
+            <select name="cuentaBancoId">
+              <option value="">Sin cuenta/banco</option>
+              ${bancos.map((item) => `<option value="${escapeHtml(item.id)}" ${record?.cuentaBancoId === item.id ? 'selected' : ''}>${escapeHtml(item.nombre || 'Banco sin nombre')}${item.activo ? '' : ' · inactivo'}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field full-span">
+            <span>Descripción <b class="required-dot">*</b></span>
+            <textarea name="descripcion" rows="3" placeholder="Ej. Estacionamiento, cargadores, mercado" required>${escapeHtml(record?.descripcion || '')}</textarea>
+          </label>
+        </div>
+        <div class="form-actions notas-icon-toolbar">
+          <button type="submit" class="notas-icon-action" title="${record ? 'Editar' : 'Agregar'}" aria-label="${record ? 'Editar' : 'Agregar'}">${record ? '✎' : '＋'}</button>
+          ${record ? '<button type="button" class="notas-icon-action" data-notas-cancel-edit title="Volver" aria-label="Cancelar edición">←</button>' : ''}
+        </div>
+      </form>
+    `;
+  }
+
+  function renderRecordatorioForm(record = null) {
+    return `
+      <form class="catalog-form" data-recordatorio-form>
+        <div class="form-grid">
+          <label class="form-field">
+            <span>Título <b class="required-dot">*</b></span>
+            <input type="text" name="titulo" value="${escapeHtml(record?.titulo || '')}" placeholder="Ej. Revisar pago" required />
+          </label>
+          <label class="form-field">
+            <span>Fecha del recordatorio <b class="required-dot">*</b></span>
+            <input type="date" name="fecha" value="${escapeHtml(record?.fecha || todayInputValue())}" required />
+          </label>
+          <label class="form-field">
+            <span>Hora opcional</span>
+            <input type="time" name="hora" value="${escapeHtml(record?.hora || '')}" />
+          </label>
+          <label class="form-field">
+            <span>Prioridad</span>
+            <select name="prioridad">
+              ${['Baja', 'Media', 'Alta'].map((item) => `<option value="${item}" ${normalizeNotasPrioridad(record?.prioridad) === item ? 'selected' : ''}>${item}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Estado</span>
+            <select name="estado">
+              ${['Pendiente', 'Cumplido', 'Cancelado'].map((item) => `<option value="${item}" ${normalizeNotasEstado(record?.estado, 'Pendiente') === item ? 'selected' : ''}>${item}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Relación opcional</span>
+            <select name="relacion">
+              ${['General', 'Ventas/OC', 'Cobros', 'Proveedores', 'Pagos', 'Gastos', 'Cierre mensual', 'Otro'].map((item) => `<option value="${item}" ${normalizeRecordatorioRelacion(record?.relacion) === item ? 'selected' : ''}>${item}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field full-span">
+            <span>Descripción / detalle</span>
+            <textarea name="descripcion" rows="3" placeholder="Detalle del recordatorio">${escapeHtml(record?.descripcion || '')}</textarea>
+          </label>
+          <label class="form-field full-span">
+            <span>Observación final</span>
+            <textarea name="observacionFinal" rows="3" placeholder="Resultado, cierre o nota final">${escapeHtml(record?.observacionFinal || '')}</textarea>
+          </label>
+        </div>
+        <div class="form-actions notas-icon-toolbar">
+          <button type="submit" class="notas-icon-action" title="${record ? 'Editar' : 'Agregar'}" aria-label="${record ? 'Editar' : 'Agregar'}">${record ? '✎' : '＋'}</button>
+          ${record ? '<button type="button" class="notas-icon-action" data-recordatorio-cancel-edit title="Volver" aria-label="Cancelar edición">←</button>' : ''}
+        </div>
+      </form>
+    `;
+  }
+
+  function renderNotasGeneralesTable(records) {
+    if (!records.length) return '<p class="muted-text compact-note">No hay notas generales activas.</p>';
+    return `
+      <div class="operational-scroll-shell">
+        <div class="operational-top-scroll" aria-hidden="true"><div class="operational-scroll-rail"><span class="operational-scroll-thumb"></span></div><div class="operational-top-scroll-spacer"></div></div>
+        <div class="operational-table-wrap" tabindex="0">
+          <table class="operational-table operational-table-notas">
+            <thead><tr><th>✓</th><th>Fecha</th><th>Título</th><th>Prioridad</th><th>Estado</th><th>Observación</th><th>Acciones</th></tr></thead>
+            <tbody>${records.map(renderNotaGeneralRow).join('')}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderNotaGeneralRow(record) {
+    return `
+      <tr>
+        <td><button type="button" class="notas-icon-action mini" data-notas-complete="${escapeHtml(record.id)}" data-notas-type="nota" title="Marcar como cumplido" aria-label="Marcar como cumplido">☐</button></td>
+        <td><span>${escapeHtml(formatDate(record.fecha))}</span></td>
+        <td><span class="compact-primary" title="${escapeHtml(record.titulo)}">${escapeHtml(record.titulo)}</span></td>
+        <td><span class="notas-priority ${getNotasPriorityClass(record.prioridad)}">${escapeHtml(record.prioridad)}</span></td>
+        <td><span class="state-pill ${getEstadoClass(record.estado)}">${escapeHtml(record.estado)}</span></td>
+        <td><small title="${escapeHtml(record.observacion)}">${escapeHtml(record.observacion || '—')}</small></td>
+        <td><div class="record-actions compact-row-actions notas-icon-toolbar">
+          <button type="button" class="notas-icon-action mini" data-notas-view="${escapeHtml(record.id)}" data-notas-type="nota" title="Ver" aria-label="Ver">👁️</button>
+          <button type="button" class="notas-icon-action mini" data-notas-edit="${escapeHtml(record.id)}" data-notas-type="nota" title="Editar" aria-label="Editar">✎</button>
+          <button type="button" class="notas-icon-action mini danger" data-notas-delete="${escapeHtml(record.id)}" data-notas-type="nota" title="Borrar" aria-label="Borrar">🗑️</button>
+        </div></td>
+      </tr>
+    `;
+  }
+
+  function renderPendientesTable(records) {
+    if (!records.length) return '<p class="muted-text compact-note">No hay pendientes de registrar activos.</p>';
+    return `
+      <div class="operational-scroll-shell">
+        <div class="operational-top-scroll" aria-hidden="true"><div class="operational-scroll-rail"><span class="operational-scroll-thumb"></span></div><div class="operational-top-scroll-spacer"></div></div>
+        <div class="operational-table-wrap" tabindex="0">
+          <table class="operational-table operational-table-notas">
+            <thead><tr><th>✓</th><th>Monto</th><th>Método</th><th>Cuenta/Banco</th><th>Descripción</th><th>Acciones</th></tr></thead>
+            <tbody>${records.map(renderPendienteRow).join('')}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderPendienteRow(record) {
+    const metodo = getCatalogRecordById('metodosPago', record.metodoPagoId);
+    const banco = getCatalogRecordById('cuentasBancos', record.cuentaBancoId);
+    return `
+      <tr>
+        <td><button type="button" class="notas-icon-action mini" data-notas-complete="${escapeHtml(record.id)}" data-notas-type="pendiente" title="Marcar como cumplido" aria-label="Marcar como cumplido">☐</button></td>
+        <td class="amount-cell"><span>${escapeHtml(formatMoney(record.monto || 0))}</span></td>
+        <td><span>${escapeHtml(metodo?.nombre || '—')}</span></td>
+        <td><span>${escapeHtml(banco?.nombre || '—')}</span></td>
+        <td><small title="${escapeHtml(record.descripcion)}">${escapeHtml(record.descripcion || '—')}</small></td>
+        <td><div class="record-actions compact-row-actions notas-icon-toolbar">
+          <button type="button" class="notas-icon-action mini" data-notas-view="${escapeHtml(record.id)}" data-notas-type="pendiente" title="Ver" aria-label="Ver">👁️</button>
+          <button type="button" class="notas-icon-action mini" data-notas-edit="${escapeHtml(record.id)}" data-notas-type="pendiente" title="Editar" aria-label="Editar">✎</button>
+          <button type="button" class="notas-icon-action mini danger" data-notas-delete="${escapeHtml(record.id)}" data-notas-type="pendiente" title="Borrar" aria-label="Borrar">🗑️</button>
+        </div></td>
+      </tr>
+    `;
+  }
+
+  function renderNotasHistoryTable(records) {
+    if (!records.length) return '<p class="muted-text compact-note">Histórico vacío.</p>';
+    return `
+      <div class="operational-scroll-shell notas-history-table">
+        <div class="operational-top-scroll" aria-hidden="true"><div class="operational-scroll-rail"><span class="operational-scroll-thumb"></span></div><div class="operational-top-scroll-spacer"></div></div>
+        <div class="operational-table-wrap" tabindex="0">
+          <table class="operational-table operational-table-notas">
+            <thead><tr><th>✓</th><th>Tipo</th><th>Detalle</th><th>Fecha cumplimiento</th><th>Acciones</th></tr></thead>
+            <tbody>${records.map((record) => renderNotasHistoryRow(record)).join('')}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderNotasHistoryRow(record) {
+    const isNota = record.tipo === 'nota';
+    const title = isNota ? record.titulo : record.descripcion;
+    return `
+      <tr>
+        <td><span class="notas-check-done" title="Cumplido" aria-label="Cumplido">☑</span></td>
+        <td><span>${escapeHtml(record.tipoHistorial || (isNota ? 'Nota general' : 'Pendiente de registrar'))}</span></td>
+        <td><span class="compact-primary" title="${escapeHtml(title)}">${escapeHtml(title || '—')}</span></td>
+        <td><span>${escapeHtml(formatDateTime(record.completedAt || record.updatedAt || record.createdAt))}</span></td>
+        <td><div class="record-actions compact-row-actions notas-icon-toolbar">
+          <button type="button" class="notas-icon-action mini" data-notas-view="${escapeHtml(record.id)}" data-notas-type="${isNota ? 'nota' : 'pendiente'}" title="Ver" aria-label="Ver">👁️</button>
+          <button type="button" class="notas-icon-action mini danger" data-notas-delete="${escapeHtml(record.id)}" data-notas-type="${isNota ? 'nota' : 'pendiente'}" title="Borrar" aria-label="Borrar">🗑️</button>
+        </div></td>
+      </tr>
+    `;
+  }
+
+  function renderRecordatoriosTable(records) {
+    if (!records.length) return '<p class="muted-text compact-note">No hay recordatorios activos.</p>';
+    return `
+      <div class="operational-scroll-shell">
+        <div class="operational-top-scroll" aria-hidden="true"><div class="operational-scroll-rail"><span class="operational-scroll-thumb"></span></div><div class="operational-top-scroll-spacer"></div></div>
+        <div class="operational-table-wrap" tabindex="0">
+          <table class="operational-table operational-table-recordatorios">
+            <thead><tr><th>✓</th><th>Fecha</th><th>Hora</th><th>Título</th><th>Prioridad</th><th>Estado</th><th>Relación</th><th>Clasificación</th><th>Acciones</th></tr></thead>
+            <tbody>${records.map(renderRecordatorioRow).join('')}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderRecordatorioRow(record) {
+    const visualClass = getRecordatorioVisualClass(record);
+    return `
+      <tr class="recordatorio-row ${visualClass}">
+        <td><button type="button" class="notas-icon-action mini" data-recordatorio-complete="${escapeHtml(record.id)}" title="Marcar como cumplido" aria-label="Marcar como cumplido">☐</button></td>
+        <td><span>${escapeHtml(formatDate(record.fecha))}</span></td>
+        <td><span>${escapeHtml(record.hora || '—')}</span></td>
+        <td><span class="compact-primary" title="${escapeHtml(record.titulo)}">${escapeHtml(record.titulo)}</span><small title="${escapeHtml(record.descripcion)}">${escapeHtml(record.descripcion || '')}</small></td>
+        <td><span class="notas-priority ${getNotasPriorityClass(record.prioridad)}">${escapeHtml(record.prioridad)}</span></td>
+        <td><span class="state-pill ${getEstadoClass(record.estado)}">${escapeHtml(record.estado)}</span></td>
+        <td><span>${escapeHtml(record.relacion || 'General')}</span></td>
+        <td><span class="recordatorio-class-pill ${visualClass}">${escapeHtml(getRecordatorioVisualLabel(record))}</span></td>
+        <td><div class="record-actions compact-row-actions notas-icon-toolbar">
+          <button type="button" class="notas-icon-action mini" data-recordatorio-calendar="${escapeHtml(record.id)}" title="Exportar al calendario" aria-label="Exportar al calendario">📅</button>
+          <button type="button" class="notas-icon-action mini" data-recordatorio-view="${escapeHtml(record.id)}" title="Ver" aria-label="Ver">👁️</button>
+          <button type="button" class="notas-icon-action mini" data-recordatorio-edit="${escapeHtml(record.id)}" title="Editar" aria-label="Editar">✎</button>
+          <button type="button" class="notas-icon-action mini danger" data-recordatorio-delete="${escapeHtml(record.id)}" title="Borrar" aria-label="Borrar">🗑️</button>
+        </div></td>
+      </tr>
+    `;
+  }
+
+  function renderRecordatoriosHistoryTable(records) {
+    if (!records.length) return '<p class="muted-text compact-note">Histórico vacío.</p>';
+    return `
+      <div class="operational-scroll-shell notas-history-table">
+        <div class="operational-top-scroll" aria-hidden="true"><div class="operational-scroll-rail"><span class="operational-scroll-thumb"></span></div><div class="operational-top-scroll-spacer"></div></div>
+        <div class="operational-table-wrap" tabindex="0">
+          <table class="operational-table operational-table-recordatorios">
+            <thead><tr><th>✓</th><th>Fecha</th><th>Hora</th><th>Título</th><th>Relación</th><th>Fecha cumplimiento</th><th>Acciones</th></tr></thead>
+            <tbody>${records.map(renderRecordatorioHistoryRow).join('')}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderRecordatorioHistoryRow(record) {
+    return `
+      <tr>
+        <td><span class="notas-check-done" title="Cumplido" aria-label="Cumplido">☑</span></td>
+        <td><span>${escapeHtml(formatDate(record.fecha))}</span></td>
+        <td><span>${escapeHtml(record.hora || '—')}</span></td>
+        <td><span class="compact-primary" title="${escapeHtml(record.titulo)}">${escapeHtml(record.titulo)}</span></td>
+        <td><span>${escapeHtml(record.relacion || 'General')}</span></td>
+        <td><span>${escapeHtml(formatDateTime(record.completedAt || record.updatedAt || record.createdAt))}</span></td>
+        <td><div class="record-actions compact-row-actions notas-icon-toolbar">
+          <button type="button" class="notas-icon-action mini" data-recordatorio-view="${escapeHtml(record.id)}" title="Ver" aria-label="Ver">👁️</button>
+          <button type="button" class="notas-icon-action mini danger" data-recordatorio-delete="${escapeHtml(record.id)}" title="Borrar" aria-label="Borrar">🗑️</button>
+        </div></td>
+      </tr>
+    `;
+  }
+
+  function renderNotasDetailModal(data = getNotasData()) {
+    if (!notasState.detailType || !notasState.detailId) return '';
+    const record = getNotasRecordByType(notasState.detailType, notasState.detailId, data);
+    if (!record) return '';
+    let body = '';
+    if (notasState.detailType === 'nota') {
+      body = `
+        <dl class="notas-detail-list">
+          <dt>Tipo</dt><dd>Nota general</dd>
+          <dt>Fecha</dt><dd>${escapeHtml(formatDate(record.fecha))}</dd>
+          <dt>Título</dt><dd>${escapeHtml(record.titulo)}</dd>
+          <dt>Prioridad</dt><dd>${escapeHtml(record.prioridad)}</dd>
+          <dt>Estado</dt><dd>${escapeHtml(record.estado)}</dd>
+          <dt>Observación</dt><dd>${escapeHtml(record.observacion || '—')}</dd>
+          <dt>Creado</dt><dd>${escapeHtml(formatDateTime(record.createdAt))}</dd>
+          <dt>Cumplido</dt><dd>${escapeHtml(record.completedAt ? formatDateTime(record.completedAt) : '—')}</dd>
+        </dl>`;
+    } else if (notasState.detailType === 'pendiente') {
+      const metodo = getCatalogRecordById('metodosPago', record.metodoPagoId);
+      const banco = getCatalogRecordById('cuentasBancos', record.cuentaBancoId);
+      body = `
+        <dl class="notas-detail-list">
+          <dt>Tipo</dt><dd>Pendiente de registrar</dd>
+          <dt>Monto</dt><dd>${escapeHtml(formatMoney(record.monto || 0))}</dd>
+          <dt>Método de pago</dt><dd>${escapeHtml(metodo?.nombre || '—')}</dd>
+          <dt>Cuenta/Banco</dt><dd>${escapeHtml(banco?.nombre || '—')}</dd>
+          <dt>Descripción</dt><dd>${escapeHtml(record.descripcion || '—')}</dd>
+          <dt>Creado</dt><dd>${escapeHtml(formatDateTime(record.createdAt))}</dd>
+          <dt>Cumplido</dt><dd>${escapeHtml(record.completedAt ? formatDateTime(record.completedAt) : '—')}</dd>
+        </dl>`;
+    } else if (notasState.detailType === 'recordatorio') {
+      body = `
+        <dl class="notas-detail-list">
+          <dt>Tipo</dt><dd>Recordatorio</dd>
+          <dt>Título</dt><dd>${escapeHtml(record.titulo)}</dd>
+          <dt>Descripción / detalle</dt><dd>${escapeHtml(record.descripcion || '—')}</dd>
+          <dt>Fecha</dt><dd>${escapeHtml(formatDate(record.fecha))}</dd>
+          <dt>Hora</dt><dd>${escapeHtml(record.hora || '—')}</dd>
+          <dt>Prioridad</dt><dd>${escapeHtml(record.prioridad)}</dd>
+          <dt>Estado</dt><dd>${escapeHtml(record.estado)}</dd>
+          <dt>Relación</dt><dd>${escapeHtml(record.relacion || 'General')}</dd>
+          <dt>Observación final</dt><dd>${escapeHtml(record.observacionFinal || '—')}</dd>
+          <dt>Clasificación</dt><dd>${escapeHtml(getRecordatorioVisualLabel(record))}</dd>
+          <dt>Creado</dt><dd>${escapeHtml(formatDateTime(record.createdAt))}</dd>
+          <dt>Cumplido</dt><dd>${escapeHtml(record.completedAt ? formatDateTime(record.completedAt) : '—')}</dd>
+        </dl>`;
+    }
+    return renderEditModal(getNotasModalId(), 'Ver detalle', 'Consulta completa del registro seleccionado.', body);
+  }
+
+  function clearNotasForms() {
+    notasState.editingNoteId = null;
+    notasState.editingNoteType = '';
+    notasState.editingReminderId = null;
+  }
+
+  function clearNotasDetail() {
+    notasState.detailType = '';
+    notasState.detailId = '';
+    renderRoute();
+  }
+
+  function saveNotaGeneralRecord(form) {
+    const formData = new FormData(form);
+    const timestamp = nowIso();
+    const data = getNotasData();
+    const existing = notasState.editingNoteType === 'nota' ? getNotasRecordByType('nota', notasState.editingNoteId, data) : null;
+    const titulo = cleanText(formData.get('titulo'));
+    if (!titulo) {
+      setNotasMessage('La Nota general necesita título.', 'error');
+      renderRoute();
+      return;
+    }
+    const estado = normalizeNotasEstado(formData.get('estado'), 'Pendiente');
+    const completed = estado === 'Cumplido';
+    const record = normalizeNotaGeneralRecord({
+      ...(existing || {}),
+      id: existing?.id || generateId('nota'),
+      fecha: toDateInputValue(formData.get('fecha')) || todayInputValue(),
+      titulo,
+      prioridad: formData.get('prioridad'),
+      estado,
+      observacion: formData.get('observacion'),
+      completed,
+      completedAt: completed ? (existing?.completedAt || timestamp) : '',
+      createdAt: existing?.createdAt || timestamp,
+      updatedAt: timestamp
+    });
+    data.notas = existing ? data.notas.map((item) => item.id === existing.id ? record : item) : [record, ...data.notas];
+    saveNotasData(data);
+    clearNotasForms();
+    setNotasMessage(completed ? 'Nota general guardada en Histórico.' : 'Nota general guardada.');
+    renderRoute();
+  }
+
+  function savePendienteRecord(form) {
+    const formData = new FormData(form);
+    const timestamp = nowIso();
+    const data = getNotasData();
+    const existing = notasState.editingNoteType === 'pendiente' ? getNotasRecordByType('pendiente', notasState.editingNoteId, data) : null;
+    const descripcion = cleanText(formData.get('descripcion'));
+    if (!descripcion) {
+      setNotasMessage('El Pendiente de registrar necesita descripción.', 'error');
+      renderRoute();
+      return;
+    }
+    const rawMonto = formData.get('monto');
+    const monto = rawMonto === null || rawMonto === '' ? 0 : parseMoney(rawMonto);
+    if (Number.isNaN(monto) || monto < 0) {
+      setNotasMessage('El monto del pendiente debe ser válido.', 'error');
+      renderRoute();
+      return;
+    }
+    const record = normalizePendienteRecord({
+      ...(existing || {}),
+      id: existing?.id || generateId('pendiente'),
+      monto,
+      metodoPagoId: formData.get('metodoPagoId'),
+      cuentaBancoId: formData.get('cuentaBancoId'),
+      descripcion,
+      estado: existing?.estado || 'Pendiente',
+      completed: existing?.completed || false,
+      completedAt: existing?.completedAt || '',
+      createdAt: existing?.createdAt || timestamp,
+      updatedAt: timestamp
+    });
+    data.pendientes = existing ? data.pendientes.map((item) => item.id === existing.id ? record : item) : [record, ...data.pendientes];
+    saveNotasData(data);
+    clearNotasForms();
+    setNotasMessage('Pendiente de registrar guardado sin afectar Gastos ni Resumen. Así sí: apunte es apunte.');
+    renderRoute();
+  }
+
+  function saveRecordatorioRecord(form) {
+    const formData = new FormData(form);
+    const timestamp = nowIso();
+    const data = getNotasData();
+    const existing = notasState.editingReminderId ? getNotasRecordByType('recordatorio', notasState.editingReminderId, data) : null;
+    const titulo = cleanText(formData.get('titulo'));
+    const fecha = toDateInputValue(formData.get('fecha'));
+    if (!titulo) {
+      setNotasMessage('El recordatorio necesita título.', 'error');
+      renderRoute();
+      return;
+    }
+    if (!fecha) {
+      setNotasMessage('La fecha del recordatorio es obligatoria.', 'error');
+      renderRoute();
+      return;
+    }
+    const estado = normalizeNotasEstado(formData.get('estado'), 'Pendiente');
+    const completed = estado === 'Cumplido';
+    const record = normalizeRecordatorioRecord({
+      ...(existing || {}),
+      id: existing?.id || generateId('recordatorio'),
+      titulo,
+      descripcion: formData.get('descripcion'),
+      fecha,
+      hora: formData.get('hora'),
+      prioridad: formData.get('prioridad'),
+      estado,
+      relacion: formData.get('relacion'),
+      observacionFinal: formData.get('observacionFinal'),
+      completed,
+      completedAt: completed ? (existing?.completedAt || timestamp) : '',
+      createdAt: existing?.createdAt || timestamp,
+      updatedAt: timestamp
+    });
+    data.recordatorios = existing ? data.recordatorios.map((item) => item.id === existing.id ? record : item) : [record, ...data.recordatorios];
+    saveNotasData(data);
+    clearNotasForms();
+    setNotasMessage(completed ? 'Recordatorio guardado en Histórico.' : 'Recordatorio guardado.');
+    renderRoute();
+  }
+
+  function editNotaRecord(type, id) {
+    notasState.editingNoteType = type;
+    notasState.editingNoteId = id;
+    notasState.editingReminderId = null;
+    notasState.message = null;
+    renderRoute();
+  }
+
+  function editRecordatorioRecord(id) {
+    notasState.editingReminderId = id;
+    notasState.editingNoteType = '';
+    notasState.editingNoteId = null;
+    notasState.message = null;
+    renderRoute();
+  }
+
+  function viewNotaRecord(type, id) {
+    notasState.detailType = type;
+    notasState.detailId = id;
+    renderRoute();
+  }
+
+  function viewRecordatorioRecord(id) {
+    notasState.detailType = 'recordatorio';
+    notasState.detailId = id;
+    renderRoute();
+  }
+
+  function completeNotaRecord(type, id) {
+    const data = getNotasData();
+    const timestamp = nowIso();
+    if (type === 'nota') {
+      data.notas = data.notas.map((record) => record.id === id ? normalizeNotaGeneralRecord({ ...record, estado: 'Cumplido', completed: true, completedAt: record.completedAt || timestamp, updatedAt: timestamp }) : record);
+    } else if (type === 'pendiente') {
+      data.pendientes = data.pendientes.map((record) => record.id === id ? normalizePendienteRecord({ ...record, estado: 'Cumplido', completed: true, completedAt: record.completedAt || timestamp, updatedAt: timestamp }) : record);
+    }
+    saveNotasData(data);
+    clearNotasForms();
+    setNotasMessage('Registro marcado como cumplido y enviado al Histórico.');
+    renderRoute();
+  }
+
+  function completeRecordatorioRecord(id) {
+    const data = getNotasData();
+    const timestamp = nowIso();
+    data.recordatorios = data.recordatorios.map((record) => record.id === id ? normalizeRecordatorioRecord({ ...record, estado: 'Cumplido', completed: true, completedAt: record.completedAt || timestamp, updatedAt: timestamp }) : record);
+    saveNotasData(data);
+    clearNotasForms();
+    setNotasMessage('Recordatorio marcado como cumplido y enviado al Histórico.');
+    renderRoute();
+  }
+
+  function deleteNotaRecord(type, id) {
+    const label = type === 'pendiente' ? 'este pendiente' : 'esta nota';
+    if (!window.confirm(`¿Borrar ${label}? Esta acción no toca datos de negocio.`)) return;
+    const data = getNotasData();
+    if (type === 'nota') data.notas = data.notas.filter((record) => record.id !== id);
+    if (type === 'pendiente') data.pendientes = data.pendientes.filter((record) => record.id !== id);
+    saveNotasData(data);
+    clearNotasForms();
+    setNotasMessage('Registro borrado definitivamente del módulo Notas.');
+    renderRoute();
+  }
+
+  function deleteRecordatorioRecord(id) {
+    if (!window.confirm('¿Borrar este recordatorio? Esta acción no toca datos de negocio.')) return;
+    const data = getNotasData();
+    data.recordatorios = data.recordatorios.filter((record) => record.id !== id);
+    saveNotasData(data);
+    clearNotasForms();
+    setNotasMessage('Recordatorio borrado definitivamente.');
+    renderRoute();
+  }
+
+  function toggleNotasHistory(kind) {
+    if (kind === 'recordatorios') notasState.historyRecordatoriosOpen = !notasState.historyRecordatoriosOpen;
+    else notasState.historyNotasOpen = !notasState.historyNotasOpen;
+    renderRoute();
   }
 
   function renderPlaceholder(module) {
@@ -12305,6 +13530,7 @@
     const bitacora = Array.isArray(activityEntries)
       ? activityEntries.length
       : (Array.isArray(data.bitacora) ? data.bitacora.length : 0);
+    const notasBackup = getNotasBackupFromSource(data) || (dataSource === appData ? getNotasData() : null);
     const counts = normalizeBackupCounts({
       catalogos,
       ventas: Array.isArray(data.ventas) ? data.ventas.length : 0,
@@ -12315,6 +13541,7 @@
       bdatos: Array.isArray(data.bdatos) ? data.bdatos.length : 0,
       cierresMensuales,
       exportacionesExcel: Array.isArray(data.exportacionesExcel) ? data.exportacionesExcel.length : 0,
+      notasModulo: notasBackup ? countNotasModuleRecords(notasBackup) : 0,
       ajustesClientes: Array.isArray(data.ventas) ? data.ventas.reduce((sum, venta) => sum + normalizeVentaAjustesList(venta?.ajustes).length, 0) : 0,
       ajustesProveedores: Array.isArray(data.comprasProveedores) ? data.comprasProveedores.reduce((sum, compra) => sum + normalizeCompraProveedorAjustesList(compra?.ajustes).length, 0) : 0,
       bitacora
@@ -12366,6 +13593,8 @@
     const exportedAt = cleanText(exportOptions.exportedAt) || nowIso();
     const identity = normalizeDeviceIdentity(appDeviceIdentity);
     const activityEntries = getRecentActivityEntries(ACTIVITY_LOG_MAX_ENTRIES);
+    const notasModulo = cloneNotasModuleData();
+    snapshot.notasModulo = notasModulo;
     const lastActivity = normalizeActivitySummary(activityEntries[0] || identity.lastActivity);
     const counts = getJsonRecordCounts(snapshot, activityEntries);
     const catalogos = CATALOGS.reduce((acc, catalog) => {
@@ -12406,6 +13635,8 @@
         cierres: snapshot.cierresMensuales || [],
         cierresMensuales: snapshot.cierresMensuales || [],
         exportacionesExcel: snapshot.exportacionesExcel || [],
+        notasModulo,
+        moduloNotas: notasModulo,
         configuracion: normalizeConfiguracion(snapshot.configuracion),
         bitacora: activityEntries
       }
@@ -12554,12 +13785,31 @@
     if (!backupDate) warnings.push('El respaldo no trae fecha de exportación; se validará por estructura compatible.');
 
     const data = extracted.data || {};
-    [...CATALOGS.map((catalog) => catalog.id), 'ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'cierresMensuales'].forEach((key) => {
-      if (!Array.isArray(data[key])) errors.push(`Falta array requerido: ${key}.`);
+    const notasBackup = getNotasBackupFromSource(data);
+    const requiredKeys = [...CATALOGS.map((catalog) => catalog.id), 'ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'cierresMensuales'];
+    const missingRequiredKeys = requiredKeys.filter((key) => !Array.isArray(data[key]));
+    const rawRecordsSource = isPlainObject(raw?.registros) ? raw.registros : raw;
+    const rawCatalogsSource = isPlainObject(rawRecordsSource?.catalogos) ? rawRecordsSource.catalogos : {};
+    const businessArrayAliases = [
+      ...CATALOGS.map((catalog) => catalog.id),
+      'ventas', 'cobros', 'comprasProveedores', 'proveedoresCompras', 'compras',
+      'pagosProveedores', 'pagos', 'gastos', 'cierresMensuales', 'cierres',
+      'bdatos', 'Bdatos', 'exportacionesExcel'
+    ];
+    const hasAnyBusinessArray = businessArrayAliases.some((key) => (
+      Array.isArray(rawRecordsSource?.[key]) || Array.isArray(rawCatalogsSource?.[key])
+    ));
+    const isNotasPartialBackup = Boolean(notasBackup) && !hasAnyBusinessArray;
+    missingRequiredKeys.forEach((key) => {
+      if (!isNotasPartialBackup) errors.push(`Falta array requerido: ${key}.`);
     });
+    if (isNotasPartialBackup) warnings.push('Respaldo parcial detectado: contiene solo módulo Notas. Se importará sin tocar datos de negocio.');
 
     const normalized = errors.length ? null : normalizeData({
       ...data,
+      notasModulo: notasBackup || getNotasBackupFromSource(data),
+      __partialImport: isNotasPartialBackup,
+      __partialModules: isNotasPartialBackup ? { notasModulo: true } : {},
       configuracion: data.configuracion || {},
       metadata: {
         ...(metadata || {}),
@@ -12568,6 +13818,11 @@
         importedFromBackupAt: backupDate
       }
     });
+    if (normalized && notasBackup) {
+      normalized.notasModulo = notasBackup;
+      normalized.__partialImport = isNotasPartialBackup;
+      normalized.__partialModules = isNotasPartialBackup ? { notasModulo: true } : {};
+    }
     const counts = getJsonRecordCounts(data, activityLog);
     if (counts.total <= 0) warnings.push('El respaldo no contiene registros operativos; puede ser una base vacía.');
     if (schemaVersion && schemaVersion !== SCHEMA_VERSION) warnings.push(`Schema del archivo: ${schemaVersion}. Schema actual: ${SCHEMA_VERSION}. Se intentará normalizar.`);
@@ -12625,13 +13880,15 @@
           bdatosUpdatedAt: registros.bdatosUpdatedAt || registros.bdatosLastUpdatedAt || '',
           cierresMensuales: registros.cierresMensuales || registros.cierres || [],
           exportacionesExcel: registros.exportacionesExcel || [],
+          notasModulo: getNotasBackupFromSource(registros) || getNotasBackupFromSource(raw),
           configuracion: registros.configuracion || raw.configuracion || {}
         }
       };
     }
 
+    const flatNotasModulo = getNotasBackupFromSource(raw);
     const hasFlatArrays = CATALOGS.some((catalog) => Array.isArray(raw[catalog.id])) || DATA_KEYS.some((key) => Array.isArray(raw[key]));
-    if (!hasFlatArrays) return { data: null };
+    if (!hasFlatArrays && !flatNotasModulo) return { data: null };
     return {
       data: {
         clientes: raw.clientes,
@@ -12650,6 +13907,7 @@
         bdatosUpdatedAt: raw.bdatosUpdatedAt || raw.bdatosLastUpdatedAt || '',
         cierresMensuales: raw.cierresMensuales || [],
         exportacionesExcel: raw.exportacionesExcel || [],
+        notasModulo: flatNotasModulo,
         configuracion: raw.configuracion || {}
       }
     };
@@ -12721,8 +13979,30 @@
 
   function applyJsonBackupPayload(importData, mode) {
     const timestamp = nowIso();
+    const incomingNotas = getNotasBackupFromSource(importData);
     const incoming = normalizeData(importData);
+    if (incomingNotas) incoming.notasModulo = incomingNotas;
     const loaded = getJsonRecordCounts(incoming);
+    const isPartialNotasImport = Boolean(importData?.__partialImport || incoming.__partialImport || (incomingNotas && ![...CATALOGS.map((catalog) => catalog.id), 'ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'cierresMensuales'].some((key) => Array.isArray(importData?.[key]))));
+    if (isPartialNotasImport) {
+      const added = { catalogos: 0, bdatos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, cierresMensuales: 0, exportacionesExcel: 0, notasModulo: 0, notas: 0, total: 0 };
+      let skipped = 0;
+      if (incomingNotas) {
+        if (mode === 'replace') {
+          saveNotasData({ ...incomingNotas, metadata: { ...incomingNotas.metadata, importedAt: timestamp, updatedAt: timestamp } });
+          added.notasModulo = countNotasModuleRecords(incomingNotas);
+          added.notas = added.notasModulo;
+        } else {
+          const notesMerge = mergeNotasModuleData(getNotasData(), incomingNotas);
+          saveNotasData(notesMerge.data);
+          added.notasModulo = notesMerge.added;
+          added.notas = notesMerge.added;
+          skipped = notesMerge.skipped;
+        }
+      }
+      added.total = added.notasModulo;
+      return { loaded, added, skipped };
+    }
     if (mode === 'replace') {
       const activeRole = getCurrentRole();
       appData = normalizeData({
@@ -12739,6 +14019,7 @@
           updatedAt: timestamp
         }
       });
+      if (incomingNotas) saveNotasData({ ...incomingNotas, metadata: { ...incomingNotas.metadata, importedAt: timestamp, updatedAt: timestamp } });
       return { loaded, added: loaded, skipped: 0 };
     }
 
@@ -12746,7 +14027,7 @@
     const idMaps = buildCatalogMergeMaps(target, incoming, timestamp);
     const ventaIdMap = new Map();
     const compraIdMap = new Map();
-    const added = { catalogos: 0, bdatos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, cierresMensuales: 0, exportacionesExcel: 0, total: 0 };
+    const added = { catalogos: 0, bdatos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, cierresMensuales: 0, exportacionesExcel: 0, notasModulo: 0, notas: 0, total: 0 };
     let skipped = 0;
 
     CATALOGS.forEach((catalog) => {
@@ -12886,9 +14167,17 @@
       added.exportacionesExcel += 1;
     });
 
+    if (incomingNotas) {
+      const notesMerge = mergeNotasModuleData(getNotasData(), incomingNotas);
+      saveNotasData(notesMerge.data);
+      added.notasModulo = notesMerge.added;
+      added.notas = notesMerge.added;
+      skipped += notesMerge.skipped;
+    }
+
     target.ventas = recalculateVentasWithCobros(target.ventas, target.cobros);
     target.comprasProveedores = recalculateComprasProveedoresWithPagos(target.comprasProveedores, target.pagosProveedores);
-    added.total = added.catalogos + added.bdatos + added.ventas + added.cobros + added.comprasProveedores + added.pagosProveedores + added.gastos + added.cierresMensuales + added.exportacionesExcel;
+    added.total = added.catalogos + added.bdatos + added.ventas + added.cobros + added.comprasProveedores + added.pagosProveedores + added.gastos + added.cierresMensuales + added.exportacionesExcel + added.notasModulo;
     appData = normalizeData({
       ...target,
       configuracion: {
@@ -15333,6 +16622,11 @@ ${rowsXml}
     else if (id === getCobroModalId()) clearCobroForm();
     else if (id === getPagoModalId()) clearPagoProveedorForm();
     else if (id === getGastoModalId()) clearGastoForm();
+    else if (id === getNotasModalId()) {
+      notasState.detailType = '';
+      notasState.detailId = '';
+      renderRoute();
+    }
   }
 
   function bindViewActions() {
@@ -15350,6 +16644,79 @@ ${rowsXml}
       });
     });
 
+    viewRoot.querySelectorAll('[data-nota-general-form]').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveNotaGeneralRecord(form);
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-pendiente-form]').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        savePendienteRecord(form);
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-recordatorio-form]').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveRecordatorioRecord(form);
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-notas-cancel-edit], [data-recordatorio-cancel-edit]').forEach((button) => {
+      button.addEventListener('click', () => {
+        clearNotasForms();
+        notasState.message = null;
+        renderRoute();
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-notas-edit]').forEach((button) => {
+      button.addEventListener('click', () => editNotaRecord(button.dataset.notasType, button.dataset.notasEdit));
+    });
+
+    viewRoot.querySelectorAll('[data-notas-delete]').forEach((button) => {
+      button.addEventListener('click', () => deleteNotaRecord(button.dataset.notasType, button.dataset.notasDelete));
+    });
+
+    viewRoot.querySelectorAll('[data-notas-complete]').forEach((button) => {
+      button.addEventListener('click', () => completeNotaRecord(button.dataset.notasType, button.dataset.notasComplete));
+    });
+
+    viewRoot.querySelectorAll('[data-notas-view]').forEach((button) => {
+      button.addEventListener('click', () => viewNotaRecord(button.dataset.notasType, button.dataset.notasView));
+    });
+
+    viewRoot.querySelectorAll('[data-recordatorio-edit]').forEach((button) => {
+      button.addEventListener('click', () => editRecordatorioRecord(button.dataset.recordatorioEdit));
+    });
+
+    viewRoot.querySelectorAll('[data-recordatorio-delete]').forEach((button) => {
+      button.addEventListener('click', () => deleteRecordatorioRecord(button.dataset.recordatorioDelete));
+    });
+
+    viewRoot.querySelectorAll('[data-recordatorio-complete]').forEach((button) => {
+      button.addEventListener('click', () => completeRecordatorioRecord(button.dataset.recordatorioComplete));
+    });
+
+    viewRoot.querySelectorAll('[data-recordatorio-view]').forEach((button) => {
+      button.addEventListener('click', () => viewRecordatorioRecord(button.dataset.recordatorioView));
+    });
+
+
+    viewRoot.querySelectorAll('[data-recordatorio-calendar]').forEach((button) => {
+      button.addEventListener('click', () => exportRecordatorioToCalendar(button.dataset.recordatorioCalendar));
+    });
+
+    viewRoot.querySelectorAll('[data-recordatorios-calendar-all]').forEach((button) => {
+      button.addEventListener('click', exportAllRecordatoriosToCalendar);
+    });
+
+    viewRoot.querySelectorAll('[data-notas-history-toggle]').forEach((button) => {
+      button.addEventListener('click', () => toggleNotasHistory(button.dataset.notasHistoryToggle));
+    });
 
     viewRoot.querySelectorAll('[data-accordion-toggle]').forEach((button) => {
       button.addEventListener('click', () => toggleAccordionGroup(button.dataset.accordionModule, button.dataset.accordionKey));

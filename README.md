@@ -1,3 +1,14 @@
+# KSA PRÁCTIKA — Notas Etapa 3/3: Calendario, JSON y hardening final
+
+Cambios principales de esta entrega:
+- Recordatorios agrega exportación individual .ics con ícono 📅 y validación de fecha.
+- Recordatorios agrega exportación global `KSA_Recordatorios_Todos.ics` solo para pendientes con fecha, excluyendo cumplidos/históricos y cancelados.
+- Respaldo JSON incluye el módulo Notas como bloque separado (`notasModulo` / `moduloNotas`) sin mezclarlo con ventas, cobros, gastos ni cierres.
+- Importación JSON reconoce Notas en respaldos completos y respaldos parciales de Notas, evitando duplicados por ID y sin borrar datos de negocio no incluidos.
+- Versión/cache PWA actualizado a `0.17.64-post12-notas-etapa3-calendario-json-final`.
+
+---
+
 # KSA PRÁCTIKA — Post12 Resumen Retenciones
 
 Cambios principales de esta entrega:
