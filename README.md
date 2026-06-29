@@ -1,3 +1,19 @@
+## 0.17.67-post12-facturas-etapa3-cobros-historico-json-final
+
+- Facturas queda conectada documentalmente con Cobros: cuando una OC queda totalmente cobrada, las facturas vinculadas pasan a `Pagada` sin tocar montos, saldos, retenciones ni recibido real.
+- Se evita pisar estados delicados: `Anulada` y `Otro` no se actualizan automáticamente; las facturas intermedias por salto solo se marcan si fueron clasificadas fuera de `Otro`.
+- Se agregó Histórico de Facturas agrupado por períodos cerrados, desplegable, con resumen, listado ordenado por fecha reciente y paginación de 20 por período.
+- La búsqueda por No. de factura se mantiene global para período actual e históricos.
+- Respaldo/importación JSON incluye el módulo Facturas como módulo propio, compatible con respaldo general y parcial, sin sobrescribir estados/observaciones existentes en fusiones.
+- Versión/cache PWA actualizado a `0.17.67-post12-facturas-etapa3-cobros-historico-json-final`.
+
+## 0.17.66-post12-facturas-etapa2-ventas-consecutivos
+
+- Módulo Facturas conectado con Ventas / OC: al guardar facturas en una OC se crean registros automáticos en Facturas.
+- Control de saltos de consecutivo con conservación de ceros iniciales; las intermedias quedan en Estado “Otro” y pendientes de clasificar.
+- Prevención de duplicados por No. de factura sin sobrescribir datos manuales.
+- Versión/cache PWA actualizado a `0.17.66-post12-facturas-etapa2-ventas-consecutivos`.
+
 # KSA PRÁCTIKA — Notas Etapa 3/3: Calendario, JSON y hardening final
 
 Cambios principales de esta entrega:
