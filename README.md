@@ -1,3 +1,18 @@
+## 0.17.70-post12-periodo-trabajo-etapa3-cierres-json-final
+
+- Se blindó el selector global para reconciliar automáticamente el Período de trabajo después de cierres generales e importaciones JSON.
+- Los períodos cerrados desde Excel / Cierre quedan fuera del selector editable; si el período activo se cierra, se selecciona el período abierto más reciente.
+- JSON incluye metadata segura del Período de trabajo y al importar evita dejar seleccionados períodos cerrados o inexistentes.
+- Se mantiene Facturas sin cierre propio: sus históricos siguen agrupándose visualmente por el cierre general de Excel.
+- Versión/cache PWA actualizado a `0.17.70-post12-periodo-trabajo-etapa3-cierres-json-final`.
+
+## 0.17.68-post12-periodo-trabajo-etapa1-selector
+
+- Se agregó selector global de **Período de trabajo** con persistencia local segura.
+- El selector muestra únicamente períodos trabajables detectados/operativos y excluye períodos cerrados desde Excel / Cierre.
+- Se prepara la separación visual entre período de origen del documento y fecha real de cobros/pagos, sin cambiar cálculos ni lógica profunda de módulos.
+- Versión/cache PWA actualizado a `0.17.68-post12-periodo-trabajo-etapa1-selector`.
+
 ## 0.17.67-post12-facturas-etapa3-cobros-historico-json-final
 
 - Facturas queda conectada documentalmente con Cobros: cuando una OC queda totalmente cobrada, las facturas vinculadas pasan a `Pagada` sin tocar montos, saldos, retenciones ni recibido real.

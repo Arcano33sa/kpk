@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.67-post12-facturas-etapa3-cobros-historico-json-final';
+  const APP_VERSION = '0.17.70-post12-periodo-trabajo-etapa3-cierres-json-final';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -14,6 +14,7 @@
   const JSON_IMPORT_HISTORY_STORAGE_KEY = 'KSA_PRACTIKA_JSON_IMPORT_HISTORY_v1';
   const NOTES_STORAGE_KEY = 'ksa_notas_v1';
   const FACTURAS_STORAGE_KEY = 'ksa_facturas_v1';
+  const WORK_PERIOD_STORAGE_KEY = 'KSA_PRACTIKA_WORK_PERIOD_v1';
   const JSON_IMPORT_HISTORY_MAX_ENTRIES = 80;
   const ACTIVITY_LOG_MAX_ENTRIES = 300;
   const FACTURAS_PAGE_SIZE = 20;
@@ -953,6 +954,7 @@
   ]);
 
   const viewRoot = document.querySelector('#viewRoot');
+  const periodWorkbar = document.querySelector('#periodWorkbar');
   const navButtons = Array.from(document.querySelectorAll('[data-route]'));
 
   let catalogState = {
@@ -2136,6 +2138,7 @@
       lastJsonBackupSummary: normalizeJsonBackupExportSummary(source.lastJsonBackupSummary),
       lastImportAt: cleanText(source.lastImportAt),
       lastJsonImportSummary: normalizeJsonBackupImportSummary(source.lastJsonImportSummary),
+      periodoTrabajoSeleccionado: normalizeWorkPeriodKey(source.periodoTrabajoSeleccionado || source.workPeriodSelected || source.periodoTrabajo?.periodo || source.workPeriod?.periodo || ''),
       pwaLastSearchAt: cleanText(source.pwaLastSearchAt),
       pwaLastUpdateAt: cleanText(source.pwaLastUpdateAt),
       updatedAt: source.updatedAt || nowIso()
@@ -3681,6 +3684,7 @@
   }
 
   let appData = loadData();
+  reconcileWorkPeriodSelectionAfterDataChange();
   let appDeviceIdentity = loadDeviceIdentity();
   let appActivityLog = loadActivityLog();
 
@@ -4037,6 +4041,7 @@
     }
     lastRenderedRoute = route;
     setActiveNav(route);
+    renderWorkPeriodSelector();
 
     if (route === 'home') {
       catalogState.message = null;
@@ -4199,6 +4204,338 @@
     } else {
       window.scrollTo({ top: 0, left: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
     }
+  }
+
+
+  function normalizeWorkPeriodKey(value) {
+    const raw = cleanText(value);
+    const match = raw.match(/^(\d{4})-(\d{2})$/);
+    if (!match) return '';
+    const year = match[1];
+    const month = match[2];
+    if (Number(month) < 1 || Number(month) > 12) return '';
+    return `${year}-${month}`;
+  }
+
+  function getStoredWorkPeriodKey() {
+    try {
+      return normalizeWorkPeriodKey(localStorage.getItem(WORK_PERIOD_STORAGE_KEY));
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo leer el período de trabajo guardado.', error);
+      return '';
+    }
+  }
+
+  function saveStoredWorkPeriodKey(periodo) {
+    const safe = normalizeWorkPeriodKey(periodo);
+    if (!safe) return;
+    try {
+      localStorage.setItem(WORK_PERIOD_STORAGE_KEY, safe);
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo guardar el período de trabajo.', error);
+    }
+  }
+
+  function clearStoredWorkPeriodKey() {
+    try {
+      localStorage.removeItem(WORK_PERIOD_STORAGE_KEY);
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo limpiar el período de trabajo guardado.', error);
+    }
+  }
+
+  function isWorkPeriodClosed(periodo) {
+    const safe = normalizeWorkPeriodKey(periodo);
+    return Boolean(safe && getCierreMensualForPeriodKey(safe));
+  }
+
+  function buildWorkPeriodInfo(periodo, source = 'Detectado') {
+    const safe = normalizeWorkPeriodKey(periodo);
+    if (!safe) return null;
+    const [year, month] = safe.split('-');
+    return {
+      periodo: safe,
+      month,
+      year,
+      label: `${getMonthLabel(month)} ${year}`,
+      source: cleanText(source) || 'Detectado'
+    };
+  }
+
+  function addWorkPeriodCandidate(target, periodo, source = 'Detectado') {
+    const info = buildWorkPeriodInfo(periodo, source);
+    if (!info) return;
+    const current = target.get(info.periodo);
+    if (!current) {
+      target.set(info.periodo, info);
+      return;
+    }
+    const sources = new Set(String(current.source || '').split(' · ').filter(Boolean));
+    sources.add(info.source);
+    current.source = Array.from(sources).join(' · ');
+  }
+
+  function addWorkPeriodCandidateFromDate(target, dateInput, source = 'Documento') {
+    const periodInfo = getPeriodFromOriginDate(dateInput);
+    if (!periodInfo) return;
+    addWorkPeriodCandidate(target, periodInfo.periodo, source);
+  }
+
+  function addRelativeWorkPeriodCandidate(target, monthOffset, source = 'Operativo') {
+    const base = new Date();
+    const date = new Date(base.getFullYear(), base.getMonth() + Number(monthOffset || 0), 1);
+    addWorkPeriodCandidate(target, `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`, source);
+  }
+
+  function getFacturasModuloPeriodsForWorkSelector() {
+    try {
+      const facturasData = getFacturasData();
+      return (Array.isArray(facturasData.facturas) ? facturasData.facturas : [])
+        .map((record) => normalizeFacturaModuloRecord(record))
+        .map((record) => normalizeWorkPeriodKey(record.periodo) || normalizeWorkPeriodKey(getPeriodFromOriginDate(record.fecha)?.periodo))
+        .filter(Boolean);
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudieron leer períodos del módulo Facturas.', error);
+      return [];
+    }
+  }
+
+  function getAvailableWorkPeriods() {
+    const candidates = new Map();
+
+    addRelativeWorkPeriodCandidate(candidates, -1, 'Mes anterior operativo');
+    addRelativeWorkPeriodCandidate(candidates, 0, 'Mes actual operativo');
+
+    const stored = getStoredWorkPeriodKey();
+    if (stored && !isWorkPeriodClosed(stored)) addWorkPeriodCandidate(candidates, stored, 'Selección guardada');
+
+    const ventas = (Array.isArray(appData.ventas) ? appData.ventas : []).map((record) => normalizeVentaRecord(record));
+    const compras = (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : []).map((record) => normalizeCompraProveedorRecord(record));
+    const ventasById = new Map(ventas.map((venta) => [venta.id, venta]));
+    const comprasById = new Map(compras.map((compra) => [compra.id, compra]));
+
+    ventas
+      .filter((record) => record.activo)
+      .forEach((record) => addWorkPeriodCandidateFromDate(candidates, record.fechaOc || record.fecha, 'Ventas / OC'));
+
+    compras
+      .filter((record) => record.activo)
+      .forEach((record) => addWorkPeriodCandidateFromDate(candidates, record.fechaCompra || record.fecha, 'Proveedores / Compras'));
+
+    (Array.isArray(appData.cobros) ? appData.cobros : [])
+      .map((record) => normalizeCobroRecord(record))
+      .filter((record) => record.activo)
+      .forEach((record) => {
+        const venta = ventasById.get(record.ventaId);
+        if (venta) addWorkPeriodCandidateFromDate(candidates, venta.fechaOc || venta.fecha, 'Cobros → OC');
+        else addWorkPeriodCandidateFromDate(candidates, record.fechaCobro || record.fecha, 'Cobros sin OC');
+      });
+
+    (Array.isArray(appData.pagosProveedores) ? appData.pagosProveedores : [])
+      .map((record) => normalizePagoProveedorRecord(record))
+      .filter((record) => record.activo)
+      .forEach((record) => {
+        const compra = comprasById.get(record.compraProveedorId || record.compraIdOrigen);
+        if (compra) addWorkPeriodCandidateFromDate(candidates, compra.fechaCompra || compra.fecha, 'Pagos → Compra');
+        else addWorkPeriodCandidateFromDate(candidates, record.fechaPago || record.fecha, 'Pagos sin compra');
+      });
+
+    (Array.isArray(appData.gastos) ? appData.gastos : [])
+      .filter((record) => normalizeGastoRecord(record).activo)
+      .forEach((record) => addWorkPeriodCandidateFromDate(candidates, record.fecha, 'Gastos'));
+
+    getFacturasModuloPeriodsForWorkSelector()
+      .forEach((periodo) => addWorkPeriodCandidate(candidates, periodo, 'Facturas'));
+
+    return Array.from(candidates.values())
+      .filter((item) => !isWorkPeriodClosed(item.periodo))
+      .sort((a, b) => String(b.periodo).localeCompare(String(a.periodo)));
+  }
+
+  function reconcileWorkPeriodSelectionAfterDataChange(preferredPeriodo = '') {
+    const preferred = normalizeWorkPeriodKey(preferredPeriodo) || getStoredWorkPeriodKey();
+    const periods = getAvailableWorkPeriods();
+    if (!periods.length) {
+      clearStoredWorkPeriodKey();
+      return { periodo: '', label: '', changed: Boolean(preferred), empty: true };
+    }
+
+    const selected = (preferred && periods.find((item) => item.periodo === preferred)) || periods[0];
+    if (!preferred || selected.periodo !== preferred) {
+      saveStoredWorkPeriodKey(selected.periodo);
+      return { ...selected, changed: Boolean(preferred && selected.periodo !== preferred), empty: false };
+    }
+
+    saveStoredWorkPeriodKey(selected.periodo);
+    return { ...selected, changed: false, empty: false };
+  }
+
+  function resolveActiveWorkPeriodInfo() {
+    return reconcileWorkPeriodSelectionAfterDataChange();
+  }
+
+  function getActiveWorkPeriodInfo() {
+    return resolveActiveWorkPeriodInfo();
+  }
+
+  function getWorkPeriodBackupInfo() {
+    const active = getActiveWorkPeriodInfo();
+    const stored = getStoredWorkPeriodKey();
+    const selected = normalizeWorkPeriodKey(active?.periodo || stored);
+    return {
+      periodo: selected,
+      label: active?.label || (selected ? buildWorkPeriodInfo(selected)?.label || '' : ''),
+      source: active?.source || '',
+      disponible: Boolean(active && selected),
+      cerradosExcluidos: true
+    };
+  }
+
+  function getActiveWorkPeriodKey() {
+    return getActiveWorkPeriodInfo()?.periodo || '';
+  }
+
+  function getActiveWorkPeriodInfoOrCurrent() {
+    const active = getActiveWorkPeriodInfo();
+    if (active) return active;
+    return buildWorkPeriodInfo(getPeriodFromOriginDate(todayInputValue())?.periodo, 'Mes actual') || {
+      periodo: '',
+      month: String(new Date().getMonth() + 1).padStart(2, '0'),
+      year: String(new Date().getFullYear()),
+      label: 'Período actual',
+      source: 'Mes actual'
+    };
+  }
+
+  function getActiveWorkPeriodKeyOrCurrent() {
+    return normalizeWorkPeriodKey(getActiveWorkPeriodInfoOrCurrent()?.periodo) || getPeriodFromOriginDate(todayInputValue())?.periodo || '';
+  }
+
+  function getWorkPeriodDefaultDate() {
+    const period = getActiveWorkPeriodKeyOrCurrent();
+    const today = todayInputValue();
+    const todayPeriod = getPeriodFromOriginDate(today)?.periodo || '';
+    if (!period) return today;
+    return period === todayPeriod ? today : `${period}-01`;
+  }
+
+  function getWorkPeriodLabelText() {
+    return getActiveWorkPeriodInfoOrCurrent()?.label || 'Período actual';
+  }
+
+  function getPeriodKeyFromDateValue(dateInput) {
+    return normalizeWorkPeriodKey(getPeriodFromOriginDate(dateInput)?.periodo);
+  }
+
+  function isDateInWorkPeriod(dateInput, periodo = getActiveWorkPeriodKeyOrCurrent()) {
+    const datePeriod = getPeriodKeyFromDateValue(dateInput);
+    const targetPeriod = normalizeWorkPeriodKey(periodo);
+    return Boolean(datePeriod && targetPeriod && datePeriod === targetPeriod);
+  }
+
+  function getVentaOriginPeriodKey(record) {
+    const venta = normalizeVentaRecord(record);
+    return getPeriodKeyFromDateValue(venta.fechaOc || venta.fecha);
+  }
+
+  function isVentaInWorkPeriod(record, periodo = getActiveWorkPeriodKeyOrCurrent()) {
+    return getVentaOriginPeriodKey(record) === normalizeWorkPeriodKey(periodo);
+  }
+
+  function getCompraOriginPeriodKey(record) {
+    const compra = normalizeCompraProveedorRecord(record);
+    return getPeriodKeyFromDateValue(compra.fechaCompra || compra.fecha);
+  }
+
+  function isCompraInWorkPeriod(record, periodo = getActiveWorkPeriodKeyOrCurrent()) {
+    return getCompraOriginPeriodKey(record) === normalizeWorkPeriodKey(periodo);
+  }
+
+  function getVentaRecordById(ventaId) {
+    const cleanId = cleanText(ventaId);
+    if (!cleanId) return null;
+    return (Array.isArray(appData.ventas) ? appData.ventas : [])
+      .map((record) => normalizeVentaRecord(record))
+      .find((record) => record.id === cleanId) || null;
+  }
+
+  function getCompraProveedorRecordById(compraId) {
+    const cleanId = cleanText(compraId);
+    if (!cleanId) return null;
+    return (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [])
+      .map((record) => normalizeCompraProveedorRecord(record))
+      .find((record) => record.id === cleanId) || null;
+  }
+
+  function isCobroInWorkPeriod(record, periodo = getActiveWorkPeriodKeyOrCurrent()) {
+    const cobro = normalizeCobroRecord(record);
+    const venta = getVentaRecordById(cobro.ventaId);
+    if (venta) return isVentaInWorkPeriod(venta, periodo);
+    return isDateInWorkPeriod(cobro.fechaCobro, periodo);
+  }
+
+  function isPagoProveedorInWorkPeriod(record, periodo = getActiveWorkPeriodKeyOrCurrent()) {
+    const pago = normalizePagoProveedorRecord(record);
+    const compra = getCompraProveedorRecordById(pago.compraProveedorId || pago.compraIdOrigen);
+    if (compra) return isCompraInWorkPeriod(compra, periodo);
+    return isDateInWorkPeriod(pago.fechaPago, periodo);
+  }
+
+  function isGastoInWorkPeriod(record, periodo = getActiveWorkPeriodKeyOrCurrent()) {
+    const gasto = normalizeGastoRecord(record);
+    return isDateInWorkPeriod(gasto.fecha, periodo);
+  }
+
+  function renderWorkPeriodInlineNotice(moduleLabel = 'Módulo operativo') {
+    const info = getActiveWorkPeriodInfoOrCurrent();
+    return `<p class="notice compact-notice work-period-inline-notice"><strong>${escapeHtml(moduleLabel)}:</strong> mostrando y creando documentos del período de trabajo ${escapeHtml(info.label)}. Cobros y pagos conservan su fecha real de movimiento.</p>`;
+  }
+
+  function renderWorkPeriodSelector() {
+    if (!periodWorkbar) return;
+    const periods = getAvailableWorkPeriods();
+    const active = resolveActiveWorkPeriodInfo();
+
+    if (!periods.length || !active) {
+      periodWorkbar.innerHTML = `
+        <section class="work-period-panel is-empty" aria-label="Período de trabajo">
+          <div class="work-period-copy">
+            <span class="eyebrow mini">Período de trabajo</span>
+            <strong>No hay períodos disponibles para trabajar.</strong>
+            <small>Los períodos cerrados desde Excel / Cierre quedan solo para histórico o consulta.</small>
+          </div>
+        </section>
+      `;
+      return;
+    }
+
+    periodWorkbar.innerHTML = `
+      <section class="work-period-panel" aria-label="Selector global de Período de trabajo">
+        <div class="work-period-copy">
+          <span class="eyebrow mini">Período de trabajo</span>
+          <strong>${escapeHtml(active.label)}</strong>
+          <small>Documento por período de origen; cobros y pagos por fecha real.</small>
+        </div>
+        <label class="work-period-select-shell">
+          <span>Período</span>
+          <select data-work-period-selector aria-label="Seleccionar período de trabajo">
+            ${periods.map((item) => `<option value="${escapeHtml(item.periodo)}" ${item.periodo === active.periodo ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
+          </select>
+        </label>
+      </section>
+    `;
+
+    periodWorkbar.querySelector('[data-work-period-selector]')?.addEventListener('change', (event) => {
+      const next = normalizeWorkPeriodKey(event.target.value);
+      const available = getAvailableWorkPeriods();
+      const match = available.find((item) => item.periodo === next);
+      if (!match) {
+        renderWorkPeriodSelector();
+        return;
+      }
+      saveStoredWorkPeriodKey(match.periodo);
+      renderRoute({ preserveScroll: true });
+    });
   }
 
 
@@ -4784,7 +5121,8 @@
   }
 
   function getCurrentFacturasPeriodInfo() {
-    return getFacturaPeriodInfoFromDate(todayInputValue());
+    const active = getActiveWorkPeriodInfoOrCurrent();
+    return active?.periodo ? active : getFacturaPeriodInfoFromDate(todayInputValue());
   }
 
   function normalizeFacturaModuloRecord(record) {
@@ -5151,9 +5489,9 @@
       : '';
     return `
       ${closedNotice}
-      <section class="metric-grid facturas-metric-grid" aria-label="Resumen de facturas del período actual">
+      <section class="metric-grid facturas-metric-grid" aria-label="Resumen de facturas del período de trabajo">
         <article class="metric-card"><span>Período</span><strong>${escapeHtml(periodInfo.label)}</strong><small>Vista actual</small></article>
-        <article class="metric-card"><span>Total facturas</span><strong>${summary.total}</strong><small>${options.historical ? 'Histórico' : 'Período abierto'}</small></article>
+        <article class="metric-card"><span>Total facturas</span><strong>${summary.total}</strong><small>${options.historical ? 'Histórico' : 'Período de trabajo'}</small></article>
         <article class="metric-card"><span>Enviadas</span><strong>${summary.estados.Enviada || 0}</strong><small>Estado</small></article>
         <article class="metric-card"><span>Recibidas</span><strong>${summary.estados.Recibida || 0}</strong><small>Estado</small></article>
         <article class="metric-card"><span>Pagadas</span><strong>${summary.estados.Pagada || 0}</strong><small>Estado</small></article>
@@ -5168,7 +5506,7 @@
     const isEditing = Boolean(record);
     const current = record || {
       no: '',
-      fecha: todayInputValue(),
+      fecha: getWorkPeriodDefaultDate(),
       estado: 'Enviada',
       monto: '',
       observaciones: ''
@@ -5193,7 +5531,7 @@
           </label>
           <label class="form-field">
             <span>Fecha *</span>
-            <input type="date" name="fecha" value="${escapeHtml(current.fecha || todayInputValue())}" required />
+            <input type="date" name="fecha" value="${escapeHtml(current.fecha || getWorkPeriodDefaultDate())}" required />
           </label>
           <label class="form-field">
             <span>Estado *</span>
@@ -5235,7 +5573,7 @@
             <button type="button" class="secondary-action compact-action" data-factura-search-clear title="Limpiar búsqueda">Limpiar</button>
           </div>
         </form>
-        ${hasQuery ? renderFacturasSearchResults(searchResults) : '<p class="compact-note muted-text">Busca en el período actual y en otros períodos ya registrados.</p>'}
+        ${hasQuery ? renderFacturasSearchResults(searchResults) : '<p class="compact-note muted-text">Busca globalmente en el período de trabajo, otros períodos abiertos y el histórico cerrado.</p>'}
       </article>
     `;
   }
@@ -5256,13 +5594,13 @@
   function renderFacturasPeriodoList(periodInfo, records, totalRecords, totalPages, options = {}) {
     const pagination = renderFacturasPagination(totalRecords, totalPages);
     const emptyText = options.closed
-      ? 'El período actual está cerrado; consulta sus facturas en Histórico de Facturas.'
-      : 'No hay facturas registradas para el período actual abierto.';
+      ? 'El período de trabajo está cerrado; consulta sus facturas en Histórico de Facturas.'
+      : 'No hay facturas registradas para el período de trabajo abierto.';
     return `
       <article class="panel-card facturas-list-panel">
         <div class="section-title-row">
           <div>
-            <span class="eyebrow mini">Período actual / abierto</span>
+            <span class="eyebrow mini">Período de trabajo / abierto</span>
             <h2>Facturas de ${escapeHtml(periodInfo.label)}</h2>
           </div>
           <span class="badge">${totalRecords} registro(s)</span>
@@ -5355,7 +5693,7 @@
               ariaLabel: `Histórico de facturas de ${group.label}`,
               tableClass: 'operational-table-facturas',
               headers: '<th>No.</th><th>Fecha</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones</th>',
-              rows: pagedRecords.map((record) => renderFacturaRow(record)).join('')
+              rows: pagedRecords.map((record) => renderFacturaRow(record, { readonly: true })).join('')
             }) : '<p class="muted-text compact-note">No hay facturas en este período histórico.</p>'}
             ${renderFacturasPagination(group.records.length, totalPages, { scope: 'history', periodo: group.periodo })}
           </div>
@@ -5368,6 +5706,14 @@
     const factura = normalizeFacturaModuloRecord(record);
     const periodInfo = getFacturaPeriodInfoFromDate(factura.fecha);
     const origenLabel = getFacturaOrigenLabel(factura);
+    const closedPeriod = isFacturaPeriodClosed(factura.periodo);
+    const readonly = Boolean(options.readonly || closedPeriod);
+    const actions = readonly
+      ? '<span class="muted-text compact-note">Histórico</span>'
+      : `<div class="record-actions compact-row-actions notas-icon-toolbar">
+          <button type="button" class="notas-icon-action mini" data-factura-edit="${escapeHtml(factura.id)}" title="Editar factura" aria-label="Editar factura ${escapeHtml(factura.no || '')}">✎</button>
+          <button type="button" class="notas-icon-action mini danger" data-factura-delete="${escapeHtml(factura.id)}" title="Borrar factura" aria-label="Borrar factura ${escapeHtml(factura.no || '')}">🗑️</button>
+        </div>`;
     return `
       <tr>
         <td><span class="compact-primary" title="${escapeHtml(factura.no)}">${escapeHtml(factura.no || '—')}</span>${origenLabel ? `<small class="factura-origin-label" title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel)}</small>` : ''}</td>
@@ -5376,10 +5722,7 @@
         <td><span class="state-pill ${getEstadoClass(factura.estado)}">${escapeHtml(factura.estado)}</span></td>
         <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.monto || 0))}</span></td>
         <td><small title="${escapeHtml(factura.observaciones)}">${escapeHtml(factura.observaciones || '—')}</small></td>
-        <td><div class="record-actions compact-row-actions notas-icon-toolbar">
-          <button type="button" class="notas-icon-action mini" data-factura-edit="${escapeHtml(factura.id)}" title="Editar factura" aria-label="Editar factura ${escapeHtml(factura.no || '')}">✎</button>
-          <button type="button" class="notas-icon-action mini danger" data-factura-delete="${escapeHtml(factura.id)}" title="Borrar factura" aria-label="Borrar factura ${escapeHtml(factura.no || '')}">🗑️</button>
-        </div></td>
+        <td>${actions}</td>
       </tr>
     `;
   }
@@ -5440,6 +5783,8 @@
       renderRoute();
       return;
     }
+
+    if (!warnIfClosedPeriod(fecha, facturasState.editingId ? 'Actualizar esta factura' : 'Crear esta factura')) return;
 
     const data = getFacturasData();
     const existing = findFacturaModuloById(facturasState.editingId, data);
@@ -9541,6 +9886,7 @@
 
   function renderVentas() {
     const ventas = getVentasOrdenadas();
+    const workPeriodLabel = getWorkPeriodLabelText();
     const clientesActivos = getActiveCatalogRecords('clientes');
     const sucursalesActivas = getActiveCatalogRecords('sucursales');
     const editingRecord = ventasState.editingId ? appData.ventas.find((record) => record.id === ventasState.editingId) : null;
@@ -9558,6 +9904,7 @@
         <aside class="hero-status" aria-label="Resumen de ventas y OC">
           <h3>Totales básicos</h3>
           <div class="status-grid">
+            <div class="status-item"><strong>Período</strong><span>${escapeHtml(workPeriodLabel)}</span></div>
             <div class="status-item"><strong>OC activas</strong><span>${totals.activas}</span></div>
             <div class="status-item"><strong>Tras ajustes</strong><span>${escapeHtml(formatMoney(totals.ventaNetaAjustada))}</span></div>
             <div class="status-item"><strong>Saldo cobrar</strong><span>${escapeHtml(formatMoney(totals.saldoPorCobrar))}</span></div>
@@ -9569,6 +9916,7 @@
       <section class="ventas-shell">
         ${ventasState.message ? `<div class="form-message ${ventasState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(ventasState.message)}</div>` : ''}
 
+        ${renderWorkPeriodInlineNotice('Ventas / OC')}
         ${missingCatalogs ? renderVentasCatalogWarning(clientesActivos, sucursalesActivas) : ''}
 
         <section class="metric-grid" aria-label="Resumen operativo de ventas">
@@ -9962,7 +10310,7 @@
     const draft = !record && isPlainObject(quickCapture) ? quickCapture : {};
     const selectedClienteId = record?.clienteId || cleanText(draft.clienteId);
     const selectedSucursalId = record?.sucursalId || cleanText(draft.sucursalId);
-    const fechaOc = record?.fechaOc || toDateInputValue(draft.fechaOc) || todayInputValue();
+    const fechaOc = record?.fechaOc || toDateInputValue(draft.fechaOc) || getWorkPeriodDefaultDate();
     const fechaEntrega = record?.fechaEntrega || toDateInputValue(draft.fechaEntrega) || '';
     const selectedTerms = selectedClienteId ? getCatalogPaymentTerms('clientes', selectedClienteId) : { diasCredito: 0 };
     const draftDias = draft.diasCredito ?? '';
@@ -10176,14 +10524,18 @@
     return ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`).join(' | ');
   }
 
-  function getVentasOrdenadas() {
+  function getVentasOrdenadas(options = {}) {
+    const periodo = normalizeWorkPeriodKey(options.periodo || getActiveWorkPeriodKeyOrCurrent());
     return [...(Array.isArray(appData.ventas) ? appData.ventas : [])]
       .map((record) => normalizeVentaRecord(record))
+      .filter((record) => options.workPeriod === false || !periodo || isVentaInWorkPeriod(record, periodo))
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }
 
-  function getVentasTotals() {
-    const ventas = Array.isArray(appData.ventas) ? appData.ventas.map((record) => normalizeVentaRecord(record)) : [];
+  function getVentasTotals(recordsSource = null) {
+    const ventas = Array.isArray(recordsSource)
+      ? recordsSource.map((record) => normalizeVentaRecord(record))
+      : getVentasOrdenadas();
     return ventas.reduce((totals, venta) => {
       if (!venta.activo) {
         totals.anuladas += 1;
@@ -10757,6 +11109,7 @@
 
   function renderCobros() {
     const ventasDisponibles = getVentasConSaldoCobro();
+    const workPeriodLabel = getWorkPeriodLabelText();
     const metodosActivos = getActiveCatalogRecords('metodosPago');
     const cuentasActivas = getActiveBankRecords();
     const cobros = getCobrosOrdenados();
@@ -10786,6 +11139,7 @@
         <aside class="hero-status" aria-label="Resumen de cobros">
           <h3>Totales básicos</h3>
           <div class="status-grid">
+            <div class="status-item"><strong>Período</strong><span>${escapeHtml(workPeriodLabel)}</span></div>
             <div class="status-item"><strong>OC cobrables</strong><span>${ventasDisponibles.length}</span></div>
             <div class="status-item"><strong>Cobros activos</strong><span>${totals.activos}</span></div>
             <div class="status-item"><strong>Total cobrado</strong><span>${escapeHtml(formatMoney(totals.totalCobrado))}</span></div>
@@ -10797,6 +11151,7 @@
       <section class="cobros-shell">
         ${cobrosState.message ? `<div class="form-message ${cobrosState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(cobrosState.message)}</div>` : ''}
 
+        ${renderWorkPeriodInlineNotice('Cobros')}
         ${renderCobrosWarning(ventasDisponibles, metodosActivos, cuentasActivas)}
 
         <section class="metric-grid" aria-label="Resumen operativo de cobros">
@@ -11527,9 +11882,11 @@
     `;
   }
 
-  function getCobrosOrdenados() {
+  function getCobrosOrdenados(options = {}) {
+    const periodo = normalizeWorkPeriodKey(options.periodo || getActiveWorkPeriodKeyOrCurrent());
     return [...(Array.isArray(appData.cobros) ? appData.cobros : [])]
       .map((record) => normalizeCobroRecord(record))
+      .filter((record) => options.workPeriod === false || !periodo || isCobroInWorkPeriod(record, periodo))
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }
 
@@ -11539,16 +11896,23 @@
       .filter((record) => record.ventaId === ventaId);
   }
 
-  function getVentasConSaldoCobro() {
+  function getVentasConSaldoCobro(options = {}) {
+    const periodo = normalizeWorkPeriodKey(options.periodo || getActiveWorkPeriodKeyOrCurrent());
     return (Array.isArray(appData.ventas) ? appData.ventas : [])
       .map((record) => normalizeVentaRecord(record))
       .filter((venta) => venta.activo && venta.saldoPorCobrar > 0)
+      .filter((venta) => options.workPeriod === false || !periodo || isVentaInWorkPeriod(venta, periodo))
       .sort((a, b) => String(a.fechaVencimiento || '').localeCompare(String(b.fechaVencimiento || '')) || String(b.createdAt).localeCompare(String(a.createdAt)));
   }
 
-  function getCobrosTotals() {
-    const cobros = Array.isArray(appData.cobros) ? appData.cobros.map((record) => normalizeCobroRecord(record)) : [];
-    const ventas = Array.isArray(appData.ventas) ? appData.ventas.map((record) => normalizeVentaRecord(record)) : [];
+  function getCobrosTotals(recordsSource = null, ventasSource = null) {
+    const cobros = Array.isArray(recordsSource)
+      ? recordsSource.map((record) => normalizeCobroRecord(record))
+      : getCobrosOrdenados();
+    const periodo = getActiveWorkPeriodKeyOrCurrent();
+    const ventas = Array.isArray(ventasSource)
+      ? ventasSource.map((record) => normalizeVentaRecord(record))
+      : (Array.isArray(appData.ventas) ? appData.ventas.map((record) => normalizeVentaRecord(record)).filter((venta) => isVentaInWorkPeriod(venta, periodo)) : []);
     const totals = cobros.reduce((summary, cobro) => {
       if (!cobro.activo) {
         summary.anulados += 1;
@@ -11919,6 +12283,7 @@
 
   function renderProveedoresCompras() {
     const compras = getComprasProveedoresOrdenadas();
+    const workPeriodLabel = getWorkPeriodLabelText();
     const proveedoresActivos = getActiveCatalogRecords('proveedores');
     const editingRecord = proveedoresState.editingId ? appData.comprasProveedores.find((record) => record.id === proveedoresState.editingId) : null;
     const totals = getComprasProveedoresTotals();
@@ -11935,6 +12300,7 @@
         <aside class="hero-status" aria-label="Resumen de proveedores y compras">
           <h3>Totales básicos</h3>
           <div class="status-grid">
+            <div class="status-item"><strong>Período</strong><span>${escapeHtml(workPeriodLabel)}</span></div>
             <div class="status-item"><strong>Compras activas</strong><span>${totals.activas}</span></div>
             <div class="status-item"><strong>Saldo pagar</strong><span>${escapeHtml(formatMoney(totals.saldoPorPagar))}</span></div>
             <div class="status-item"><strong>Vencidas</strong><span>${totals.vencidas}</span></div>
@@ -11946,6 +12312,7 @@
       <section class="proveedores-shell">
         ${proveedoresState.message ? `<div class="form-message ${proveedoresState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(proveedoresState.message)}</div>` : ''}
 
+        ${renderWorkPeriodInlineNotice('Proveedores / Compras')}
         ${missingProviders ? renderProveedoresCatalogWarning() : ''}
 
         <section class="metric-grid" aria-label="Resumen operativo de proveedores y compras">
@@ -12101,7 +12468,7 @@
       ? selectedTerms.condicionPago
       : normalizePaymentCondition(record?.condicionPagoSnapshot || draft.condicionPagoSnapshot || '');
     const isContado = Boolean(selectedProveedorId) && condicionPagoSnapshot === 'Contado';
-    const fechaCompra = record?.fechaCompra || toDateInputValue(draft.fechaCompra) || todayInputValue();
+    const fechaCompra = record?.fechaCompra || toDateInputValue(draft.fechaCompra) || getWorkPeriodDefaultDate();
     const draftDias = draft.diasCredito ?? '';
     const diasCredito = isContado ? 0 : (record ? (record.diasCredito ?? '') : (draftDias !== '' ? draftDias : (selectedTerms.diasCredito || '')));
     const fechaVencimiento = isContado
@@ -12407,14 +12774,18 @@
     return ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`).join(' | ');
   }
 
-  function getComprasProveedoresOrdenadas() {
+  function getComprasProveedoresOrdenadas(options = {}) {
+    const periodo = normalizeWorkPeriodKey(options.periodo || getActiveWorkPeriodKeyOrCurrent());
     return [...(Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [])]
       .map((record) => normalizeCompraProveedorRecord(record))
+      .filter((record) => options.workPeriod === false || !periodo || isCompraInWorkPeriod(record, periodo))
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }
 
-  function getComprasProveedoresTotals() {
-    const compras = Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores.map((record) => normalizeCompraProveedorRecord(record)) : [];
+  function getComprasProveedoresTotals(recordsSource = null) {
+    const compras = Array.isArray(recordsSource)
+      ? recordsSource.map((record) => normalizeCompraProveedorRecord(record))
+      : getComprasProveedoresOrdenadas();
     return compras.reduce((totals, compra) => {
       if (!compra.activo) {
         totals.anuladas += 1;
@@ -13146,6 +13517,7 @@
 
   function renderPagosProveedores() {
     const comprasDisponibles = getComprasConSaldoPago();
+    const workPeriodLabel = getWorkPeriodLabelText();
     const metodosActivos = getActiveCatalogRecords('metodosPago');
     const cuentasActivas = getActiveBankRecords();
     const pagos = getPagosProveedoresOrdenados();
@@ -13170,6 +13542,7 @@
         <aside class="hero-status" aria-label="Resumen de pagos a proveedores">
           <h3>Totales básicos</h3>
           <div class="status-grid">
+            <div class="status-item"><strong>Período</strong><span>${escapeHtml(workPeriodLabel)}</span></div>
             <div class="status-item"><strong>Facturas pagables</strong><span>${comprasDisponibles.length}</span></div>
             <div class="status-item"><strong>Pagos activos</strong><span>${totals.activos}</span></div>
             <div class="status-item"><strong>Pagado</strong><span>${escapeHtml(formatMoney(totals.totalPagado))}</span></div>
@@ -13181,6 +13554,7 @@
       <section class="pagos-shell">
         ${pagosState.message ? `<div class="form-message ${pagosState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(pagosState.message)}</div>` : ''}
 
+        ${renderWorkPeriodInlineNotice('Pagos a proveedores')}
         ${renderPagosWarning(comprasDisponibles, metodosActivos, cuentasActivas)}
 
         <section class="metric-grid" aria-label="Resumen operativo de pagos a proveedores">
@@ -13427,22 +13801,31 @@
     `;
   }
 
-  function getPagosProveedoresOrdenados() {
+  function getPagosProveedoresOrdenados(options = {}) {
+    const periodo = normalizeWorkPeriodKey(options.periodo || getActiveWorkPeriodKeyOrCurrent());
     return [...(Array.isArray(appData.pagosProveedores) ? appData.pagosProveedores : [])]
       .map((record) => normalizePagoProveedorRecord(record))
+      .filter((record) => options.workPeriod === false || !periodo || isPagoProveedorInWorkPeriod(record, periodo))
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }
 
-  function getComprasConSaldoPago() {
+  function getComprasConSaldoPago(options = {}) {
+    const periodo = normalizeWorkPeriodKey(options.periodo || getActiveWorkPeriodKeyOrCurrent());
     return (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [])
       .map((record) => normalizeCompraProveedorRecord(record))
       .filter((compra) => compra.activo && compra.saldoPorPagar > 0)
+      .filter((compra) => options.workPeriod === false || !periodo || isCompraInWorkPeriod(compra, periodo))
       .sort((a, b) => String(a.fechaVencimiento || '').localeCompare(String(b.fechaVencimiento || '')) || String(b.createdAt).localeCompare(String(a.createdAt)));
   }
 
-  function getPagosProveedoresTotals() {
-    const pagos = Array.isArray(appData.pagosProveedores) ? appData.pagosProveedores.map((record) => normalizePagoProveedorRecord(record)) : [];
-    const compras = Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores.map((record) => normalizeCompraProveedorRecord(record)) : [];
+  function getPagosProveedoresTotals(recordsSource = null, comprasSource = null) {
+    const pagos = Array.isArray(recordsSource)
+      ? recordsSource.map((record) => normalizePagoProveedorRecord(record))
+      : getPagosProveedoresOrdenados();
+    const periodo = getActiveWorkPeriodKeyOrCurrent();
+    const compras = Array.isArray(comprasSource)
+      ? comprasSource.map((record) => normalizeCompraProveedorRecord(record))
+      : (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores.map((record) => normalizeCompraProveedorRecord(record)).filter((compra) => isCompraInWorkPeriod(compra, periodo)) : []);
     const totals = pagos.reduce((summary, pago) => {
       if (!pago.activo) {
         summary.anulados += 1;
@@ -13654,6 +14037,7 @@
 
   function renderGastos() {
     const tiposActivos = getActiveCatalogRecords('tiposGasto');
+    const workPeriodLabel = getWorkPeriodLabelText();
     const metodosActivos = getActiveCatalogRecords('metodosPago');
     const cuentasActivas = getActiveBankRecords();
     const gastos = getGastosOrdenados();
@@ -13671,6 +14055,7 @@
         <aside class="hero-status" aria-label="Resumen de gastos">
           <h3>Totales básicos</h3>
           <div class="status-grid">
+            <div class="status-item"><strong>Período</strong><span>${escapeHtml(workPeriodLabel)}</span></div>
             <div class="status-item"><strong>Gastos activos</strong><span>${totals.activos}</span></div>
             <div class="status-item"><strong>Total activo</strong><span>${escapeHtml(formatMoney(totals.totalActivo))}</span></div>
             <div class="status-item"><strong>Anulados</strong><span>${totals.anulados}</span></div>
@@ -13682,6 +14067,7 @@
       <section class="gastos-shell">
         ${gastosState.message ? `<div class="form-message ${gastosState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(gastosState.message)}</div>` : ''}
 
+        ${renderWorkPeriodInlineNotice('Gastos')}
         ${renderGastosWarning(tiposActivos, metodosActivos, cuentasActivas)}
 
         <section class="metric-grid" aria-label="Resumen operativo de gastos">
@@ -13741,7 +14127,7 @@
 
   function renderGastoForm(record, tiposActivos, metodosActivos, cuentasActivas, missingCatalogs) {
     const cannotCreate = Boolean(missingCatalogs);
-    const fecha = record?.fecha || todayInputValue();
+    const fecha = record?.fecha || getWorkPeriodDefaultDate();
     return `
       <form class="gasto-form" data-gasto-form novalidate>
         <input type="hidden" name="id" value="${escapeHtml(record?.id || '')}" />
@@ -13860,14 +14246,18 @@
     `;
   }
 
-  function getGastosOrdenados() {
+  function getGastosOrdenados(options = {}) {
+    const periodo = normalizeWorkPeriodKey(options.periodo || getActiveWorkPeriodKeyOrCurrent());
     return [...(Array.isArray(appData.gastos) ? appData.gastos : [])]
       .map((record) => normalizeGastoRecord(record))
+      .filter((record) => options.workPeriod === false || !periodo || isGastoInWorkPeriod(record, periodo))
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }
 
-  function getGastosTotals() {
-    const gastos = Array.isArray(appData.gastos) ? appData.gastos.map((record) => normalizeGastoRecord(record)) : [];
+  function getGastosTotals(recordsSource = null) {
+    const gastos = Array.isArray(recordsSource)
+      ? recordsSource.map((record) => normalizeGastoRecord(record))
+      : getGastosOrdenados();
     return gastos.reduce((totals, gasto) => {
       if (!gasto.activo) {
         totals.anulados += 1;
@@ -14572,8 +14962,13 @@
     const activityEntries = getRecentActivityEntries(ACTIVITY_LOG_MAX_ENTRIES);
     const notasModulo = cloneNotasModuleData();
     const facturasModulo = cloneFacturasModuleData();
+    const workPeriodInfo = getWorkPeriodBackupInfo();
     snapshot.notasModulo = notasModulo;
     snapshot.facturasModulo = facturasModulo;
+    snapshot.configuracion = normalizeConfiguracion({
+      ...snapshot.configuracion,
+      periodoTrabajoSeleccionado: workPeriodInfo.periodo
+    });
     const lastActivity = normalizeActivitySummary(activityEntries[0] || identity.lastActivity);
     const counts = getJsonRecordCounts(snapshot, activityEntries);
     const catalogos = CATALOGS.reduce((acc, catalog) => {
@@ -14594,6 +14989,8 @@
         sourceDeviceName: identity.deviceName,
         fileName: cleanText(exportOptions.fileName),
         lastActivity,
+        periodoTrabajo: workPeriodInfo,
+        periodoTrabajoSeleccionado: workPeriodInfo.periodo,
         counts,
         recordCounts: counts,
         source: 'KSA PRÁCTIKA respaldo JSON manual'
@@ -14927,7 +15324,9 @@
     const preview = jsonBackupState.preview;
     const importSummary = buildJsonImportSummary(preview, selectedMode, fileName);
     const incomingActivityLog = Array.isArray(jsonBackupState.activityLog) ? jsonBackupState.activityLog : [];
+    const importedWorkPeriod = normalizeWorkPeriodKey(jsonBackupState.payload?.configuracion?.periodoTrabajoSeleccionado || jsonBackupState.payload?.metadata?.periodoTrabajoSeleccionado || jsonBackupState.payload?.metadata?.periodoTrabajo?.periodo || '');
     const result = applyJsonBackupPayload(jsonBackupState.payload, selectedMode);
+    const workPeriodResult = reconcileWorkPeriodSelectionAfterDataChange(importedWorkPeriod);
     const activityImportResult = mergeImportedActivityLog(incomingActivityLog);
     appData.configuracion = {
       ...normalizeConfiguracion(appData.configuracion),
@@ -14945,9 +15344,12 @@
     jsonBackupState.preview = null;
     jsonBackupState.payload = null;
     jsonBackupState.activityLog = [];
+    const workPeriodMessage = workPeriodResult.empty
+      ? ' No hay períodos abiertos disponibles; el selector queda sin opción editable hasta que exista un período trabajable.'
+      : ` Período de trabajo activo: ${workPeriodResult.label}.`;
     jsonBackupState.message = selectedMode === 'replace'
-      ? `Importación JSON completada por reemplazo. Registros cargados: ${result.loaded.total}. Bitácora nueva: ${activityImportResult.added}.`
-      : `Importación JSON completada por fusión. Agregados: ${result.added.total}. Duplicados omitidos: ${result.skipped}. Bitácora nueva: ${activityImportResult.added}.`;
+      ? `Importación JSON completada por reemplazo. Registros cargados: ${result.loaded.total}. Bitácora nueva: ${activityImportResult.added}.${workPeriodMessage}`
+      : `Importación JSON completada por fusión. Agregados: ${result.added.total}. Duplicados omitidos: ${result.skipped}. Bitácora nueva: ${activityImportResult.added}.${workPeriodMessage}`;
     jsonBackupState.messageType = 'success';
     const originName = importSummary.sourceDeviceName || 'Origen no identificado';
     const exportedText = importSummary.exportedAtDisplay || formatDateTime(importSummary.exportedAt);
@@ -16073,7 +16475,11 @@
       detail: buildActivityDetail(['Cierre mensual registrado', getMonthLabel(month), year, lastExport.nombreArchivo]),
       source: 'sistema'
     });
-    cierreMensualState.message = `Cierre mensual registrado para ${getMonthLabel(month)} ${year}.`;
+    const workPeriodResult = reconcileWorkPeriodSelectionAfterDataChange();
+    const workPeriodNote = workPeriodResult.empty
+      ? ' No hay períodos abiertos disponibles; el selector queda sin opción editable.'
+      : ` Período de trabajo activo: ${workPeriodResult.label}.`;
+    cierreMensualState.message = `Cierre mensual registrado para ${getMonthLabel(month)} ${year}.${workPeriodNote}`;
     cierreMensualState.messageType = 'success';
     renderRoute();
   }
