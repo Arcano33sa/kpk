@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.73-post12-facturas-orden-natural';
+  const APP_VERSION = '0.17.74-post12-facturas-modal-edicion';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -4038,7 +4038,7 @@
 
   function getRouteInnerScrollSnapshot() {
     if (!viewRoot) return [];
-    const scrollables = Array.from(viewRoot.querySelectorAll('[data-operational-table-scroll], [data-operational-top-scroll], .modal-body, .table-wrap, .list-scroll, .scroll-x'));
+    const scrollables = Array.from(viewRoot.querySelectorAll('[data-operational-table-scroll], [data-operational-top-scroll], .modal-body, .edit-modal-body, .table-wrap, .list-scroll, .scroll-x'));
     return scrollables.map((element, index) => {
       const shell = element.closest?.('[data-operational-scroll-shell]');
       const region = shell?.querySelector?.('[role="region"]');
@@ -4139,7 +4139,7 @@
   function restoreInnerScrollSnapshot(snapshot) {
     const items = Array.isArray(snapshot?.innerScrolls) ? snapshot.innerScrolls : [];
     if (!items.length || !viewRoot) return;
-    const scrollables = Array.from(viewRoot.querySelectorAll('[data-operational-table-scroll], [data-operational-top-scroll], .modal-body, .table-wrap, .list-scroll, .scroll-x'));
+    const scrollables = Array.from(viewRoot.querySelectorAll('[data-operational-table-scroll], [data-operational-top-scroll], .modal-body, .edit-modal-body, .table-wrap, .list-scroll, .scroll-x'));
     items.forEach((item) => {
       const element = scrollables[item.index];
       if (!element) return;
@@ -5662,6 +5662,11 @@
     const data = getFacturasData();
     const periodInfo = getCurrentFacturasPeriodInfo();
     const currentPeriodClosed = isFacturaPeriodClosed(periodInfo.periodo);
+    const editingRecord = facturasState.editingId ? findFacturaModuloById(facturasState.editingId, data) : null;
+    if (facturasState.editingId && (!editingRecord || isFacturaPeriodClosed(editingRecord.periodo))) {
+      facturasState.editingId = null;
+    }
+    const safeEditingRecord = facturasState.editingId ? editingRecord : null;
     const periodRecords = currentPeriodClosed ? [] : getFacturasForPeriod(periodInfo.periodo, data);
     const summary = buildFacturasSummary(periodRecords);
     const searchResults = getFacturasSearchResults(data);
@@ -5691,10 +5696,11 @@
       <section class="facturas-shell">
         ${facturasState.message ? `<div class="form-message ${facturasState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(facturasState.message)}</div>` : ''}
         ${renderFacturasSummary(periodInfo, summary, { closed: currentPeriodClosed })}
-        ${renderFacturaForm(findFacturaModuloById(facturasState.editingId, data))}
+        ${renderFacturaForm(null, 'create')}
         ${renderFacturasSearch(searchResults)}
         ${renderFacturasPeriodoList(periodInfo, pagedRecords, periodRecords.length, totalPages, { closed: currentPeriodClosed })}
         ${renderFacturasHistorico(historyGroups)}
+        ${safeEditingRecord ? renderEditModal(getFacturasModalId(), 'Editar factura', 'Actualiza la factura sin salir del listado ni saltar al formulario principal.', renderFacturaForm(safeEditingRecord, 'edit')) : ''}
       </section>
     `;
   }
@@ -5718,8 +5724,8 @@
     `;
   }
 
-  function renderFacturaForm(record) {
-    const isEditing = Boolean(record);
+  function renderFacturaForm(record, mode = 'create') {
+    const isEditing = mode === 'edit' && Boolean(record);
     const current = record || {
       no: '',
       fecha: getWorkPeriodDefaultDate(),
@@ -5728,15 +5734,15 @@
       observaciones: ''
     };
     return `
-      <form class="panel-card facturas-form" data-factura-form>
+      <form class="${isEditing ? 'facturas-form facturas-modal-form' : 'panel-card facturas-form'}" data-factura-form data-factura-form-mode="${isEditing ? 'edit' : 'create'}">
+        ${isEditing && facturasState.message ? `<div class="form-message ${facturasState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(facturasState.message)}</div>` : ''}
         <div class="section-title-row">
           <div>
             <span class="eyebrow mini">${isEditing ? 'Editar' : 'Agregar'}</span>
-            <h2>${isEditing ? 'Editar factura' : 'Agregar factura manual'}</h2>
+            <h2>${isEditing ? `Factura ${escapeHtml(current.no || '')}` : 'Agregar factura manual'}</h2>
           </div>
           <div class="record-actions compact-row-actions">
-            ${isEditing ? '<button type="button" class="secondary-action compact-action" data-factura-cancel title="Cancelar edición">Cancelar</button>' : ''}
-            <button type="button" class="secondary-action compact-action" data-factura-clear title="Limpiar formulario">Limpiar</button>
+            ${isEditing ? '<button type="button" class="secondary-action compact-action" data-factura-cancel title="Cancelar edición">Cancelar</button>' : '<button type="button" class="secondary-action compact-action" data-factura-clear title="Limpiar formulario">Limpiar</button>'}
             <button type="submit" class="card-action compact-action" title="Guardar factura">Guardar</button>
           </div>
         </div>
@@ -5968,7 +5974,7 @@
   function clearFacturaForm() {
     facturasState.editingId = null;
     facturasState.message = null;
-    renderRoute();
+    renderRoute({ preserveScroll: true });
   }
 
   function saveFacturaRecord(form) {
@@ -5981,22 +5987,22 @@
     const monto = montoRaw ? parseMoney(montoRaw) : 0;
     if (!no) {
       setFacturasMessage('El No. de factura es obligatorio.', 'error');
-      renderRoute();
+      renderRoute({ preserveScroll: true });
       return;
     }
     if (!fecha) {
       setFacturasMessage('La fecha de la factura es obligatoria.', 'error');
-      renderRoute();
+      renderRoute({ preserveScroll: true });
       return;
     }
     if (Number.isNaN(monto) || monto < 0) {
       setFacturasMessage('El monto debe ser válido y no negativo.', 'error');
-      renderRoute();
+      renderRoute({ preserveScroll: true });
       return;
     }
     if (estado === 'Otro' && !observaciones) {
       setFacturasMessage('Cuando el Estado es “Otro”, Observaciones es obligatorio.', 'error');
-      renderRoute();
+      renderRoute({ preserveScroll: true });
       return;
     }
 
@@ -6033,21 +6039,26 @@
     }
     saveFacturasData(data);
     facturasState.editingId = null;
-    facturasState.page = 1;
+    if (!existing) facturasState.page = 1;
     setFacturasMessage(existing ? 'Factura actualizada correctamente.' : 'Factura agregada correctamente.');
-    renderRoute();
+    renderRoute({ preserveScroll: true });
   }
 
   function editFacturaRecord(id) {
     const record = findFacturaModuloById(id);
     if (!record) {
       setFacturasMessage('No se encontró la factura para editar.', 'error');
-      renderRoute();
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (isFacturaPeriodClosed(record.periodo)) {
+      setFacturasMessage('Las facturas de períodos cerrados quedan solo para consulta histórica.', 'error');
+      renderRoute({ preserveScroll: true });
       return;
     }
     facturasState.editingId = record.id;
     facturasState.message = null;
-    renderRoute();
+    renderRoute({ preserveScroll: true });
   }
 
   function deleteFacturaRecord(id) {
@@ -10098,6 +10109,7 @@
   function getCobroModalId() { return 'cobro'; }
   function getPagoModalId() { return 'pago'; }
   function getGastoModalId() { return 'gasto'; }
+  function getFacturasModalId() { return 'factura'; }
 
 
   function renderVentas() {
@@ -18260,6 +18272,7 @@ ${rowsXml}
     else if (id === getCobroModalId()) clearCobroForm();
     else if (id === getPagoModalId()) clearPagoProveedorForm();
     else if (id === getGastoModalId()) clearGastoForm();
+    else if (id === getFacturasModalId()) clearFacturaForm();
     else if (id === getNotasModalId()) {
       notasState.detailType = '';
       notasState.detailId = '';
