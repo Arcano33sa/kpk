@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.72-post12-antisalto-etapa2-hardening-final';
+  const APP_VERSION = '0.17.73-post12-facturas-orden-natural';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -2698,7 +2698,7 @@
     if (isPlainObject(source)) source = [source];
     if (!Array.isArray(source)) return [];
     const seen = new Set();
-    return source
+    return sortFacturaNumeroRecords(source
       .map((item) => normalizeFacturaVentaRecord(item))
       .filter(Boolean)
       .filter((item) => {
@@ -2706,7 +2706,7 @@
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
-      });
+      }), (item) => item.numero);
   }
 
   function normalizeVentaAjusteRecord(record) {
@@ -2803,7 +2803,7 @@
     if (isPlainObject(source)) source = [source];
     if (!Array.isArray(source)) return [];
     const seen = new Set();
-    return source
+    return sortFacturaNumeroRecords(source
       .map((item) => normalizeFacturaProveedorRecord(item))
       .filter(Boolean)
       .filter((item) => {
@@ -2811,7 +2811,7 @@
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
-      });
+      }), (item) => item.numero);
   }
 
   function normalizeCompraProveedorFacturasFromRaw(raw) {
@@ -5374,6 +5374,7 @@
   function saveFacturasData(data) {
     try {
       const normalized = normalizeFacturasData(data);
+      normalized.facturas = sortFacturasModulo(normalized.facturas);
       normalized.metadata.updatedAt = nowIso();
       localStorage.setItem(FACTURAS_STORAGE_KEY, JSON.stringify(normalized));
       return normalized;
@@ -5426,6 +5427,40 @@
   function formatFacturaConsecutivoNumber(parts, value, width = parts?.width || 1) {
     if (!parts) return '';
     return `${parts.prefix}${String(value).padStart(width, '0')}${parts.suffix}`;
+  }
+
+  function compareFacturaNaturalNo(aValue, bValue) {
+    const aRaw = cleanFacturaVentaNumero(aValue);
+    const bRaw = cleanFacturaVentaNumero(bValue);
+    if (!aRaw && !bRaw) return 0;
+    if (!aRaw) return 1;
+    if (!bRaw) return -1;
+
+    const aParts = getFacturaConsecutivoParts(aRaw);
+    const bParts = getFacturaConsecutivoParts(bRaw);
+
+    if (aParts && bParts) {
+      const bySignature = String(aParts.signature).localeCompare(String(bParts.signature), 'es-NI', {
+        numeric: true,
+        sensitivity: 'base'
+      });
+      if (bySignature !== 0) return bySignature;
+      if (aParts.value !== bParts.value) return aParts.value - bParts.value;
+      const byWidth = aParts.width - bParts.width;
+      if (byWidth !== 0) return byWidth;
+    } else if (aParts && !bParts) {
+      return -1;
+    } else if (!aParts && bParts) {
+      return 1;
+    }
+
+    return aRaw.localeCompare(bRaw, 'es-NI', { numeric: true, sensitivity: 'base' });
+  }
+
+  function sortFacturaNumeroRecords(records, getNumero = (record) => record?.no || record?.numero || '') {
+    return (Array.isArray(records) ? records : [])
+      .slice()
+      .sort((a, b) => compareFacturaNaturalNo(getNumero(a), getNumero(b)));
   }
 
   function expandFacturasVentaConsecutivos(facturas) {
@@ -5586,9 +5621,11 @@
     return (Array.isArray(records) ? records : [])
       .map(normalizeFacturaModuloRecord)
       .sort((a, b) => {
-        const byDate = String(b.fecha).localeCompare(String(a.fecha));
+        const byNo = compareFacturaNaturalNo(a.no, b.no);
+        if (byNo !== 0) return byNo;
+        const byDate = String(a.fecha).localeCompare(String(b.fecha));
         if (byDate !== 0) return byDate;
-        return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+        return String(a.updatedAt || '').localeCompare(String(b.updatedAt || ''));
       });
   }
 
