@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_74_post12_facturas_modal_edicion';
+const CACHE_VERSION = 'v0_17_76_post12_no_corte_valores_global';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

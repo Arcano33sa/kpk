@@ -7519,3 +7519,290 @@ body,
     white-space: normal;
   }
 }
+
+
+/* Post12 — No corte de valores críticos reutilizable */
+.critical-summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 164px), 1fr));
+}
+
+.critical-summary-grid .summary-cell-item {
+  min-width: 0;
+}
+
+.critical-summary-grid .critical-value {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal !important;
+  word-break: keep-all;
+  font-variant-numeric: tabular-nums;
+}
+
+.critical-summary-grid .critical-value-money,
+.critical-summary-grid .critical-value-date,
+.critical-summary-grid .critical-value-doc {
+  letter-spacing: -0.01em;
+}
+
+.pago-summary .critical-summary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pago-summary .critical-summary-grid .summary-cell-item:nth-child(1),
+.pago-summary .critical-summary-grid .summary-cell-item:nth-child(2) {
+  grid-column: 1 / -1;
+}
+
+@media (min-width: 720px) {
+  .pago-summary .critical-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .pago-summary .critical-summary-grid .summary-cell-item:nth-child(1),
+  .pago-summary .critical-summary-grid .summary-cell-item:nth-child(2) {
+    grid-column: span 2;
+  }
+}
+
+@media (min-width: 1180px) {
+  .pago-summary .critical-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .pago-summary .critical-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Post12 Etapa 2/2 — regla anti-corte global para valores críticos */
+:where(.metric-grid, .facturas-metric-grid) {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 168px), 1fr));
+}
+
+:where(.metric-card, .formula-card, .cobro-summary-item, .mora-detail-grid div, .alert-detail-grid div, .summary-cell-item) {
+  min-width: 0;
+}
+
+:where(.metric-card strong,
+  .critical-value,
+  .critical-value-money,
+  .critical-value-date,
+  .critical-value-doc,
+  .critical-value-state,
+  .cobro-summary-balance b,
+  .cobro-summary-referred strong,
+  .factura-chip,
+  .pagination-row span) {
+  white-space: nowrap;
+  overflow-wrap: normal !important;
+  word-break: keep-all;
+  font-variant-numeric: tabular-nums;
+}
+
+:where(.metric-card strong,
+  .critical-value,
+  .cobro-summary-balance b,
+  .cobro-summary-referred strong,
+  .summary-cell-item b) {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric-card strong {
+  line-height: 1.12;
+  letter-spacing: -0.015em;
+}
+
+.metric-card span,
+.summary-cell-item span,
+.cobro-summary-item span,
+.mora-detail-grid span,
+.alert-detail-grid span {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.formula-grid.summary-cell-grid,
+.cobro-summary-grid,
+.mora-detail-grid,
+.alert-detail-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+}
+
+.formula-grid.summary-cell-grid .summary-cell-item {
+  display: grid;
+  gap: 3px;
+  align-content: start;
+}
+
+.formula-grid.summary-cell-grid .summary-cell-item b {
+  justify-self: end;
+  text-align: right;
+}
+
+.ajuste-summary-grid,
+.venta-summary-grid,
+.compra-summary-grid,
+.calculator-summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+}
+
+.cobro-summary-item b,
+.cobro-summary-balance b,
+.cobro-summary-referred strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.cobro-summary-facturas-list {
+  min-width: 0;
+}
+
+.factura-chip {
+  display: inline-flex;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:where(.operational-table td[data-label="Fecha"] > span,
+  .operational-table td[data-label="Compra"] > span,
+  .operational-table td[data-label="Vence"] > span,
+  .operational-table td[data-label="Monto"] > span,
+  .operational-table td[data-label="Subtotal"] > span,
+  .operational-table td[data-label="Descuento"] > span,
+  .operational-table td[data-label="Total"] > span,
+  .operational-table td[data-label="Ajustes"] > span,
+  .operational-table td[data-label="Cobrado"] > span,
+  .operational-table td[data-label="Saldo"] > span,
+  .operational-table td[data-label="Recibido"] > span,
+  .operational-table td[data-label="Aplicado"] > span,
+  .operational-table td[data-label="Original"] > span,
+  .operational-table td[data-label="Ajustado"] > span,
+  .operational-table td[data-label="Pagado"] > span,
+  .operational-table td[data-label="Estado"] > span,
+  .venta-row td[data-label="OC"] > span.compact-primary,
+  .venta-row td[data-label="OC"] small,
+  .cobro-row td[data-label="OC"] > span.compact-primary,
+  .cobro-row td[data-label="OC"] small,
+  .compra-row td[data-label="Facturas"] > span.compact-primary,
+  .compra-row td[data-label="Facturas"] small,
+  .pago-row td[data-label="Compra / facturas"] > span.compact-primary,
+  .operational-table-facturas td:nth-child(1) > span,
+  .operational-table-facturas td:nth-child(2) > span,
+  .operational-table-facturas td:nth-child(3) > span,
+  .operational-table-facturas .state-pill,
+  .amount-cell > span,
+  .state-pill) {
+  white-space: nowrap;
+  overflow-wrap: normal !important;
+  word-break: keep-all;
+  font-variant-numeric: tabular-nums;
+}
+
+:where(.operational-table td[data-label="Método"] > span,
+  .operational-table td[data-label="Banco"] > span,
+  .operational-table td[data-label="Observación"] > span) {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.operational-table :where(.amount-cell, .state-pill) {
+  white-space: nowrap;
+}
+
+.operational-table :where(td[data-label="Fecha"], td[data-label="Compra"], td[data-label="Vence"]) {
+  min-width: 96px;
+}
+
+.operational-table :where(td[data-label="OC"], td[data-label="Facturas"], td[data-label="Compra / facturas"]) {
+  min-width: 160px;
+}
+
+.operational-table-facturas td:nth-child(1) {
+  min-width: 112px;
+}
+
+.operational-table-facturas td:nth-child(2),
+.operational-table-facturas td:nth-child(3) {
+  min-width: 118px;
+}
+
+.operational-table-facturas .actions-cell,
+.operational-table-facturas td:last-child {
+  white-space: nowrap;
+}
+
+:where(.resumen-compact-amount,
+  .resumen-compact-date,
+  .resumen-compact-mora,
+  .resumen-compact-count,
+  .periodo-blocking-date,
+  .periodo-blocking-mora,
+  .periodo-blocking-amount,
+  .mora-compact-date,
+  .mora-compact-mora,
+  .mora-compact-amount,
+  .mora-compact-state,
+  .historial-compact-date,
+  .historial-compact-amount,
+  .historial-compact-state,
+  .closing-compact-period,
+  .closing-compact-date,
+  .catalog-retencion-porcentaje,
+  .catalog-compact-state) {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+:where(.history-card .mora-detail-grid strong,
+  .mora-card .mora-detail-grid strong,
+  .alert-card .alert-detail-grid strong) {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 720px) {
+  :where(.metric-grid, .facturas-metric-grid) {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  }
+
+  .formula-grid.summary-cell-grid,
+  .cobro-summary-grid,
+  .mora-detail-grid,
+  .mora-detail-grid.compact-grid,
+  .alert-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .operational-table :where(td[data-label="OC"], td[data-label="Facturas"], td[data-label="Compra / facturas"]) {
+    min-width: 148px;
+  }
+}
+
+@media (max-width: 520px) {
+  :where(.metric-grid, .facturas-metric-grid),
+  .formula-grid.summary-cell-grid,
+  .cobro-summary-grid,
+  .mora-detail-grid,
+  .mora-detail-grid.compact-grid,
+  .alert-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .formula-grid.summary-cell-grid .summary-cell-item b {
+    justify-self: start;
+    text-align: left;
+  }
+
+  .metric-card {
+    padding: 12px 13px;
+  }
+}

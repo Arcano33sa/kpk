@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.74-post12-facturas-modal-edicion';
+  const APP_VERSION = '0.17.76-post12-no-corte-valores-global';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -10286,6 +10286,50 @@
     `;
   }
 
+  function criticalValueAttrs(value, extraClass = '') {
+    const safeClass = cleanText(extraClass);
+    return `class="critical-value${safeClass ? ` ${escapeHtml(safeClass)}` : ''}" title="${escapeHtml(value ?? '')}"`;
+  }
+
+  function getCriticalValueClass(label, value = '') {
+    const text = normalizeNameForCompare(`${label || ''} ${value || ''}`);
+    if (!text) return '';
+    const classes = ['critical-value'];
+    if (/(monto|total|subtotal|descuento|ajuste|cobrad|saldo|original|pagad|recibid|aplicad|suma|utilidad|flujo|caja|venta neta|compra|deuda|c\$|us\$)/u.test(text)) {
+      classes.push('critical-value-money');
+    } else if (/(fecha|vence|vencimiento|entrega|periodo|período|t\/c|actualizacion|actualización)/u.test(text)) {
+      classes.push('critical-value-date');
+    } else if (/(factura|oc|documento|referencia|consecutivo|numero|número)/u.test(text)) {
+      classes.push('critical-value-doc');
+    } else if (/(estado|mora|dias|días)/u.test(text)) {
+      classes.push('critical-value-state');
+    } else {
+      return '';
+    }
+    return classes.join(' ');
+  }
+
+  function mergeCriticalValueAttrs(label, value, valueAttrs = '') {
+    const rawAttrs = cleanText(valueAttrs);
+    const criticalClass = getCriticalValueClass(label, value);
+    if (!criticalClass) return rawAttrs;
+
+    let attrs = rawAttrs;
+    if (/\bclass=/.test(attrs)) {
+      attrs = attrs.replace(/\bclass=(["'])(.*?)\1/, (_match, quote, classText) => {
+        const current = String(classText || '').split(/\s+/).filter(Boolean);
+        criticalClass.split(/\s+/).forEach((className) => {
+          if (className && !current.includes(className)) current.push(className);
+        });
+        return `class=${quote}${current.join(' ')}${quote}`;
+      });
+    } else {
+      attrs = `class="${escapeHtml(criticalClass)}"${attrs ? ` ${attrs}` : ''}`;
+    }
+    if (!/\btitle=/.test(attrs)) attrs += ` title="${escapeHtml(value ?? '')}"`;
+    return attrs;
+  }
+
   function renderFormulaSummaryGrid(items, extraClass = '') {
     const safeItems = Array.isArray(items) ? items : [];
     const safeExtraClass = cleanText(extraClass);
@@ -10295,10 +10339,11 @@
           const label = Array.isArray(item) ? item[0] : item?.label;
           const value = Array.isArray(item) ? item[1] : item?.value;
           const valueAttrs = Array.isArray(item) ? (item[2] || '') : (item?.valueAttrs || '');
+          const mergedValueAttrs = mergeCriticalValueAttrs(label, value, valueAttrs);
           return `
             <div class="summary-cell-item">
               <span>${escapeHtml(label || '')}</span>
-              <b${valueAttrs ? ` ${valueAttrs}` : ''}>${escapeHtml(value ?? '')}</b>
+              <b${mergedValueAttrs ? ` ${mergedValueAttrs}` : ''}>${escapeHtml(value ?? '')}</b>
             </div>
           `;
         }).join('')}
@@ -13939,18 +13984,25 @@
   }
 
   function renderSelectedCompraPagoSummary(compra, proveedor) {
+    const proveedorNombre = proveedor?.nombre || compra.proveedorNombre || 'Proveedor no encontrado';
+    const facturasReferencia = getCompraProveedorReferenciaCompacta(compra);
+    const fechaCompra = formatDate(compra.fechaCompra);
+    const fechaVencimiento = formatDate(compra.fechaVencimiento);
+    const totalCompra = formatMoney(compra.totalCompra);
+    const totalPagado = formatMoney(compra.totalPagado);
+    const saldoPorPagar = formatMoney(compra.saldoPorPagar);
     return `
       <div class="formula-card pago-summary" aria-live="polite">
         <strong>Compra/deuda seleccionada</strong>
         ${renderFormulaSummaryGrid([
-          ['Proveedor', proveedor?.nombre || compra.proveedorNombre || 'Proveedor no encontrado'],
-          ['Facturas', getCompraProveedorReferenciaCompacta(compra)],
-          ['Fecha compra', formatDate(compra.fechaCompra)],
-          ['Vencimiento', formatDate(compra.fechaVencimiento)],
-          ['Total compra/deuda', formatMoney(compra.totalCompra)],
-          ['Pagado actual', formatMoney(compra.totalPagado)],
-          ['Saldo por pagar actual', formatMoney(compra.saldoPorPagar)]
-        ], 'pago-summary-grid')}
+          ['Proveedor', proveedorNombre, criticalValueAttrs(proveedorNombre, 'critical-value-text')],
+          ['Facturas', facturasReferencia, criticalValueAttrs(facturasReferencia, 'critical-value-doc')],
+          ['Fecha compra', fechaCompra, criticalValueAttrs(fechaCompra, 'critical-value-date')],
+          ['Vencimiento', fechaVencimiento, criticalValueAttrs(fechaVencimiento, 'critical-value-date')],
+          ['Total compra/deuda', totalCompra, criticalValueAttrs(totalCompra, 'critical-value-money')],
+          ['Pagado actual', totalPagado, criticalValueAttrs(totalPagado, 'critical-value-money')],
+          ['Saldo por pagar actual', saldoPorPagar, criticalValueAttrs(saldoPorPagar, 'critical-value-money')]
+        ], 'pago-summary-grid critical-summary-grid')}
       </div>
     `;
   }
