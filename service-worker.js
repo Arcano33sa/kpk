@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_70_post12_periodo_trabajo_etapa3_cierres_json_final';
+const CACHE_VERSION = 'v0_17_72_post12_antisalto_etapa2_hardening_final';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

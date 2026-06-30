@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.70-post12-periodo-trabajo-etapa3-cierres-json-final';
+  const APP_VERSION = '0.17.72-post12-antisalto-etapa2-hardening-final';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1080,6 +1080,7 @@
   };
 
   let lastRenderedRoute = null;
+  let pendingRouteScrollRestore = null;
   let operationalScrollbarResizeHandler = null;
   let operationalScrollbarCleanup = null;
 
@@ -1114,6 +1115,41 @@
   const PWA_RELOAD_LOCK_KEY = 'KSA_PRACTIKA_PWA_RELOAD_LOCK';
   const PWA_APPLY_PENDING_KEY = 'KSA_PRACTIKA_PWA_APPLY_PENDING';
   const CONFIG_SCROLL_RESTORE_KEY = 'KSA_PRACTIKA_CONFIG_SCROLL_RESTORE';
+  const ROUTE_SCROLL_SHIELD_TTL_MS = 9000;
+  const SCROLL_SHIELD_FORM_SELECTOR = [
+    '[data-factura-form]',
+    '[data-venta-form]',
+    '[data-ajuste-venta-form]',
+    '[data-cobro-form]',
+    '[data-compra-form]',
+    '[data-ajuste-proveedor-form]',
+    '[data-pago-form]',
+    '[data-gasto-form]',
+    '[data-nota-general-form]',
+    '[data-pendiente-form]',
+    '[data-recordatorio-form]',
+    '[data-catalog-form]',
+    '[data-bdatos-create-form]',
+    '[data-bdatos-edit-form]',
+    '[data-device-identity-form]',
+    '[data-config-form]'
+  ].join(',');
+  const SCROLL_SHIELD_CLICK_SELECTOR = [
+    '[data-factura-delete]',
+    '[data-notas-delete]',
+    '[data-notas-complete]',
+    '[data-recordatorio-delete]',
+    '[data-recordatorio-complete]',
+    '[data-catalog-toggle]',
+    '[data-venta-toggle]',
+    '[data-ajuste-venta-delete]',
+    '[data-cobro-annul]',
+    '[data-compra-toggle]',
+    '[data-ajuste-delete]',
+    '[data-pago-annul]',
+    '[data-gasto-annul]',
+    '[data-bdatos-delete]'
+  ].join(',');
 
   function nowIso() {
     return new Date().toISOString();
@@ -3971,7 +4007,7 @@
   function setRoute(route) {
     const safeRoute = routeAliases.get(String(route).toLowerCase()) || 'home';
     if (getRoute() === safeRoute) {
-      renderRoute();
+      renderRoute({ resetScroll: true });
       return;
     }
     window.location.hash = safeRoute;
@@ -3995,12 +4031,142 @@
     return window.scrollY || document.documentElement?.scrollTop || document.body?.scrollTop || 0;
   }
 
+  function isRouteScrollPreservable(route) {
+    const safeRoute = cleanText(route);
+    return Boolean(safeRoute && safeRoute !== 'home');
+  }
+
+  function getRouteInnerScrollSnapshot() {
+    if (!viewRoot) return [];
+    const scrollables = Array.from(viewRoot.querySelectorAll('[data-operational-table-scroll], [data-operational-top-scroll], .modal-body, .table-wrap, .list-scroll, .scroll-x'));
+    return scrollables.map((element, index) => {
+      const shell = element.closest?.('[data-operational-scroll-shell]');
+      const region = shell?.querySelector?.('[role="region"]');
+      const kind = element.hasAttribute?.('data-operational-table-scroll')
+        ? 'table'
+        : (element.hasAttribute?.('data-operational-top-scroll') ? 'top' : (element.className || element.tagName || 'scroll'));
+      const signature = [
+        kind,
+        cleanText(region?.getAttribute?.('aria-label')),
+        cleanText(shell?.className),
+        cleanText(element.className),
+        index
+      ].join('|');
+      return {
+        signature,
+        index,
+        scrollTop: Number(element.scrollTop) || 0,
+        scrollLeft: Number(element.scrollLeft) || 0
+      };
+    }).filter((item) => item.scrollTop || item.scrollLeft);
+  }
+
+  function buildRouteScrollSnapshot(route, reason = '') {
+    const safeRoute = cleanText(route || getRoute());
+    if (!isRouteScrollPreservable(safeRoute)) return null;
+    return {
+      route: safeRoute,
+      scrollTop: getViewportScrollTop(),
+      innerScrolls: getRouteInnerScrollSnapshot(),
+      createdAt: Date.now(),
+      reason: cleanText(reason)
+    };
+  }
+
+  function armRouteScrollShield(reason = '') {
+    const snapshot = buildRouteScrollSnapshot(getRoute(), reason);
+    if (!snapshot) return;
+    pendingRouteScrollRestore = snapshot;
+  }
+
+  function consumeRouteScrollShield(route) {
+    const ticket = pendingRouteScrollRestore;
+    pendingRouteScrollRestore = null;
+    if (!ticket || !isRouteScrollPreservable(route)) return null;
+    if (ticket.route !== route) return null;
+    if (Date.now() - ticket.createdAt > ROUTE_SCROLL_SHIELD_TTL_MS) return null;
+    return ticket;
+  }
+
+  function getEventElementTarget(event) {
+    const target = event?.target;
+    return target && target.nodeType === 1 ? target : null;
+  }
+
+  function isLocalActionTarget(target) {
+    if (!target || !viewRoot?.contains(target)) return false;
+    if (target.closest?.('[data-go], [data-route], .nav-button, .module-card, .home-card')) return false;
+    const action = target.closest?.('button, input[type="button"], input[type="submit"], input[type="reset"], [role="button"], a, label, summary');
+    if (!action || !viewRoot.contains(action)) return false;
+    const href = cleanText(action.getAttribute?.('href'));
+    if (href && (href.startsWith('#') || href.startsWith('http'))) return false;
+    return true;
+  }
+
+  function bindRouteScrollShield() {
+    if (!viewRoot || viewRoot.dataset.scrollShieldBound === '1') return;
+    viewRoot.dataset.scrollShieldBound = '1';
+
+    viewRoot.addEventListener('submit', (event) => {
+      const target = getEventElementTarget(event);
+      const form = target?.closest?.('form');
+      if (form && viewRoot.contains(form)) armRouteScrollShield('form-submit');
+    }, true);
+
+    viewRoot.addEventListener('click', (event) => {
+      const target = getEventElementTarget(event);
+      if (isLocalActionTarget(target)) armRouteScrollShield('local-click');
+    }, true);
+
+    viewRoot.addEventListener('change', (event) => {
+      const target = getEventElementTarget(event);
+      if (target && viewRoot.contains(target) && !target.closest?.('[data-go], [data-route]')) armRouteScrollShield('local-change');
+    }, true);
+  }
+
   function restoreViewportScrollTop(scrollTop) {
     const rawTop = Number(scrollTop);
     if (!Number.isFinite(rawTop)) return;
     const maxTop = Math.max(0, (document.documentElement?.scrollHeight || document.body?.scrollHeight || 0) - window.innerHeight);
     const targetTop = Math.max(0, Math.min(rawTop, maxTop));
-    window.scrollTo({ top: targetTop, left: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
+    const root = document.documentElement;
+    const previousBehavior = root?.style?.scrollBehavior || '';
+    if (root?.style) root.style.scrollBehavior = 'auto';
+    window.scrollTo({ top: targetTop, left: 0, behavior: 'auto' });
+    if (root?.style) root.style.scrollBehavior = previousBehavior;
+  }
+
+  function restoreInnerScrollSnapshot(snapshot) {
+    const items = Array.isArray(snapshot?.innerScrolls) ? snapshot.innerScrolls : [];
+    if (!items.length || !viewRoot) return;
+    const scrollables = Array.from(viewRoot.querySelectorAll('[data-operational-table-scroll], [data-operational-top-scroll], .modal-body, .table-wrap, .list-scroll, .scroll-x'));
+    items.forEach((item) => {
+      const element = scrollables[item.index];
+      if (!element) return;
+      element.scrollTop = Number(item.scrollTop) || 0;
+      element.scrollLeft = Number(item.scrollLeft) || 0;
+    });
+  }
+
+  function restoreRouteScrollSnapshot(snapshot) {
+    if (!snapshot) return;
+    restoreInnerScrollSnapshot(snapshot);
+    restoreViewportScrollTop(snapshot.scrollTop);
+  }
+
+  function scheduleRouteScrollRestore(snapshot) {
+    if (!snapshot) return;
+    const schedule = window.requestAnimationFrame || ((callback) => window.setTimeout(callback, 0));
+    schedule(() => {
+      restoreRouteScrollSnapshot(snapshot);
+      schedule(() => restoreRouteScrollSnapshot(snapshot));
+      window.setTimeout(() => restoreRouteScrollSnapshot(snapshot), 80);
+      window.setTimeout(() => restoreRouteScrollSnapshot(snapshot), 220);
+    });
+  }
+
+  function scheduleViewportScrollRestore(scrollTop) {
+    scheduleRouteScrollRestore({ route: getRoute(), scrollTop, innerScrolls: [], createdAt: Date.now(), reason: 'legacy-scroll-restore' });
   }
 
   function readConfigScrollRestore() {
@@ -4027,16 +4193,28 @@
 
   function renderRoute(options = {}) {
     const route = getRoute();
+    const previousRoute = lastRenderedRoute;
     const isConfigScreen = isConfigRoute(route);
-    const wasConfigScreen = isConfigRoute(lastRenderedRoute);
+    const wasConfigScreen = isConfigRoute(previousRoute);
+    const routeChanged = previousRoute !== null && previousRoute !== route;
+    const explicitReset = options?.resetScroll === true || options?.preserveScroll === false;
     const storedConfigScroll = isConfigScreen ? readConfigScrollRestore() : null;
-    const preserveScroll = options?.preserveScroll === true || (isConfigScreen && (storedConfigScroll !== null || (wasConfigScreen && options?.preserveScroll !== false)));
-    const scrollTopBeforeRender = storedConfigScroll !== null ? storedConfigScroll : getViewportScrollTop();
+    const shieldedSnapshot = consumeRouteScrollShield(route);
+    const sameRouteSnapshot = (!explicitReset && !routeChanged && previousRoute === route && isRouteScrollPreservable(route))
+      ? buildRouteScrollSnapshot(route, 'same-route-render')
+      : null;
+    const configSnapshot = storedConfigScroll !== null
+      ? { route, scrollTop: storedConfigScroll, innerScrolls: [], createdAt: Date.now(), reason: 'config-session-restore' }
+      : null;
+    const restoreSnapshot = !explicitReset
+      ? (configSnapshot || shieldedSnapshot || sameRouteSnapshot || (options?.preserveScroll === true ? buildRouteScrollSnapshot(route, 'explicit-preserve') : null))
+      : null;
+    const preserveScroll = Boolean(restoreSnapshot) || (!explicitReset && isConfigScreen && wasConfigScreen && options?.preserveScroll !== false);
 
-    if (lastRenderedRoute === 'proveedores' && route !== 'proveedores') {
+    if (previousRoute === 'proveedores' && route !== 'proveedores') {
       resetProveedoresTransientState();
     }
-    if (lastRenderedRoute === 'ventas' && route !== 'ventas') {
+    if (previousRoute === 'ventas' && route !== 'ventas') {
       resetVentasTransientState();
     }
     lastRenderedRoute = route;
@@ -4198,11 +4376,12 @@
     bindViewActions();
     setupOperationalTopScrollbars();
     document.querySelector('#mainContent')?.focus({ preventScroll: true });
-    if (preserveScroll) {
-      const scheduleScrollRestore = window.requestAnimationFrame || ((callback) => window.setTimeout(callback, 0));
-      scheduleScrollRestore(() => restoreViewportScrollTop(scrollTopBeforeRender));
+    if (preserveScroll && restoreSnapshot) {
+      scheduleRouteScrollRestore(restoreSnapshot);
+    } else if (preserveScroll) {
+      scheduleViewportScrollRestore(getViewportScrollTop());
     } else {
-      window.scrollTo({ top: 0, left: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
+      restoreViewportScrollTop(0);
     }
   }
 
@@ -18558,6 +18737,8 @@ ${rowsXml}
     setupGastosSearch();
 
   }
+
+  bindRouteScrollShield();
 
   navButtons.forEach((button) => {
     button.addEventListener('click', () => setRoute(button.dataset.route));
