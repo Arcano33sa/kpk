@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.76-post12-no-corte-valores-global';
+  const APP_VERSION = '0.17.78-post12-facturas-retencion-temporal-e2';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1034,6 +1034,11 @@
     page: 1,
     historyOpenPeriod: '',
     historyPages: {},
+    captureDraft: {
+      fecha: '',
+      clienteId: '',
+      sucursalId: ''
+    },
     message: null,
     messageType: 'success'
   };
@@ -4217,6 +4222,9 @@
     if (previousRoute === 'ventas' && route !== 'ventas') {
       resetVentasTransientState();
     }
+    if (previousRoute === 'facturas' && route !== 'facturas') {
+      resetFacturasTransientState();
+    }
     lastRenderedRoute = route;
     setActiveNav(route);
     renderWorkPeriodSelector();
@@ -5320,8 +5328,10 @@
       origen: cleanText(raw.origen || raw.source) || 'manual',
       ventaId: cleanText(raw.ventaId || raw.ocId || raw.documentoId),
       ventaDocumento: cleanText(raw.ventaDocumento || raw.numeroDocumento || raw.oc || raw.ventaRef || raw.documentoVenta),
-      clienteId: cleanText(raw.clienteId),
-      sucursalId: cleanText(raw.sucursalId),
+      clienteId: cleanText(raw.clienteId || raw.clientId || raw.clienteRef),
+      clienteNombre: cleanText(raw.clienteNombre || raw.nombreCliente || raw.cliente || raw.clientName),
+      sucursalId: cleanText(raw.sucursalId || raw.branchId || raw.sucursalRef),
+      sucursalNombre: cleanText(raw.sucursalNombre || raw.nombreSucursal || raw.sucursal || raw.branchName),
       periodo: periodInfo.periodo,
       autoPagada: Boolean(raw.autoPagada),
       autoPagadaAt: Boolean(raw.autoPagada) ? cleanText(raw.autoPagadaAt) : '',
@@ -5546,6 +5556,8 @@
     const existingKeys = new Set((data.facturas || []).map((record) => normalizeFacturaModuloNoKey(normalizeFacturaModuloRecord(record).no)).filter(Boolean));
     const timestamp = nowIso();
     const createdRecords = [];
+    const cliente = venta.clienteId ? getCatalogRecordById('clientes', venta.clienteId) : null;
+    const sucursal = venta.sucursalId ? getCatalogRecordById('sucursales', venta.sucursalId) : null;
     let skipped = 0;
 
     expanded.items.forEach((item) => {
@@ -5566,7 +5578,9 @@
         ventaId: venta.id,
         ventaDocumento: venta.numeroDocumento,
         clienteId: venta.clienteId,
+        clienteNombre: cliente?.nombre || '',
         sucursalId: venta.sucursalId,
+        sucursalNombre: sucursal?.nombre || '',
         createdAt: timestamp,
         updatedAt: timestamp
       });
@@ -5652,6 +5666,145 @@
     return (data.facturas || []).map(normalizeFacturaModuloRecord).find((record) => record.id === target) || null;
   }
 
+  function sortFacturaCatalogByName(records = []) {
+    return (Array.isArray(records) ? records : [])
+      .slice()
+      .sort((a, b) => String(a?.nombre || '').localeCompare(String(b?.nombre || ''), 'es-NI', { numeric: true, sensitivity: 'base' }));
+  }
+
+  function getFacturaClientesForSelect(currentClienteId = '') {
+    const selected = cleanText(currentClienteId);
+    return sortFacturaCatalogByName(getCatalogRecords('clientes').filter((cliente) => cliente.activo || cliente.id === selected));
+  }
+
+  function getFacturaSucursalesForCliente(clienteId, currentSucursalId = '') {
+    const selectedClienteId = cleanText(clienteId);
+    const selectedSucursalId = cleanText(currentSucursalId);
+    if (!selectedClienteId) return [];
+    return sortFacturaCatalogByName(getCatalogRecords('sucursales').filter((sucursal) => {
+      if (sucursal.clienteId !== selectedClienteId) return false;
+      return sucursal.activo || sucursal.id === selectedSucursalId;
+    }));
+  }
+
+  function getFacturaClienteDisplay(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    const cliente = factura.clienteId ? getCatalogRecordById('clientes', factura.clienteId) : null;
+    return cleanText(factura.clienteNombre || cliente?.nombre || '');
+  }
+
+  function getFacturaSucursalDisplay(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    const sucursal = factura.sucursalId ? getCatalogRecordById('sucursales', factura.sucursalId) : null;
+    return cleanText(factura.sucursalNombre || sucursal?.nombre || '');
+  }
+
+  function getFacturaClienteSucursalPayload(clienteId, sucursalId, currentSucursalId = '') {
+    const selectedClienteId = cleanText(clienteId);
+    const cliente = selectedClienteId ? getCatalogRecordById('clientes', selectedClienteId) : null;
+    const validSucursales = cliente ? getFacturaSucursalesForCliente(cliente.id, currentSucursalId) : [];
+    const selectedSucursalId = validSucursales.some((sucursal) => sucursal.id === cleanText(sucursalId)) ? cleanText(sucursalId) : '';
+    const sucursal = selectedSucursalId ? getCatalogRecordById('sucursales', selectedSucursalId) : null;
+    return {
+      clienteId: cliente?.id || '',
+      clienteNombre: cliente?.nombre || '',
+      sucursalId: sucursal?.id || '',
+      sucursalNombre: sucursal?.nombre || ''
+    };
+  }
+
+  function createEmptyFacturasCaptureDraft() {
+    return {
+      fecha: '',
+      clienteId: '',
+      sucursalId: ''
+    };
+  }
+
+  function normalizeFacturasCaptureDraft(raw = {}) {
+    const source = isPlainObject(raw) ? raw : {};
+    const fecha = toDateInputValue(source.fecha) || '';
+    const clienteId = cleanText(source.clienteId);
+    const sucursalId = cleanText(source.sucursalId);
+    if (!clienteId) {
+      return { fecha, clienteId: '', sucursalId: '' };
+    }
+    const cliente = getCatalogRecordById('clientes', clienteId);
+    if (!cliente) {
+      return { fecha, clienteId: '', sucursalId: '' };
+    }
+    const sucursales = getFacturaSucursalesForCliente(clienteId, sucursalId);
+    const safeSucursalId = sucursales.some((sucursal) => sucursal.id === sucursalId) ? sucursalId : '';
+    return {
+      fecha,
+      clienteId,
+      sucursalId: safeSucursalId
+    };
+  }
+
+  function resetFacturasCaptureDraft() {
+    facturasState.captureDraft = createEmptyFacturasCaptureDraft();
+  }
+
+  function resetFacturasTransientState() {
+    facturasState.editingId = null;
+    resetFacturasCaptureDraft();
+  }
+
+  function isFacturaCreateForm(form) {
+    return cleanText(form?.dataset?.facturaFormMode || '') !== 'edit';
+  }
+
+  function rememberFacturasCaptureFromForm(form) {
+    if (!form || !isFacturaCreateForm(form)) return;
+    facturasState.captureDraft = normalizeFacturasCaptureDraft({
+      fecha: form.querySelector('input[name="fecha"]')?.value || '',
+      clienteId: form.querySelector('[data-factura-cliente]')?.value || '',
+      sucursalId: form.querySelector('[data-factura-sucursal]')?.value || ''
+    });
+  }
+
+  function getFacturasCreateFormDefaults() {
+    const draft = normalizeFacturasCaptureDraft(facturasState.captureDraft);
+    facturasState.captureDraft = draft;
+    return {
+      no: '',
+      fecha: draft.fecha || getWorkPeriodDefaultDate(),
+      estado: 'Enviada',
+      monto: '',
+      clienteId: draft.clienteId,
+      clienteNombre: '',
+      sucursalId: draft.sucursalId,
+      sucursalNombre: '',
+      observaciones: ''
+    };
+  }
+
+  function renderFacturaSucursalOptions(clienteId, selectedSucursalId = '') {
+    const selectedClienteId = cleanText(clienteId);
+    const selected = cleanText(selectedSucursalId);
+    if (!selectedClienteId) return '<option value="">Selecciona cliente primero</option>';
+    const sucursales = getFacturaSucursalesForCliente(selectedClienteId, selected);
+    if (!sucursales.length) return '<option value="">Sin sucursales registradas</option>';
+    return [
+      '<option value="">Seleccionar sucursal</option>',
+      ...sucursales.map((sucursal) => `<option value="${escapeHtml(sucursal.id)}" ${sucursal.id === selected ? 'selected' : ''}>${escapeHtml(sucursal.nombre || 'Sucursal sin nombre')}</option>`)
+    ].join('');
+  }
+
+  function syncFacturaSucursalSelect(form) {
+    const clienteSelect = form?.querySelector('[data-factura-cliente]');
+    const sucursalSelect = form?.querySelector('[data-factura-sucursal]');
+    if (!clienteSelect || !sucursalSelect) return;
+    const selectedClienteId = cleanText(clienteSelect.value);
+    const currentSucursalId = cleanText(sucursalSelect.value);
+    const validSucursales = getFacturaSucursalesForCliente(selectedClienteId, currentSucursalId);
+    sucursalSelect.innerHTML = renderFacturaSucursalOptions(selectedClienteId, currentSucursalId);
+    const stillValid = validSucursales.some((sucursal) => sucursal.id === currentSucursalId);
+    if (!stillValid) sucursalSelect.value = '';
+    sucursalSelect.disabled = !selectedClienteId || !validSucursales.length;
+  }
+
   function getFacturasSearchResults(data = getFacturasData()) {
     const query = normalizeKeyForCompare(facturasState.search);
     if (!query) return [];
@@ -5726,13 +5879,12 @@
 
   function renderFacturaForm(record, mode = 'create') {
     const isEditing = mode === 'edit' && Boolean(record);
-    const current = record || {
-      no: '',
-      fecha: getWorkPeriodDefaultDate(),
-      estado: 'Enviada',
-      monto: '',
-      observaciones: ''
-    };
+    const current = record || getFacturasCreateFormDefaults();
+    const selectedClienteId = cleanText(current.clienteId);
+    const selectedSucursalId = cleanText(current.sucursalId);
+    const clientes = getFacturaClientesForSelect(selectedClienteId);
+    const sucursales = getFacturaSucursalesForCliente(selectedClienteId, selectedSucursalId);
+    const sucursalDisabled = !selectedClienteId || !sucursales.length;
     return `
       <form class="${isEditing ? 'facturas-form facturas-modal-form' : 'panel-card facturas-form'}" data-factura-form data-factura-form-mode="${isEditing ? 'edit' : 'create'}">
         ${isEditing && facturasState.message ? `<div class="form-message ${facturasState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(facturasState.message)}</div>` : ''}
@@ -5754,6 +5906,20 @@
           <label class="form-field">
             <span>Fecha *</span>
             <input type="date" name="fecha" value="${escapeHtml(current.fecha || getWorkPeriodDefaultDate())}" required />
+          </label>
+          <label class="form-field">
+            <span>Cliente</span>
+            <select name="clienteId" data-factura-cliente>
+              <option value="">Seleccionar cliente</option>
+              ${clientes.map((cliente) => `<option value="${escapeHtml(cliente.id)}" ${cliente.id === selectedClienteId ? 'selected' : ''}>${escapeHtml(cliente.nombre || 'Cliente sin nombre')}${cliente.activo ? '' : ' · inactivo'}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Sucursal</span>
+            <select name="sucursalId" data-factura-sucursal ${sucursalDisabled ? 'disabled' : ''}>
+              ${renderFacturaSucursalOptions(selectedClienteId, selectedSucursalId)}
+            </select>
+            <small>${selectedClienteId ? (sucursales.length ? 'Sucursales del cliente seleccionado.' : 'Cliente sin sucursales registradas.') : 'Primero selecciona un cliente.'}</small>
           </label>
           <label class="form-field">
             <span>Estado *</span>
@@ -5808,7 +5974,7 @@
       wrapClass: 'facturas-table-wrap',
       ariaLabel: 'Resultados de búsqueda de facturas',
       tableClass: 'operational-table-facturas',
-      headers: '<th>No.</th><th>Período</th><th>Fecha</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones</th>',
+      headers: '<th>No.</th><th>Período</th><th>Fecha</th><th>Cliente</th><th>Sucursal</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones>',
       rows
     });
   }
@@ -5832,7 +5998,7 @@
           wrapClass: 'facturas-table-wrap',
           ariaLabel: `Listado de facturas de ${periodInfo.label}`,
           tableClass: 'operational-table-facturas',
-          headers: '<th>No.</th><th>Fecha</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones</th>',
+          headers: '<th>No.</th><th>Fecha</th><th>Cliente</th><th>Sucursal</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones>',
           rows: records.map((record) => renderFacturaRow(record)).join('')
         }) : `<p class="muted-text compact-note">${escapeHtml(emptyText)}</p>`}
         ${pagination}
@@ -5914,7 +6080,7 @@
               wrapClass: 'facturas-table-wrap',
               ariaLabel: `Histórico de facturas de ${group.label}`,
               tableClass: 'operational-table-facturas',
-              headers: '<th>No.</th><th>Fecha</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones</th>',
+              headers: '<th>No.</th><th>Fecha</th><th>Cliente</th><th>Sucursal</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones>',
               rows: pagedRecords.map((record) => renderFacturaRow(record, { readonly: true })).join('')
             }) : '<p class="muted-text compact-note">No hay facturas en este período histórico.</p>'}
             ${renderFacturasPagination(group.records.length, totalPages, { scope: 'history', periodo: group.periodo })}
@@ -5928,6 +6094,8 @@
     const factura = normalizeFacturaModuloRecord(record);
     const periodInfo = getFacturaPeriodInfoFromDate(factura.fecha);
     const origenLabel = getFacturaOrigenLabel(factura);
+    const clienteNombre = getFacturaClienteDisplay(factura);
+    const sucursalNombre = getFacturaSucursalDisplay(factura);
     const closedPeriod = isFacturaPeriodClosed(factura.periodo);
     const readonly = Boolean(options.readonly || closedPeriod);
     const actions = readonly
@@ -5941,6 +6109,8 @@
         <td><span class="compact-primary" title="${escapeHtml(factura.no)}">${escapeHtml(factura.no || '—')}</span>${origenLabel ? `<small class="factura-origin-label" title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel)}</small>` : ''}</td>
         ${options.includePeriod ? `<td><span>${escapeHtml(periodInfo.label)}</span></td>` : ''}
         <td><span>${escapeHtml(formatDate(factura.fecha))}</span></td>
+        <td><span title="${escapeHtml(clienteNombre || 'Sin cliente')}">${escapeHtml(clienteNombre || '—')}</span></td>
+        <td><span title="${escapeHtml(sucursalNombre || 'Sin sucursal')}">${escapeHtml(sucursalNombre || '—')}</span></td>
         <td><span class="state-pill ${getEstadoClass(factura.estado)}">${escapeHtml(factura.estado)}</span></td>
         <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.monto || 0))}</span></td>
         <td><small title="${escapeHtml(factura.observaciones)}">${escapeHtml(factura.observaciones || '—')}</small></td>
@@ -5971,20 +6141,29 @@
     `;
   }
 
-  function clearFacturaForm() {
+  function clearFacturaForm(options = {}) {
     facturasState.editingId = null;
     facturasState.message = null;
+    if (options.resetCapture === true) resetFacturasCaptureDraft();
     renderRoute({ preserveScroll: true });
+  }
+
+  function clearFacturaCreateForm() {
+    clearFacturaForm({ resetCapture: true });
   }
 
   function saveFacturaRecord(form) {
     const formData = new FormData(form);
+    const isCreateMode = isFacturaCreateForm(form);
     const no = cleanText(formData.get('no'));
     const fecha = toDateInputValue(formData.get('fecha'));
     const estado = normalizeFacturaEstado(formData.get('estado'));
+    const clienteId = cleanText(formData.get('clienteId'));
+    const sucursalId = cleanText(formData.get('sucursalId'));
     const observaciones = cleanText(formData.get('observaciones'));
     const montoRaw = cleanText(formData.get('monto'));
     const monto = montoRaw ? parseMoney(montoRaw) : 0;
+    if (isCreateMode) rememberFacturasCaptureFromForm(form);
     if (!no) {
       setFacturasMessage('El No. de factura es obligatorio.', 'error');
       renderRoute({ preserveScroll: true });
@@ -6010,6 +6189,7 @@
 
     const data = getFacturasData();
     const existing = findFacturaModuloById(facturasState.editingId, data);
+    const catalogPayload = getFacturaClienteSucursalPayload(clienteId, sucursalId, existing?.sucursalId || '');
     const timestamp = nowIso();
     const nextRecord = normalizeFacturaModuloRecord({
       ...(existing || {}),
@@ -6022,8 +6202,10 @@
       origen: existing?.origen || 'manual',
       ventaId: existing?.ventaId || '',
       ventaDocumento: existing?.ventaDocumento || '',
-      clienteId: existing?.clienteId || '',
-      sucursalId: existing?.sucursalId || '',
+      clienteId: catalogPayload.clienteId,
+      clienteNombre: catalogPayload.clienteNombre,
+      sucursalId: catalogPayload.sucursalId,
+      sucursalNombre: catalogPayload.sucursalNombre,
       autoPagada: existing?.autoPagada && estado === 'Pagada',
       autoPagadaAt: existing?.autoPagada && estado === 'Pagada' ? existing.autoPagadaAt : '',
       autoPagadaVentaId: existing?.autoPagada && estado === 'Pagada' ? existing.autoPagadaVentaId : '',
@@ -6039,7 +6221,14 @@
     }
     saveFacturasData(data);
     facturasState.editingId = null;
-    if (!existing) facturasState.page = 1;
+    if (!existing) {
+      facturasState.page = 1;
+      facturasState.captureDraft = normalizeFacturasCaptureDraft({
+        fecha,
+        clienteId: catalogPayload.clienteId,
+        sucursalId: catalogPayload.sucursalId
+      });
+    }
     setFacturasMessage(existing ? 'Factura actualizada correctamente.' : 'Factura agregada correctamente.');
     renderRoute({ preserveScroll: true });
   }
@@ -18348,14 +18537,32 @@ ${rowsXml}
     });
 
     viewRoot.querySelectorAll('[data-factura-form]').forEach((form) => {
+      syncFacturaSucursalSelect(form);
+      const isCreate = isFacturaCreateForm(form);
+      form.querySelector('input[name="fecha"]')?.addEventListener('change', () => {
+        if (isCreate) rememberFacturasCaptureFromForm(form);
+      });
+      form.querySelector('[data-factura-cliente]')?.addEventListener('change', () => {
+        const sucursalSelect = form.querySelector('[data-factura-sucursal]');
+        if (sucursalSelect) sucursalSelect.value = '';
+        syncFacturaSucursalSelect(form);
+        if (isCreate) rememberFacturasCaptureFromForm(form);
+      });
+      form.querySelector('[data-factura-sucursal]')?.addEventListener('change', () => {
+        if (isCreate) rememberFacturasCaptureFromForm(form);
+      });
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         saveFacturaRecord(form);
       });
     });
 
-    viewRoot.querySelectorAll('[data-factura-clear], [data-factura-cancel]').forEach((button) => {
-      button.addEventListener('click', clearFacturaForm);
+    viewRoot.querySelectorAll('[data-factura-clear]').forEach((button) => {
+      button.addEventListener('click', clearFacturaCreateForm);
+    });
+
+    viewRoot.querySelectorAll('[data-factura-cancel]').forEach((button) => {
+      button.addEventListener('click', () => clearFacturaForm());
     });
 
     viewRoot.querySelectorAll('[data-factura-edit]').forEach((button) => {

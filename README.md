@@ -1,3 +1,11 @@
+## 0.17.78-post12-facturas-retencion-temporal-e2
+
+- Facturas conserva temporalmente Fecha, Cliente y Sucursal en el formulario de nueva factura mientras el usuario permanece dentro del módulo.
+- Al guardar una factura nueva, se limpian los campos variables y se mantienen los datos de captura repetitiva sin guardarlos en localStorage ni en JSON.
+- Al salir de Facturas o recargar la app, la retención temporal desaparece; el modal de edición no modifica esta ayuda de captura.
+- Se mantiene orden numérico natural, búsqueda, históricos por período, cierre general, Excel, JSON y conexión con Ventas / OC y Cobros.
+- Versión/cache PWA actualizado a `0.17.78-post12-facturas-retencion-temporal-e2`.
+
 ## 0.17.70-post12-periodo-trabajo-etapa3-cierres-json-final
 
 - Se blindó el selector global para reconciliar automáticamente el Período de trabajo después de cierres generales e importaciones JSON.

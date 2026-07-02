@@ -7343,7 +7343,7 @@ body,
 }
 
 .operational-table-facturas {
-  min-width: 820px;
+  min-width: 1080px;
 }
 
 .operational-table-facturas th:last-child,
@@ -7389,7 +7389,7 @@ body,
   }
 
   .operational-table-facturas {
-    min-width: 760px;
+    min-width: 980px;
   }
 }
 
@@ -7695,6 +7695,8 @@ body,
   .operational-table-facturas td:nth-child(1) > span,
   .operational-table-facturas td:nth-child(2) > span,
   .operational-table-facturas td:nth-child(3) > span,
+  .operational-table-facturas td:nth-child(4) > span,
+  .operational-table-facturas td:nth-child(5) > span,
   .operational-table-facturas .state-pill,
   .amount-cell > span,
   .state-pill) {
@@ -7730,6 +7732,11 @@ body,
 .operational-table-facturas td:nth-child(2),
 .operational-table-facturas td:nth-child(3) {
   min-width: 118px;
+}
+
+.operational-table-facturas td:nth-child(4),
+.operational-table-facturas td:nth-child(5) {
+  min-width: 142px;
 }
 
 .operational-table-facturas .actions-cell,
