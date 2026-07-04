@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.86-post12-catalogos-ordenaz-sucursales-cliente';
+  const APP_VERSION = '0.17.88-post12-ordenvisual-listados-resumen';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -3781,6 +3781,47 @@
     return cleanText(value).toLocaleLowerCase('es-NI');
   }
 
+  function compareVisualText(left, right) {
+    return CATALOG_DISPLAY_COLLATOR.compare(cleanText(left), cleanText(right));
+  }
+
+  function getVisualNumber(record, field) {
+    const value = typeof field === 'function' ? field(record) : record?.[field];
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+  }
+
+  function compareVisualAmountDesc(left, right, fields = []) {
+    const keys = Array.isArray(fields) ? fields : [fields];
+    for (const field of keys) {
+      const diff = getVisualNumber(right, field) - getVisualNumber(left, field);
+      if (diff !== 0) return diff;
+    }
+    return 0;
+  }
+
+  function compareVisualDateAsc(left, right, fields = []) {
+    const keys = Array.isArray(fields) ? fields : [fields];
+    for (const field of keys) {
+      const leftDate = toDateInputValue(typeof field === 'function' ? field(left) : left?.[field]);
+      const rightDate = toDateInputValue(typeof field === 'function' ? field(right) : right?.[field]);
+      const compare = String(leftDate || '9999-12-31').localeCompare(String(rightDate || '9999-12-31'));
+      if (compare !== 0) return compare;
+    }
+    return 0;
+  }
+
+  function compareVisualDateDesc(left, right, fields = []) {
+    return compareVisualDateAsc(right, left, fields);
+  }
+
+  function compareVisualMoraPriority(left, right, nameField = '') {
+    return compareVisualAmountDesc(left, right, ['diasMora', 'saldoPendiente'])
+      || compareVisualDateAsc(left, right, ['fechaVencimiento'])
+      || (nameField ? compareVisualText(left?.[nameField], right?.[nameField]) : 0)
+      || compareVisualText(left?.documento, right?.documento);
+  }
+
   function normalizeKeyForCompare(value) {
     return cleanText(value)
       .normalize('NFD')
@@ -3890,12 +3931,12 @@
   }
 
   function getActiveBankRecords() {
-    return getCatalogRecords('cuentasBancos').filter((record) => record.activo && isBankCatalogRecord(record));
+    return getSortedCatalogRecords('cuentasBancos').filter((record) => record.activo && isBankCatalogRecord(record));
   }
 
   function getSelectableBankRecords(currentId = '') {
     const selected = cleanText(currentId);
-    return getCatalogRecords('cuentasBancos').filter((record) => (
+    return getSortedCatalogRecords('cuentasBancos').filter((record) => (
       isBankCatalogRecord(record) && (record.activo || record.id === selected)
     ));
   }
@@ -3904,7 +3945,7 @@
     const selected = cleanText(currentId);
     const requiredType = cleanText(type);
     if (!requiredType) return [];
-    return getCatalogRecords('cuentasBancos').filter((record) => (
+    return getSortedCatalogRecords('cuentasBancos').filter((record) => (
       isBankCatalogRecord(record) &&
       bankMatchesType(record, requiredType) &&
       (record.activo || record.id === selected)
@@ -5761,7 +5802,7 @@
   function sortFacturaCatalogByName(records = []) {
     return (Array.isArray(records) ? records : [])
       .slice()
-      .sort((a, b) => String(a?.nombre || '').localeCompare(String(b?.nombre || ''), 'es-NI', { numeric: true, sensitivity: 'base' }));
+      .sort((a, b) => compareCatalogDisplayText(a?.nombre, b?.nombre));
   }
 
   function getFacturaClientesForSelect(currentClienteId = '') {
@@ -7014,8 +7055,8 @@
   }
 
   function renderPendienteForm(record = null) {
-    const metodos = getCatalogRecords('metodosPago');
-    const bancos = getCatalogRecords('cuentasBancos');
+    const metodos = getSelectableCatalogRecords('metodosPago', record?.metodoPagoId);
+    const bancos = getSelectableBankRecords(record?.cuentaBancoId);
     return `
       <form class="catalog-form" data-pendiente-form>
         <div class="form-grid">
@@ -7784,23 +7825,23 @@
     const clientesMora = ventas
       .filter((venta) => venta.activo && venta.saldoPorCobrar > 0 && isPastVentaDue(venta) && matchesResumenVenta(venta, filters, null, false))
       .map((venta) => buildClienteMoraItem(venta))
-      .sort((a, b) => b.diasMora - a.diasMora || b.saldoPendiente - a.saldoPendiente);
+      .sort((a, b) => compareVisualMoraPriority(a, b, 'cliente'));
     const proveedoresMora = compras
       .filter((compra) => compra.activo && compra.saldoPorPagar > 0 && isPastDate(compra.fechaVencimiento) && matchesResumenCompra(compra, filters, null, false))
       .map((compra) => buildProveedorMoraItem(compra))
-      .sort((a, b) => b.diasMora - a.diasMora || b.saldoPendiente - a.saldoPendiente);
+      .sort((a, b) => compareVisualMoraPriority(a, b, 'proveedor'));
     const ventasProximas = ventas
       .filter((venta) => venta.activo && venta.saldoPorCobrar > 0 && isVentaDueWithinNextDays(venta, 7) && matchesResumenVenta(venta, filters, null, false))
-      .sort((a, b) => String(a.fechaVencimiento).localeCompare(String(b.fechaVencimiento)));
+      .sort((a, b) => compareVisualDateAsc(a, b, ['fechaVencimiento']) || compareVisualText(a.numeroDocumento || a.facturaReferencia, b.numeroDocumento || b.facturaReferencia));
     const comprasProximas = compras
       .filter((compra) => compra.activo && compra.saldoPorPagar > 0 && isWithinNextDays(compra.fechaVencimiento, 7) && matchesResumenCompra(compra, filters, null, false))
-      .sort((a, b) => String(a.fechaVencimiento).localeCompare(String(b.fechaVencimiento)));
-    const saldosAltosClientes = ventasCartera.slice().sort((a, b) => b.saldoPorCobrar - a.saldoPorCobrar).slice(0, 3);
-    const saldosAltosProveedores = comprasCartera.slice().sort((a, b) => b.saldoPorPagar - a.saldoPorPagar).slice(0, 3);
+      .sort((a, b) => compareVisualDateAsc(a, b, ['fechaVencimiento']) || compareVisualText(a.numeroDocumento || a.facturaReferencia, b.numeroDocumento || b.facturaReferencia));
+    const saldosAltosClientes = ventasCartera.slice().sort((a, b) => compareVisualAmountDesc(a, b, ['saldoPorCobrar']) || compareVisualDateAsc(a, b, ['fechaVencimiento']) || compareVisualText(a.numeroDocumento, b.numeroDocumento)).slice(0, 3);
+    const saldosAltosProveedores = comprasCartera.slice().sort((a, b) => compareVisualAmountDesc(a, b, ['saldoPorPagar']) || compareVisualDateAsc(a, b, ['fechaVencimiento']) || compareVisualText(a.facturaReferencia, b.facturaReferencia)).slice(0, 3);
     const parciales = [
       ...ventas.filter((venta) => venta.activo && venta.estado === 'Abonado' && matchesResumenVenta(venta, filters, null, false)).map((venta) => ({ tipo: 'Cliente', titulo: venta.numeroDocumento || 'OC sin número', saldo: venta.saldoPorCobrar })),
       ...compras.filter((compra) => compra.activo && compra.estado === 'Abonado' && matchesResumenCompra(compra, filters, null, false)).map((compra) => ({ tipo: 'Proveedor', titulo: compra.facturaReferencia || 'Factura sin referencia', saldo: compra.saldoPorPagar }))
-    ];
+    ].sort((a, b) => compareVisualAmountDesc(a, b, ['saldo']) || compareVisualText(a.tipo, b.tipo) || compareVisualText(a.titulo, b.titulo));
     const alertas = buildAlertasList({ clientesMora, proveedoresMora, ventasProximas, comprasProximas, saldosAltosClientes, saldosAltosProveedores, parciales });
 
     const totalSubtotalVentas = sumMoney(ventasPeriodo, (venta) => venta.subtotal);
@@ -8572,7 +8613,7 @@
       current.cantidad += 1;
       groups.set(key, current);
     });
-    return Array.from(groups.values()).sort((a, b) => b.total - a.total || a.tipo.localeCompare(b.tipo, 'es-NI'));
+    return Array.from(groups.values()).sort((a, b) => compareVisualAmountDesc(a, b, ['total']) || compareVisualText(a.tipo, b.tipo));
   }
 
   function buildVentaPorSucursal(ventasPeriodo, cobrosPeriodo, ventasCartera, ventasById) {
@@ -8614,7 +8655,7 @@
 
     return Array.from(groups.values())
       .filter((item) => item.totalVendido || item.totalCobrado || item.saldoPorCobrar)
-      .sort((a, b) => b.totalVendido - a.totalVendido || b.saldoPorCobrar - a.saldoPorCobrar || a.sucursal.localeCompare(b.sucursal, 'es-NI'));
+      .sort((a, b) => compareVisualAmountDesc(a, b, ['totalVendido', 'saldoPorCobrar', 'totalCobrado']) || compareVisualText(a.sucursal, b.sucursal));
   }
 
   function buildSaldosPorProveedor(compras) {
@@ -8642,7 +8683,7 @@
     });
     return Array.from(groups.values())
       .filter((item) => item.totalAjustado || item.totalPagado || item.saldoPorPagar)
-      .sort((a, b) => b.saldoPorPagar - a.saldoPorPagar || b.totalAjustado - a.totalAjustado || a.proveedor.localeCompare(b.proveedor, 'es-NI'));
+      .sort((a, b) => compareVisualAmountDesc(a, b, ['saldoPorPagar', 'totalAjustado', 'totalPagado']) || compareVisualText(a.proveedor, b.proveedor));
   }
 
   function getCobroRetencionMontoForResumen(cobro) {
@@ -8667,7 +8708,7 @@
       current.cantidad += 1;
       groups.set(key, current);
     });
-    return Array.from(groups.values()).sort((a, b) => b.monto - a.monto || a.concepto.localeCompare(b.concepto, 'es-NI'));
+    return Array.from(groups.values()).sort((a, b) => compareVisualText(a.concepto, b.concepto) || compareVisualAmountDesc(a, b, ['monto']));
   }
 
   function renderResumenRetencionesPorConcepto(items) {
@@ -9034,17 +9075,17 @@
     const clientesMora = ventas
       .filter((venta) => venta.activo && venta.saldoPorCobrar > 0 && isPastVentaDue(venta))
       .map((venta) => buildClienteMoraItem(venta))
-      .sort((a, b) => b.diasMora - a.diasMora || b.saldoPendiente - a.saldoPendiente);
+      .sort((a, b) => compareVisualMoraPriority(a, b, 'cliente'));
     const proveedoresMora = compras
       .filter((compra) => compra.activo && compra.saldoPorPagar > 0 && isPastDate(compra.fechaVencimiento))
       .map((compra) => buildProveedorMoraItem(compra))
-      .sort((a, b) => b.diasMora - a.diasMora || b.saldoPendiente - a.saldoPendiente);
+      .sort((a, b) => compareVisualMoraPriority(a, b, 'proveedor'));
     const ventasProximas = ventas
       .filter((venta) => venta.activo && venta.saldoPorCobrar > 0 && isVentaDueWithinNextDays(venta, 7))
-      .sort((a, b) => String(a.fechaVencimiento).localeCompare(String(b.fechaVencimiento)));
+      .sort((a, b) => compareVisualDateAsc(a, b, ['fechaVencimiento']) || compareVisualText(a.numeroDocumento || a.facturaReferencia, b.numeroDocumento || b.facturaReferencia));
     const comprasProximas = compras
       .filter((compra) => compra.activo && compra.saldoPorPagar > 0 && isWithinNextDays(compra.fechaVencimiento, 7))
-      .sort((a, b) => String(a.fechaVencimiento).localeCompare(String(b.fechaVencimiento)));
+      .sort((a, b) => compareVisualDateAsc(a, b, ['fechaVencimiento']) || compareVisualText(a.numeroDocumento || a.facturaReferencia, b.numeroDocumento || b.facturaReferencia));
     const saldosAltosClientes = ventas
       .filter((venta) => venta.activo && venta.saldoPorCobrar > 0)
       .sort((a, b) => b.saldoPorCobrar - a.saldoPorCobrar)
@@ -9056,12 +9097,12 @@
     const parciales = [
       ...ventas.filter((venta) => venta.activo && venta.estado === 'Abonado').map((venta) => ({ tipo: 'Cliente', titulo: venta.numeroDocumento || 'OC sin número', saldo: venta.saldoPorCobrar })),
       ...compras.filter((compra) => compra.activo && compra.estado === 'Abonado').map((compra) => ({ tipo: 'Proveedor', titulo: compra.facturaReferencia || 'Factura sin referencia', saldo: compra.saldoPorPagar }))
-    ];
+    ].sort((a, b) => compareVisualAmountDesc(a, b, ['saldo']) || compareVisualText(a.tipo, b.tipo) || compareVisualText(a.titulo, b.titulo));
     const alertas = buildAlertasList({ clientesMora, proveedoresMora, ventasProximas, comprasProximas, saldosAltosClientes, saldosAltosProveedores, parciales });
 
     return {
-      ventas,
-      compras,
+      ventas: ventas.slice().sort((a, b) => compareVisualDateDesc(a, b, ['createdAt', 'fechaOc']) || compareVisualText(a.numeroDocumento, b.numeroDocumento)),
+      compras: compras.slice().sort((a, b) => compareVisualDateDesc(a, b, ['createdAt', 'fechaCompra']) || compareVisualText(a.facturaReferencia, b.facturaReferencia)),
       clientesMora,
       proveedoresMora,
       ventasProximas,
@@ -9264,7 +9305,7 @@
     const highBalances = [
       ...summary.saldosAltosClientes.map((venta) => ({ label: `OC ${venta.numeroDocumento || 'Sin número'}`, amount: venta.saldoPorCobrar })),
       ...summary.saldosAltosProveedores.map((compra) => ({ label: `Factura ${compra.facturaReferencia || 'Sin referencia'}`, amount: compra.saldoPorPagar }))
-    ].sort((a, b) => b.amount - a.amount).slice(0, 5).map((item) => `
+    ].sort((a, b) => compareVisualAmountDesc(a, b, ['amount']) || compareVisualText(a.label, b.label)).slice(0, 5).map((item) => `
       <li><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(formatMoney(item.amount))}</span></li>
     `).join('');
     const partials = summary.parciales.slice(0, 5).map((item) => `
@@ -10754,7 +10795,7 @@
       const cliente = getCatalogRecordById('clientes', venta.clienteId);
       const label = cleanText(cliente?.nombre || venta.clienteNombre) || 'Cliente no encontrado';
       return [venta.clienteId || label, { id: venta.clienteId, nombre: label }];
-    })).values()).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+    })).values()).sort((a, b) => compareCatalogDisplayText(a.nombre, b.nombre));
 
     return `
       <form class="ajuste-form" data-ajuste-venta-form novalidate>
@@ -10804,6 +10845,40 @@
         </div>
       </form>
     `;
+  }
+
+  function getVentaSucursalesForCliente(clienteId, currentSucursalId = '') {
+    const selectedClienteId = cleanText(clienteId);
+    const selected = cleanText(currentSucursalId);
+    if (!selectedClienteId) return [];
+    return getSelectableCatalogRecords('sucursales', selected)
+      .filter((sucursal) => cleanText(sucursal.clienteId) === selectedClienteId);
+  }
+
+  function renderVentaSucursalOptions(clienteId, selectedSucursalId = '') {
+    const selectedClienteId = cleanText(clienteId);
+    const selected = cleanText(selectedSucursalId);
+    if (!selectedClienteId) return '<option value="">Selecciona cliente primero</option>';
+    const sucursales = getVentaSucursalesForCliente(selectedClienteId, selected);
+    if (!sucursales.length) return '<option value="">Sin sucursales registradas</option>';
+    return [
+      '<option value="">Seleccionar sucursal</option>',
+      ...sucursales.map((sucursal) => `<option value="${escapeHtml(sucursal.id)}" ${sucursal.id === selected ? 'selected' : ''}>${escapeHtml(sucursal.nombre || 'Sucursal sin nombre')}${sucursal.activo ? '' : ' · inactiva'}</option>`)
+    ].join('');
+  }
+
+  function syncVentaSucursalSelect(form) {
+    const clienteSelect = form?.querySelector('[data-venta-client]');
+    const sucursalSelect = form?.querySelector('[data-venta-sucursal]');
+    if (!clienteSelect || !sucursalSelect) return;
+    const selectedClienteId = cleanText(clienteSelect.value);
+    const currentSucursalId = cleanText(sucursalSelect.value);
+    const validSucursales = getVentaSucursalesForCliente(selectedClienteId, currentSucursalId);
+    sucursalSelect.innerHTML = renderVentaSucursalOptions(selectedClienteId, currentSucursalId);
+    const stillValid = validSucursales.some((sucursal) => sucursal.id === currentSucursalId);
+    if (!stillValid) sucursalSelect.value = '';
+    const baseDisabled = sucursalSelect.dataset.baseDisabled === 'true';
+    sucursalSelect.disabled = baseDisabled || !selectedClienteId || !validSucursales.length;
   }
 
   function criticalValueAttrs(value, extraClass = '') {
@@ -11121,6 +11196,8 @@
     };
     const calculations = getVentaCalculations(previewSource);
     const facturasSource = record || draft;
+    const ventaSucursales = getVentaSucursalesForCliente(selectedClienteId, selectedSucursalId);
+    const sucursalDisabled = missingCatalogs || !selectedClienteId || !ventaSucursales.length;
 
     return `
       <form class="venta-form" data-venta-form data-current-cobrado="${escapeHtml(record?.totalCobrado || 0)}" data-current-ajustes="${escapeHtml(JSON.stringify(record?.ajustes || []))}" novalidate>
@@ -11143,9 +11220,8 @@
           </label>
           <label class="form-field">
             <span>Sucursal <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <select name="sucursalId" required ${missingCatalogs ? 'disabled' : ''}>
-              <option value="">Seleccionar sucursal</option>
-              ${sucursalesActivas.map((sucursal) => `<option value="${escapeHtml(sucursal.id)}" ${sucursal.id === selectedSucursalId ? 'selected' : ''}>${escapeHtml(sucursal.nombre || 'Sucursal sin nombre')}</option>`).join('')}
+            <select name="sucursalId" required data-venta-sucursal data-base-disabled="${missingCatalogs ? 'true' : 'false'}" ${sucursalDisabled ? 'disabled' : ''}>
+              ${renderVentaSucursalOptions(selectedClienteId, selectedSucursalId)}
             </select>
           </label>
           <label class="form-field ${requiereEnvio ? 'is-hidden' : ''}" data-venta-delivery-field>
@@ -11434,6 +11510,7 @@
     if (!record.numeroDocumento) return 'El número OC es obligatorio.';
     if (!record.clienteId || !getActiveCatalogRecords('clientes').some((cliente) => cliente.id === record.clienteId)) return 'Selecciona un cliente activo desde Catálogos.';
     if (!record.sucursalId || !getActiveCatalogRecords('sucursales').some((sucursal) => sucursal.id === record.sucursalId)) return 'Selecciona una sucursal activa desde Catálogos.';
+    if (!getVentaSucursalesForCliente(record.clienteId, record.sucursalId).some((sucursal) => sucursal.id === record.sucursalId)) return 'Selecciona una sucursal correspondiente al cliente elegido.';
     if (!record.fechaOc) return 'La fecha OC es obligatoria.';
     if (Number.isNaN(parseMoney(record.subtotal)) || record.subtotal <= 0) return 'Subtotal debe ser un número mayor que cero.';
     if (Number.isNaN(parsePositiveInteger(record.diasCredito))) return 'Días de crédito debe ser cero o un número entero positivo.';
@@ -11787,7 +11864,10 @@
     dueInput?.addEventListener('input', () => { form.dataset.manualDue = '1'; });
     dueInput?.addEventListener('change', () => { form.dataset.manualDue = '1'; });
 
-    form.querySelector('[data-venta-client]')?.addEventListener('change', () => applyVentaPaymentTermsSuggestion(form));
+    form.querySelector('[data-venta-client]')?.addEventListener('change', () => {
+      syncVentaSucursalSelect(form);
+      applyVentaPaymentTermsSuggestion(form);
+    });
     form.querySelector('[data-venta-date]')?.addEventListener('change', () => updateVentaPreviewFromForm(form, true));
     form.querySelector('[data-venta-delivery]')?.addEventListener('change', () => updateVentaPreviewFromForm(form, true));
     form.querySelector('[data-venta-days]')?.addEventListener('input', () => updateVentaPreviewFromForm(form, true));
@@ -12132,10 +12212,8 @@
 
   function getCobroRetencionesForForm(currentId = '') {
     const selected = cleanText(currentId);
-    return getCatalogRecords('retenciones')
-      .filter((record) => record.activo || (selected && record.id === selected))
-      .map((record) => normalizeCatalogRecord(record, CATALOGS.find((catalog) => catalog.id === 'retenciones')))
-      .sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es', { sensitivity: 'base' }));
+    return getSelectableCatalogRecords('retenciones', selected)
+      .map((record) => normalizeCatalogRecord(record, CATALOGS.find((catalog) => catalog.id === 'retenciones')));
   }
 
   function formatCobroRetencionPercentage(value) {
@@ -12430,7 +12508,7 @@
 
     return Array.from(groupsMap.values())
       .filter((group) => group.records.length > 0)
-      .sort((a, b) => a.label.localeCompare(b.label, 'es', { sensitivity: 'base' }));
+      .sort((a, b) => compareVisualText(a.label, b.label) || compareVisualText(a.key, b.key));
   }
 
   function ensureOpenAccordionGroup(state, groups) {
@@ -13191,7 +13269,7 @@
       const proveedor = getCatalogRecordById('proveedores', compra.proveedorId);
       const label = cleanText(proveedor?.nombre || compra.proveedorNombre) || 'Proveedor no encontrado';
       return [compra.proveedorId || label, { id: compra.proveedorId, nombre: label }];
-    })).values()).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+    })).values()).sort((a, b) => compareCatalogDisplayText(a.nombre, b.nombre));
 
     return `
       <form class="ajuste-form" data-ajuste-proveedor-form novalidate>

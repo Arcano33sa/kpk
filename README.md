@@ -1,3 +1,12 @@
+# KSA PRÁCTIKA — Post12 Orden Visual Etapa 2/2: listados, agrupaciones y resumen
+
+- Se agregó orden visual inteligente para agrupaciones y bloques de resumen sin modificar datos guardados ni estructuras operativas.
+- Las agrupaciones por cliente, proveedor, sucursal, tipo, método, banco/cuenta y retención mantienen orden A-Z con comparador en español cuando son de consulta.
+- Los bloques de impacto financiero conservan prioridad por monto mayor a menor cuando corresponde; mora prioriza días, vencimiento y saldo.
+- Los registros operativos conservan su orden por fecha, vencimiento, número natural, saldo, estado, consecutivo o lógica existente.
+- Se mantiene intacto JSON, Excel, cierres, consecutivos, cálculos, Facturas, Ventas / OC, Cobros, Proveedores / Compras, Pagos, Gastos, Resumen, Catálogos, selectores y responsive.
+- Versión/cache PWA actualizado a `0.17.88-post12-ordenvisual-listados-resumen`.
+
 # KSA PRÁCTIKA — Post12 DesktopLayout Etapa 3/3: hardening responsive final
 
 - Se reforzó el layout responsive para escritorio ancho/mediano, iPad horizontal/vertical, móvil y PWA.
