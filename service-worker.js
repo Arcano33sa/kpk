@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_96_post12_casa_etapa3';
+const CACHE_VERSION = 'v0_17_97_post12_casa_etapa3_fix_casa_nav';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.96-post12-casa-etapa3';
+  const APP_VERSION = '0.17.97-post12-casa-etapa3-fix-casa-nav';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -83,7 +83,7 @@
     },
     {
       id: 'casa',
-      icon: '⌂',
+      icon: 'CA',
       title: 'Casa',
       short: 'Casa',
       description: 'Control independiente de gastos personales/familiares con categorías propias, sin contaminar la utilidad productiva.',
@@ -4456,7 +4456,7 @@
 
   function isLocalActionTarget(target) {
     if (!target || !viewRoot?.contains(target)) return false;
-    if (target.closest?.('[data-go], [data-route], .nav-button, .module-card, .home-card')) return false;
+    if (target.closest?.('[data-go], [data-route], [data-module-go], .nav-button, .nav-btn, .module-card, .home-card')) return false;
     const action = target.closest?.('button, input[type="button"], input[type="submit"], input[type="reset"], [role="button"], a, label, summary');
     if (!action || !viewRoot.contains(action)) return false;
     const href = cleanText(action.getAttribute?.('href'));
@@ -5367,7 +5367,7 @@
     const catalogRecords = CATALOGS.reduce((sum, catalog) => sum + appData[catalog.id].length, 0);
     const jsonAppliedRows = renderJsonAppliedMetadataRows();
     const cards = MODULES.map((module) => `
-      <article class="module-card">
+      <article class="module-card" data-module-go="${escapeHtml(module.id)}" role="button" tabindex="0" aria-label="Entrar a ${escapeHtml(module.title)}">
         <div class="module-icon" aria-hidden="true">${escapeHtml(module.icon)}</div>
         <h3>${escapeHtml(module.title)}</h3>
         <p>${escapeHtml(module.description)}</p>
@@ -5378,7 +5378,7 @@
     return `
       <section class="hero">
         <div>
-          <span class="eyebrow">Post 12 / Facturas Etapa 3</span>
+          <span class="eyebrow">Post 12 / Casa Etapa 3 · Fix navegación</span>
           <h1>KSA PRÁCTIKA</h1>
           <p class="lead">Webapp estática para convertir el control de OC, cobros, proveedores, pagos, gastos, Casa y documentación en un sistema operativo continuo. Ya tiene menú, navegación fija, Catálogos editables, Ventas / OC, Cobros de clientes, Proveedores / Compras, Pagos a proveedores, Gastos, Casa independiente, Notas, Facturas, mora avanzada, alertas, historial por documento, Resumen / Tablero operativo, importación inicial desde Excel, Configuración, roles básicos locales y respaldo JSON validado, exportación Excel y cierre mensual.</p>
         </div>
@@ -20373,6 +20373,19 @@ ${rowsXml}
   function bindViewActions() {
     viewRoot.querySelectorAll('[data-go]').forEach((button) => {
       button.addEventListener('click', () => setRoute(button.dataset.go));
+    });
+
+    viewRoot.querySelectorAll('[data-module-go]').forEach((card) => {
+      const openModule = () => setRoute(card.dataset.moduleGo);
+      card.addEventListener('click', (event) => {
+        if (event.target?.closest?.('button, a, input, select, textarea, label, summary, [role="button"]:not([data-module-go])')) return;
+        openModule();
+      });
+      card.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        openModule();
+      });
     });
 
     viewRoot.querySelectorAll('[data-modal-close]').forEach((button) => {
