@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_84_post12_desktop_layout_scrollbar_unica';
+const CACHE_VERSION = 'v0_17_85_post12_scrollbar_sin_superposicion';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
