@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.85-post12-scrollbar-sin-superposicion';
+  const APP_VERSION = '0.17.86-post12-catalogos-ordenaz-sucursales-cliente';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -246,6 +246,12 @@
       ]
     }
   ];
+
+  const CATALOG_DISPLAY_COLLATOR = new Intl.Collator('es-NI', {
+    sensitivity: 'base',
+    numeric: true,
+    ignorePunctuation: true
+  });
 
   const DEFAULT_SEEDS = {
     tiposGasto: ['Estacionamiento', 'Cargadores', 'Transporte', 'Combustible', 'Empaque', 'Otros'],
@@ -10204,10 +10210,10 @@
 
   function renderCatalogos() {
     const activeCatalog = getActiveCatalog();
-    const records = getCatalogRecords(activeCatalog.id);
+    const records = getSortedCatalogRecords(activeCatalog.id);
     const activeCount = records.filter((record) => record.activo).length;
     const inactiveCount = records.length - activeCount;
-    const editingRecord = catalogState.editingId ? records.find((record) => record.id === catalogState.editingId) : null;
+    const editingRecord = catalogState.editingId ? getCatalogRecords(activeCatalog.id).find((record) => record.id === catalogState.editingId) : null;
     const canEditCatalogs = canCurrentRole('editCatalogs');
 
     return `
@@ -10316,7 +10322,7 @@
     }
 
     if (field.type === 'select-client') {
-      const clientes = getCatalogRecords('clientes');
+      const clientes = getSortedCatalogRecords('clientes');
       return `
         <label class="form-field">
           <span>${escapeHtml(field.label)} ${requiredLabel}</span>
@@ -10369,7 +10375,8 @@
   }
 
   function renderCatalogList(catalog, records) {
-    if (!records.length) {
+    const sortedRecords = sortCatalogRecordsForDisplay(catalog.id, records);
+    if (!sortedRecords.length) {
       return `
         <div class="empty-state">
           <strong>No hay registros todavía.</strong>
@@ -10378,10 +10385,11 @@
       `;
     }
 
-    if (catalog.id === 'retenciones') return renderRetencionesCatalogList(catalog, records);
+    if (catalog.id === 'sucursales') return renderSucursalesCatalogList(catalog, sortedRecords);
+    if (catalog.id === 'retenciones') return renderRetencionesCatalogList(catalog, sortedRecords);
 
-    const showType = shouldShowCatalogTypeColumn(catalog, records);
-    const rows = records.map((record) => renderCatalogRecord(catalog, record, showType)).join('');
+    const showType = shouldShowCatalogTypeColumn(catalog, sortedRecords);
+    const rows = sortedRecords.map((record) => renderCatalogRecord(catalog, record, showType)).join('');
 
     return renderOperationalTableShell({
       shellClass: `catalog-compact-scroll-shell ${showType ? 'catalog-compact-with-type' : 'catalog-compact-basic'}`,
@@ -10406,8 +10414,107 @@
     });
   }
 
+  function renderSucursalesCatalogList(catalog, records) {
+    const groups = buildSucursalCatalogGroups(records);
+    if (!groups.length) {
+      return `
+        <div class="empty-state">
+          <strong>No hay sucursales agrupables todavía.</strong>
+          <p>Agrega una sucursal y asígnala a un cliente para verla aquí.</p>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="catalog-branch-groups" aria-label="Sucursales agrupadas por cliente">
+        ${groups.map((group) => renderSucursalCatalogGroup(catalog, group)).join('')}
+      </div>
+    `;
+  }
+
+  function buildSucursalCatalogGroups(records) {
+    const clientes = getSortedCatalogRecords('clientes');
+    const clientesById = new Map(clientes.map((cliente) => [cliente.id, cliente]));
+    const grouped = new Map();
+    const sinCliente = [];
+
+    sortCatalogRecordsForDisplay('sucursales', records).forEach((sucursal) => {
+      const cliente = sucursal.clienteId ? clientesById.get(sucursal.clienteId) : null;
+      if (!cliente) {
+        sinCliente.push(sucursal);
+        return;
+      }
+      if (!grouped.has(cliente.id)) {
+        grouped.set(cliente.id, {
+          key: cliente.id,
+          label: cleanText(cliente.nombre) || 'Cliente sin nombre',
+          cliente,
+          records: []
+        });
+      }
+      grouped.get(cliente.id).records.push(sucursal);
+    });
+
+    const groups = Array.from(grouped.values())
+      .map((group) => ({ ...group, records: sortCatalogRecordsForDisplay('sucursales', group.records) }))
+      .sort((left, right) => compareCatalogDisplayText(left.label, right.label));
+
+    if (sinCliente.length) {
+      groups.push({
+        key: 'sin-cliente-asignado',
+        label: 'Sin cliente asignado',
+        cliente: null,
+        records: sortCatalogRecordsForDisplay('sucursales', sinCliente),
+        isUnassigned: true
+      });
+    }
+
+    return groups;
+  }
+
+  function renderSucursalCatalogGroup(catalog, group) {
+    const activeCount = group.records.filter((record) => record.activo).length;
+    const inactiveCount = group.records.length - activeCount;
+    const summaryClass = group.isUnassigned ? 'catalog-branch-summary is-unassigned' : 'catalog-branch-summary';
+    return `
+      <details class="catalog-branch-group" open>
+        <summary class="${summaryClass}">
+          <span class="catalog-branch-chevron" aria-hidden="true"></span>
+          <span class="catalog-branch-title" title="${escapeHtml(group.label)}">${escapeHtml(group.label)}</span>
+          <span class="catalog-branch-count">${group.records.length} ${group.records.length === 1 ? 'sucursal' : 'sucursales'}</span>
+          <span class="catalog-branch-state">${activeCount} activas${inactiveCount ? ` · ${inactiveCount} inactivas` : ''}</span>
+        </summary>
+        <div class="catalog-branch-list">
+          ${group.records.map((record) => renderSucursalCatalogRecord(catalog, record)).join('')}
+        </div>
+      </details>
+    `;
+  }
+
+  function renderSucursalCatalogRecord(catalog, record) {
+    const canEdit = canCurrentRole('editCatalogs');
+    const toggleLabel = getCatalogToggleLabel(catalog, record);
+    const secondary = getCatalogCompactSecondaryText(catalog, record);
+    return `
+      <article class="catalog-branch-record ${record.activo ? 'is-active' : 'is-inactive'}">
+        <div class="catalog-branch-record-main">
+          <strong title="${escapeHtml(record.nombre || 'Sin nombre')}">${escapeHtml(record.nombre || 'Sin nombre')}</strong>
+          ${secondary ? `<small title="${escapeHtml(secondary)}">${escapeHtml(secondary)}</small>` : ''}
+          ${record.observacion ? `<small class="catalog-compact-note" title="${escapeHtml(record.observacion)}">${escapeHtml(record.observacion)}</small>` : ''}
+        </div>
+        <div class="catalog-branch-record-side">
+          <span class="state-pill ${record.activo ? 'is-active' : 'is-inactive'}">${record.activo ? 'Activo' : 'Inactivo'}</span>
+          <div class="record-actions compact-row-actions">
+            ${canEdit ? `<button type="button" class="secondary-action compact" data-catalog-edit="${escapeHtml(record.id)}">Editar</button>` : '<span class="muted-text compact-note">Lectura</span>'}
+            ${canEdit ? `<button type="button" class="${record.activo ? 'danger-action' : 'card-action'} compact" data-catalog-toggle="${escapeHtml(record.id)}">${escapeHtml(toggleLabel)}</button>` : ''}
+          </div>
+        </div>
+      </article>
+    `;
+  }
+
   function renderRetencionesCatalogList(catalog, records) {
-    const rows = records.map((record) => renderRetencionCatalogRecord(catalog, record)).join('');
+    const rows = sortCatalogRecordsForDisplay(catalog.id, records).map((record) => renderRetencionCatalogRecord(catalog, record)).join('');
     return renderOperationalTableShell({
       shellClass: 'catalog-compact-scroll-shell catalog-retenciones-scroll-shell',
       wrapClass: 'catalog-compact-table-wrap',
@@ -10435,7 +10542,7 @@
 
   function renderRetencionCatalogRecord(catalog, record) {
     const canEdit = canCurrentRole('editCatalogs');
-    const toggleLabel = record.activo ? 'Desactivar' : 'Activar';
+    const toggleLabel = getCatalogToggleLabel(catalog, record);
     return `
       <tr class="compact-record-row catalog-compact-row catalog-retencion-row ${record.activo ? 'is-active' : 'is-inactive'}">
         <td class="catalog-retencion-concepto"><span title="${escapeHtml(record.nombre || 'Sin concepto')}">${escapeHtml(record.nombre || 'Sin concepto')}</span></td>
@@ -10459,9 +10566,7 @@
   function renderCatalogRecord(catalog, record, showType = false) {
     const secondary = getCatalogCompactSecondaryText(catalog, record);
     const canEdit = canCurrentRole('editCatalogs');
-    const toggleLabel = record.activo
-      ? (isSafeDeleteCatalog(catalog.id) ? 'Borrar seguro' : 'Desactivar')
-      : (isSafeDeleteCatalog(catalog.id) ? 'Restaurar' : 'Activar');
+    const toggleLabel = getCatalogToggleLabel(catalog, record);
     return `
       <tr class="compact-record-row catalog-compact-row ${record.activo ? 'is-active' : 'is-inactive'}">
         <td class="catalog-compact-name">
@@ -10479,6 +10584,12 @@
         </td>
       </tr>
     `;
+  }
+
+  function getCatalogToggleLabel(catalog, record) {
+    return record.activo
+      ? (isSafeDeleteCatalog(catalog.id) ? 'Borrar seguro' : 'Desactivar')
+      : (isSafeDeleteCatalog(catalog.id) ? 'Restaurar' : 'Activar');
   }
 
   function getCatalogCompactTypeText(record) {
@@ -18413,7 +18524,7 @@ ${rowsXml}
   }
 
   function getActiveCatalogRecords(catalogId) {
-    return getCatalogRecords(catalogId).filter((record) => record.activo);
+    return getSortedCatalogRecords(catalogId).filter((record) => record.activo);
   }
 
   function getCatalogRecordById(catalogId, recordId) {
@@ -18421,7 +18532,7 @@ ${rowsXml}
   }
 
   function getSelectableCatalogRecords(catalogId, currentId = '') {
-    const records = getCatalogRecords(catalogId);
+    const records = getSortedCatalogRecords(catalogId);
     const selected = cleanText(currentId);
     return records.filter((record) => record.activo || record.id === selected);
   }
@@ -18499,6 +18610,41 @@ ${rowsXml}
 
   function getCatalogRecords(catalogId) {
     return Array.isArray(appData[catalogId]) ? appData[catalogId] : [];
+  }
+
+  function getSortedCatalogRecords(catalogId) {
+    return sortCatalogRecordsForDisplay(catalogId, getCatalogRecords(catalogId));
+  }
+
+  function sortCatalogRecordsForDisplay(catalogId, records = []) {
+    return [...(Array.isArray(records) ? records : [])].sort((left, right) => compareCatalogRecordsForDisplay(catalogId, left, right));
+  }
+
+  function compareCatalogRecordsForDisplay(catalogId, left, right) {
+    const leftName = getCatalogDisplaySortText(catalogId, left);
+    const rightName = getCatalogDisplaySortText(catalogId, right);
+    const nameCompare = compareCatalogDisplayText(leftName, rightName);
+    if (nameCompare !== 0) return nameCompare;
+
+    if (catalogId === 'cuentasBancos') {
+      const typeCompare = compareCatalogDisplayText(getBankTypeDisplay(left), getBankTypeDisplay(right));
+      if (typeCompare !== 0) return typeCompare;
+    }
+
+    const createdCompare = compareCatalogDisplayText(left?.createdAt, right?.createdAt);
+    if (createdCompare !== 0) return createdCompare;
+    return compareCatalogDisplayText(left?.id, right?.id);
+  }
+
+  function getCatalogDisplaySortText(catalogId, record = {}) {
+    const name = cleanText(record?.nombre);
+    if (name) return name;
+    if (catalogId === 'retenciones') return cleanText(record?.concepto || record?.retencionNombre) || 'ZZZ';
+    return 'ZZZ';
+  }
+
+  function compareCatalogDisplayText(left, right) {
+    return CATALOG_DISPLAY_COLLATOR.compare(cleanText(left), cleanText(right));
   }
 
   function formatDateTime(iso) {

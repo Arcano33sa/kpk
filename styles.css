@@ -9004,3 +9004,198 @@ body,
   position: relative !important;
   z-index: 1 !important;
 }
+
+/* Etapa única — Catálogos ordenados + Sucursales agrupadas por Cliente */
+.catalog-branch-groups {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.catalog-branch-group {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(185, 135, 43, 0.2);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 10px 24px rgba(17, 24, 39, 0.04);
+  overflow: hidden;
+}
+
+.catalog-branch-summary {
+  list-style: none;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, rgba(255, 248, 232, 0.92), rgba(255, 255, 255, 0.9));
+  color: var(--ink);
+  user-select: none;
+}
+
+.catalog-branch-summary::-webkit-details-marker {
+  display: none;
+}
+
+.catalog-branch-summary:focus-visible {
+  outline: 3px solid rgba(185, 135, 43, 0.32);
+  outline-offset: -3px;
+}
+
+.catalog-branch-summary.is-unassigned {
+  background: linear-gradient(135deg, rgba(248, 250, 252, 0.96), rgba(255, 255, 255, 0.9));
+}
+
+.catalog-branch-chevron {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  background: rgba(185, 135, 43, 0.12);
+  color: var(--accent-dark);
+  flex: 0 0 auto;
+}
+
+.catalog-branch-chevron::before {
+  content: '›';
+  display: block;
+  font-size: 1.35rem;
+  font-weight: 950;
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform 0.16s ease;
+}
+
+.catalog-branch-group[open] .catalog-branch-chevron::before {
+  transform: rotate(90deg);
+}
+
+.catalog-branch-title {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 0.96rem;
+  font-weight: 950;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalog-branch-count,
+.catalog-branch-state {
+  white-space: nowrap;
+  font-size: 0.76rem;
+  font-weight: 900;
+  color: var(--muted);
+}
+
+.catalog-branch-count {
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.06);
+  color: #334155;
+}
+
+.catalog-branch-list {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(248, 250, 252, 0.54);
+}
+
+.catalog-branch-record {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  border-radius: 15px;
+  background: #fff;
+}
+
+.catalog-branch-record.is-inactive {
+  background: rgba(248, 250, 252, 0.88);
+}
+
+.catalog-branch-record-main {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.catalog-branch-record-main strong {
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 950;
+  line-height: 1.22;
+  overflow-wrap: anywhere;
+}
+
+.catalog-branch-record-main small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.24;
+  overflow-wrap: anywhere;
+}
+
+.catalog-branch-record-side {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.catalog-branch-record-side .compact-row-actions {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+.catalog-branch-record-side .secondary-action.compact,
+.catalog-branch-record-side .danger-action.compact,
+.catalog-branch-record-side .card-action.compact {
+  min-width: 72px;
+  justify-content: center;
+}
+
+@media (max-width: 760px) {
+  .catalog-branch-summary {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .catalog-branch-count,
+  .catalog-branch-state {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .catalog-branch-title {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  .catalog-branch-record {
+    grid-template-columns: 1fr;
+  }
+
+  .catalog-branch-record-side {
+    justify-content: flex-start;
+  }
+
+  .catalog-branch-record-side .compact-row-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}
