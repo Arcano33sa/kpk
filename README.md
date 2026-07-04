@@ -1,3 +1,9 @@
+# KSA PRÁCTIKA — Post12 Resumen del ejercicio sin fondo celeste
+
+- Se quitó el fondo celeste aplicado a los bloques finales del módulo Resumen en la app.
+- Se conserva el orden final: Flujo del período, Ventas ajustadas, Compras ajustadas, Gastos del período, Utilidad del período y Utilidad acumulada.
+- No se modificó la lógica de Excel, Consulta, Cierre, JSON ni módulos operativos.
+
 # KSA PRÁCTIKA — Post12 Excel Consulta Etapa 1/2: origen + movimientos vinculados
 
 - Excel de Consulta ahora se construye por documentos de origen del período consultado.

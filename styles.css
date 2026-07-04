@@ -1753,15 +1753,6 @@ button:disabled,
   border-color: rgba(185, 135, 43, 0.34);
 }
 
-.resumen-exercise-card {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(225, 245, 255, 0.72));
-  border-color: rgba(56, 189, 248, 0.22);
-  box-shadow: 0 12px 26px rgba(14, 116, 144, 0.07);
-}
-
-.resumen-exercise-card span {
-  color: #346070;
-}
 
 .resumen-utility-note {
   margin: -6px 0 4px;

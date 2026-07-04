@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_91_post12_resumen_ejercicio';
+const CACHE_VERSION = 'v0_17_92_post12_resumen_sin_celeste';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
