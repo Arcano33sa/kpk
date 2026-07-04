@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.98-post12-casa-fix-utilidad-kpk-periodo';
+  const APP_VERSION = '0.17.99-post12-casa-fix-utilidad-kpk-periodo-trabajo';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1050,6 +1050,8 @@
     month: getCurrentMonthValue(),
     year: getCurrentYearValue(),
     categoriaCasaId: '',
+    periodInitialized: false,
+    periodManuallyAdjusted: false,
     message: null,
     messageType: 'success'
   };
@@ -4049,6 +4051,7 @@
 
   let appData = loadData();
   reconcileWorkPeriodSelectionAfterDataChange();
+  syncCasaFiltersWithActiveWorkPeriod({ force: true });
   let appDeviceIdentity = loadDeviceIdentity();
   let appActivityLog = loadActivityLog();
 
@@ -4770,6 +4773,7 @@
       pagosState.message = null;
       gastosState.message = null;
       facturasState.message = null;
+      syncCasaFiltersWithActiveWorkPeriod();
       viewRoot.innerHTML = renderCasa();
     } else if (route === 'notas') {
       catalogState.message = null;
@@ -4997,7 +5001,9 @@
   }
 
   function reconcileWorkPeriodSelectionAfterDataChange(preferredPeriodo = '') {
-    const preferred = normalizeWorkPeriodKey(preferredPeriodo) || getStoredWorkPeriodKey();
+    const preferred = normalizeWorkPeriodKey(preferredPeriodo)
+      || getStoredWorkPeriodKey()
+      || normalizeWorkPeriodKey(appData?.configuracion?.periodoTrabajoSeleccionado);
     const periods = getAvailableWorkPeriods();
     if (!periods.length) {
       clearStoredWorkPeriodKey();
@@ -5182,6 +5188,11 @@
         facturasState.page = 1;
         facturasState.search = '';
         facturasState.editingId = null;
+      }
+      if (getRoute() === 'casa') {
+        syncCasaFiltersWithActiveWorkPeriod({ force: true, preserveCategory: true });
+      } else if (!casaState.periodManuallyAdjusted) {
+        syncCasaFiltersWithActiveWorkPeriod({ force: true, preserveCategory: true });
       }
       renderRoute({ preserveScroll: true });
     });
@@ -16414,13 +16425,40 @@
     casaState.month = /^\d{2}$/.test(String(formData.get('month') || '')) ? String(formData.get('month')) : '';
     casaState.year = /^\d{4}$/.test(String(formData.get('year') || '')) ? String(formData.get('year')) : '';
     casaState.categoriaCasaId = cleanText(formData.get('categoriaCasaId'));
+    casaState.periodInitialized = true;
+    casaState.periodManuallyAdjusted = true;
     casaState.message = null;
     renderRoute({ preserveScroll: true });
   }
 
+  function getCasaDefaultPeriodParts() {
+    const activePeriod = normalizeWorkPeriodKey(getActiveWorkPeriodKeyOrCurrent());
+    if (activePeriod) {
+      const [year, month] = activePeriod.split('-');
+      return { year, month };
+    }
+    return {
+      year: getCurrentYearValue(),
+      month: getCurrentMonthValue()
+    };
+  }
+
+  function syncCasaFiltersWithActiveWorkPeriod(options = {}) {
+    const defaultPeriod = getCasaDefaultPeriodParts();
+    if (!defaultPeriod.month || !defaultPeriod.year) return false;
+    const force = Boolean(options.force);
+    const preserveCategory = Boolean(options.preserveCategory);
+    if (!force && casaState.periodInitialized) return false;
+    casaState.month = defaultPeriod.month;
+    casaState.year = defaultPeriod.year;
+    if (!preserveCategory) casaState.categoriaCasaId = casaState.categoriaCasaId || '';
+    casaState.periodInitialized = true;
+    casaState.periodManuallyAdjusted = false;
+    return true;
+  }
+
   function clearCasaFilters() {
-    casaState.month = getCurrentMonthValue();
-    casaState.year = getCurrentYearValue();
+    syncCasaFiltersWithActiveWorkPeriod({ force: true });
     casaState.categoriaCasaId = '';
     casaState.message = null;
     renderRoute({ preserveScroll: true });
@@ -17361,6 +17399,7 @@
     const importedWorkPeriod = normalizeWorkPeriodKey(jsonBackupState.payload?.configuracion?.periodoTrabajoSeleccionado || jsonBackupState.payload?.metadata?.periodoTrabajoSeleccionado || jsonBackupState.payload?.metadata?.periodoTrabajo?.periodo || '');
     const result = applyJsonBackupPayload(jsonBackupState.payload, selectedMode);
     const workPeriodResult = reconcileWorkPeriodSelectionAfterDataChange(importedWorkPeriod);
+    syncCasaFiltersWithActiveWorkPeriod({ force: true });
     const activityImportResult = mergeImportedActivityLog(incomingActivityLog);
     appData.configuracion = {
       ...normalizeConfiguracion(appData.configuracion),

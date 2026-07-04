@@ -6,4 +6,4 @@
 - Se actualizó versión/cache PWA para refrescar la entrega.
 
 
-Fix navegación Casa: tarjeta del Menú clickeable, ícono Casa diferenciado y cache bump 0.17.97.
+Fix Casa: Utilidad KPK usa el período de trabajo activo por defecto y cache bump 0.17.99.
