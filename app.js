@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.79-post12-facturas-pagina-activa-busqueda-global';
+  const APP_VERSION = '0.17.80-post12-ventas-oc-sucursal-columna';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -11042,6 +11042,7 @@
       tableClass: 'operational-table-ventas',
       headers: `
         <th>OC</th>
+        <th>Sucursal</th>
         <th>Fecha</th>
         <th>Vence</th>
         <th class="amount-cell">Subtotal</th>
@@ -11055,17 +11056,18 @@
       `,
       rows: ventas.map((venta) => renderVentaCard(venta)).join(''),
       colgroup: `
-        <col style="width: 176px;">
+        <col style="width: 168px;">
+        <col style="width: 128px;">
         <col style="width: 92px;">
         <col style="width: 92px;">
-        <col style="width: 118px;">
-        <col style="width: 118px;">
-        <col style="width: 118px;">
-        <col style="width: 118px;">
-        <col style="width: 118px;">
-        <col style="width: 118px;">
+        <col style="width: 112px;">
+        <col style="width: 112px;">
+        <col style="width: 112px;">
+        <col style="width: 112px;">
+        <col style="width: 112px;">
+        <col style="width: 112px;">
         <col style="width: 92px;">
-        <col style="width: 320px;">
+        <col style="width: 300px;">
       `
     });
   }
@@ -11076,10 +11078,12 @@
     const sucursal = getCatalogRecordById('sucursales', record.sucursalId);
     const estadoClass = getEstadoClass(record.estado);
     const facturas = normalizeFacturasVentaList(record.facturas);
-    const ajustesRow = renderVentaAjustesCompactRow(record, 11);
+    const sucursalNombre = cleanText(sucursal?.nombre || '');
+    const ajustesRow = renderVentaAjustesCompactRow(record, 12);
     return `
       <tr class="compact-record-row venta-row ${record.activo ? 'is-active' : 'is-inactive'}">
         <td data-label="OC"><span class="compact-primary">${escapeHtml(record.numeroDocumento || 'Sin número')}</span>${facturas.length ? `<small>Facturas: ${escapeHtml(formatFacturasVentaResumen(facturas))}</small>` : ''}${record.requiereEnvio ? `<small>${escapeHtml(formatLogisticaVentaResumen(record))}</small>` : ''}</td>
+        <td data-label="Sucursal"><span title="${escapeHtml(sucursalNombre || 'Sin sucursal')}">${escapeHtml(sucursalNombre || '—')}</span></td>
         <td data-label="Fecha"><span>${escapeHtml(formatDate(record.fechaOc))}</span></td>
         <td data-label="Vence"><span>${escapeHtml(formatDate(record.fechaVencimiento))}</span></td>
         <td data-label="Subtotal" class="amount-cell"><span>${escapeHtml(formatMoney(record.subtotal))}</span></td>

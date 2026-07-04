@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_79_post12_facturas_pagina_activa_busqueda_global';
+const CACHE_VERSION = 'v0_17_80_post12_ventas_oc_sucursal_columna';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

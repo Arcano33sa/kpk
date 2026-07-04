@@ -1,3 +1,10 @@
+# KSA PRÁCTIKA — Post12 Ventas / OC: Sucursal visible en OC registradas
+
+- En el listado de OC registradas se agrega columna visible “Sucursal”.
+- No se agrega columna Cliente porque el cliente ya se selecciona como contexto previo.
+- Ajuste visual/operativo sin tocar cálculos, saldos, cobros, facturas, Excel, JSON, cierres, mora ni lógica de negocio.
+- Versión/cache PWA actualizado a `0.17.80-post12-ventas-oc-sucursal-columna`.
+
 ## 0.17.79-post12-facturas-pagina-activa-busqueda-global
 
 - Facturas conserva la página activa al guardar, editar, cerrar modal o borrar, con ajuste automático a la última página válida cuando el total cambia.
