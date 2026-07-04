@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_80_post12_ventas_oc_sucursal_columna';
+const CACHE_VERSION = 'v0_17_83_post12_desktop_layout_etapa3_hardening_final';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

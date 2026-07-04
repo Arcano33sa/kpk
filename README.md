@@ -1,3 +1,28 @@
+# KSA PRÁCTIKA — Post12 DesktopLayout Etapa 3/3: hardening responsive final
+
+- Se reforzó el layout responsive para escritorio ancho/mediano, iPad horizontal/vertical, móvil y PWA.
+- Se blindó el scroll horizontal general para que las tablas/listados anchos usen scroll interno controlado.
+- Se reforzó la regla anti-corte de valores críticos: montos, fechas, facturas, OC, documentos, saldos, períodos y paginación.
+- Se revisaron navegación superior, modales, formularios, tablas operativas, Facturas, Ventas / OC, Cobros, Proveedores, Pagos, Gastos, Notas, Catálogos, Bdatos, JSON y Configuración sin cambiar lógica de negocio.
+- Se agregó hardening runtime para wrappers de tablas y valores críticos, manteniendo anti-salto y contexto visual.
+- Versión/cache PWA actualizado a `0.17.83-post12-desktop-layout-etapa3-hardening-final`.
+
+# KSA PRÁCTIKA — Post12 DesktopLayout Etapa 2/3: módulos operativos adaptados al ancho de escritorio
+
+- Se ajustaron los layouts internos de Resumen, Ventas / OC, Cobros, Proveedores / Compras, Pagos, Gastos, Notas, Facturas, Catálogos, Bdatos y Configuración para aprovechar mejor pantallas de escritorio.
+- Se ampliaron grids, paneles, formularios, listados, tablas compactas y bloques de detalle sin cambiar fórmulas, saldos, mora, retenciones, períodos, Excel, JSON, Bdatos ni localStorage de negocio.
+- Se mantiene scroll horizontal únicamente dentro de tablas/listados que lo necesitan, evitando scroll horizontal general del body.
+- Se conserva compatibilidad responsive para iPad horizontal, iPad vertical y móvil.
+- Versión/cache PWA actualizado a `0.17.82-post12-desktop-layout-etapa2-modulos`.
+
+# KSA PRÁCTIKA — Post12 DesktopLayout Etapa 1/3: layout global adaptable para escritorio
+
+- Se amplió el ancho útil del contenedor global en pantallas de escritorio para reducir márgenes laterales excesivos.
+- Se ajustaron reglas globales de grids, héroes, tarjetas y layouts principales para aprovechar mejor el ancho sin estirar desordenadamente.
+- Se conserva contracción responsive para iPad horizontal, iPad vertical y móvil, sin scroll horizontal general.
+- No se modifica lógica de negocio, datos, saldos, mora, facturas, períodos, Excel, JSON, Bdatos ni navegación.
+- Versión/cache PWA actualizado a `0.17.81-post12-desktop-layout-etapa1-global`.
+
 # KSA PRÁCTIKA — Post12 Ventas / OC: Sucursal visible en OC registradas
 
 - En el listado de OC registradas se agrega columna visible “Sucursal”.

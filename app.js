@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.80-post12-ventas-oc-sucursal-columna';
+  const APP_VERSION = '0.17.83-post12-desktop-layout-etapa3-hardening-final';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -4196,6 +4196,81 @@
     }
   }
 
+
+  function setupResponsiveHardening() {
+    if (!viewRoot) return;
+
+    viewRoot.querySelectorAll('.operational-scroll-shell:not([data-operational-scroll-shell])').forEach((shell) => {
+      shell.setAttribute('data-operational-scroll-shell', '');
+      shell.querySelector('.operational-top-scroll:not([data-operational-top-scroll])')?.setAttribute('data-operational-top-scroll', '');
+      shell.querySelector('.operational-scroll-rail:not([data-operational-scroll-rail])')?.setAttribute('data-operational-scroll-rail', '');
+      shell.querySelector('.operational-scroll-thumb:not([data-operational-scroll-thumb])')?.setAttribute('data-operational-scroll-thumb', '');
+      shell.querySelector('.operational-top-scroll-spacer:not([data-operational-top-spacer])')?.setAttribute('data-operational-top-spacer', '');
+      const wrap = shell.querySelector('.operational-table-wrap:not([data-operational-table-scroll])');
+      if (wrap) {
+        wrap.setAttribute('data-operational-table-scroll', '');
+        if (!wrap.getAttribute('role')) wrap.setAttribute('role', 'region');
+        if (!wrap.getAttribute('aria-label')) wrap.setAttribute('aria-label', 'Listado operativo');
+      }
+    });
+
+    const wrapperSelectors = [
+      '.operational-table-wrap',
+      '.periodo-blocking-table-wrap',
+      '.mora-compact-table-wrap',
+      '.historial-compact-table-wrap',
+      '.resumen-compact-table-wrap',
+      '.catalog-compact-table-wrap',
+      '.closing-compact-table-wrap',
+      '.json-import-history-table-wrap',
+      '.activity-log-table-wrap',
+      '.bdatos-table-wrap',
+      '.facturas-table-wrap',
+      '.json-comparison-table-wrap',
+      '.compact-table-wrap'
+    ].join(',');
+    viewRoot.querySelectorAll(wrapperSelectors).forEach((wrap) => {
+      wrap.classList.add('responsive-internal-scroll');
+      if (!wrap.getAttribute('tabindex')) wrap.setAttribute('tabindex', '0');
+    });
+
+    const criticalSelectors = [
+      '.critical-value',
+      '.critical-value-money',
+      '.critical-value-date',
+      '.critical-value-doc',
+      '.critical-value-state',
+      '.amount-cell > span',
+      '.state-pill',
+      '.factura-chip',
+      '.facturas-pagination span',
+      '.badge',
+      '.resumen-compact-amount',
+      '.resumen-compact-date',
+      '.resumen-compact-mora',
+      '.mora-compact-date',
+      '.mora-compact-mora',
+      '.mora-compact-amount',
+      '.historial-compact-date',
+      '.historial-compact-amount',
+      '.closing-compact-period',
+      '.closing-compact-date',
+      'td[data-label="OC"] > span',
+      'td[data-label="Facturas"] > span',
+      'td[data-label="Compra / facturas"] > span',
+      'td[data-label="Fecha"] > span',
+      'td[data-label="Vence"] > span',
+      'td[data-label="Saldo"] > span',
+      'td[data-label="Total"] > span',
+      'td[data-label="Monto"] > span'
+    ].join(',');
+    viewRoot.querySelectorAll(criticalSelectors).forEach((element) => {
+      element.classList.add('responsive-critical-value');
+      const text = cleanText(element.textContent);
+      if (text && !element.getAttribute('title')) element.setAttribute('title', text);
+    });
+  }
+
   function renderRoute(options = {}) {
     const route = getRoute();
     const previousRoute = lastRenderedRoute;
@@ -4387,6 +4462,7 @@
     }
 
     bindViewActions();
+    setupResponsiveHardening();
     setupOperationalTopScrollbars();
     document.querySelector('#mainContent')?.focus({ preventScroll: true });
     if (preserveScroll && restoreSnapshot) {
@@ -7022,9 +7098,9 @@
   function renderNotasGeneralesTable(records) {
     if (!records.length) return '<p class="muted-text compact-note">No hay notas generales activas.</p>';
     return `
-      <div class="operational-scroll-shell">
-        <div class="operational-top-scroll" aria-hidden="true"><div class="operational-scroll-rail"><span class="operational-scroll-thumb"></span></div><div class="operational-top-scroll-spacer"></div></div>
-        <div class="operational-table-wrap" tabindex="0">
+      <div class="operational-scroll-shell" data-operational-scroll-shell>
+        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-scroll-rail" data-operational-scroll-rail><span class="operational-scroll-thumb" data-operational-scroll-thumb></span></div><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
+        <div class="operational-table-wrap" role="region" aria-label="Listado operativo" tabindex="0" data-operational-table-scroll>
           <table class="operational-table operational-table-notas">
             <thead><tr><th>✓</th><th>Fecha</th><th>Título</th><th>Prioridad</th><th>Estado</th><th>Observación</th><th>Acciones</th></tr></thead>
             <tbody>${records.map(renderNotaGeneralRow).join('')}</tbody>
@@ -7055,9 +7131,9 @@
   function renderPendientesTable(records) {
     if (!records.length) return '<p class="muted-text compact-note">No hay pendientes de registrar activos.</p>';
     return `
-      <div class="operational-scroll-shell">
-        <div class="operational-top-scroll" aria-hidden="true"><div class="operational-scroll-rail"><span class="operational-scroll-thumb"></span></div><div class="operational-top-scroll-spacer"></div></div>
-        <div class="operational-table-wrap" tabindex="0">
+      <div class="operational-scroll-shell" data-operational-scroll-shell>
+        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-scroll-rail" data-operational-scroll-rail><span class="operational-scroll-thumb" data-operational-scroll-thumb></span></div><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
+        <div class="operational-table-wrap" role="region" aria-label="Listado operativo" tabindex="0" data-operational-table-scroll>
           <table class="operational-table operational-table-notas">
             <thead><tr><th>✓</th><th>Monto</th><th>Método</th><th>Cuenta/Banco</th><th>Descripción</th><th>Acciones</th></tr></thead>
             <tbody>${records.map(renderPendienteRow).join('')}</tbody>
@@ -7089,9 +7165,9 @@
   function renderNotasHistoryTable(records) {
     if (!records.length) return '<p class="muted-text compact-note">Histórico vacío.</p>';
     return `
-      <div class="operational-scroll-shell notas-history-table">
-        <div class="operational-top-scroll" aria-hidden="true"><div class="operational-scroll-rail"><span class="operational-scroll-thumb"></span></div><div class="operational-top-scroll-spacer"></div></div>
-        <div class="operational-table-wrap" tabindex="0">
+      <div class="operational-scroll-shell notas-history-table" data-operational-scroll-shell>
+        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-scroll-rail" data-operational-scroll-rail><span class="operational-scroll-thumb" data-operational-scroll-thumb></span></div><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
+        <div class="operational-table-wrap" role="region" aria-label="Listado operativo" tabindex="0" data-operational-table-scroll>
           <table class="operational-table operational-table-notas">
             <thead><tr><th>✓</th><th>Tipo</th><th>Detalle</th><th>Fecha cumplimiento</th><th>Acciones</th></tr></thead>
             <tbody>${records.map((record) => renderNotasHistoryRow(record)).join('')}</tbody>
@@ -7121,9 +7197,9 @@
   function renderRecordatoriosTable(records) {
     if (!records.length) return '<p class="muted-text compact-note">No hay recordatorios activos.</p>';
     return `
-      <div class="operational-scroll-shell">
-        <div class="operational-top-scroll" aria-hidden="true"><div class="operational-scroll-rail"><span class="operational-scroll-thumb"></span></div><div class="operational-top-scroll-spacer"></div></div>
-        <div class="operational-table-wrap" tabindex="0">
+      <div class="operational-scroll-shell" data-operational-scroll-shell>
+        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-scroll-rail" data-operational-scroll-rail><span class="operational-scroll-thumb" data-operational-scroll-thumb></span></div><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
+        <div class="operational-table-wrap" role="region" aria-label="Listado operativo" tabindex="0" data-operational-table-scroll>
           <table class="operational-table operational-table-recordatorios">
             <thead><tr><th>✓</th><th>Fecha</th><th>Hora</th><th>Título</th><th>Prioridad</th><th>Estado</th><th>Relación</th><th>Clasificación</th><th>Acciones</th></tr></thead>
             <tbody>${records.map(renderRecordatorioRow).join('')}</tbody>
@@ -7158,9 +7234,9 @@
   function renderRecordatoriosHistoryTable(records) {
     if (!records.length) return '<p class="muted-text compact-note">Histórico vacío.</p>';
     return `
-      <div class="operational-scroll-shell notas-history-table">
-        <div class="operational-top-scroll" aria-hidden="true"><div class="operational-scroll-rail"><span class="operational-scroll-thumb"></span></div><div class="operational-top-scroll-spacer"></div></div>
-        <div class="operational-table-wrap" tabindex="0">
+      <div class="operational-scroll-shell notas-history-table" data-operational-scroll-shell>
+        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-scroll-rail" data-operational-scroll-rail><span class="operational-scroll-thumb" data-operational-scroll-thumb></span></div><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
+        <div class="operational-table-wrap" role="region" aria-label="Listado operativo" tabindex="0" data-operational-table-scroll>
           <table class="operational-table operational-table-recordatorios">
             <thead><tr><th>✓</th><th>Fecha</th><th>Hora</th><th>Título</th><th>Relación</th><th>Fecha cumplimiento</th><th>Acciones</th></tr></thead>
             <tbody>${records.map(renderRecordatorioHistoryRow).join('')}</tbody>
