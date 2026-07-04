@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_88_post12_ordenvisual_listados_resumen';
+const CACHE_VERSION = 'v0_17_90_post12_excel_cierre_corte_oficial_e2';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

@@ -1,3 +1,12 @@
+# KSA PRÁCTIKA — Post12 Excel Consulta Etapa 1/2: origen + movimientos vinculados
+
+- Excel de Consulta ahora se construye por documentos de origen del período consultado.
+- Cobros vinculados a OC del período se incluyen aunque la fecha real sea posterior, separando aplicado a OC, recibido real y retenciones.
+- Pagos vinculados a compras del período se incluyen aunque la fecha real sea posterior, manteniendo saldo por pagar del período sin mezclar cartera global.
+- Flujo del período queda rotulado por fecha real para no confundir caja con saldos documentales.
+- Excel de Cierre, JSON, cierres, consecutivos, datos operativos, layout responsive y PWA se conservan sin cambios funcionales.
+- Versión/cache PWA actualizado a `0.17.89-post12-excel-consulta-origen-movimientos-e1`.
+
 # KSA PRÁCTIKA — Post12 Orden Visual Etapa 2/2: listados, agrupaciones y resumen
 
 - Se agregó orden visual inteligente para agrupaciones y bloques de resumen sin modificar datos guardados ni estructuras operativas.

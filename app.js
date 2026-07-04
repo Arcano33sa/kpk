@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.88-post12-ordenvisual-listados-resumen';
+  const APP_VERSION = '0.17.90-post12-excel-cierre-corte-oficial';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -3274,6 +3274,8 @@
       nombreArchivoExcel: cleanText(raw.nombreArchivoExcel || raw.archivoExcel || raw.fileName),
       exportacionExcelId: cleanText(raw.exportacionExcelId),
       modoEdicion: cleanText(raw.modoEdicion || 'advertencia'),
+      corteOficialAt: cleanText(raw.corteOficialAt || raw.fechaHoraCierre || raw.closedAt || raw.fechaCierre) || timestamp,
+      snapshotCierre: normalizeExcelCierreSnapshotRecord(raw.snapshotCierre || raw.corteOficialSnapshot || raw.snapshotOficial || raw.corteOficial),
       totales: isPlainObject(raw.totales) ? raw.totales : {},
       observacion: cleanText(raw.observacion || 'Período cerrado con advertencia para edición posterior.'),
       createdAt: raw.createdAt || raw.fechaHoraCierre || timestamp,
@@ -3292,13 +3294,243 @@
       periodo,
       month,
       year,
+      tipo: ['consulta', 'cierre'].includes(cleanText(raw.tipo || raw.mode || raw.modo).toLowerCase()) ? cleanText(raw.tipo || raw.mode || raw.modo).toLowerCase() : 'cierre',
       nombreArchivo: cleanText(raw.nombreArchivo || raw.fileName || raw.archivo),
       exportadoAt: cleanText(raw.exportadoAt || raw.fechaExportacion || raw.createdAt) || timestamp,
+      corteOficialAt: cleanText(raw.corteOficialAt || raw.fechaCorteOficial || raw.exportadoAt || raw.fechaExportacion || raw.createdAt) || timestamp,
+      snapshotCierre: normalizeExcelCierreSnapshotRecord(raw.snapshotCierre || raw.corteOficialSnapshot || raw.snapshotOficial || raw.corteOficial),
       totales: isPlainObject(raw.totales) ? raw.totales : {},
-      hojas: Array.isArray(raw.hojas) ? raw.hojas : ['Resumen', 'Ventas', 'Proveedores', 'Gastos', 'Catálogos'],
+      hojas: Array.isArray(raw.hojas) ? raw.hojas : ['Resumen', 'Ventas', 'Cobros', 'Proveedores', 'Pagos', 'Gastos', 'Catálogos'],
       createdAt: raw.createdAt || timestamp,
       updatedAt: raw.updatedAt || timestamp
     };
+  }
+
+  function clonePlainObject(value, fallback = null) {
+    try {
+      if (value === undefined) return fallback;
+      return JSON.parse(JSON.stringify(value));
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  function normalizeExcelCierreSnapshotSummary(summary) {
+    const raw = isPlainObject(summary) ? summary : {};
+    const normalized = {
+      ...raw,
+      filters: normalizeResumenFilters(raw.filters || {}),
+      range: isPlainObject(raw.range) ? { ...raw.range } : null,
+      periodLabel: cleanText(raw.periodLabel),
+      excelConsultaMode: Boolean(raw.excelConsultaMode),
+      excelCierreMode: Boolean(raw.excelCierreMode),
+      corteOficialAt: cleanText(raw.corteOficialAt || raw.exportedAt || raw.fechaCorteOficial)
+    };
+    const ventaLists = ['ventasPeriodo', 'ventasExport'];
+    ventaLists.forEach((key) => {
+      normalized[key] = Array.isArray(raw[key])
+        ? raw[key].map((record) => {
+          const normalizedVenta = normalizeVentaRecord(record);
+          return {
+            ...normalizedVenta,
+            clienteNombre: cleanText(record?.clienteNombre || record?.cliente || normalizedVenta.clienteNombre),
+            sucursalNombre: cleanText(record?.sucursalNombre || record?.sucursal || normalizedVenta.sucursalNombre)
+          };
+        })
+        : [];
+    });
+    const compraLists = ['comprasPeriodo', 'comprasExport'];
+    compraLists.forEach((key) => {
+      normalized[key] = Array.isArray(raw[key]) ? raw[key].map((record) => normalizeCompraProveedorRecord(record)) : [];
+    });
+    const cobroLists = ['cobrosPeriodo', 'cobrosDocumentoPeriodo', 'cobrosFlujoPeriodo'];
+    cobroLists.forEach((key) => {
+      normalized[key] = Array.isArray(raw[key]) ? raw[key].map((record) => normalizeCobroRecord(record)) : [];
+    });
+    const pagoLists = ['pagosPeriodo', 'pagosDocumentoPeriodo', 'pagosFlujoPeriodo'];
+    pagoLists.forEach((key) => {
+      normalized[key] = Array.isArray(raw[key]) ? raw[key].map((record) => normalizePagoProveedorRecord(record)) : [];
+    });
+    normalized.gastosPeriodo = Array.isArray(raw.gastosPeriodo) ? raw.gastosPeriodo.map((record) => normalizeGastoRecord(record)) : [];
+    normalized.gastosExport = Array.isArray(raw.gastosExport) ? raw.gastosExport.map((record) => normalizeGastoRecord(record)) : normalized.gastosPeriodo;
+    ['clientesMora', 'proveedoresMora', 'ventasProximas', 'comprasProximas', 'saldosAltosClientes', 'saldosAltosProveedores', 'parciales', 'alertas', 'gastosPorTipo', 'ventaPorSucursal', 'saldosPorProveedor', 'retencionesPorConcepto'].forEach((key) => {
+      normalized[key] = Array.isArray(raw[key]) ? clonePlainObject(raw[key], []) : [];
+    });
+    return normalized;
+  }
+
+  function normalizeExcelCierreSnapshotRecord(snapshot) {
+    const raw = isPlainObject(snapshot) ? snapshot : null;
+    if (!raw) return null;
+    const timestamp = nowIso();
+    const month = /^\d{2}$/.test(String(raw.month || raw.mes || '')) ? String(raw.month || raw.mes) : String(new Date().getMonth() + 1).padStart(2, '0');
+    const year = /^\d{4}$/.test(String(raw.year || raw.anio || raw.año || '')) ? String(raw.year || raw.anio || raw.año) : String(new Date().getFullYear());
+    const summary = normalizeExcelCierreSnapshotSummary(raw.summary || raw.resumen || {});
+    const hasMeaningfulSummary = Boolean(
+      summary.periodLabel
+      || summary.ventasExport.length
+      || summary.comprasExport.length
+      || summary.cobrosPeriodo.length
+      || summary.pagosPeriodo.length
+      || summary.gastosPeriodo.length
+    );
+    if (!hasMeaningfulSummary) return null;
+    return {
+      version: cleanText(raw.version || '1.0'),
+      tipo: cleanText(raw.tipo || 'cierre_oficial'),
+      periodo: cleanText(raw.periodo) || `${year}-${month}`,
+      month,
+      year,
+      corteOficialAt: cleanText(raw.corteOficialAt || raw.fechaCorteOficial || raw.exportedAt || raw.generadoAt) || timestamp,
+      generadoAt: cleanText(raw.generadoAt || raw.createdAt || raw.exportedAt) || timestamp,
+      nombreArchivo: cleanText(raw.nombreArchivo || raw.fileName || raw.archivo),
+      summary
+    };
+  }
+
+  function buildExcelSummarySnapshotPayload(summary) {
+    const raw = isPlainObject(summary) ? summary : {};
+    const keys = [
+      'filters', 'range', 'periodLabel', 'excelConsultaMode', 'excelCierreMode', 'corteOficialAt',
+      'ventasPeriodo', 'comprasPeriodo', 'cobrosPeriodo', 'pagosPeriodo', 'gastosPeriodo',
+      'ventasExport', 'comprasExport', 'gastosExport',
+      'cobrosDocumentoPeriodo', 'pagosDocumentoPeriodo', 'cobrosFlujoPeriodo', 'pagosFlujoPeriodo',
+      'totalSubtotalVentas', 'totalDescuentosVentas', 'totalVendidoOriginal', 'totalAjustesClientes',
+      'totalVendido', 'ventaNetaAjustada', 'totalCobradoClientes', 'totalCobradoAplicadoOC',
+      'totalRecibidoReal', 'totalRetenciones', 'retencionesPorConcepto', 'saldoPorCobrar',
+      'totalComprasOriginal', 'totalAjustesProveedores', 'totalComprasProveedores', 'totalComprasAjustadas',
+      'totalPagadoProveedores', 'saldoPorPagar', 'totalGastos', 'flujoPeriodo',
+      'flujoCobradoClientes', 'flujoPagadoProveedores', 'utilidadPeriodo', 'utilidadDelPeriodo',
+      'utilidadAcumulada', 'utilidadVentasPeriodo', 'utilidadComprasPeriodo', 'utilidadGastosPeriodo',
+      'utilidadVentasAcumulada', 'utilidadComprasAcumulada', 'utilidadGastosAcumulada',
+      'clientesMora', 'proveedoresMora', 'clientesMoraCount', 'proveedoresMoraCount',
+      'ventasProximas', 'comprasProximas', 'saldosAltosClientes', 'saldosAltosProveedores',
+      'parciales', 'alertas', 'gastosPorTipo', 'ventaPorSucursal', 'saldosPorProveedor'
+    ];
+    const payload = {};
+    keys.forEach((key) => {
+      if (raw[key] !== undefined) payload[key] = clonePlainObject(raw[key], raw[key]);
+    });
+    return normalizeExcelCierreSnapshotSummary(payload);
+  }
+
+  function buildExcelCierreSnapshot(month, year, cutoffAt, summary, fileName = '') {
+    const snapshotSummary = buildExcelSummarySnapshotPayload({
+      ...(isPlainObject(summary) ? summary : {}),
+      excelConsultaMode: false,
+      excelCierreMode: true,
+      corteOficialAt: cutoffAt
+    });
+    return normalizeExcelCierreSnapshotRecord({
+      version: '1.0',
+      tipo: 'cierre_oficial',
+      periodo: getPeriodKey(month, year),
+      month,
+      year,
+      corteOficialAt: cutoffAt,
+      generadoAt: nowIso(),
+      nombreArchivo: fileName,
+      summary: snapshotSummary
+    });
+  }
+
+  function getExcelCierreSnapshotFromRecord(record) {
+    if (!record) return null;
+    return normalizeExcelCierreSnapshotRecord(record.snapshotCierre || record.corteOficialSnapshot || record.snapshotOficial || record.corteOficial);
+  }
+
+  function reviveExcelCierreSummaryFromSnapshot(snapshot) {
+    const normalized = normalizeExcelCierreSnapshotRecord(snapshot);
+    if (!normalized) return null;
+    return {
+      ...normalized.summary,
+      excelConsultaMode: false,
+      excelCierreMode: true,
+      corteOficialAt: normalized.corteOficialAt,
+      periodLabel: normalized.summary.periodLabel || getResumenPeriodLabel(normalized.summary.filters, normalized.summary.range)
+    };
+  }
+
+  function normalizeCutoffComparable(value) {
+    const safe = cleanText(value);
+    if (!safe) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(safe)) return `${safe}T23:59:59`;
+    return safe;
+  }
+
+  function isTimestampOnOrBefore(value, cutoffAt) {
+    const cutoff = normalizeCutoffComparable(cutoffAt);
+    if (!cutoff) return true;
+    const candidate = normalizeCutoffComparable(value);
+    if (!candidate) return true;
+    const candidateTime = Date.parse(candidate);
+    const cutoffTime = Date.parse(cutoff);
+    if (Number.isFinite(candidateTime) && Number.isFinite(cutoffTime)) return candidateTime <= cutoffTime + 999;
+    return String(candidate).localeCompare(String(cutoff)) <= 0;
+  }
+
+  function getRecordFallbackDateForCutoff(record) {
+    const raw = isPlainObject(record) ? record : {};
+    return toDateInputValue(
+      raw.fechaCobro || raw.fechaPago || raw.fechaCompra || raw.fechaOc || raw.fechaOC || raw.fechaGasto || raw.fecha || raw.fechaAjuste || raw.createdAt || raw.updatedAt || ''
+    );
+  }
+
+  function isRecordRegisteredByCutoff(record, cutoffAt) {
+    if (!cutoffAt) return true;
+    const raw = isPlainObject(record) ? record : {};
+    const timestamp = cleanText(raw.createdAt || raw.registradoAt || raw.fechaRegistro || raw.fechaCreacion || raw.createdOn || '');
+    if (timestamp) return isTimestampOnOrBefore(timestamp, cutoffAt);
+    const fallbackDate = getRecordFallbackDateForCutoff(raw);
+    return fallbackDate ? isTimestampOnOrBefore(fallbackDate, cutoffAt) : true;
+  }
+
+  function filterRecordsByCutoff(records, cutoffAt, normalizer) {
+    const source = Array.isArray(records) ? records : [];
+    return source
+      .map((record) => (typeof normalizer === 'function' ? normalizer(record) : record))
+      .filter((record) => isRecordRegisteredByCutoff(record, cutoffAt));
+  }
+
+  function enrichVentaForExcelSnapshot(record) {
+    const venta = normalizeVentaRecord(record);
+    const cliente = getCatalogRecordById('clientes', venta.clienteId);
+    const sucursal = getCatalogRecordById('sucursales', venta.sucursalId);
+    return {
+      ...venta,
+      clienteNombre: cleanText(record?.clienteNombre || record?.cliente || cliente?.nombre || ''),
+      sucursalNombre: cleanText(record?.sucursalNombre || record?.sucursal || sucursal?.nombre || '')
+    };
+  }
+
+  function enrichCompraForExcelSnapshot(record) {
+    const compra = normalizeCompraProveedorRecord(record);
+    const proveedor = getCatalogRecordById('proveedores', compra.proveedorId);
+    return { ...compra, proveedorNombre: cleanText(compra.proveedorNombre || proveedor?.nombre || '') };
+  }
+
+  function enrichGastoForExcelSnapshot(record) {
+    const gasto = normalizeGastoRecord(record);
+    const tipo = getCatalogRecordById('tiposGasto', gasto.tipoGastoId);
+    const metodo = getCatalogRecordById('metodosPago', gasto.metodoPagoId);
+    const cuenta = getCatalogRecordById('cuentasBancos', gasto.cuentaBancoId);
+    return {
+      ...gasto,
+      tipoGastoNombre: cleanText(gasto.tipoGastoNombre || tipo?.nombre || ''),
+      metodoPagoNombre: cleanText(gasto.metodoPagoNombre || metodo?.nombre || ''),
+      cuentaBancoNombre: cleanText(gasto.cuentaBancoNombre || cuenta?.nombre || ''),
+      cuentaBancoTipo: normalizeBankType(gasto.cuentaBancoTipo || cuenta?.tipo || '')
+    };
+  }
+
+  function withTemporaryAppData(tempData, callback) {
+    const previous = appData;
+    appData = tempData;
+    try {
+      return callback();
+    } finally {
+      appData = previous;
+    }
   }
 
   function getActiveCobrosForVenta(ventaId, cobrosSource) {
@@ -7966,6 +8198,251 @@
     const safeDate = toDateInputValue(dateInput);
     if (!safeDate) return false;
     return safeDate >= range.from && safeDate <= range.to;
+  }
+
+
+  function getExcelConsultaVentaOriginDate(venta) {
+    return toDateInputValue(venta?.fechaOc) || toDateInputValue(venta?.fechaEntrega) || toDateInputValue(venta?.createdAt) || '';
+  }
+
+  function getExcelConsultaCompraOriginDate(compra) {
+    return toDateInputValue(compra?.fechaCompra) || toDateInputValue(compra?.createdAt) || '';
+  }
+
+  function getCobroAplicadoOcAmount(cobro) {
+    const applied = parseMoney(cobro?.montoAplicadoOC ?? cobro?.montoAplicadoOc ?? cobro?.totalAplicadoOC ?? cobro?.totalAplicadoOc ?? cobro?.montoAplicado ?? cobro?.totalAplicado);
+    if (!Number.isNaN(applied)) return Math.max(0, applied);
+    const received = parseMoney(cobro?.montoRecibidoReal ?? cobro?.montoCobrado ?? cobro?.monto ?? cobro?.importe);
+    const retention = getCobroRetencionMontoForResumen(cobro);
+    return roundMoney((Number.isNaN(received) ? 0 : Math.max(0, received)) + retention);
+  }
+
+  function buildCobrosAplicadosForConsulta(cobros) {
+    return (Array.isArray(cobros) ? cobros : []).map((cobro) => ({
+      ...cobro,
+      montoCobrado: getCobroAplicadoOcAmount(cobro)
+    }));
+  }
+
+  function matchesExcelConsultaCobroByDocument(cobro, filters, venta) {
+    const clienteId = venta?.clienteId || cobro.clienteId;
+    const sucursalId = venta?.sucursalId || cobro.sucursalId;
+    if (filters.clienteId && clienteId !== filters.clienteId) return false;
+    if (filters.sucursalId && sucursalId !== filters.sucursalId) return false;
+    if (filters.metodoPagoId && cobro.metodoPagoId !== filters.metodoPagoId) return false;
+    if (filters.estado && cobro.estado !== filters.estado && venta?.estado !== filters.estado) return false;
+    if (venta && !matchesResumenMoraFilter(venta.fechaVencimiento, venta.saldoPorCobrar, filters.mora)) return false;
+    return true;
+  }
+
+  function matchesExcelConsultaPagoByDocument(pago, filters, compra) {
+    const proveedorId = compra?.proveedorId || pago.proveedorId;
+    if (filters.proveedorId && proveedorId !== filters.proveedorId) return false;
+    if (filters.metodoPagoId && pago.metodoPagoId !== filters.metodoPagoId) return false;
+    if (filters.estado && pago.estado !== filters.estado && compra?.estado !== filters.estado) return false;
+    if (compra && !matchesResumenMoraFilter(compra.fechaVencimiento, compra.saldoPorPagar, filters.mora)) return false;
+    return true;
+  }
+
+  function buildExcelConsultaSummaryForPeriod(month, year) {
+    const filters = normalizeResumenFilters({ month, year });
+    const range = getResumenDateRange(filters);
+    const ventas = recalculateVentasWithCobros(appData.ventas, appData.cobros).map((record) => normalizeVentaRecord(record));
+    const compras = recalculateComprasProveedoresWithPagos(appData.comprasProveedores, appData.pagosProveedores).map((record) => normalizeCompraProveedorRecord(record));
+    const cobros = (Array.isArray(appData.cobros) ? appData.cobros : []).map((record) => normalizeCobroRecord(record));
+    const pagos = (Array.isArray(appData.pagosProveedores) ? appData.pagosProveedores : []).map((record) => normalizePagoProveedorRecord(record));
+    const gastos = (Array.isArray(appData.gastos) ? appData.gastos : []).map((record) => normalizeGastoRecord(record));
+
+    const ventasPeriodo = ventas
+      .filter((venta) => venta.activo && isDateInResumenRange(getExcelConsultaVentaOriginDate(venta), range) && matchesResumenVenta(venta, filters, null, false))
+      .sort((a, b) => String(getExcelConsultaVentaOriginDate(a)).localeCompare(String(getExcelConsultaVentaOriginDate(b))) || String(a.numeroDocumento).localeCompare(String(b.numeroDocumento)));
+    const comprasPeriodo = compras
+      .filter((compra) => compra.activo && isDateInResumenRange(getExcelConsultaCompraOriginDate(compra), range) && matchesResumenCompra(compra, filters, null, false))
+      .sort((a, b) => String(getExcelConsultaCompraOriginDate(a)).localeCompare(String(getExcelConsultaCompraOriginDate(b))) || String(a.facturaReferencia).localeCompare(String(b.facturaReferencia)));
+
+    const ventasById = new Map(ventas.map((venta) => [venta.id, venta]));
+    const comprasById = new Map(compras.map((compra) => [compra.id, compra]));
+    const ventasPeriodoById = new Map(ventasPeriodo.map((venta) => [venta.id, venta]));
+    const comprasPeriodoById = new Map(comprasPeriodo.map((compra) => [compra.id, compra]));
+    const ventaIdsPeriodo = new Set(ventasPeriodoById.keys());
+    const compraIdsPeriodo = new Set(comprasPeriodoById.keys());
+
+    const cobrosDocumentoPeriodo = cobros
+      .filter((cobro) => cobro.activo && ventaIdsPeriodo.has(cobro.ventaId) && matchesExcelConsultaCobroByDocument(cobro, filters, ventasPeriodoById.get(cobro.ventaId)))
+      .sort((a, b) => String(ventasPeriodoById.get(a.ventaId)?.numeroDocumento || a.numeroDocumento).localeCompare(String(ventasPeriodoById.get(b.ventaId)?.numeroDocumento || b.numeroDocumento)) || String(a.fechaCobro).localeCompare(String(b.fechaCobro)));
+    const pagosDocumentoPeriodo = pagos
+      .filter((pago) => pago.activo && compraIdsPeriodo.has(pago.compraProveedorId) && matchesExcelConsultaPagoByDocument(pago, filters, comprasPeriodoById.get(pago.compraProveedorId)))
+      .sort((a, b) => String(comprasPeriodoById.get(a.compraProveedorId)?.facturaReferencia || a.facturaReferencia).localeCompare(String(comprasPeriodoById.get(b.compraProveedorId)?.facturaReferencia || b.facturaReferencia)) || String(a.fechaPago).localeCompare(String(b.fechaPago)));
+
+    const cobrosFlujoPeriodo = cobros.filter((cobro) => cobro.activo && matchesResumenCobro(cobro, filters, range, ventasById));
+    const pagosFlujoPeriodo = pagos.filter((pago) => pago.activo && matchesResumenPago(pago, filters, range, comprasById));
+    const gastosPeriodo = gastos
+      .filter((gasto) => gasto.activo && matchesResumenGasto(gasto, filters, range))
+      .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || String(a.tipoGastoNombre).localeCompare(String(b.tipoGastoNombre)));
+
+    const ventasCarteraPeriodo = ventasPeriodo.filter((venta) => venta.saldoPorCobrar > 0);
+    const comprasCarteraPeriodo = comprasPeriodo.filter((compra) => compra.saldoPorPagar > 0);
+    const clientesMora = ventasCarteraPeriodo
+      .filter((venta) => isPastVentaDue(venta))
+      .map((venta) => buildClienteMoraItem(venta))
+      .sort((a, b) => compareVisualMoraPriority(a, b, 'cliente'));
+    const proveedoresMora = comprasCarteraPeriodo
+      .filter((compra) => isPastDate(compra.fechaVencimiento))
+      .map((compra) => buildProveedorMoraItem(compra))
+      .sort((a, b) => compareVisualMoraPriority(a, b, 'proveedor'));
+    const ventasProximas = ventasCarteraPeriodo
+      .filter((venta) => isVentaDueWithinNextDays(venta, 7))
+      .sort((a, b) => compareVisualDateAsc(a, b, ['fechaVencimiento']) || compareVisualText(a.numeroDocumento || a.facturaReferencia, b.numeroDocumento || b.facturaReferencia));
+    const comprasProximas = comprasCarteraPeriodo
+      .filter((compra) => isWithinNextDays(compra.fechaVencimiento, 7))
+      .sort((a, b) => compareVisualDateAsc(a, b, ['fechaVencimiento']) || compareVisualText(a.numeroDocumento || a.facturaReferencia, b.numeroDocumento || b.facturaReferencia));
+    const saldosAltosClientes = ventasCarteraPeriodo.slice().sort((a, b) => compareVisualAmountDesc(a, b, ['saldoPorCobrar']) || compareVisualDateAsc(a, b, ['fechaVencimiento']) || compareVisualText(a.numeroDocumento, b.numeroDocumento)).slice(0, 3);
+    const saldosAltosProveedores = comprasCarteraPeriodo.slice().sort((a, b) => compareVisualAmountDesc(a, b, ['saldoPorPagar']) || compareVisualDateAsc(a, b, ['fechaVencimiento']) || compareVisualText(a.facturaReferencia, b.facturaReferencia)).slice(0, 3);
+    const parciales = [
+      ...ventasPeriodo.filter((venta) => venta.estado === 'Abonado').map((venta) => ({ tipo: 'Cliente', titulo: venta.numeroDocumento || 'OC sin número', saldo: venta.saldoPorCobrar })),
+      ...comprasPeriodo.filter((compra) => compra.estado === 'Abonado').map((compra) => ({ tipo: 'Proveedor', titulo: compra.facturaReferencia || 'Factura sin referencia', saldo: compra.saldoPorPagar }))
+    ].sort((a, b) => compareVisualAmountDesc(a, b, ['saldo']) || compareVisualText(a.tipo, b.tipo) || compareVisualText(a.titulo, b.titulo));
+    const alertas = buildAlertasList({ clientesMora, proveedoresMora, ventasProximas, comprasProximas, saldosAltosClientes, saldosAltosProveedores, parciales });
+
+    const totalSubtotalVentas = sumMoney(ventasPeriodo, (venta) => venta.subtotal);
+    const totalDescuentosVentas = sumMoney(ventasPeriodo, (venta) => venta.descuento);
+    const totalVendidoOriginal = sumMoney(ventasPeriodo, (venta) => venta.ventaNetaOriginal);
+    const totalAjustesClientes = sumMoney(ventasPeriodo, (venta) => venta.totalAjustes);
+    const totalVendido = sumMoney(ventasPeriodo, (venta) => venta.ventaNetaAjustada);
+    const totalCobradoAplicadoOC = sumMoney(cobrosDocumentoPeriodo, (cobro) => getCobroAplicadoOcAmount(cobro));
+    const totalRecibidoReal = sumMoney(cobrosDocumentoPeriodo, (cobro) => cobro.montoRecibidoReal ?? cobro.montoCobrado);
+    const totalRetenciones = sumMoney(cobrosDocumentoPeriodo, (cobro) => getCobroRetencionMontoForResumen(cobro));
+    const totalComprasOriginal = sumMoney(comprasPeriodo, (compra) => compra.totalCompra);
+    const totalAjustesProveedores = sumMoney(comprasPeriodo, (compra) => compra.totalAjustes);
+    const totalComprasProveedores = sumMoney(comprasPeriodo, (compra) => compra.totalAjustado ?? compra.totalCompra);
+    const totalPagadoProveedores = sumMoney(pagosDocumentoPeriodo, (pago) => pago.montoPagado);
+    const totalGastos = sumMoney(gastosPeriodo, (gasto) => gasto.monto);
+    const flujoCobradoClientes = sumMoney(cobrosFlujoPeriodo, (cobro) => cobro.montoCobrado);
+    const flujoPagadoProveedores = sumMoney(pagosFlujoPeriodo, (pago) => pago.montoPagado);
+    const flujoPeriodo = roundMoney(flujoCobradoClientes - flujoPagadoProveedores - totalGastos);
+    const utilidadDelPeriodo = roundMoney(totalVendido - totalComprasProveedores - totalGastos);
+    const utilidadBase = buildResumenUtilityMetrics({ ventas, compras, gastos, filters, range });
+    const utilidadMetrics = {
+      ...utilidadBase,
+      utilidadPeriodo: utilidadDelPeriodo,
+      utilidadDelPeriodo,
+      utilidadVentasPeriodo: totalVendido,
+      utilidadComprasPeriodo: totalComprasProveedores,
+      utilidadGastosPeriodo: totalGastos
+    };
+    const cobrosAplicadosPorDocumento = buildCobrosAplicadosForConsulta(cobrosDocumentoPeriodo);
+
+    return {
+      filters,
+      range,
+      excelConsultaMode: true,
+      periodLabel: getResumenPeriodLabel(filters, range),
+      ventas,
+      compras,
+      cobros,
+      pagos,
+      gastos,
+      ventasPeriodo,
+      comprasPeriodo,
+      cobrosPeriodo: cobrosDocumentoPeriodo,
+      pagosPeriodo: pagosDocumentoPeriodo,
+      gastosPeriodo,
+      ventasExport: ventasPeriodo,
+      comprasExport: comprasPeriodo,
+      gastosExport: gastosPeriodo,
+      cobrosDocumentoPeriodo,
+      pagosDocumentoPeriodo,
+      cobrosFlujoPeriodo,
+      pagosFlujoPeriodo,
+      totalSubtotalVentas,
+      totalDescuentosVentas,
+      totalVendidoOriginal,
+      totalAjustesClientes,
+      totalVendido,
+      ventaNetaAjustada: totalVendido,
+      totalCobradoClientes: totalCobradoAplicadoOC,
+      totalCobradoAplicadoOC,
+      totalRecibidoReal,
+      totalRetenciones,
+      retencionesPorConcepto: buildRetencionesPorConcepto(cobrosDocumentoPeriodo),
+      saldoPorCobrar: sumMoney(ventasPeriodo, (venta) => venta.saldoPorCobrar),
+      totalComprasOriginal,
+      totalAjustesProveedores,
+      totalComprasProveedores,
+      totalComprasAjustadas: totalComprasProveedores,
+      totalPagadoProveedores,
+      saldoPorPagar: sumMoney(comprasPeriodo, (compra) => compra.saldoPorPagar),
+      totalGastos,
+      flujoPeriodo,
+      flujoCobradoClientes,
+      flujoPagadoProveedores,
+      ...utilidadMetrics,
+      clientesMora,
+      proveedoresMora,
+      clientesMoraCount: countUnique(clientesMora, (item) => item.cliente),
+      proveedoresMoraCount: countUnique(proveedoresMora, (item) => item.proveedor),
+      ventasProximas,
+      comprasProximas,
+      saldosAltosClientes,
+      saldosAltosProveedores,
+      parciales,
+      alertas,
+      periodosCierre: buildPeriodosCierreSummary(ventas, compras),
+      gastosPorTipo: buildGastosPorTipo(gastosPeriodo),
+      ventaPorSucursal: buildVentaPorSucursal(ventasPeriodo, cobrosAplicadosPorDocumento, ventasCarteraPeriodo, ventasPeriodoById),
+      saldosPorProveedor: buildSaldosPorProveedor(comprasPeriodo)
+    };
+  }
+
+  function buildExcelCierreSummaryForPeriod(month, year, options = {}) {
+    const cutoffAt = cleanText(options.cutoffAt || options.corteOficialAt || nowIso());
+    const ventasCorte = (Array.isArray(appData.ventas) ? appData.ventas : [])
+      .filter((record) => isRecordRegisteredByCutoff(record, cutoffAt))
+      .map((record) => enrichVentaForExcelSnapshot({
+        ...record,
+        ajustes: filterRecordsByCutoff(record?.ajustes, cutoffAt, normalizeVentaAjusteRecord)
+      }));
+    const comprasCorte = (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [])
+      .filter((record) => isRecordRegisteredByCutoff(record, cutoffAt))
+      .map((record) => enrichCompraForExcelSnapshot({
+        ...record,
+        ajustes: filterRecordsByCutoff(record?.ajustes, cutoffAt, normalizeCompraProveedorAjusteRecord)
+      }));
+    const cobrosCorte = (Array.isArray(appData.cobros) ? appData.cobros : [])
+      .map((record) => normalizeCobroRecord(record))
+      .filter((record) => record.activo && isRecordRegisteredByCutoff(record, cutoffAt));
+    const pagosCorte = (Array.isArray(appData.pagosProveedores) ? appData.pagosProveedores : [])
+      .map((record) => normalizePagoProveedorRecord(record))
+      .filter((record) => record.activo && isRecordRegisteredByCutoff(record, cutoffAt));
+    const gastosCorte = (Array.isArray(appData.gastos) ? appData.gastos : [])
+      .map((record) => enrichGastoForExcelSnapshot(record))
+      .filter((record) => record.activo && isRecordRegisteredByCutoff(record, cutoffAt));
+    const tempData = {
+      ...appData,
+      ventas: ventasCorte,
+      cobros: cobrosCorte,
+      comprasProveedores: comprasCorte,
+      pagosProveedores: pagosCorte,
+      gastos: gastosCorte
+    };
+    const summary = withTemporaryAppData(tempData, () => buildExcelConsultaSummaryForPeriod(month, year));
+    return {
+      ...summary,
+      excelConsultaMode: false,
+      excelCierreMode: true,
+      corteOficialAt: cutoffAt,
+      ventas: ventasCorte,
+      compras: comprasCorte,
+      cobros: cobrosCorte,
+      pagos: pagosCorte,
+      gastos: gastosCorte,
+      ventasPeriodo: summary.ventasPeriodo.map((venta) => enrichVentaForExcelSnapshot(venta)),
+      ventasExport: summary.ventasExport.map((venta) => enrichVentaForExcelSnapshot(venta)),
+      comprasPeriodo: summary.comprasPeriodo.map((compra) => enrichCompraForExcelSnapshot(compra)),
+      comprasExport: summary.comprasExport.map((compra) => enrichCompraForExcelSnapshot(compra)),
+      gastosPeriodo: summary.gastosPeriodo.map((gasto) => enrichGastoForExcelSnapshot(gasto)),
+      gastosExport: summary.gastosExport.map((gasto) => enrichGastoForExcelSnapshot(gasto))
+    };
   }
 
   function getResumenAccumulatedRange(filters, range) {
@@ -17012,7 +17489,9 @@
           <div class="badge-row">
             <span class="badge">Resumen</span>
             <span class="badge">Ventas</span>
+            <span class="badge">Cobros</span>
             <span class="badge">Proveedores</span>
+            <span class="badge">Pagos</span>
             <span class="badge">Gastos</span>
             <span class="badge">Catálogos</span>
             <span class="badge">JSZip local</span>
@@ -17126,7 +17605,7 @@
 
   function getLastExcelExportForPeriod(month, year) {
     const key = getPeriodKey(month, year);
-    return getExcelExports().find((record) => record.periodo === key) || null;
+    return getExcelExports().find((record) => record.periodo === key && (!record.tipo || record.tipo === 'cierre')) || null;
   }
 
   function getCierreMensualForPeriod(month, year) {
@@ -17221,7 +17700,7 @@
     renderRoute();
 
     try {
-      const result = await exportExcelForPeriod(month, year, { fileName });
+      const result = await exportExcelForPeriod(month, year, { fileName, mode: 'consulta' });
       if (!saveExcelConsultaSequence(sequence + 1)) {
         throw new Error('El Excel se generó, pero no se pudo avanzar el consecutivo local de consulta.');
       }
@@ -17254,7 +17733,7 @@
     renderRoute();
 
     try {
-      const result = await exportExcelForPeriod(month, year, { fileName });
+      const result = await exportExcelForPeriod(month, year, { fileName, mode: 'cierre' });
       if (!saveExcelCierreSequence(sequence + 1)) {
         throw new Error('El Excel se generó, pero no se pudo avanzar el consecutivo local de cierre.');
       }
@@ -17263,8 +17742,11 @@
         periodo,
         month,
         year,
+        tipo: 'cierre',
         nombreArchivo: result.fileName,
         exportadoAt: result.exportedAt,
+        corteOficialAt: result.corteOficialAt || result.exportedAt,
+        snapshotCierre: result.snapshotCierre,
         totales: result.totales,
         hojas: result.hojas
       });
@@ -17332,19 +17814,26 @@
     const ok = window.confirm(`Vas a cerrar ${getMonthLabel(month)} ${year}. Se usará el Excel ${lastExport.nombreArchivo}. Las ediciones futuras del período mostrarán advertencia. ¿Continuar?`);
     if (!ok) return;
 
-    const summary = buildResumenSummaryForFilters({ month, year });
+    const fechaHoraCierre = nowIso();
+    const exportSnapshot = getExcelCierreSnapshotFromRecord(lastExport);
+    const summary = exportSnapshot
+      ? reviveExcelCierreSummaryFromSnapshot(exportSnapshot)
+      : buildExcelCierreSummaryForPeriod(month, year, { cutoffAt: fechaHoraCierre });
+    const snapshotCierre = exportSnapshot || buildExcelCierreSnapshot(month, year, fechaHoraCierre, summary, lastExport.nombreArchivo);
     const cierre = normalizeCierreMensualRecord({
       id: `cierre_${periodo}`,
       periodo,
       month,
       year,
-      fechaHoraCierre: nowIso(),
+      fechaHoraCierre,
+      corteOficialAt: snapshotCierre?.corteOficialAt || fechaHoraCierre,
       usuarioRol: getCurrentRoleDefinition().label,
       nombreArchivoExcel: lastExport.nombreArchivo,
       exportacionExcelId: lastExport.id,
       modoEdicion: 'advertencia',
+      snapshotCierre,
       totales: buildClosingTotals(summary),
-      observacion: 'Cierre mensual con exportación Excel previa obligatoria. Edición posterior bajo advertencia.'
+      observacion: 'Cierre mensual con exportación Excel previa obligatoria. Corte oficial congelado para no recalcular movimientos posteriores.'
     });
 
     appData.cierresMensuales = [cierre, ...getCierresMensuales()];
@@ -17430,24 +17919,47 @@
     return {
       fileName: workbook.fileName,
       exportedAt: workbook.exportedAt,
+      corteOficialAt: workbook.corteOficialAt,
+      snapshotCierre: workbook.snapshotCierre,
       hojas: workbook.sheets.map((sheet) => sheet.name),
       totales: workbook.totales
     };
   }
 
   function buildExcelWorkbookForPeriod(month, year, options = {}) {
-    const summary = buildResumenSummaryForFilters({ month, year });
+    const exportMode = cleanText(options.mode || options.tipo || '').toLowerCase();
+    const isConsulta = exportMode === 'consulta';
     const exportedAt = nowIso();
-    const label = summary.periodLabel;
     const fileName = cleanText(options.fileName) || `KSA_PRACTIKA_${year}_${month}_CONTROL.xlsx`;
+    let summary;
+    let snapshotCierre = null;
+    if (isConsulta) {
+      summary = buildExcelConsultaSummaryForPeriod(month, year);
+    } else {
+      const cierreExistente = getCierreMensualForPeriod(month, year);
+      const snapshotExistente = getExcelCierreSnapshotFromRecord(cierreExistente);
+      if (snapshotExistente) {
+        snapshotCierre = snapshotExistente;
+        summary = reviveExcelCierreSummaryFromSnapshot(snapshotExistente);
+      } else {
+        const cutoffAt = cleanText(options.cutoffAt || options.corteOficialAt || cierreExistente?.fechaHoraCierre || exportedAt);
+        summary = buildExcelCierreSummaryForPeriod(month, year, { cutoffAt });
+        snapshotCierre = buildExcelCierreSnapshot(month, year, cutoffAt, summary, fileName);
+      }
+    }
+    const label = summary.periodLabel;
     return {
       fileName,
       exportedAt,
+      corteOficialAt: snapshotCierre?.corteOficialAt || '',
+      snapshotCierre,
       totales: buildClosingTotals(summary),
       sheets: [
         buildResumenSheet(summary, label, exportedAt),
         buildVentasSheet(summary),
+        buildCobrosSheet(summary),
         buildProveedoresSheet(summary),
+        buildPagosSheet(summary),
         buildGastosSheet(summary),
         buildCatalogosSheet()
       ]
@@ -17455,10 +17967,13 @@
   }
 
   function buildResumenSheet(summary, label, exportedAt) {
+    const usesLinkedDocumentCut = Boolean(summary.excelConsultaMode || summary.excelCierreMode);
     const rows = [
       [xlsxTitle('KSA PRÁCTIKA — Resumen')],
+      [xlsxLabel('Tipo de Excel'), xlsxText(summary.excelConsultaMode ? 'Consulta dinámica' : (summary.excelCierreMode ? 'Cierre oficial congelado' : 'Cierre'))],
       [xlsxLabel('Corte o período exportado'), xlsxText(label)],
       [xlsxLabel('Fecha/hora de exportación'), xlsxText(formatDateTime(exportedAt))],
+      ...(summary.excelCierreMode ? [[xlsxLabel('Corte oficial congelado'), xlsxText(formatDateTime(summary.corteOficialAt || exportedAt))]] : []),
       [],
       xlsxHeaderRow(['Indicador', 'Valor']),
       [xlsxText('Subtotal ventas'), xlsxMoney(summary.totalSubtotalVentas || summary.totalVendidoOriginal || 0)],
@@ -17466,7 +17981,11 @@
       [xlsxText('Total ventas'), xlsxMoney(summary.totalVendidoOriginal || 0)],
       [xlsxText('Ajustes clientes'), xlsxMoney((summary.totalAjustesClientes || 0) > 0 ? -summary.totalAjustesClientes : 0)],
       [xlsxText('Total ventas ajustado'), xlsxMoney(summary.totalVendido)],
-      [xlsxText('Total cobrado clientes'), xlsxMoney(summary.totalCobradoClientes)],
+      [xlsxText(usesLinkedDocumentCut ? 'Total cobrado clientes (aplicado a OC)' : 'Total cobrado clientes'), xlsxMoney(summary.totalCobradoClientes)],
+      ...(usesLinkedDocumentCut ? [
+        [xlsxText('Recibido real vinculado'), xlsxMoney(summary.totalRecibidoReal || 0)],
+        [xlsxText('Retenciones vinculadas'), xlsxMoney(summary.totalRetenciones || 0)]
+      ] : []),
       [xlsxText('Saldo por cobrar'), xlsxMoney(summary.saldoPorCobrar)],
       [xlsxText('Compras originales'), xlsxMoney(summary.totalComprasOriginal || 0)],
       [xlsxText('Ajustes proveedores'), xlsxMoney((summary.totalAjustesProveedores || 0) > 0 ? -summary.totalAjustesProveedores : 0)],
@@ -17474,7 +17993,11 @@
       [xlsxText('Pagado proveedores'), xlsxMoney(summary.totalPagadoProveedores)],
       [xlsxText('Saldo por pagar'), xlsxMoney(summary.saldoPorPagar)],
       [xlsxText('Total gastos'), xlsxMoney(summary.totalGastos)],
-      [xlsxText('Flujo del período'), xlsxMoney(summary.flujoPeriodo)],
+      [xlsxText(usesLinkedDocumentCut ? 'Flujo del período (corte)' : 'Flujo del período'), xlsxMoney(summary.flujoPeriodo)],
+      ...(usesLinkedDocumentCut ? [
+        [xlsxText(summary.excelCierreMode ? 'Cobros incluidos hasta corte' : 'Cobros del flujo (fecha real)'), xlsxMoney(summary.flujoCobradoClientes || 0)],
+        [xlsxText(summary.excelCierreMode ? 'Pagos incluidos hasta corte' : 'Pagos del flujo (fecha real)'), xlsxMoney(summary.flujoPagadoProveedores || 0)]
+      ] : []),
       [xlsxText('Clientes en mora'), xlsxNumber(summary.clientesMora.length)],
       [xlsxText('Proveedores en mora'), xlsxNumber(summary.proveedoresMora.length)],
       [],
@@ -17508,15 +18031,16 @@
       [],
       xlsxHeaderRow(['Fecha', 'Fecha entrega', 'Cliente', 'Sucursal', 'OC', 'Facturas', 'Envío', 'Transportista', 'Embarque', 'Estimada', 'Real', 'Guía', 'Subtotal', 'Descuento', 'Total', 'Ajustes', 'Cobrado', 'Saldo', 'Vence', 'Mora', 'Estado', 'Detalle', 'Observación'])
     ];
-    getVentasForExport(summary.range, summary.filters).forEach((venta) => {
+    const ventasExport = Array.isArray(summary.ventasExport) ? summary.ventasExport : getVentasForExport(summary.range, summary.filters);
+    ventasExport.forEach((venta) => {
       const cliente = getCatalogRecordById('clientes', venta.clienteId);
       const sucursal = getCatalogRecordById('sucursales', venta.sucursalId);
       const logistica = normalizeLogisticaVentaRecord(venta.logistica);
       rows.push([
         xlsxDate(venta.fechaOc),
         xlsxDate(venta.fechaEntrega),
-        xlsxText(cliente?.nombre || venta.clienteNombre || 'Cliente no encontrado'),
-        xlsxText(sucursal?.nombre || venta.sucursalNombre || 'Sucursal no encontrada'),
+        xlsxText(venta.clienteNombre || cliente?.nombre || 'Cliente no encontrado'),
+        xlsxText(venta.sucursalNombre || sucursal?.nombre || 'Sucursal no encontrada'),
         xlsxText(venta.numeroDocumento),
         xlsxText(formatFacturasVentaResumen(venta.facturas)),
         xlsxText(venta.requiereEnvio ? 'Sí' : 'No'),
@@ -17541,6 +18065,40 @@
     return { name: 'Ventas', rows, cols: [14, 16, 24, 24, 18, 30, 14, 20, 16, 16, 16, 18, 14, 14, 14, 14, 16, 16, 16, 12, 14, 38, 32] };
   }
 
+  function buildCobrosSheet(summary) {
+    const rows = [
+      [xlsxTitle('Cobros de clientes')],
+      [xlsxLabel('Período'), xlsxText(summary.periodLabel)],
+      ...(summary.excelCierreMode ? [[xlsxLabel('Corte oficial'), xlsxText(formatDateTime(summary.corteOficialAt))]] : []),
+      [],
+      xlsxHeaderRow(['Fecha cobro', 'Cliente', 'Sucursal', 'OC', 'Factura', 'Recibido real', 'Aplicado OC', 'Retención', 'Concepto retención', 'Método', 'Banco', 'Estado', 'Observación'])
+    ];
+    const cobrosExport = Array.isArray(summary.cobrosPeriodo) ? summary.cobrosPeriodo : [];
+    cobrosExport.forEach((cobro) => {
+      const venta = Array.isArray(summary.ventasExport) ? summary.ventasExport.find((item) => item.id === cobro.ventaId) : null;
+      const cliente = getCatalogRecordById('clientes', cobro.clienteId || venta?.clienteId);
+      const sucursal = getCatalogRecordById('sucursales', cobro.sucursalId || venta?.sucursalId);
+      const metodo = getCatalogRecordById('metodosPago', cobro.metodoPagoId);
+      const cuenta = getCatalogRecordById('cuentasBancos', cobro.cuentaBancoId);
+      rows.push([
+        xlsxDate(cobro.fechaCobro),
+        xlsxText(cobro.clienteNombre || venta?.clienteNombre || cliente?.nombre || 'Cliente no encontrado'),
+        xlsxText(cobro.sucursalNombre || venta?.sucursalNombre || sucursal?.nombre || 'Sucursal no encontrada'),
+        xlsxText(cobro.numeroDocumento || venta?.numeroDocumento || ''),
+        xlsxText(cobro.facturaReferida),
+        xlsxMoney(cobro.montoRecibidoReal ?? cobro.montoCobrado),
+        xlsxMoney(getCobroAplicadoOcAmount(cobro)),
+        xlsxMoney(getCobroRetencionMontoForResumen(cobro)),
+        xlsxText(cobro.retencionConcepto),
+        xlsxText(cobro.metodoPagoNombre || metodo?.nombre || 'Sin método'),
+        xlsxText(cobro.cuentaBancoNombre || cuenta?.nombre || 'Sin banco'),
+        xlsxText(cobro.estado),
+        xlsxText(cobro.observacion)
+      ]);
+    });
+    return { name: 'Cobros', rows, cols: [16, 24, 24, 18, 18, 16, 16, 16, 24, 18, 22, 14, 34] };
+  }
+
   function buildProveedoresSheet(summary) {
     const rows = [
       [xlsxTitle('Proveedores / Compras')],
@@ -17548,11 +18106,12 @@
       [],
       xlsxHeaderRow(['Fecha compra', 'Proveedor', 'Referencia', 'Fecha vencimiento', 'Original', 'Ajustes', 'Ajustado', 'Pagado', 'Saldo por pagar', 'Días mora', 'Estado', 'Ajustes detalle', 'Observación'])
     ];
-    getComprasForExport(summary.range, summary.filters).forEach((compra) => {
+    const comprasExport = Array.isArray(summary.comprasExport) ? summary.comprasExport : getComprasForExport(summary.range, summary.filters);
+    comprasExport.forEach((compra) => {
       const proveedor = getCatalogRecordById('proveedores', compra.proveedorId);
       rows.push([
         xlsxDate(compra.fechaCompra),
-        xlsxText(proveedor?.nombre || compra.proveedorNombre || 'Proveedor no encontrado'),
+        xlsxText(compra.proveedorNombre || proveedor?.nombre || 'Proveedor no encontrado'),
         xlsxText(compra.facturaReferencia),
         xlsxDate(compra.fechaVencimiento),
         xlsxMoney(compra.totalCompra),
@@ -17569,6 +18128,35 @@
     return { name: 'Proveedores', rows, cols: [16, 28, 22, 16, 18, 14, 18, 16, 16, 12, 14, 38, 34] };
   }
 
+  function buildPagosSheet(summary) {
+    const rows = [
+      [xlsxTitle('Pagos a proveedores')],
+      [xlsxLabel('Período'), xlsxText(summary.periodLabel)],
+      ...(summary.excelCierreMode ? [[xlsxLabel('Corte oficial'), xlsxText(formatDateTime(summary.corteOficialAt))]] : []),
+      [],
+      xlsxHeaderRow(['Fecha pago', 'Proveedor', 'Referencia', 'Monto pagado', 'Método', 'Banco', 'Automático', 'Estado', 'Observación'])
+    ];
+    const pagosExport = Array.isArray(summary.pagosPeriodo) ? summary.pagosPeriodo : [];
+    pagosExport.forEach((pago) => {
+      const compra = Array.isArray(summary.comprasExport) ? summary.comprasExport.find((item) => item.id === pago.compraProveedorId) : null;
+      const proveedor = getCatalogRecordById('proveedores', pago.proveedorId || compra?.proveedorId);
+      const metodo = getCatalogRecordById('metodosPago', pago.metodoPagoId);
+      const cuenta = getCatalogRecordById('cuentasBancos', pago.cuentaBancoId);
+      rows.push([
+        xlsxDate(pago.fechaPago),
+        xlsxText(pago.proveedorNombre || compra?.proveedorNombre || proveedor?.nombre || 'Proveedor no encontrado'),
+        xlsxText(pago.facturaReferencia || compra?.facturaReferencia || ''),
+        xlsxMoney(pago.montoPagado),
+        xlsxText(pago.metodoPagoNombre || metodo?.nombre || 'Sin método'),
+        xlsxText(pago.cuentaBancoNombre || cuenta?.nombre || 'Sin banco'),
+        xlsxText(pago.autoGenerado ? 'Sí' : 'No'),
+        xlsxText(pago.estado),
+        xlsxText(pago.observacion)
+      ]);
+    });
+    return { name: 'Pagos', rows, cols: [16, 28, 22, 16, 18, 22, 14, 14, 34] };
+  }
+
   function buildGastosSheet(summary) {
     const rows = [
       [xlsxTitle('Gastos')],
@@ -17576,16 +18164,17 @@
       [],
       xlsxHeaderRow(['Fecha', 'Tipo de gasto', 'Monto', 'Método', 'Banco', 'Estado', 'Observación'])
     ];
-    getGastosForExport(summary.range, summary.filters).forEach((gasto) => {
+    const gastosExport = Array.isArray(summary.gastosExport) ? summary.gastosExport : getGastosForExport(summary.range, summary.filters);
+    gastosExport.forEach((gasto) => {
       const tipo = getCatalogRecordById('tiposGasto', gasto.tipoGastoId);
       const metodo = getCatalogRecordById('metodosPago', gasto.metodoPagoId);
       const cuenta = getCatalogRecordById('cuentasBancos', gasto.cuentaBancoId);
       rows.push([
         xlsxDate(gasto.fecha),
-        xlsxText(tipo?.nombre || gasto.tipoGastoNombre || 'Sin tipo'),
+        xlsxText(gasto.tipoGastoNombre || tipo?.nombre || 'Sin tipo'),
         xlsxMoney(gasto.monto),
-        xlsxText(metodo?.nombre || gasto.metodoPagoNombre || 'Sin método'),
-        xlsxText(cuenta?.nombre || gasto.cuentaBancoNombre || 'Sin banco'),
+        xlsxText(gasto.metodoPagoNombre || metodo?.nombre || 'Sin método'),
+        xlsxText(gasto.cuentaBancoNombre || cuenta?.nombre || 'Sin banco'),
         xlsxText(gasto.estado),
         xlsxText(gasto.observacion)
       ]);
