@@ -7947,23 +7947,23 @@
           <article class="metric-card"><span>Subtotal ventas</span><strong>${escapeHtml(formatMoney(summary.totalSubtotalVentas || summary.totalVendidoOriginal || 0))}</strong><small>Antes de descuento</small></article>
           <article class="metric-card"><span>Descuentos</span><strong>${escapeHtml(formatMoney(summary.totalDescuentosVentas || 0))}</strong><small>Aplicados a OC</small></article>
           <article class="metric-card"><span>Total ventas</span><strong>${escapeHtml(formatMoney(summary.totalVendidoOriginal || 0))}</strong><small>Subtotal - descuento</small></article>
-          <article class="metric-card resumen-utility-card ${summary.utilidadPeriodo < 0 ? 'is-negative' : ''}" aria-label="Utilidad del período"><span>Utilidad</span><strong>${escapeHtml(formatMoney(summary.utilidadPeriodo || 0))}</strong><small>Según fecha del documento</small></article>
-          <article class="metric-card resumen-utility-card ${summary.utilidadAcumulada < 0 ? 'is-negative' : ''}" aria-label="Utilidad acumulada"><span>Acumulada</span><strong>${escapeHtml(formatMoney(summary.utilidadAcumulada || 0))}</strong><small>Hasta corte seleccionado</small></article>
           <article class="metric-card"><span>Ajustes clientes</span><strong>${summary.totalAjustesClientes > 0 ? '-' : ''}${escapeHtml(formatMoney(summary.totalAjustesClientes || 0))}</strong><small>No son cobros</small></article>
-          <article class="metric-card"><span>Total tras ajustes</span><strong>${escapeHtml(formatMoney(summary.totalVendido))}</strong><small>Total - ajustes</small></article>
           <article class="metric-card"><span>Total cobrado clientes</span><strong>${escapeHtml(formatMoney(summary.totalCobradoClientes))}</strong><small>Fecha real de cobro</small></article>
           <article class="metric-card"><span>Retenciones</span><strong>${escapeHtml(formatMoney(summary.totalRetenciones || 0))}</strong><small>Total del período</small></article>
           <article class="metric-card"><span>Saldo por cobrar</span><strong>${escapeHtml(formatMoney(summary.saldoPorCobrar))}</strong><small>Cartera general</small></article>
-          <article class="metric-card"><span>Compras ajustadas</span><strong>${escapeHtml(formatMoney(summary.totalComprasProveedores))}</strong><small>Original ${escapeHtml(formatMoney(summary.totalComprasOriginal || 0))}</small></article>
           <article class="metric-card"><span>Ajustes proveedores</span><strong>${summary.totalAjustesProveedores > 0 ? '-' : ''}${escapeHtml(formatMoney(summary.totalAjustesProveedores || 0))}</strong><small>No son pagos</small></article>
           <article class="metric-card"><span>Pagado proveedores</span><strong>${escapeHtml(formatMoney(summary.totalPagadoProveedores))}</strong><small>Fecha real de pago</small></article>
           <article class="metric-card"><span>Saldo por pagar</span><strong>${escapeHtml(formatMoney(summary.saldoPorPagar))}</strong><small>Cartera general</small></article>
-          <article class="metric-card"><span>Total gastos</span><strong>${escapeHtml(formatMoney(summary.totalGastos))}</strong><small>Gastos no anulados</small></article>
           <article class="metric-card"><span>Clientes en mora</span><strong>${summary.clientesMoraCount}</strong><small>${summary.clientesMora.length} documentos</small></article>
           <article class="metric-card"><span>Proveedores en mora</span><strong>${summary.proveedoresMoraCount}</strong><small>${summary.proveedoresMora.length} documentos</small></article>
-          <article class="metric-card"><span>Flujo del período</span><strong>${escapeHtml(formatMoney(summary.flujoPeriodo))}</strong><small>Cobros - pagos - gastos</small></article>
+          <article class="metric-card resumen-exercise-card"><span>Flujo del período</span><strong>${escapeHtml(formatMoney(summary.flujoPeriodo))}</strong><small>Cobros - pagos - gastos</small></article>
+          <article class="metric-card resumen-exercise-card"><span>Ventas ajustadas</span><strong>${escapeHtml(formatMoney(summary.utilidadVentasPeriodo ?? summary.totalVendido ?? 0))}</strong><small>Suma usada en utilidad</small></article>
+          <article class="metric-card resumen-exercise-card"><span>Compras ajustadas</span><strong>${escapeHtml(formatMoney(-Math.abs(summary.utilidadComprasPeriodo ?? summary.totalComprasProveedores ?? 0)))}</strong><small>Se resta en utilidad</small></article>
+          <article class="metric-card resumen-exercise-card"><span>Gastos del período</span><strong>${escapeHtml(formatMoney(-Math.abs(summary.utilidadGastosPeriodo ?? summary.totalGastos ?? 0)))}</strong><small>Se resta en utilidad</small></article>
+          <article class="metric-card resumen-exercise-card ${summary.utilidadPeriodo < 0 ? 'is-negative' : ''}" aria-label="Utilidad del período"><span>Utilidad del período</span><strong>${escapeHtml(formatMoney(summary.utilidadPeriodo || 0))}</strong><small>Ventas - compras - gastos</small></article>
+          <article class="metric-card resumen-exercise-card ${summary.utilidadAcumulada < 0 ? 'is-negative' : ''}" aria-label="Utilidad acumulada"><span>Utilidad acumulada</span><strong>${escapeHtml(formatMoney(summary.utilidadAcumulada || 0))}</strong><small>Hasta corte seleccionado</small></article>
         </section>
-        <p class="resumen-utility-note">Utilidad por origen, flujo por movimiento.</p>
+        <p class="resumen-utility-note">Flujo por movimiento; utilidad por origen del documento.</p>
 
         ${renderPeriodosPendientesCierreCard(summary.periodosCierre)}
 
@@ -17966,6 +17966,15 @@
     };
   }
 
+  function buildResumenEjercicioData(summary) {
+    const source = isPlainObject(summary) ? summary : {};
+    const ventasAjustadas = roundMoney(source.utilidadVentasPeriodo ?? source.totalVendido ?? source.ventaNetaAjustada ?? 0);
+    const comprasAjustadas = roundMoney(source.utilidadComprasPeriodo ?? source.totalComprasProveedores ?? source.totalComprasAjustadas ?? 0);
+    const gastosPeriodo = roundMoney(source.utilidadGastosPeriodo ?? source.totalGastos ?? 0);
+    const utilidadPeriodo = roundMoney(ventasAjustadas - comprasAjustadas - gastosPeriodo);
+    return { ventasAjustadas, comprasAjustadas, gastosPeriodo, utilidadPeriodo };
+  }
+
   function buildResumenSheet(summary, label, exportedAt) {
     const usesLinkedDocumentCut = Boolean(summary.excelConsultaMode || summary.excelCierreMode);
     const rows = [
@@ -18020,6 +18029,17 @@
     summary.clientesMora.forEach((item) => rows.push([xlsxText(item.cliente), xlsxText(item.sucursal), xlsxText(item.documento), xlsxDate(item.fechaEntrega), xlsxDate(item.fechaVencimiento), xlsxNumber(item.diasMora), xlsxMoney(item.saldoPendiente), xlsxText(item.estado)]));
     rows.push([], xlsxHeaderRow(['Proveedores en mora', 'Referencia', 'Fecha vencimiento', 'Días mora', 'Saldo pendiente', 'Estado']));
     summary.proveedoresMora.forEach((item) => rows.push([xlsxText(item.proveedor), xlsxText(item.documento), xlsxDate(item.fechaVencimiento), xlsxNumber(item.diasMora), xlsxMoney(item.saldoPendiente), xlsxText(item.estado)]));
+
+    const ejercicio = buildResumenEjercicioData(summary);
+    rows.push(
+      [],
+      [xlsxSubtitle('Resumen del ejercicio')],
+      xlsxHeaderRow(['Cuenta', 'Monto']),
+      [xlsxText('Ventas ajustadas'), xlsxMoney(ejercicio.ventasAjustadas)],
+      [xlsxText('Compras ajustadas'), xlsxMoney(-Math.abs(ejercicio.comprasAjustadas))],
+      [xlsxText('Gastos del período'), xlsxMoney(-Math.abs(ejercicio.gastosPeriodo))],
+      [xlsxTotalText('Utilidad del período'), xlsxTotalMoney(ejercicio.utilidadPeriodo)]
+    );
 
     return { name: 'Resumen', rows, cols: [28, 18, 18, 16, 18, 14, 18, 18] };
   }
@@ -18239,6 +18259,8 @@
   function xlsxLabel(value) { return { value, style: 'label', type: 'string' }; }
   function xlsxText(value) { return { value: cleanText(value), style: 'text', type: 'string' }; }
   function xlsxMoney(value) { return { value: roundMoney(value), style: 'money', type: 'number' }; }
+  function xlsxTotalText(value) { return { value: cleanText(value), style: 'totalText', type: 'string' }; }
+  function xlsxTotalMoney(value) { return { value: roundMoney(value), style: 'totalMoney', type: 'number' }; }
   function xlsxNumber(value) { return { value: Number(value) || 0, style: 'integer', type: 'number' }; }
   function xlsxDate(value) { return { value: toDateInputValue(value), style: 'date', type: 'date' }; }
   function xlsxHeaderRow(values) { return values.map((value) => ({ value, style: 'header', type: 'string' })); }
@@ -18332,26 +18354,28 @@
     <numFmt numFmtId="164" formatCode="&quot;C$&quot;#,##0.00"/>
     <numFmt numFmtId="165" formatCode="dd/mm/yyyy"/>
   </numFmts>
-  <fonts count="5">
+  <fonts count="6">
     <font><sz val="11"/><color rgb="FF111827"/><name val="Calibri"/></font>
     <font><b/><sz val="18"/><color rgb="FF111827"/><name val="Calibri"/></font>
     <font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
     <font><b/><sz val="11"/><color rgb="FF5F4520"/><name val="Calibri"/></font>
     <font><sz val="10"/><color rgb="FF64748B"/><name val="Calibri"/></font>
+    <font><b/><sz val="11"/><color rgb="FF0F172A"/><name val="Calibri"/></font>
   </fonts>
-  <fills count="5">
+  <fills count="6">
     <fill><patternFill patternType="none"/></fill>
     <fill><patternFill patternType="gray125"/></fill>
     <fill><patternFill patternType="solid"><fgColor rgb="FF111827"/><bgColor indexed="64"/></patternFill></fill>
     <fill><patternFill patternType="solid"><fgColor rgb="FFF4E5BE"/><bgColor indexed="64"/></patternFill></fill>
     <fill><patternFill patternType="solid"><fgColor rgb="FFFFF8EA"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFE0F4FF"/><bgColor indexed="64"/></patternFill></fill>
   </fills>
   <borders count="2">
     <border><left/><right/><top/><bottom/><diagonal/></border>
     <border><left style="thin"><color rgb="FFD5CFC2"/></left><right style="thin"><color rgb="FFD5CFC2"/></right><top style="thin"><color rgb="FFD5CFC2"/></top><bottom style="thin"><color rgb="FFD5CFC2"/></bottom><diagonal/></border>
   </borders>
   <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-  <cellXfs count="8">
+  <cellXfs count="10">
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
     <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
     <xf numFmtId="0" fontId="3" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
@@ -18360,6 +18384,8 @@
     <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>
     <xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>
     <xf numFmtId="165" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>
+    <xf numFmtId="0" fontId="5" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
+    <xf numFmtId="164" fontId="5" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyNumberFormat="1" applyBorder="1"/>
   </cellXfs>
   <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
@@ -18414,7 +18440,7 @@ ${rowsXml}
   }
 
   function xlsxStyleId(style) {
-    const map = { title: 1, subtitle: 2, header: 3, label: 4, text: 5, money: 6, date: 7, integer: 5 };
+    const map = { title: 1, subtitle: 2, header: 3, label: 4, text: 5, money: 6, date: 7, integer: 5, totalText: 8, totalMoney: 9 };
     return map[style] || 0;
   }
 
