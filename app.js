@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.92-post12-resumen-sin-celeste';
+  const APP_VERSION = '0.17.93-post12-resumen-crema-sin-flujo';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -7956,7 +7956,7 @@
           <article class="metric-card"><span>Saldo por pagar</span><strong>${escapeHtml(formatMoney(summary.saldoPorPagar))}</strong><small>Cartera general</small></article>
           <article class="metric-card"><span>Clientes en mora</span><strong>${summary.clientesMoraCount}</strong><small>${summary.clientesMora.length} documentos</small></article>
           <article class="metric-card"><span>Proveedores en mora</span><strong>${summary.proveedoresMoraCount}</strong><small>${summary.proveedoresMora.length} documentos</small></article>
-          <article class="metric-card resumen-exercise-card"><span>Flujo del período</span><strong>${escapeHtml(formatMoney(summary.flujoPeriodo))}</strong><small>Cobros - pagos - gastos</small></article>
+          <article class="metric-card"><span>Flujo del período</span><strong>${escapeHtml(formatMoney(summary.flujoPeriodo))}</strong><small>Cobros - pagos - gastos</small></article>
           <article class="metric-card resumen-exercise-card"><span>Ventas ajustadas</span><strong>${escapeHtml(formatMoney(summary.utilidadVentasPeriodo ?? summary.totalVendido ?? 0))}</strong><small>Suma usada en utilidad</small></article>
           <article class="metric-card resumen-exercise-card"><span>Compras ajustadas</span><strong>${escapeHtml(formatMoney(-Math.abs(summary.utilidadComprasPeriodo ?? summary.totalComprasProveedores ?? 0)))}</strong><small>Se resta en utilidad</small></article>
           <article class="metric-card resumen-exercise-card"><span>Gastos del período</span><strong>${escapeHtml(formatMoney(-Math.abs(summary.utilidadGastosPeriodo ?? summary.totalGastos ?? 0)))}</strong><small>Se resta en utilidad</small></article>
