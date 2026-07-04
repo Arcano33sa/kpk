@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.99-post12-casa-fix-utilidad-kpk-periodo-trabajo';
+  const APP_VERSION = '0.18.07-post12-casa-etapa2-gastosporcategoria';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -15,6 +15,7 @@
   const NOTES_STORAGE_KEY = 'ksa_notas_v1';
   const FACTURAS_STORAGE_KEY = 'ksa_facturas_v1';
   const WORK_PERIOD_STORAGE_KEY = 'KSA_PRACTIKA_WORK_PERIOD_v1';
+  const AUTH_LOCAL_SESSION_STORAGE_KEY = 'KSA_PRACTIKA_AUTH_LOCAL_SESSION_v1';
   const JSON_IMPORT_HISTORY_MAX_ENTRIES = 80;
   const ACTIVITY_LOG_MAX_ENTRIES = 300;
   const FACTURAS_PAGE_SIZE = 20;
@@ -142,8 +143,8 @@
       icon: '⚙',
       title: 'Configuración',
       short: 'Config.',
-      description: 'Parámetros generales, roles básicos locales, respaldo JSON validado e información del sistema.',
-      placeholder: 'Configuración activa con roles locales, parámetros generales, respaldo JSON validado e historial de cierres/exportaciones.'
+      description: 'Parámetros generales, Usuarios preparados, respaldo JSON validado e información del sistema.',
+      placeholder: 'Configuración activa con Usuarios, parámetros generales, respaldo JSON validado e historial de cierres/exportaciones.'
     }
   ];
 
@@ -943,18 +944,60 @@
     administrador: {
       id: 'administrador',
       label: 'Administrador',
-      description: 'Puede editar catálogos, anular movimientos, importar Excel/JSON, exportar JSON y cambiar configuración.',
-      permissions: new Set(['editCatalogs', 'annulMovements', 'importExcel', 'exportExcel', 'exportJson', 'importJson', 'changeConfig', 'closeMonth'])
+      description: 'Contrato futuro: podrá gestionar usuarios, importar JSON inicial a nube, exportar respaldos, cerrar períodos, anular movimientos, modificar catálogos y acceder a configuración delicada.',
+      permissions: new Set(['manageUsers', 'initialJsonToCloud', 'editCatalogs', 'annulMovements', 'importExcel', 'exportExcel', 'exportJson', 'importJson', 'changeConfig', 'sensitiveConfig', 'closeMonth'])
     },
     usuario: {
       id: 'usuario',
       label: 'Usuario normal',
-      description: 'Puede registrar ventas, cobros, proveedores/compras, pagos, gastos y consultar tablero.',
-      permissions: new Set(['registerOperations', 'viewDashboard'])
+      description: 'Contrato futuro: podrá registrar operaciones, consultar datos y trabajar módulos operativos, sin tocar partes delicadas.',
+      permissions: new Set(['registerOperations', 'viewDashboard', 'workOperationalModules'])
     }
   };
 
   const ROLE_ORDER = ['administrador', 'usuario'];
+  const USER_FUTURE_SCHEMA_FIELDS = Object.freeze([
+    { key: 'uid', description: 'Identificador que vendrá desde Firebase Auth.' },
+    { key: 'correo', description: 'Correo del usuario cuando Firebase esté activo.' },
+    { key: 'nombre', description: 'Nombre visible del usuario.' },
+    { key: 'rol', description: 'Administrador o Usuario normal.' },
+    { key: 'activo', description: 'Indicador para activar o desactivar acceso futuro.' },
+    { key: 'workspaceId', description: 'Empresa o espacio de trabajo al que pertenece.' },
+    { key: 'createdAt', description: 'Fecha de creación futura.' },
+    { key: 'updatedAt', description: 'Fecha de actualización futura.' },
+    { key: 'ultimoAcceso', description: 'Último acceso futuro, si aplica.' },
+    { key: 'fuente', description: 'local_preparado o firebase.' }
+  ]);
+  const USER_PREPARED_ACTIONS = Object.freeze(['Agregar usuario', 'Editar usuario', 'Desactivar usuario', 'Cambiar rol']);
+  const FIRESTORE_WORKSPACE_ID_PLACEHOLDER = 'workspace_ksa_practika';
+  const FIRESTORE_COLLECTION_CONTRACTS = Object.freeze([
+    { key: 'configuracion', path: 'workspaces/{workspaceId}/configuracion/sistema', label: 'Configuración', source: 'configuracion', idPolicy: 'Documento estable por área de configuración.' },
+    { key: 'usuarios', path: 'workspaces/{workspaceId}/usuarios/{uid}', label: 'Usuarios', source: 'firebase_auth_future', idPolicy: 'uid de Firebase Auth como documentId futuro.' },
+    { key: 'catalogos', path: 'workspaces/{workspaceId}/catalogos/{catalogoId}/items/{itemId}', label: 'Catálogos', source: 'catalogos', idPolicy: 'Conservar IDs actuales de clientes, sucursales, proveedores, categorías, métodos y bancos.' },
+    { key: 'ventas', path: 'workspaces/{workspaceId}/ventas/{ventaId}', label: 'Ventas / OC', source: 'ventas', idPolicy: 'Usar venta.id como documentId o campo id estable.' },
+    { key: 'cobros', path: 'workspaces/{workspaceId}/cobros/{cobroId}', label: 'Cobros', source: 'cobros', idPolicy: 'Conservar cobro.id y ventaId para no romper saldos.' },
+    { key: 'comprasProveedores', path: 'workspaces/{workspaceId}/comprasProveedores/{compraProveedorId}', label: 'Compras proveedores', source: 'comprasProveedores', idPolicy: 'Conservar compra.id y proveedorId.' },
+    { key: 'pagosProveedores', path: 'workspaces/{workspaceId}/pagosProveedores/{pagoProveedorId}', label: 'Pagos proveedores', source: 'pagosProveedores', idPolicy: 'Conservar pago.id y compraProveedorId.' },
+    { key: 'gastos', path: 'workspaces/{workspaceId}/gastos/{gastoId}', label: 'Gastos productivos', source: 'gastos', idPolicy: 'Conservar gasto.id, vínculos y anulaciones.' },
+    { key: 'casaGastos', path: 'workspaces/{workspaceId}/casaGastos/{casaGastoId}', label: 'Casa gastos', source: 'casaGastos', idPolicy: 'Conservar casaGasto.id y categoriaCasaId.' },
+    { key: 'facturasModulo', path: 'workspaces/{workspaceId}/facturasModulo/{facturaModuloId}', label: 'Facturas', source: 'facturasModulo', idPolicy: 'Conservar id interno y vínculos ventaId/clienteId/sucursalId.' },
+    { key: 'notasModulo', path: 'workspaces/{workspaceId}/notasModulo/{notaId}', label: 'Notas', source: 'notasModulo', idPolicy: 'Conservar ids de notas, pendientes, recordatorios e históricos.' },
+    { key: 'cierresMensuales', path: 'workspaces/{workspaceId}/cierresMensuales/{periodo}', label: 'Cierres mensuales', source: 'cierresMensuales', idPolicy: 'Usar período YYYY-MM como id o campo estable, sin reabrir históricos.' },
+    { key: 'exportacionesExcel', path: 'workspaces/{workspaceId}/exportacionesExcel/{exportacionId}', label: 'Exportaciones Excel', source: 'exportacionesExcel', idPolicy: 'Conservar id de exportación, tipo consulta/cierre y consecutivo correspondiente.' },
+    { key: 'bitacora', path: 'workspaces/{workspaceId}/bitacora/{actividadId}', label: 'Bitácora', source: 'bitacora', idPolicy: 'Conservar id de actividad cuando exista; generar solo en etapas futuras.' },
+    { key: 'consecutivos', path: 'workspaces/{workspaceId}/consecutivos/{tipo}', label: 'Consecutivos', source: 'consecutivos', idPolicy: 'Documentos separados: excelConsulta, excelCierre, json y otros.' },
+    { key: 'metadata', path: 'workspaces/{workspaceId}/metadata/sistema', label: 'Metadata', source: 'metadata', idPolicy: 'Documento informativo de versión, schema, fechas y origen.' },
+    { key: 'respaldosImportaciones', path: 'workspaces/{workspaceId}/respaldosImportaciones/{importId}', label: 'Respaldos / Importaciones', source: 'jsonImportHistory', idPolicy: 'Conservar importId y marca de respaldo para evitar doble importación.' }
+  ]);
+  const FIRESTORE_RELATION_CONTRACTS = Object.freeze([
+    { from: 'cobros', field: 'ventaId', to: 'ventas', purpose: 'Aplicar abonos y pagos a la OC correcta.' },
+    { from: 'pagosProveedores', field: 'compraProveedorId', to: 'comprasProveedores', purpose: 'Aplicar pagos al documento de proveedor correcto.' },
+    { from: 'ventas/cobros/facturas', field: 'clienteId', to: 'catalogos.clientes', purpose: 'Mantener cartera por cliente.' },
+    { from: 'ventas/cobros/facturas', field: 'sucursalId', to: 'catalogos.sucursales', purpose: 'Mantener sucursal ligada a cliente y documentos.' },
+    { from: 'comprasProveedores/pagosProveedores', field: 'proveedorId', to: 'catalogos.proveedores', purpose: 'Mantener saldos por proveedor.' },
+    { from: 'casaGastos', field: 'categoriaCasaId', to: 'catalogos.categoriasCasa', purpose: 'Totales individuales y globales de Casa.' },
+    { from: 'configuracion', field: 'periodoTrabajoSeleccionado', to: 'cierresMensuales', purpose: 'Controlar período activo y bloqueo futuro.' }
+  ]);
 
   const routeAliases = new Map([
     ['home', 'home'],
@@ -1047,6 +1090,7 @@
 
   let casaState = {
     editingId: null,
+    openGroupKey: '',
     month: getCurrentMonthValue(),
     year: getCurrentYearValue(),
     categoriaCasaId: '',
@@ -3393,6 +3437,312 @@
     }
   }
 
+  function getFirestoreCollectionContract(key) {
+    const safeKey = cleanText(key);
+    return FIRESTORE_COLLECTION_CONTRACTS.find((item) => item.key === safeKey) || null;
+  }
+
+  function getFirestoreCollectionContracts() {
+    return FIRESTORE_COLLECTION_CONTRACTS.map((item) => clonePlainObject(item, { ...item }));
+  }
+
+  function createKSAFirestoreContract() {
+    const collectionKeys = FIRESTORE_COLLECTION_CONTRACTS.map((item) => item.key);
+    return Object.freeze({
+      name: 'KSAFirestoreContract',
+      stage: 'Bloque A - Etapa 6/6',
+      status: 'prepared_only',
+      firebaseConnected: false,
+      firestoreActive: false,
+      migrationEnabled: false,
+      workspace: {
+        path: 'workspaces/{workspaceId}',
+        placeholderId: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+        description: 'Workspace/empresa principal para KSA PRÁCTIKA.'
+      },
+      collectionKeys,
+      collections: getFirestoreCollectionContracts(),
+      relationships: FIRESTORE_RELATION_CONTRACTS.map((item) => clonePlainObject(item, { ...item })),
+      idPolicy: {
+        preserveExistingIds: true,
+        documentIdStrategy: 'Usar el id actual como documentId futuro cuando sea seguro; de lo contrario conservarlo como campo id estable.',
+        protectedRelations: ['ventaId', 'compraProveedorId', 'clienteId', 'sucursalId', 'proveedorId', 'categoriaCasaId']
+      },
+      consecutivos: {
+        path: 'workspaces/{workspaceId}/consecutivos/{tipo}',
+        separate: true,
+        tipos: ['excelConsulta', 'excelCierre', 'json', 'otros'],
+        noConsumeInThisStage: true
+      },
+      periodosYCierres: {
+        periodoTrabajoActivo: 'configuracion.periodoTrabajoSeleccionado',
+        periodosCerrados: 'cierresMensuales',
+        excelConsulta: 'exportacionesExcel tipo=consulta',
+        excelCierre: 'exportacionesExcel tipo=cierre',
+        bloqueoEdicionFuturo: true,
+        noChangeInThisStage: true
+      },
+      usuarios: {
+        visibleLocation: 'Configuración → Usuarios',
+        collectionPath: 'workspaces/{workspaceId}/usuarios/{uid}',
+        noPasswords: true,
+        fields: USER_FUTURE_SCHEMA_FIELDS.map((field) => field.key)
+      },
+      importacionInicial: {
+        collectionPath: 'workspaces/{workspaceId}/respaldosImportaciones/{importId}',
+        fields: ['importId', 'fecha', 'usuario', 'conteos', 'hashOMarcaRespaldo', 'estado'],
+        estados: ['pendiente', 'validado', 'importado', 'rechazado'],
+        doubleImportProtection: true,
+        implementedNow: false
+      },
+      localOperation: {
+        stillLocal: true,
+        storage: 'localStorage',
+        noDataMigration: true,
+        noFirestoreWrites: true,
+        noLocalStorageClear: true
+      },
+      getCollection: getFirestoreCollectionContract,
+      getCollections: getFirestoreCollectionContracts
+    });
+  }
+
+  function getKSAFirestoreContract() {
+    return createKSAFirestoreContract();
+  }
+
+  // BLOQUE A / Etapa 6: adaptador Firebase preparado sin configuración real.
+  // No carga SDK, no conecta Firebase, no escribe en nube y no bloquea modo local.
+  const KSA_FIREBASE_CONFIG_GLOBAL = 'KSA_FIREBASE_CONFIG';
+  const FIREBASE_REQUIRED_CONFIG_KEYS = Object.freeze(['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId']);
+
+  function getRawKSAFirebaseConfig() {
+    try {
+      if (typeof window !== 'undefined' && isPlainObject(window[KSA_FIREBASE_CONFIG_GLOBAL])) {
+        return clonePlainObject(window[KSA_FIREBASE_CONFIG_GLOBAL], {});
+      }
+    } catch (_) {
+      // Sin ruido en consola: si no existe configuración, el adaptador queda pendiente.
+    }
+    return {};
+  }
+
+  function inspectKSAFirebaseConfig(configInput = null) {
+    const config = isPlainObject(configInput) ? configInput : getRawKSAFirebaseConfig();
+    const values = FIREBASE_REQUIRED_CONFIG_KEYS.reduce((acc, key) => {
+      acc[key] = cleanText(config[key]);
+      return acc;
+    }, {});
+    const populatedKeys = FIREBASE_REQUIRED_CONFIG_KEYS.filter((key) => values[key]);
+    const missingKeys = FIREBASE_REQUIRED_CONFIG_KEYS.filter((key) => !values[key]);
+    const hasConfigObject = isPlainObject(configInput) || (typeof window !== 'undefined' && isPlainObject(window[KSA_FIREBASE_CONFIG_GLOBAL]));
+    const state = populatedKeys.length === 0
+      ? (hasConfigObject ? 'empty' : 'missing')
+      : (missingKeys.length === 0 ? 'complete' : 'incomplete');
+    const labelMap = {
+      missing: 'Firebase pendiente de configuración',
+      empty: 'Firebase pendiente de configuración',
+      incomplete: 'Firebase configuración incompleta',
+      complete: 'Firebase configuración aparentemente completa'
+    };
+    return {
+      state,
+      label: labelMap[state] || labelMap.missing,
+      configured: state === 'complete',
+      complete: state === 'complete',
+      incomplete: state === 'incomplete',
+      missingKeys,
+      populatedKeys,
+      requiredKeys: Array.from(FIREBASE_REQUIRED_CONFIG_KEYS),
+      configGlobalName: KSA_FIREBASE_CONFIG_GLOBAL,
+      configFile: 'firebase-config.js'
+    };
+  }
+
+  function getFirebasePendingResult(action, extra = {}) {
+    const status = getKSAFirebaseStatusSafe();
+    return {
+      ok: false,
+      action: cleanText(action) || 'firebase_pending',
+      code: status.configComplete ? 'firebase/prepared_not_activated' : 'firebase/pending_configuration',
+      message: status.configComplete
+        ? 'Firebase parece tener configuración, pero esta etapa no activa conexión real todavía. La app continúa en modo local.'
+        : 'Firebase pendiente de configuración. La app continúa en modo local.',
+      localMode: true,
+      cloudActive: false,
+      firebaseConnected: false,
+      ...extra,
+      status
+    };
+  }
+
+  function createKSAFirebaseAdapter() {
+    const state = {
+      initialized: false,
+      firebaseApp: null,
+      auth: null,
+      firestore: null,
+      currentUser: null,
+      currentWorkspace: null,
+      lastCheckAt: null
+    };
+
+    function getFirebaseStatus() {
+      const configStatus = inspectKSAFirebaseConfig();
+      state.lastCheckAt = nowIso();
+      return Object.freeze({
+        name: 'KSAFirebaseAdapter',
+        stage: 'Bloque A - Etapa 6/6',
+        mode: 'local',
+        dataMode: 'Local',
+        firebase: configStatus.configured ? 'Configuración aparentemente completa / conexión no activada' : 'Firebase pendiente de configuración',
+        firebaseLabel: configStatus.label,
+        configState: configStatus.state,
+        configComplete: configStatus.complete,
+        missingConfigKeys: Array.from(configStatus.missingKeys || []),
+        populatedConfigKeys: Array.from(configStatus.populatedKeys || []),
+        requiredConfigKeys: Array.from(configStatus.requiredKeys || FIREBASE_REQUIRED_CONFIG_KEYS),
+        configGlobalName: configStatus.configGlobalName,
+        configFile: configStatus.configFile,
+        sdkPolicy: 'CDN/import controlado futuro; no se carga SDK en esta etapa.',
+        sdkLoaded: false,
+        firebaseAppReady: false,
+        auth: 'Pendiente',
+        authReady: false,
+        firestore: 'Pendiente',
+        firestoreReady: false,
+        connection: 'Sin conexión Firebase real',
+        connected: false,
+        firebaseConnected: false,
+        workspace: 'No activo todavía',
+        workspaceId: null,
+        currentUser: null,
+        importInitialBackup: 'Pendiente',
+        cloudReadsEnabled: false,
+        cloudWritesEnabled: false,
+        initialImportEnabled: false,
+        localMode: true,
+        noDataMigration: true,
+        noFirestoreWrites: true,
+        message: configStatus.configured
+          ? 'Firebase parece configurado, pero esta etapa no activa SDK, Auth, Firestore ni sincronización. La app continúa en modo local.'
+          : 'Firebase pendiente de configuración. La app continúa en modo local y la nube se activará en una etapa posterior.',
+        lastCheckAt: state.lastCheckAt
+      });
+    }
+
+    function initFirebase() {
+      state.initialized = false;
+      state.firebaseApp = null;
+      state.auth = null;
+      state.firestore = null;
+      state.currentUser = null;
+      state.currentWorkspace = null;
+      return getFirebasePendingResult('initFirebase');
+    }
+
+    function isFirebaseConfigured() {
+      return inspectKSAFirebaseConfig().configured;
+    }
+
+    function signIn() {
+      return getFirebasePendingResult('signIn', { auth: 'Pendiente' });
+    }
+
+    function signOut() {
+      state.currentUser = null;
+      return getFirebasePendingResult('signOut', { auth: 'Pendiente' });
+    }
+
+    function getCurrentUser() {
+      return null;
+    }
+
+    function getCurrentWorkspace() {
+      return null;
+    }
+
+    function getUserRole() {
+      return {
+        ok: false,
+        role: 'local_owner',
+        source: 'modo_local_preparado',
+        message: 'Rol local preparado. Roles reales llegarán con Firebase Auth y Firestore.'
+      };
+    }
+
+    function readCloudCollection(collectionKey) {
+      return getFirebasePendingResult('readCloudCollection', {
+        collectionKey: cleanText(collectionKey),
+        records: [],
+        readEnabled: false
+      });
+    }
+
+    function writeCloudDocument(collectionKey, documentId) {
+      return getFirebasePendingResult('writeCloudDocument', {
+        collectionKey: cleanText(collectionKey),
+        documentId: cleanText(documentId),
+        writeEnabled: false
+      });
+    }
+
+    function importInitialBackupToCloud() {
+      return getFirebasePendingResult('importInitialBackupToCloud', {
+        importEnabled: false
+      });
+    }
+
+    return Object.freeze({
+      name: 'KSAFirebaseAdapter',
+      stage: 'Bloque A - Etapa 6/6',
+      configGlobalName: KSA_FIREBASE_CONFIG_GLOBAL,
+      configFile: 'firebase-config.js',
+      requiredConfigKeys: Array.from(FIREBASE_REQUIRED_CONFIG_KEYS),
+      initFirebase,
+      isFirebaseConfigured,
+      getFirebaseStatus,
+      getStatus: getFirebaseStatus,
+      signIn,
+      signOut,
+      getCurrentUser,
+      getCurrentWorkspace,
+      getUserRole,
+      readCloudCollection,
+      writeCloudDocument,
+      importInitialBackupToCloud
+    });
+  }
+
+  function getKSAFirebaseStatusSafe() {
+    try {
+      if (typeof KSAFirebaseAdapter !== 'undefined' && KSAFirebaseAdapter && typeof KSAFirebaseAdapter.getFirebaseStatus === 'function') {
+        return KSAFirebaseAdapter.getFirebaseStatus();
+      }
+    } catch (_) {
+      // Si algo externo rompe la configuración futura, la app no debe romperse en modo local.
+    }
+    return {
+      mode: 'local',
+      dataMode: 'Local',
+      firebase: 'Firebase pendiente de configuración',
+      firebaseLabel: 'Firebase pendiente de configuración',
+      configState: 'missing',
+      configComplete: false,
+      auth: 'Pendiente',
+      authReady: false,
+      firestore: 'Pendiente',
+      firestoreReady: false,
+      connection: 'Sin conexión Firebase real',
+      connected: false,
+      firebaseConnected: false,
+      workspace: 'No activo todavía',
+      workspaceId: null,
+      localMode: true,
+      message: 'Firebase pendiente de configuración. La app continúa en modo local.'
+    };
+  }
+
   function normalizeExcelCierreSnapshotSummary(summary) {
     const raw = isPlainObject(summary) ? summary : {};
     const normalized = {
@@ -4049,11 +4399,502 @@
     }
   }
 
+  // BLOQUE A / Etapa 1: capa preparatoria nube/local.
+  // Esta capa mantiene la app operando en localStorage y deja un contrato único
+  // para conectar Firebase/Firestore en etapas futuras sin reescribir módulos.
+  function createKSADataLayer() {
+    const MODES = Object.freeze(['local', 'firebase_pending', 'cloud_ready', 'cloud_active']);
+    const COLLECTION_KEYS = Object.freeze(FIRESTORE_COLLECTION_CONTRACTS.map((item) => item.key));
+
+    function cloneForLayer(value, fallback = null) {
+      return clonePlainObject(value, fallback);
+    }
+
+    function parseLocalDataSnapshot() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return cloneForLayer(appData, createInitialData());
+        return normalizeData(JSON.parse(raw));
+      } catch (error) {
+        console.warn('KSA PRÁCTIKA DataLayer: no se pudo leer snapshot local.', error);
+        return cloneForLayer(appData, createInitialData());
+      }
+    }
+
+    function detectMode() {
+      const cloudConfig = isPlainObject(appData?.configuracion?.nube)
+        ? appData.configuracion.nube
+        : (isPlainObject(appData?.configuracion?.cloudSync) ? appData.configuracion.cloudSync : {});
+      const requestedMode = cleanText(cloudConfig.mode || cloudConfig.modo || '').toLowerCase();
+      if (MODES.includes(requestedMode)) return requestedMode;
+      if (cloudConfig.active === true || cloudConfig.activo === true) return 'cloud_active';
+      if (cloudConfig.ready === true || cloudConfig.listo === true) return 'cloud_ready';
+      if (cloudConfig.firebasePending === true || cloudConfig.firebasePendiente === true) return 'firebase_pending';
+      return 'local';
+    }
+
+    function readSequenceValue(storageKey) {
+      try {
+        const raw = localStorage.getItem(storageKey);
+        if (raw === null) return null;
+        const numberValue = Number(raw);
+        return Number.isFinite(numberValue) ? numberValue : cleanText(raw);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function readConsecutivosSnapshot() {
+      return {
+        json: readSequenceValue(JSON_EXPORT_SEQUENCE_STORAGE_KEY),
+        excelConsulta: readSequenceValue(EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY),
+        excelCierre: readSequenceValue(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY)
+      };
+    }
+
+    function countExistingConsecutivos(consecutivos) {
+      return Object.values(consecutivos || {}).filter((value) => value !== null && value !== '').length;
+    }
+
+    function readModuleSnapshots() {
+      const notasModulo = cloneNotasModuleData();
+      const facturasModulo = cloneFacturasModuleData();
+      return { notasModulo, facturasModulo };
+    }
+
+    function readLocalSnapshot(options = {}) {
+      const readOptions = isPlainObject(options) ? options : {};
+      const data = parseLocalDataSnapshot();
+      const { notasModulo, facturasModulo } = readModuleSnapshots();
+      const bitacora = Array.isArray(appActivityLog) ? appActivityLog.map((entry) => cloneForLayer(entry, entry)) : [];
+      const consecutivos = readConsecutivosSnapshot();
+      const snapshot = {
+        ...data,
+        notasModulo,
+        facturasModulo,
+        bitacora,
+        consecutivos,
+        __dataLayer: {
+          mode: detectMode(),
+          storage: 'localStorage',
+          generatedAt: nowIso(),
+          appVersion: APP_VERSION,
+          schemaVersion: SCHEMA_VERSION
+        }
+      };
+      if (readOptions.jsonCompatible === true) {
+        return buildJsonBackupPayload({ exportedAt: nowIso(), fileName: cleanText(readOptions.fileName) });
+      }
+      return cloneForLayer(snapshot, snapshot);
+    }
+
+    function getCatalogosSummary(data) {
+      const detalle = CATALOGS.reduce((acc, catalog) => {
+        acc[catalog.id] = Array.isArray(data?.[catalog.id]) ? data[catalog.id].length : 0;
+        return acc;
+      }, {});
+      return {
+        count: Object.values(detalle).reduce((sum, value) => sum + value, 0),
+        detalle
+      };
+    }
+
+    function getCollectionCount(key, snapshot) {
+      if (key === 'catalogos') return getCatalogosSummary(snapshot).count;
+      if (key === 'facturasModulo') return countFacturasModuleRecords(snapshot.facturasModulo);
+      if (key === 'notasModulo') return countNotasModuleRecords(snapshot.notasModulo);
+      if (key === 'bitacora') return Array.isArray(snapshot.bitacora) ? snapshot.bitacora.length : 0;
+      if (key === 'configuracion') return isPlainObject(snapshot.configuracion) ? 1 : 0;
+      if (key === 'usuarios') return 0;
+      if (key === 'metadata') return isPlainObject(snapshot.metadata) ? 1 : 0;
+      if (key === 'respaldosImportaciones') return loadJsonImportHistory().length;
+      if (key === 'consecutivos') return countExistingConsecutivos(snapshot.consecutivos);
+      return Array.isArray(snapshot[key]) ? snapshot[key].length : 0;
+    }
+
+    function readCollection(collectionKey, snapshotInput = null) {
+      const key = cleanText(collectionKey);
+      const snapshot = snapshotInput || readLocalSnapshot();
+      if (key === 'catalogos') {
+        return CATALOGS.reduce((acc, catalog) => {
+          acc[catalog.id] = Array.isArray(snapshot[catalog.id]) ? cloneForLayer(snapshot[catalog.id], []) : [];
+          return acc;
+        }, {});
+      }
+      if (key === 'facturasModulo') return cloneForLayer(snapshot.facturasModulo, null);
+      if (key === 'notasModulo') return cloneForLayer(snapshot.notasModulo, null);
+      if (key === 'bitacora') return Array.isArray(snapshot.bitacora) ? cloneForLayer(snapshot.bitacora, []) : [];
+      if (key === 'configuracion') return cloneForLayer(snapshot.configuracion, {});
+      if (key === 'usuarios') return [];
+      if (key === 'metadata') return cloneForLayer(snapshot.metadata, {});
+      if (key === 'respaldosImportaciones') return cloneForLayer(loadJsonImportHistory(), []);
+      if (key === 'consecutivos') return cloneForLayer(snapshot.consecutivos, {});
+      if (COLLECTION_KEYS.includes(key) && Array.isArray(snapshot[key])) return cloneForLayer(snapshot[key], []);
+      return null;
+    }
+
+    function summarizeCollections(snapshotInput = null) {
+      const snapshot = snapshotInput || readLocalSnapshot();
+      const catalogos = getCatalogosSummary(snapshot);
+      const collections = COLLECTION_KEYS.reduce((acc, key) => {
+        const contract = getFirestoreCollectionContract(key);
+        acc[key] = {
+          count: getCollectionCount(key, snapshot),
+          source: ['facturasModulo', 'notasModulo', 'bitacora', 'consecutivos', 'respaldosImportaciones'].includes(key) ? 'localStorage_auxiliar' : (key === 'usuarios' ? 'contrato_preparado' : 'localStorage_principal'),
+          futurePath: contract?.path || '',
+          idPolicy: contract?.idPolicy || ''
+        };
+        return acc;
+      }, {});
+      collections.catalogos.detalle = catalogos.detalle;
+      return {
+        mode: detectMode(),
+        generatedAt: nowIso(),
+        storage: {
+          primaryKey: STORAGE_KEY,
+          facturasKey: FACTURAS_STORAGE_KEY,
+          notasKey: NOTES_STORAGE_KEY,
+          activityLogKey: ACTIVITY_LOG_STORAGE_KEY
+        },
+        collections
+      };
+    }
+
+    function getDiagnostics() {
+      const snapshot = readLocalSnapshot();
+      return {
+        ok: true,
+        appName: APP_NAME,
+        appVersion: APP_VERSION,
+        schemaVersion: SCHEMA_VERSION,
+        mode: detectMode(),
+        availableModes: [...MODES],
+        localOnly: detectMode() === 'local',
+        cloudConnected: false,
+        firebaseConnected: false,
+        collectionSummary: summarizeCollections(snapshot),
+        firestoreContract: getKSAFirestoreContract(),
+        metadata: cloneForLayer(snapshot.metadata, {}),
+        generatedAt: nowIso()
+      };
+    }
+
+    function writeLocal(nextData, options = {}) {
+      const writeOptions = isPlainObject(options) ? options : {};
+      if (!isPlainObject(nextData)) {
+        return { ok: false, mode: detectMode(), error: 'Datos inválidos para escritura local.' };
+      }
+      const normalized = normalizeData(nextData);
+      const incomingNotas = getNotasBackupFromSource(nextData);
+      const incomingFacturas = getFacturasBackupFromSource(nextData);
+      appData = normalized;
+      saveData(appData);
+      if (incomingNotas && writeOptions.includeAuxiliary !== false) saveNotasData(incomingNotas);
+      if (incomingFacturas && writeOptions.includeAuxiliary !== false) saveFacturasData(incomingFacturas);
+      if (writeOptions.render === true && typeof renderRoute === 'function') renderRoute();
+      return {
+        ok: true,
+        mode: detectMode(),
+        savedAt: appData.metadata?.updatedAt || nowIso(),
+        collectionSummary: summarizeCollections(readLocalSnapshot())
+      };
+    }
+
+    function readJsonCompatibleSnapshot(options = {}) {
+      const readOptions = isPlainObject(options) ? options : {};
+      return buildJsonBackupPayload({
+        exportedAt: cleanText(readOptions.exportedAt) || nowIso(),
+        fileName: cleanText(readOptions.fileName)
+      });
+    }
+
+    return Object.freeze({
+      name: 'KSADataLayer',
+      stage: 'Bloque A - Etapa 6/6',
+      modes: MODES,
+      collectionKeys: COLLECTION_KEYS,
+      firestoreContract: getKSAFirestoreContract(),
+      getMode: detectMode,
+      getStatus: () => {
+        const firebaseStatus = getKSAFirebaseStatusSafe();
+        return {
+          mode: detectMode(),
+          localOnly: detectMode() === 'local',
+          cloudConnected: false,
+          firebaseConnected: false,
+          firebase: firebaseStatus.firebaseLabel || 'Firebase pendiente de configuración',
+          firebaseConfigState: firebaseStatus.configState || 'missing',
+          firebaseConfigComplete: firebaseStatus.configComplete === true,
+          auth: firebaseStatus.auth || 'Pendiente',
+          firestore: firebaseStatus.firestore || 'Pendiente',
+          workspace: firebaseStatus.workspace || 'No activo todavía'
+        };
+      },
+      readLocalSnapshot,
+      getLocalSnapshot: readLocalSnapshot,
+      readJsonCompatibleSnapshot,
+      writeLocal,
+      saveLocalData: writeLocal,
+      readCollection,
+      summarizeCollections,
+      getCollectionSummary: summarizeCollections,
+      getFirestoreContract: getKSAFirestoreContract,
+      getDiagnostics,
+      diagnose: getDiagnostics
+    });
+  }
+
   let appData = loadData();
   reconcileWorkPeriodSelectionAfterDataChange();
   syncCasaFiltersWithActiveWorkPeriod({ force: true });
   let appDeviceIdentity = loadDeviceIdentity();
   let appActivityLog = loadActivityLog();
+  const KSAFirebaseAdapter = createKSAFirebaseAdapter();
+  if (typeof window !== 'undefined') window.KSAFirebaseAdapter = KSAFirebaseAdapter;
+  const KSADataLayer = createKSADataLayer();
+  if (typeof window !== 'undefined') window.KSADataLayer = KSADataLayer;
+  const KSAFirestoreContract = getKSAFirestoreContract();
+  if (typeof window !== 'undefined') window.KSAFirestoreContract = KSAFirestoreContract;
+
+  // BLOQUE A / Etapa 3: acceso preparado sin autenticación real.
+  // Mantiene la operación local y deja un contrato claro para Firebase Auth futuro.
+  function isFirebaseAuthConfigured() {
+    return getKSAFirebaseStatusSafe().authReady === true;
+  }
+
+  function createPreparedAuthSession(overrides = {}) {
+    const base = {
+      authMode: 'local',
+      user: null,
+      role: 'local_owner',
+      firebaseConfigured: false,
+      firebaseAuthStatus: 'pending_configuration',
+      localAccessAccepted: false,
+      createdAt: nowIso(),
+      updatedAt: nowIso()
+    };
+    const safeOverrides = isPlainObject(overrides) ? overrides : {};
+    return {
+      ...base,
+      ...safeOverrides,
+      authMode: 'local',
+      role: cleanText(safeOverrides.role) || base.role,
+      firebaseConfigured: false,
+      firebaseAuthStatus: 'pending_configuration',
+      updatedAt: nowIso()
+    };
+  }
+
+  function loadPreparedAuthSession() {
+    try {
+      const raw = sessionStorage.getItem(AUTH_LOCAL_SESSION_STORAGE_KEY);
+      if (!raw) return createPreparedAuthSession();
+      const parsed = JSON.parse(raw);
+      if (!isPlainObject(parsed)) return createPreparedAuthSession();
+      return createPreparedAuthSession(parsed);
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo leer sesión local preparada.', error);
+      return createPreparedAuthSession();
+    }
+  }
+
+  function savePreparedAuthSession(nextSession) {
+    const session = createPreparedAuthSession(nextSession);
+    try {
+      sessionStorage.setItem(AUTH_LOCAL_SESSION_STORAGE_KEY, JSON.stringify(session));
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo guardar sesión local preparada.', error);
+    }
+    return session;
+  }
+
+  let appAuthSession = loadPreparedAuthSession();
+
+  function getPreparedAuthStatus() {
+    const firebaseConfigured = isFirebaseAuthConfigured();
+    return {
+      ...createPreparedAuthSession(appAuthSession),
+      authMode: 'local',
+      user: appAuthSession?.user || null,
+      role: cleanText(appAuthSession?.role) || 'local_owner',
+      firebaseConfigured,
+      firebaseAuthStatus: firebaseConfigured ? 'configured' : 'pending_configuration',
+      accessLabel: 'Modo local',
+      firebaseAuthLabel: firebaseConfigured ? 'Configurado' : 'Pendiente de configuración',
+      message: firebaseConfigured
+        ? 'Firebase Auth está preparado para una etapa futura.'
+        : 'Firebase aún no está configurado. Puedes continuar trabajando en modo local.'
+    };
+  }
+
+  function acceptLocalPreparedAccess() {
+    appAuthSession = savePreparedAuthSession({
+      ...appAuthSession,
+      authMode: 'local',
+      user: {
+        id: 'local_owner',
+        displayName: 'Usuario local',
+        email: ''
+      },
+      role: 'local_owner',
+      localAccessAccepted: true
+    });
+  }
+
+  function getPreparedAccessOverlay() {
+    let overlay = document.getElementById('accessPreparedOverlay');
+    if (overlay) return overlay;
+    overlay = document.createElement('section');
+    overlay.id = 'accessPreparedOverlay';
+    overlay.className = 'access-prepared-overlay is-hidden';
+    overlay.setAttribute('aria-live', 'polite');
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  function renderPreparedAccessScreen(message = '') {
+    const status = getPreparedAuthStatus();
+    const detailMessage = cleanText(message) || status.message;
+    return `
+      <div class="access-prepared-panel" role="dialog" aria-modal="true" aria-labelledby="accessPreparedTitle" aria-describedby="accessPreparedNotice">
+        <div class="access-prepared-brand">
+          <img src="assets/ksa-logo.png" alt="" aria-hidden="true" decoding="async" />
+          <div>
+            <span class="eyebrow mini">Acceso</span>
+            <h1 id="accessPreparedTitle">KSA PRÁCTIKA</h1>
+            <p>Acceso preparado para base en línea</p>
+          </div>
+        </div>
+        <form class="access-prepared-form" data-access-prepared-form novalidate>
+          <div class="access-prepared-info" role="note">
+            <strong>Firebase Auth pendiente</strong>
+            <span>No se solicita correo ni contraseña real en modo local.</span>
+          </div>
+          <div id="accessPreparedNotice" class="access-prepared-notice" role="status">${escapeHtml(detailMessage)}</div>
+          <div class="access-prepared-actions">
+            <button type="button" class="card-action compact" data-access-login disabled title="Disponible cuando Firebase esté activo">Iniciar sesión</button>
+            <button type="button" class="secondary-action compact" data-access-local>Continuar en modo local</button>
+          </div>
+          <button type="button" class="link-button access-menu-link" data-access-menu>Ir al Menú principal en modo local</button>
+        </form>
+        <div class="access-prepared-status" aria-label="Estado de acceso">
+          <div class="status-item"><strong>Acceso</strong><span>${escapeHtml(status.accessLabel)}</span></div>
+          <div class="status-item"><strong>Firebase Auth</strong><span>${escapeHtml(status.firebaseAuthLabel)}</span></div>
+        </div>
+      </div>
+    `;
+  }
+
+  function closePreparedAccessScreen() {
+    const overlay = getPreparedAccessOverlay();
+    overlay.classList.add('is-hidden');
+    overlay.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('access-prepared-open');
+  }
+
+  function openPreparedAccessScreen(message = '') {
+    const overlay = getPreparedAccessOverlay();
+    overlay.innerHTML = renderPreparedAccessScreen(message);
+    overlay.classList.remove('is-hidden');
+    overlay.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('access-prepared-open');
+    bindPreparedAccessActions(overlay);
+  }
+
+  function continuePreparedLocalMode() {
+    acceptLocalPreparedAccess();
+    closePreparedAccessScreen();
+    setRoute('home');
+  }
+
+  function bindPreparedAccessActions(overlay) {
+    const target = overlay || getPreparedAccessOverlay();
+    target.querySelector('[data-access-prepared-form]')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      openPreparedAccessScreen('Firebase aún no está configurado. Puedes continuar trabajando en modo local.');
+    });
+    target.querySelector('[data-access-local]')?.addEventListener('click', continuePreparedLocalMode);
+    target.querySelector('[data-access-menu]')?.addEventListener('click', continuePreparedLocalMode);
+  }
+
+  function initPreparedAccessScreen() {
+    const overlay = getPreparedAccessOverlay();
+    overlay.innerHTML = renderPreparedAccessScreen();
+    bindPreparedAccessActions(overlay);
+    if (getPreparedAuthStatus().localAccessAccepted) {
+      closePreparedAccessScreen();
+      return;
+    }
+    openPreparedAccessScreen();
+  }
+
+  function createKSAAuthLayer() {
+    return Object.freeze({
+      name: 'KSAAuthLayer',
+      stage: 'Bloque A - Etapa 6/6',
+      getStatus: getPreparedAuthStatus,
+      continueLocal: continuePreparedLocalMode,
+      isFirebaseConfigured: isFirebaseAuthConfigured
+    });
+  }
+
+  const KSAAuthLayer = createKSAAuthLayer();
+  if (typeof window !== 'undefined') window.KSAAuthLayer = KSAAuthLayer;
+
+  function createKSAUsersLayer() {
+    return Object.freeze({
+      name: 'KSAUsersLayer',
+      stage: 'Bloque A - Etapa 5/6',
+      mode: 'local_preparado',
+      firebaseAuthStatus: 'pending_configuration',
+      databaseStatus: 'local',
+      roles: ROLE_ORDER.map((roleId) => {
+        const role = ROLE_DEFINITIONS[roleId];
+        return {
+          id: role.id,
+          label: role.label,
+          description: role.description,
+          permissions: Array.from(role.permissions || [])
+        };
+      }),
+      schema: USER_FUTURE_SCHEMA_FIELDS.map((field) => ({ ...field })),
+      actionsEnabled: false,
+      getStatus: getPreparedUsersStatus
+    });
+  }
+
+  function getPreparedUsersStatus() {
+    const authStatus = getPreparedAuthStatus();
+    const firebaseStatus = getKSAFirebaseStatusSafe();
+    const role = getCurrentRoleDefinition();
+    return {
+      accessState: 'Modo local / Firebase pendiente',
+      currentUser: authStatus.user?.displayName || 'Usuario local o sesión local',
+      currentRole: `${role.label} local / Preparación`,
+      firebaseAuth: firebaseStatus.auth || 'Pendiente',
+      database: 'Local actualmente / Firestore pendiente',
+      firestore: firebaseStatus.firestore || 'Pendiente',
+      workspace: firebaseStatus.workspace || 'No activo todavía',
+      message: 'Usuarios y roles están preparados. Firebase Auth está pendiente y la gestión real se activará después de configurar Firebase.',
+      firebaseConfigured: false,
+      actionsEnabled: false,
+      userTemplate: {
+        uid: 'uid futuro',
+        correo: '',
+        nombre: 'Usuario local',
+        rol: role.id,
+        activo: true,
+        workspaceId: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+        createdAt: 'pendiente',
+        updatedAt: 'pendiente',
+        ultimoAcceso: 'pendiente',
+        fuente: 'local_preparado / firebase'
+      }
+    };
+  }
+
+  const KSAUsersLayer = createKSAUsersLayer();
+  if (typeof window !== 'undefined') window.KSAUsersLayer = KSAUsersLayer;
 
   function getCurrentRole() {
     const role = appData?.configuracion?.currentRole;
@@ -4065,6 +4906,7 @@
   }
 
   function canCurrentRole(permission) {
+    if (!isFirebaseAuthConfigured()) return true;
     const role = getCurrentRoleDefinition();
     return Boolean(role?.permissions?.has(permission));
   }
@@ -13147,12 +13989,15 @@
         ${groups.map((group) => {
           const isOpen = group.key === openGroupKey;
           const pendingIndicator = module === 'compras' ? renderComprasAccordionPending(group.records) : '';
+          const totalIndicator = module === 'casa' ? renderCasaAccordionTotal(group) : '';
+          const middleIndicator = pendingIndicator || totalIndicator;
+          const indicatorClass = pendingIndicator ? 'has-pending-indicator' : (totalIndicator ? 'has-total-indicator' : '');
           return `
             <section class="entity-accordion-item ${isOpen ? 'is-open' : ''}" data-accordion-item="${escapeHtml(module)}" data-accordion-search="${escapeHtml(group.searchText)}">
-              <button type="button" class="entity-accordion-toggle ${pendingIndicator ? 'has-pending-indicator' : ''}" data-accordion-toggle data-accordion-module="${escapeHtml(module)}" data-accordion-key="${escapeHtml(group.key)}" aria-expanded="${isOpen ? 'true' : 'false'}">
+              <button type="button" class="entity-accordion-toggle ${indicatorClass}" data-accordion-toggle data-accordion-module="${escapeHtml(module)}" data-accordion-key="${escapeHtml(group.key)}" aria-expanded="${isOpen ? 'true' : 'false'}">
                 <span class="entity-accordion-chevron" aria-hidden="true">${isOpen ? '▾' : '▸'}</span>
                 <span class="entity-accordion-name">${escapeHtml(group.label)}</span>
-                ${pendingIndicator}
+                ${middleIndicator}
                 <span class="entity-accordion-count">${group.records.length} ${group.records.length === 1 ? 'registro' : 'registros'}</span>
               </button>
               ${isOpen ? `<div class="entity-accordion-panel">${renderOpenGroup(group)}</div>` : ''}
@@ -13255,7 +14100,8 @@
       compras: proveedoresState,
       pagos: pagosState,
       cobros: cobrosState,
-      gastos: gastosState
+      gastos: gastosState,
+      casa: casaState
     }[module] || null;
   }
 
@@ -13265,6 +14111,7 @@
     if (module === 'pagos') return getPagoProveedorAccordionInfo(record);
     if (module === 'cobros') return getCobroAccordionInfo(record);
     if (module === 'gastos') return getGastoAccordionInfo(record);
+    if (module === 'casa') return getCasaAccordionInfo(record);
     return null;
   }
 
@@ -16035,9 +16882,21 @@
     `;
   }
 
+  function getCasaSuggestedDateForNewGasto() {
+    const today = todayInputValue();
+    const month = /^\d{2}$/.test(String(casaState.month || '')) ? String(casaState.month) : '';
+    const year = /^\d{4}$/.test(String(casaState.year || '')) ? String(casaState.year) : '';
+    if (!month || !year) return today;
+
+    const targetPeriod = normalizeWorkPeriodKey(`${year}-${month}`);
+    const todayPeriod = getPeriodKeyFromDateValue(today);
+    if (!targetPeriod) return today;
+    return targetPeriod === todayPeriod ? today : `${targetPeriod}-01`;
+  }
+
   function renderCasaForm(record, categoriasActivas, metodosActivos, cuentasActivas, missingCatalogs) {
     const cannotCreate = Boolean(missingCatalogs);
-    const fecha = record?.fecha || todayInputValue();
+    const fecha = record?.fecha || getCasaSuggestedDateForNewGasto();
     const categorias = record?.categoriaCasaId ? getSelectableCatalogRecords('categoriasCasa', record.categoriaCasaId) : categoriasActivas;
     return `
       <form class="casa-form" data-casa-form novalidate>
@@ -16095,10 +16954,53 @@
       `;
     }
 
+    const groups = buildCasaAccordionGroups(gastos);
+    ensureOpenAccordionGroup(casaState, groups);
+
+    return renderAccordionGroups({
+      module: 'casa',
+      groups,
+      openGroupKey: casaState.openGroupKey,
+      renderOpenGroup: (group) => renderCasaTable(group.records, group.label)
+    });
+  }
+
+  function buildCasaAccordionGroups(gastos) {
+    return buildAccordionGroups(gastos, getCasaAccordionInfo).map((group) => ({
+      ...group,
+      total: group.records.reduce((sum, gasto) => roundMoney(sum + normalizeCasaGastoRecord(gasto).monto), 0)
+    }));
+  }
+
+  function renderCasaAccordionTotal(group) {
+    const total = roundMoney(Number(group?.total) || 0);
+    const amount = formatMoney(total);
+    return `
+      <span class="entity-accordion-total" title="Total: ${escapeHtml(amount)}">
+        <span class="total-full">Total: ${escapeHtml(amount)}</span>
+        <span class="total-short">Tot.: ${escapeHtml(amount)}</span>
+      </span>
+    `;
+  }
+
+  function getCasaAccordionInfo(gasto) {
+    const record = normalizeCasaGastoRecord(gasto);
+    const categoria = getCatalogRecordById('categoriasCasa', record.categoriaCasaId);
+    const metodo = getCatalogRecordById('metodosPago', record.metodoPagoId);
+    const cuenta = getCatalogRecordById('cuentasBancos', record.cuentaBancoId);
+    const label = cleanText(categoria?.nombre || record.categoriaCasaNombre) || 'Sin categoría';
+    return {
+      key: makeAccordionGroupKey('casa-categoria', record.categoriaCasaId, label),
+      label,
+      searchText: `${label} ${record.descripcion} ${metodo?.nombre || record.metodoPagoNombre || ''} ${cuenta?.nombre || record.cuentaBancoNombre || ''} ${record.observacion} ${formatMoney(record.monto)}`
+    };
+  }
+
+  function renderCasaTable(gastos, groupLabel = '') {
     return renderOperationalTableShell({
       shellClass: 'casa-scroll-shell',
       wrapClass: 'casa-list',
-      ariaLabel: 'Gastos Casa registrados',
+      ariaLabel: groupLabel ? `Gastos Casa de ${groupLabel}` : 'Gastos Casa registrados',
       tableClass: 'operational-table-casa',
       headers: `
         <th>Fecha</th>
@@ -16377,6 +17279,7 @@
       casaState.message = `Gasto Casa registrado: ${formatMoney(newRecord.monto)}.`;
     }
 
+    openAccordionGroupForRecord('casa', newRecord);
     casaState.editingId = null;
     casaState.messageType = 'success';
     saveData(appData);
@@ -16396,6 +17299,7 @@
     const record = (Array.isArray(appData.casaGastos) ? appData.casaGastos : []).find((item) => item.id === recordId);
     if (!record) return;
     casaState.editingId = recordId;
+    openAccordionGroupForRecord('casa', record);
     casaState.message = null;
     renderRoute();
   }
@@ -16475,6 +17379,241 @@
   }
 
 
+  function getDataSyncStatusInfo() {
+    let status = { mode: 'local', localOnly: true, cloudConnected: false, firebaseConnected: false };
+    let diagnostics = null;
+
+    try {
+      if (typeof KSADataLayer !== 'undefined' && KSADataLayer && typeof KSADataLayer.getStatus === 'function') {
+        status = { ...status, ...KSADataLayer.getStatus() };
+      }
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo leer estado de datos.', error);
+    }
+
+    try {
+      if (typeof KSADataLayer !== 'undefined' && KSADataLayer && typeof KSADataLayer.diagnose === 'function') {
+        diagnostics = KSADataLayer.diagnose();
+      }
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo leer diagnóstico de datos.', error);
+    }
+
+    const mode = cleanText(status.mode || diagnostics?.mode || 'local').toLowerCase();
+    const modeMap = {
+      local: {
+        estado: 'Modo local',
+        fuente: 'Este dispositivo',
+        firebase: 'Pendiente de configuración',
+        nube: 'Nube no activa todavía',
+        badgeClass: 'is-local',
+        message: 'La base en línea aún no está activa. La app sigue funcionando con datos locales.'
+      },
+      firebase_pending: {
+        estado: 'Firebase pendiente',
+        fuente: 'Este dispositivo',
+        firebase: 'Pendiente de configuración',
+        nube: 'Nube no activa todavía',
+        badgeClass: 'is-pending',
+        message: 'Firebase está preparado para una etapa futura, pero la operación sigue usando datos locales.'
+      },
+      cloud_ready: {
+        estado: 'Nube preparada',
+        fuente: 'Este dispositivo',
+        firebase: 'Preparado, no sincronizando',
+        nube: 'Pendiente de activación',
+        badgeClass: 'is-pending',
+        message: 'La base en línea está marcada como preparada, pero todavía no reemplaza la operación local.'
+      },
+      cloud_active: {
+        estado: 'Nube activa',
+        fuente: 'Base en línea',
+        firebase: 'Activo',
+        nube: 'Activa',
+        badgeClass: 'is-cloud',
+        message: 'La base en línea está activa según la capa de datos.'
+      }
+    };
+
+    const info = modeMap[mode] || modeMap.local;
+    const collectionSummary = diagnostics?.collectionSummary?.collections || null;
+    const localRecords = collectionSummary
+      ? Object.values(collectionSummary).reduce((sum, item) => sum + (Number(item?.count) || 0), 0)
+      : null;
+
+    const authStatus = getPreparedAuthStatus();
+    const firebaseStatus = getKSAFirebaseStatusSafe();
+
+    return {
+      ...info,
+      mode,
+      lastCheck: nowIso(),
+      diagnosticsOk: diagnostics?.ok === true,
+      localRecords,
+      access: authStatus.accessLabel,
+      firebase: firebaseStatus.firebaseLabel || info.firebase,
+      firebaseAuth: firebaseStatus.auth || authStatus.firebaseAuthLabel,
+      firestore: firebaseStatus.firestore || 'Pendiente',
+      workspace: firebaseStatus.workspace || 'No activo todavía',
+      firebaseConnection: firebaseStatus.connection || 'Sin conexión Firebase real',
+      firebaseConfigState: firebaseStatus.configState || 'missing',
+      firebaseMessage: firebaseStatus.message || info.message
+    };
+  }
+
+  function renderDataSyncStatusCard() {
+    const info = getDataSyncStatusInfo();
+    return `
+      <article class="panel-card config-card full-span data-sync-status-card">
+        <div class="section-title-row">
+          <div>
+            <span class="eyebrow mini">Sincronización</span>
+            <h2>Estado de datos</h2>
+          </div>
+          <span class="sync-mode-badge ${escapeHtml(info.badgeClass)}">${escapeHtml(info.estado)}</span>
+        </div>
+        <p class="notice">${escapeHtml(info.message)}</p>
+        <div class="import-summary-grid compact-summary data-sync-grid">
+          <div class="status-item"><strong>Modo de datos</strong><span>Local</span></div>
+          <div class="status-item"><strong>Fuente de datos</strong><span>${escapeHtml(info.fuente)}</span></div>
+          <div class="status-item"><strong>Firebase</strong><span>${escapeHtml(info.firebase)}</span></div>
+          <div class="status-item"><strong>Auth</strong><span>${escapeHtml(info.firebaseAuth || 'Pendiente')}</span></div>
+          <div class="status-item"><strong>Firestore</strong><span>${escapeHtml(info.firestore || 'Pendiente')}</span></div>
+          <div class="status-item"><strong>Workspace</strong><span>${escapeHtml(info.workspace || 'No activo todavía')}</span></div>
+          <div class="status-item"><strong>Acceso</strong><span>${escapeHtml(info.access || 'Modo local')}</span></div>
+          <div class="status-item"><strong>Última comprobación</strong><span>${escapeHtml(formatDateTime(info.lastCheck))}</span></div>
+          <div class="status-item"><strong>Nube</strong><span>${escapeHtml(info.nube)}</span></div>
+          ${Number.isFinite(info.localRecords) ? `<div class="status-item"><strong>Conteos locales</strong><span>${escapeHtml(String(info.localRecords))}</span><small>Solo informativo</small></div>` : ''}
+        </div>
+      </article>
+    `;
+  }
+
+
+  function renderFirestoreContractCard() {
+    const contract = getKSAFirestoreContract();
+    const collections = getFirestoreCollectionContracts();
+    const collectionRows = collections.map((item) => `
+      <div class="firestore-collection-pill">
+        <strong>${escapeHtml(item.label)}</strong>
+        <span>${escapeHtml(item.key)}</span>
+      </div>
+    `).join('');
+    return `
+      <article class="panel-card config-card full-span firestore-contract-card" aria-label="Modelo nube preparado">
+        <div class="section-title-row">
+          <div>
+            <span class="eyebrow mini">Nube futura</span>
+            <h2>Modelo nube preparado</h2>
+          </div>
+          <span class="sync-mode-badge is-pending">Firestore pendiente</span>
+        </div>
+        <p class="notice">Firestore todavía no está activo. Esta etapa solo deja definido el mapa interno para conectar la nube después, sin mover ni alterar datos locales.</p>
+        <div class="import-summary-grid compact-summary firestore-contract-summary">
+          <div class="status-item"><strong>Workspace</strong><span>${escapeHtml(contract.workspace.placeholderId)}</span><small>${escapeHtml(contract.workspace.path)}</small></div>
+          <div class="status-item"><strong>Colecciones previstas</strong><span>${escapeHtml(String(collections.length))}</span><small>Dentro de workspaces/{workspaceId}</small></div>
+          <div class="status-item"><strong>IDs actuales</strong><span>Se conservan</span><small>No se rompen relaciones entre módulos.</small></div>
+          <div class="status-item"><strong>Consecutivos</strong><span>Separados</span><small>Consulta, Cierre, JSON y otros.</small></div>
+          <div class="status-item"><strong>Importación inicial</strong><span>No activa</span><small>Prevista con protección contra doble importación.</small></div>
+          <div class="status-item"><strong>Operación actual</strong><span>Modo local</span><small>Sin escrituras en Firestore.</small></div>
+        </div>
+        <div class="firestore-collection-list" aria-label="Colecciones futuras previstas">
+          ${collectionRows}
+        </div>
+      </article>
+    `;
+  }
+
+
+  function renderFirebaseAdapterCard() {
+    const status = getKSAFirebaseStatusSafe();
+    const missingKeys = Array.isArray(status.missingConfigKeys) && status.missingConfigKeys.length
+      ? status.missingConfigKeys.join(', ')
+      : 'Ninguna si configuración futura está completa';
+    return `
+      <article class="panel-card config-card full-span firebase-adapter-card" aria-label="Adaptador Firebase preparado">
+        <div class="section-title-row">
+          <div>
+            <span class="eyebrow mini">Firebase</span>
+            <h2>Adaptador Firebase preparado</h2>
+          </div>
+          <span class="sync-mode-badge is-pending">Pendiente</span>
+        </div>
+        <p class="notice">${escapeHtml(status.message || 'Firebase pendiente de configuración. La app continúa en modo local.')}</p>
+        <div class="import-summary-grid compact-summary firebase-adapter-grid">
+          <div class="status-item"><strong>Config futura</strong><span>${escapeHtml(status.configFile || 'firebase-config.js')}</span><small>${escapeHtml(status.configGlobalName || 'KSA_FIREBASE_CONFIG')}</small></div>
+          <div class="status-item"><strong>Firebase App</strong><span>${escapeHtml(status.firebaseAppReady ? 'Preparada' : 'Pendiente')}</span></div>
+          <div class="status-item"><strong>Auth</strong><span>${escapeHtml(status.auth || 'Pendiente')}</span></div>
+          <div class="status-item"><strong>Firestore</strong><span>${escapeHtml(status.firestore || 'Pendiente')}</span></div>
+          <div class="status-item"><strong>Conexión</strong><span>${escapeHtml(status.connection || 'Sin conexión Firebase real')}</span></div>
+          <div class="status-item"><strong>Workspace</strong><span>${escapeHtml(status.workspace || 'No activo todavía')}</span></div>
+          <div class="status-item"><strong>Lectura nube</strong><span>${escapeHtml(status.cloudReadsEnabled ? 'Activa' : 'Pendiente')}</span></div>
+          <div class="status-item"><strong>Escritura nube</strong><span>${escapeHtml(status.cloudWritesEnabled ? 'Activa' : 'Pendiente')}</span></div>
+          <div class="status-item"><strong>Importación inicial</strong><span>${escapeHtml(status.importInitialBackup || 'Pendiente')}</span></div>
+          <div class="status-item"><strong>Campos pendientes</strong><span>${escapeHtml(missingKeys)}</span></div>
+        </div>
+      </article>
+    `;
+  }
+
+
+  function renderUsersConfigCard(currentRole) {
+    const status = getPreparedUsersStatus();
+    const rolesHtml = ROLE_ORDER.map((roleId) => {
+      const role = ROLE_DEFINITIONS[roleId];
+      return `
+        <div class="role-card ${role.id === currentRole.id ? 'is-active' : ''}">
+          <strong>${escapeHtml(role.label)}</strong>
+          <p>${escapeHtml(role.description)}</p>
+        </div>
+      `;
+    }).join('');
+    const schemaRows = USER_FUTURE_SCHEMA_FIELDS.map((field) => `
+      <dt>${escapeHtml(field.key)}</dt><dd>${escapeHtml(field.description)}</dd>
+    `).join('');
+    const disabledActions = USER_PREPARED_ACTIONS.map((label) => `
+      <button type="button" class="secondary-action compact" disabled title="Disponible cuando Firebase esté activo">${escapeHtml(label)}</button>
+    `).join('');
+
+    return `
+      <article class="panel-card config-card full-span users-prep-card" aria-label="Usuarios">
+        <div class="section-title-row">
+          <div>
+            <span class="eyebrow mini">Configuración</span>
+            <h2>Usuarios</h2>
+          </div>
+          <span class="sync-mode-badge is-pending">Firebase pendiente</span>
+        </div>
+        <p class="notice">${escapeHtml(status.message)}</p>
+        <div class="import-summary-grid compact-summary users-status-grid">
+          <div class="status-item"><strong>Estado de acceso</strong><span>${escapeHtml(status.accessState)}</span></div>
+          <div class="status-item"><strong>Usuario actual</strong><span>${escapeHtml(status.currentUser)}</span></div>
+          <div class="status-item"><strong>Rol actual</strong><span>${escapeHtml(status.currentRole)}</span></div>
+          <div class="status-item"><strong>Firebase Auth</strong><span>${escapeHtml(status.firebaseAuth)}</span></div>
+          <div class="status-item"><strong>Firestore</strong><span>${escapeHtml(status.firestore || 'Pendiente')}</span></div>
+          <div class="status-item"><strong>Workspace</strong><span>${escapeHtml(status.workspace || 'No activo todavía')}</span></div>
+          <div class="status-item"><strong>Base de datos</strong><span>${escapeHtml(status.database)}</span></div>
+          <div class="status-item"><strong>Seguridad</strong><span>Sin contraseñas locales</span><small>Auth real llegará con Firebase Auth y reglas de Firestore.</small></div>
+        </div>
+        <div class="users-prep-actions" aria-label="Acciones futuras de usuarios">
+          ${disabledActions}
+          <small>Disponible cuando Firebase esté activo.</small>
+        </div>
+        <div class="users-prep-grid">
+          <section class="users-prep-panel" aria-label="Roles preparados">
+            <h3>Roles preparados</h3>
+            <div class="role-list users-role-list">${rolesHtml}</div>
+          </section>
+          <section class="users-prep-panel" aria-label="Estructura futura de usuario">
+            <h3>Estructura futura</h3>
+            <dl class="definition-list users-schema-list">${schemaRows}</dl>
+          </section>
+        </div>
+      </article>
+    `;
+  }
+
+
   function renderConfiguracion() {
     const config = normalizeConfiguracion(appData.configuracion);
     const currentRole = getCurrentRoleDefinition();
@@ -16510,7 +17649,7 @@
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Configuración</h1>
-          <p class="lead">Centraliza parámetros generales, roles básicos locales, respaldo JSON validado e información del sistema. Es protección local, no login real: una cerradura de oficina, no bóveda suiza.</p>
+          <p class="lead">Centraliza parámetros generales, Usuarios, respaldo JSON validado e información del sistema. La gestión real de usuarios queda preparada para Firebase, sin login obligatorio ni bloqueo real todavía.</p>
         </div>
         <aside class="hero-status" aria-label="Estado de configuración">
           <h3>Sistema</h3>
@@ -16561,37 +17700,15 @@
             </form>
           </article>
 
-          <article class="panel-card config-card">
-            <div class="section-title-row">
-              <div>
-                <span class="eyebrow mini">Roles</span>
-                <h2>Protección básica local</h2>
-              </div>
-            </div>
-            <p class="notice">Roles locales sin backend ni login real. Sirven para ordenar permisos en este dispositivo; el login formal queda listo para una etapa futura si se decide.</p>
-            <label class="form-field">
-              <span>Rol activo en este dispositivo</span>
-              <select data-config-role>
-                ${ROLE_ORDER.map((roleId) => {
-                  const role = ROLE_DEFINITIONS[roleId];
-                  return `<option value="${escapeHtml(role.id)}" ${role.id === currentRole.id ? 'selected' : ''}>${escapeHtml(role.label)}</option>`;
-                }).join('')}
-              </select>
-            </label>
-            <div class="role-list">
-              ${ROLE_ORDER.map((roleId) => {
-                const role = ROLE_DEFINITIONS[roleId];
-                return `
-                  <div class="role-card ${role.id === currentRole.id ? 'is-active' : ''}">
-                    <strong>${escapeHtml(role.label)}</strong>
-                    <p>${escapeHtml(role.description)}</p>
-                  </div>
-                `;
-              }).join('')}
-            </div>
-          </article>
+          ${renderUsersConfigCard(currentRole)}
 
           ${renderPwaUpdateCard(config)}
+
+          ${renderDataSyncStatusCard()}
+
+          ${renderFirestoreContractCard()}
+
+          ${renderFirebaseAdapterCard()}
 
           ${renderDeviceIdentityCard(config)}
 
@@ -16654,10 +17771,11 @@
               <dt>App esperada</dt><dd>${escapeHtml(APP_NAME)}</dd>
               <dt>Versión</dt><dd>${escapeHtml(APP_VERSION)}</dd>
               <dt>SchemaVersion</dt><dd>${escapeHtml(SCHEMA_VERSION)}</dd>
+              <dt>Modo de datos</dt><dd>${escapeHtml(getDataSyncStatusInfo().estado)}</dd>
               <dt>localStorage</dt><dd>${escapeHtml(STORAGE_KEY)}</dd>
               <dt>Creado</dt><dd>${escapeHtml(formatDateTime(appData.metadata?.createdAt))}</dd>
               <dt>Actualizado</dt><dd>${escapeHtml(formatDateTime(appData.metadata?.updatedAt))}</dd>
-              <dt>Nota</dt><dd>Sin backend, sin Firebase, sin sincronización automática.</dd>
+              <dt>Nota</dt><dd>Sin conexión Firebase real todavía; Usuarios queda preparado y la operación local sigue intacta.</dd>
             </dl>
           </article>
         </div>
@@ -21005,6 +22123,7 @@ ${rowsXml}
     window.history.replaceState(null, '', '#home');
   }
   renderRoute();
+  initPreparedAccessScreen();
 
   setupPwaUpdateListeners();
 })();

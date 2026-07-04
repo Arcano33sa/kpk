@@ -1,12 +1,13 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_99_post12_casa_fix_utilidad_kpk_periodo_trabajo';
+const CACHE_VERSION = 'v0_18_07_post12_casa_etapa2_gastosporcategoria';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './firebase-config.js',
   './vendor/jszip.min.js',
   './manifest.webmanifest',
   './assets/icon-192.svg',

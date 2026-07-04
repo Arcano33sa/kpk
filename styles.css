@@ -5416,7 +5416,8 @@ body {
   .cobros-shell,
   .proveedores-shell,
   .pagos-shell,
-  .gastos-shell) .entity-accordion-panel {
+  .gastos-shell,
+  .casa-shell) .entity-accordion-panel {
   padding: 10px;
 }
 
@@ -5612,7 +5613,8 @@ body {
     .cobros-shell,
     .proveedores-shell,
     .pagos-shell,
-    .gastos-shell) .form-field input,
+    .gastos-shell,
+    .casa-shell) .form-field input,
   :where(.ventas-shell,
     .cobros-shell,
     .proveedores-shell,
@@ -5947,6 +5949,30 @@ body {
   display: none;
 }
 
+.entity-accordion-toggle.has-total-indicator {
+  grid-template-columns: auto minmax(0, 1fr) minmax(112px, auto) auto;
+}
+
+.entity-accordion-total {
+  justify-self: center;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(185, 135, 43, 0.28);
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: rgba(255, 248, 234, 0.94);
+  color: var(--accent-dark);
+  font-size: 0.74rem;
+  font-weight: 950;
+  line-height: 1.08;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.entity-accordion-total .total-short {
+  display: none;
+}
+
 .proveedores-shell .entity-accordion-name {
   overflow-wrap: anywhere;
 }
@@ -5959,7 +5985,8 @@ body {
   .cobros-shell,
   .proveedores-shell,
   .pagos-shell,
-  .gastos-shell) .entity-accordion-toggle {
+  .gastos-shell,
+  .casa-shell) .entity-accordion-toggle {
   min-height: 39px;
   padding: 7px 10px;
 }
@@ -5968,7 +5995,8 @@ body {
   .cobros-shell,
   .proveedores-shell,
   .pagos-shell,
-  .gastos-shell) .entity-accordion-panel {
+  .gastos-shell,
+  .casa-shell) .entity-accordion-panel {
   padding: 8px;
 }
 
@@ -5976,12 +6004,14 @@ body {
   .cobros-shell,
   .proveedores-shell,
   .pagos-shell,
-  .gastos-shell) .operational-table th,
+  .gastos-shell,
+  .casa-shell) .operational-table th,
 :where(.ventas-shell,
   .cobros-shell,
   .proveedores-shell,
   .pagos-shell,
-  .gastos-shell) .operational-table td {
+  .gastos-shell,
+  .casa-shell) .operational-table td {
   padding: 5px 7px;
 }
 
@@ -5989,7 +6019,8 @@ body {
   .cobros-shell,
   .proveedores-shell,
   .pagos-shell,
-  .gastos-shell) .compact-row-actions {
+  .gastos-shell,
+  .casa-shell) .compact-row-actions {
   gap: 5px;
 }
 
@@ -5997,7 +6028,8 @@ body {
   .cobros-shell,
   .proveedores-shell,
   .pagos-shell,
-  .gastos-shell) :where(.card-action.compact,
+  .gastos-shell,
+  .casa-shell) :where(.card-action.compact,
   .secondary-action.compact,
   .danger-action.compact,
   .operational-table .compact) {
@@ -6026,11 +6058,13 @@ body {
 }
 
 @media (max-width: 900px) {
-  .entity-accordion-toggle.has-pending-indicator {
+  .entity-accordion-toggle.has-pending-indicator,
+  .entity-accordion-toggle.has-total-indicator {
     grid-template-columns: auto minmax(0, 1fr) auto;
   }
 
-  .entity-accordion-pending {
+  .entity-accordion-pending,
+  .entity-accordion-total {
     justify-self: start;
     grid-column: 2;
     grid-row: 2;
@@ -6038,17 +6072,20 @@ body {
     padding: 3px 7px;
   }
 
-  .entity-accordion-toggle.has-pending-indicator .entity-accordion-count {
+  .entity-accordion-toggle.has-pending-indicator .entity-accordion-count,
+  .entity-accordion-toggle.has-total-indicator .entity-accordion-count {
     grid-column: 3;
     grid-row: 1 / span 2;
     align-self: center;
   }
 
-  .entity-accordion-pending .pending-full {
+  .entity-accordion-pending .pending-full,
+  .entity-accordion-total .total-full {
     display: none;
   }
 
-  .entity-accordion-pending .pending-short {
+  .entity-accordion-pending .pending-short,
+  .entity-accordion-total .total-short {
     display: inline;
   }
 }
@@ -6069,18 +6106,22 @@ body {
     padding: 11px;
   }
 
-  .entity-accordion-toggle.has-pending-indicator {
+  .entity-accordion-toggle.has-pending-indicator,
+  .entity-accordion-toggle.has-total-indicator {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
   .entity-accordion-pending,
-  .entity-accordion-toggle.has-pending-indicator .entity-accordion-count {
+  .entity-accordion-total,
+  .entity-accordion-toggle.has-pending-indicator .entity-accordion-count,
+  .entity-accordion-toggle.has-total-indicator .entity-accordion-count {
     grid-column: 2;
     grid-row: auto;
     justify-self: start;
   }
 
-  .entity-accordion-pending {
+  .entity-accordion-pending,
+  .entity-accordion-total {
     max-width: 100%;
   }
 
@@ -6088,7 +6129,8 @@ body {
     .cobros-shell,
     .proveedores-shell,
     .pagos-shell,
-    .gastos-shell) .form-field input,
+    .gastos-shell,
+    .casa-shell) .form-field input,
   :where(.ventas-shell,
     .cobros-shell,
     .proveedores-shell,
@@ -9366,5 +9408,340 @@ body,
     align-items: flex-start;
     flex-direction: column;
     gap: 5px;
+  }
+}
+
+/* Bloque A / Etapa 2 — Estado de sincronización y modo de datos */
+.data-sync-status-card {
+  background: linear-gradient(180deg, #fffdf8, #fff8ea);
+}
+
+.data-sync-grid .status-item span {
+  overflow-wrap: anywhere;
+}
+
+.sync-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.sync-mode-badge.is-local,
+.sync-mode-badge.is-pending {
+  background: #fff4d9;
+  border-color: rgba(185, 135, 43, 0.32);
+}
+
+.sync-mode-badge.is-cloud {
+  background: #eaf8ef;
+  border-color: rgba(46, 125, 50, 0.26);
+}
+
+@media (max-width: 680px) {
+  .data-sync-status-card .section-title-row {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .sync-mode-badge {
+    width: fit-content;
+  }
+}
+
+/* Bloque A / Etapa 3 — Acceso preparado sin bloqueo real */
+.access-prepared-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(12px, 3vw, 28px);
+  background: radial-gradient(circle at top left, rgba(229, 192, 123, 0.18), transparent 34%), rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(8px);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.access-prepared-overlay.is-hidden {
+  display: none;
+}
+
+.access-prepared-open {
+  overflow-x: hidden;
+}
+
+.access-prepared-panel {
+  width: min(560px, 100%);
+  display: grid;
+  gap: 14px;
+  padding: clamp(16px, 3vw, 24px);
+  border: 1px solid rgba(229, 192, 123, 0.44);
+  border-radius: 28px;
+  background: linear-gradient(180deg, #fffdf8, #fff8ec);
+  box-shadow: 0 32px 90px rgba(15, 23, 42, 0.38);
+}
+
+.access-prepared-brand {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.access-prepared-brand img {
+  width: 58px;
+  height: 58px;
+  object-fit: contain;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+}
+
+.access-prepared-brand h1,
+.access-prepared-brand p {
+  margin: 0;
+}
+
+.access-prepared-brand h1 {
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: clamp(1.35rem, 3.6vw, 2rem);
+  line-height: 1.05;
+}
+
+.access-prepared-brand p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.access-prepared-form {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.access-prepared-form .form-field input {
+  min-height: 44px;
+}
+
+.access-prepared-notice {
+  padding: 10px 12px;
+  border: 1px solid rgba(185, 135, 43, 0.28);
+  border-radius: 16px;
+  background: #fff4d9;
+  color: var(--ink);
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.access-prepared-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.access-prepared-actions .card-action,
+.access-prepared-actions .secondary-action {
+  width: 100%;
+  min-height: 44px;
+  padding-inline: 12px;
+  white-space: nowrap;
+}
+
+.access-menu-link {
+  justify-self: center;
+  border: 0;
+  background: transparent;
+  color: var(--accent-dark);
+  font-weight: 900;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.access-menu-link:hover,
+.access-menu-link:focus-visible {
+  color: var(--ink);
+  outline: none;
+}
+
+.access-prepared-status {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.access-prepared-status .status-item span {
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .access-prepared-overlay {
+    align-items: flex-start;
+    padding: 10px;
+  }
+
+  .access-prepared-panel {
+    border-radius: 22px;
+  }
+
+  .access-prepared-actions,
+  .access-prepared-status {
+    grid-template-columns: 1fr;
+  }
+
+  .access-prepared-actions .card-action,
+  .access-prepared-actions .secondary-action {
+    white-space: normal;
+  }
+}
+
+
+/* Bloque A / Etapa 4 — Configuración → Usuarios preparado */
+.users-prep-card {
+  border-color: rgba(185, 135, 43, 0.32);
+}
+
+.users-status-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.users-prep-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 14px;
+}
+
+.users-prep-actions .secondary-action[disabled] {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+.users-prep-actions small {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.users-prep-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+}
+
+.users-prep-panel {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.users-prep-panel h3 {
+  margin: 0 0 10px;
+  font-size: 0.98rem;
+}
+
+.users-role-list {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.users-schema-list {
+  margin: 0;
+}
+
+.users-schema-list dt,
+.users-schema-list dd {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .users-prep-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+.access-prepared-info {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px dashed rgba(185, 135, 43, 0.34);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.74);
+  color: var(--ink);
+}
+
+.access-prepared-info span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+/* Bloque A / Etapa 5 — Contrato interno Firestore preparado */
+.firestore-contract-card {
+  background: linear-gradient(180deg, #fffdf8, #fff7e8);
+  border-color: rgba(185, 135, 43, 0.28);
+}
+
+.firestore-contract-summary .status-item span,
+.firestore-contract-summary .status-item small {
+  overflow-wrap: anywhere;
+}
+
+.firestore-collection-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+  min-width: 0;
+}
+
+.firestore-collection-pill {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.firestore-collection-pill strong,
+.firestore-collection-pill span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.firestore-collection-pill strong {
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.firestore-collection-pill span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+@media (max-width: 560px) {
+  .firestore-collection-list {
+    grid-template-columns: 1fr;
   }
 }
