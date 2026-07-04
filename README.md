@@ -1,5 +1,6 @@
-# KSA PRÁCTIKA — Post12 Resumen del ejercicio crema sin Flujo
+# KSA PRÁCTIKA — Post12 Casa Etapa 2
 
-- Se dejó “Flujo del período” como bloque normal, sin fondo especial.
-- Se aplicó fondo cremita/beige suave premium únicamente a Ventas ajustadas, Compras ajustadas, Gastos del período, Utilidad del período y Utilidad acumulada.
-- No se modificó lógica de cálculo, Excel, JSON ni módulos operativos.
+- Se agregó resumen interno de Casa con “Utilidad KPK”, “Total global Casa” y “Disponible después de Casa”.
+- Se agregó desglose de totales individuales por Categoría Casa, respetando filtros de mes, año y categoría.
+- Casa sigue separado de Resumen productivo, Ventas, Compras, Gastos productivos, Flujo, Excel Consulta y Excel Cierre.
+- Se actualizó versión/cache PWA para refrescar la entrega.

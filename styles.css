@@ -9211,3 +9211,141 @@ body,
     flex-wrap: wrap;
   }
 }
+
+/* Etapa Casa 1/3 — módulo independiente y Categorías Casa */
+.casa-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.82fr) minmax(0, 1.18fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.casa-form-card,
+.casa-list-card,
+.casa-filter-panel {
+  min-width: 0;
+}
+
+.casa-form {
+  display: grid;
+  gap: 14px;
+}
+
+.casa-filter-panel {
+  margin-bottom: 16px;
+}
+
+.casa-filter-grid .compact-filter-actions {
+  align-self: end;
+  justify-content: flex-start;
+}
+
+.operational-table-casa {
+  min-width: 980px;
+}
+
+.casa-row td[data-label="Categoría"] > span,
+.casa-row td[data-label="Método"] > span,
+.casa-row td[data-label="Banco / cuenta"] > span {
+  white-space: nowrap;
+}
+
+.casa-shell .casa-form textarea[name="observacion"] {
+  min-height: 84px;
+}
+
+:where(.operational-table-casa) {
+  width: max-content;
+  min-width: 100%;
+}
+
+@media (min-width: 1200px) {
+  .operational-table-casa { min-width: 1120px; }
+}
+
+@media (max-width: 900px) {
+  .casa-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .casa-filter-grid .compact-filter-actions {
+    align-self: stretch;
+  }
+}
+
+/* Etapa Casa 2/3 — totales Casa + Utilidad KPK */
+.casa-finance-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 16px;
+}
+
+.casa-finance-card {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.casa-finance-card strong {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  font-size: clamp(1.02rem, 1.5vw, 1.22rem);
+}
+
+.casa-category-totals-card {
+  margin-bottom: 16px;
+}
+
+.casa-category-total-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.casa-category-total-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.casa-category-total-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-weight: 850;
+}
+
+.casa-category-total-row strong {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  color: var(--text);
+  font-size: 0.96rem;
+}
+
+.casa-category-total-row.is-empty {
+  opacity: 0.74;
+}
+
+@media (max-width: 900px) {
+  .casa-finance-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .casa-category-total-list {
+    grid-template-columns: 1fr;
+  }
+
+  .casa-category-total-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+}

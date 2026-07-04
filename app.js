@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.93-post12-resumen-crema-sin-flujo';
+  const APP_VERSION = '0.17.96-post12-casa-etapa3';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -82,6 +82,14 @@
       placeholder: 'Gastos ya permite crear, editar y anular registros usando tipos, métodos y bancos desde Catálogos.'
     },
     {
+      id: 'casa',
+      icon: '⌂',
+      title: 'Casa',
+      short: 'Casa',
+      description: 'Control independiente de gastos personales/familiares con categorías propias, sin contaminar la utilidad productiva.',
+      placeholder: 'Casa registra gastos familiares separados de los gastos productivos de KSA PRÁCTIKA.'
+    },
+    {
       id: 'notas',
       icon: '✎',
       title: 'Notas',
@@ -147,12 +155,14 @@
     'metodosPago',
     'cuentasBancos',
     'retenciones',
+    'categoriasCasa',
     'bdatos',
     'ventas',
     'cobros',
     'comprasProveedores',
     'pagosProveedores',
     'gastos',
+    'casaGastos',
     'cierresMensuales',
     'exportacionesExcel'
   ];
@@ -210,6 +220,17 @@
       ]
     },
     {
+      id: 'categoriasCasa',
+      label: 'Categorías Casa',
+      singular: 'categoría Casa',
+      icon: 'CA',
+      description: 'Categorías separadas para gastos personales/familiares del módulo Casa.',
+      fields: [
+        { name: 'nombre', label: 'Nombre', type: 'text', required: true, placeholder: 'Ej. Supermercado' },
+        { name: 'observacion', label: 'Observación', type: 'textarea', placeholder: 'Notas internas de la categoría Casa' }
+      ]
+    },
+    {
       id: 'metodosPago',
       label: 'Métodos de pago/cobro',
       singular: 'método',
@@ -255,6 +276,7 @@
 
   const DEFAULT_SEEDS = {
     tiposGasto: ['Estacionamiento', 'Cargadores', 'Transporte', 'Combustible', 'Empaque', 'Otros'],
+    categoriasCasa: ['Servicios básicos', 'Supermercado', 'Colegio / educación', 'Gimnasio', 'Restaurantes', 'Salud / farmacia', 'Suscripciones', 'Mantenimiento de casa', 'Vestuario', 'Entretenimiento', 'Otros'],
     metodosPago: [
       { nombre: 'Efectivo' },
       { nombre: 'Transferencia' },
@@ -946,6 +968,7 @@
     ['proveedores', 'proveedores'],
     ['pagos', 'pagos'],
     ['gastos', 'gastos'],
+    ['casa', 'casa'],
     ['notas', 'notas'],
     ['notas-inicio', 'notas'],
     ['notas-apuntes', 'notas-apuntes'],
@@ -1018,6 +1041,15 @@
   let gastosState = {
     editingId: null,
     openGroupKey: '',
+    message: null,
+    messageType: 'success'
+  };
+
+  let casaState = {
+    editingId: null,
+    month: '',
+    year: String(new Date().getFullYear()),
+    categoriaCasaId: '',
     message: null,
     messageType: 'success'
   };
@@ -1136,6 +1168,7 @@
     '[data-ajuste-proveedor-form]',
     '[data-pago-form]',
     '[data-gasto-form]',
+    '[data-casa-form]',
     '[data-nota-general-form]',
     '[data-pendiente-form]',
     '[data-recordatorio-form]',
@@ -1159,6 +1192,7 @@
     '[data-ajuste-delete]',
     '[data-pago-annul]',
     '[data-gasto-annul]',
+    '[data-casa-delete]',
     '[data-bdatos-delete]'
   ].join(',');
 
@@ -1775,6 +1809,7 @@
       pagosProveedores: Number.isNaN(pagos) ? 0 : pagos,
       pagos: Number.isNaN(pagos) ? 0 : pagos,
       gastos: safeNumber(raw.gastos),
+      casaGastos: safeNumber(raw.casaGastos || raw.casa || raw.gastosCasa),
       catalogos: safeNumber(raw.catalogos),
       bdatos: safeNumber(raw.bdatos || raw.Bdatos),
       cierresMensuales: Number.isNaN(cierres) ? 0 : cierres,
@@ -1797,6 +1832,7 @@
       + normalized.comprasProveedores
       + normalized.pagosProveedores
       + normalized.gastos
+      + normalized.casaGastos
       + normalized.catalogos
       + normalized.bdatos
       + normalized.cierresMensuales
@@ -1816,6 +1852,7 @@
       `${normalized.comprasProveedores} compras`,
       `${normalized.pagosProveedores} pagos`,
       `${normalized.gastos} gastos`,
+      `${normalized.casaGastos} Casa`,
       `${normalized.bdatos} Bdatos`,
       `${normalized.notasModulo} Notas`,
       `${normalized.facturasModulo} Facturas`,
@@ -1921,6 +1958,7 @@
       { key: 'comprasProveedores', label: 'Compras / Proveedores' },
       { key: 'pagosProveedores', label: 'Pagos' },
       { key: 'gastos', label: 'Gastos' },
+      { key: 'casaGastos', label: 'Casa' },
       { key: 'cierresMensuales', label: 'Cierres' },
       { key: 'catalogos', label: 'Catálogos' },
       { key: 'notasModulo', label: 'Notas' },
@@ -2114,6 +2152,7 @@
       metodosPago: [],
       cuentasBancos: [],
       retenciones: [],
+      categoriasCasa: [],
       bdatos: buildInitialBdatosRecords(BDATOS_INITIAL_UPDATED_AT),
       bdatosUpdatedAt: BDATOS_INITIAL_UPDATED_AT,
       ventas: [],
@@ -2121,6 +2160,7 @@
       comprasProveedores: [],
       pagosProveedores: [],
       gastos: [],
+      casaGastos: [],
       cierresMensuales: [],
       exportacionesExcel: [],
       configuracion: createDefaultConfiguracion(timestamp),
@@ -2211,6 +2251,7 @@
     normalized.cobros = normalized.cobros.map((record) => normalizeCobroRecord(record));
     normalized.pagosProveedores = normalized.pagosProveedores.map((record) => normalizePagoProveedorRecord(record));
     normalized.gastos = normalized.gastos.map((record) => normalizeGastoRecord(record));
+    normalized.casaGastos = normalized.casaGastos.map((record) => normalizeCasaGastoRecord(record));
     enrichBankSnapshotsForData(normalized);
     normalized.cierresMensuales = normalized.cierresMensuales.map((record) => normalizeCierreMensualRecord(record));
     normalized.exportacionesExcel = normalized.exportacionesExcel.map((record) => normalizeExcelExportRecord(record));
@@ -3258,6 +3299,33 @@
   }
 
 
+
+  function normalizeCasaGastoRecord(record) {
+    const raw = isPlainObject(record) ? record : {};
+    const timestamp = nowIso();
+    const monto = parseMoney(raw.monto || raw.importe || raw.valor);
+    const activo = typeof raw.activo === 'boolean' ? raw.activo : raw.estado !== 'Eliminado';
+    return {
+      id: raw.id || generateId('casaGasto'),
+      fecha: toDateInputValue(raw.fecha || raw.fechaGasto || '') || todayInputValue(),
+      categoriaCasaId: cleanText(raw.categoriaCasaId || raw.categoriaId || raw.tipoCasaId),
+      categoriaCasaNombre: cleanText(raw.categoriaCasaNombre || raw.categoriaCasa || raw.categoria || raw.tipoCasa),
+      descripcion: cleanText(raw.descripcion || raw.detalle || raw.concepto),
+      monto: Number.isNaN(monto) ? 0 : monto,
+      metodoPagoId: cleanText(raw.metodoPagoId),
+      metodoPagoNombre: cleanText(raw.metodoPagoNombre || raw.metodoPago || raw.metodo),
+      cuentaBancoId: cleanText(raw.cuentaBancoId),
+      cuentaBancoNombre: cleanText(raw.cuentaBancoNombre || raw.cuentaBanco || raw.banco || raw.cuenta),
+      cuentaBancoTipo: normalizeBankType(raw.cuentaBancoTipo || raw.bancoTipo || raw.tipoBanco || raw.bankType || raw.tipoCuentaBanco),
+      observacion: cleanText(raw.observacion),
+      estado: activo ? 'Registrado' : 'Eliminado',
+      activo,
+      createdAt: raw.createdAt || timestamp,
+      updatedAt: raw.updatedAt || raw.createdAt || timestamp
+    };
+  }
+
+
   function normalizeCierreMensualRecord(record) {
     const raw = isPlainObject(record) ? record : {};
     const timestamp = nowIso();
@@ -3353,9 +3421,16 @@
     });
     normalized.gastosPeriodo = Array.isArray(raw.gastosPeriodo) ? raw.gastosPeriodo.map((record) => normalizeGastoRecord(record)) : [];
     normalized.gastosExport = Array.isArray(raw.gastosExport) ? raw.gastosExport.map((record) => normalizeGastoRecord(record)) : normalized.gastosPeriodo;
-    ['clientesMora', 'proveedoresMora', 'ventasProximas', 'comprasProximas', 'saldosAltosClientes', 'saldosAltosProveedores', 'parciales', 'alertas', 'gastosPorTipo', 'ventaPorSucursal', 'saldosPorProveedor', 'retencionesPorConcepto'].forEach((key) => {
+    normalized.casaGastosPeriodo = Array.isArray(raw.casaGastosPeriodo) ? raw.casaGastosPeriodo.map((record) => normalizeCasaGastoRecord(record)) : [];
+    normalized.casaGastosExport = Array.isArray(raw.casaGastosExport) ? raw.casaGastosExport.map((record) => normalizeCasaGastoRecord(record)) : normalized.casaGastosPeriodo;
+    ['clientesMora', 'proveedoresMora', 'ventasProximas', 'comprasProximas', 'saldosAltosClientes', 'saldosAltosProveedores', 'parciales', 'alertas', 'gastosPorTipo', 'ventaPorSucursal', 'saldosPorProveedor', 'retencionesPorConcepto', 'casaCategoryTotals'].forEach((key) => {
       normalized[key] = Array.isArray(raw[key]) ? clonePlainObject(raw[key], []) : [];
     });
+    normalized.casaResumen = isPlainObject(raw.casaResumen) ? {
+      utilidadKpk: roundMoney(raw.casaResumen.utilidadKpk || 0),
+      totalGlobalCasa: roundMoney(raw.casaResumen.totalGlobalCasa || 0),
+      disponibleDespuesCasa: roundMoney(raw.casaResumen.disponibleDespuesCasa || 0)
+    } : {};
     return normalized;
   }
 
@@ -3373,6 +3448,7 @@
       || summary.cobrosPeriodo.length
       || summary.pagosPeriodo.length
       || summary.gastosPeriodo.length
+      || summary.casaGastosPeriodo.length
     );
     if (!hasMeaningfulSummary) return null;
     return {
@@ -3394,6 +3470,7 @@
       'filters', 'range', 'periodLabel', 'excelConsultaMode', 'excelCierreMode', 'corteOficialAt',
       'ventasPeriodo', 'comprasPeriodo', 'cobrosPeriodo', 'pagosPeriodo', 'gastosPeriodo',
       'ventasExport', 'comprasExport', 'gastosExport',
+      'casaGastosPeriodo', 'casaGastosExport', 'casaCategoryTotals', 'casaResumen',
       'cobrosDocumentoPeriodo', 'pagosDocumentoPeriodo', 'cobrosFlujoPeriodo', 'pagosFlujoPeriodo',
       'totalSubtotalVentas', 'totalDescuentosVentas', 'totalVendidoOriginal', 'totalAjustesClientes',
       'totalVendido', 'ventaNetaAjustada', 'totalCobradoClientes', 'totalCobradoAplicadoOC',
@@ -4500,6 +4577,7 @@
       '.historial-compact-table-wrap',
       '.resumen-compact-table-wrap',
       '.catalog-compact-table-wrap',
+      '.casa-list',
       '.closing-compact-table-wrap',
       '.json-import-history-table-wrap',
       '.activity-log-table-wrap',
@@ -4596,6 +4674,7 @@
       proveedoresState.message = null;
       pagosState.message = null;
       gastosState.message = null;
+      casaState.message = null;
       facturasState.message = null;
       viewRoot.innerHTML = renderHome();
     } else if (route === 'resumen') {
@@ -4672,8 +4751,18 @@
       cobrosState.message = null;
       proveedoresState.message = null;
       pagosState.message = null;
+      casaState.message = null;
       facturasState.message = null;
       viewRoot.innerHTML = renderGastos();
+    } else if (route === 'casa') {
+      catalogState.message = null;
+      ventasState.message = null;
+      cobrosState.message = null;
+      proveedoresState.message = null;
+      pagosState.message = null;
+      gastosState.message = null;
+      facturasState.message = null;
+      viewRoot.innerHTML = renderCasa();
     } else if (route === 'notas') {
       catalogState.message = null;
       ventasState.message = null;
@@ -5291,7 +5380,7 @@
         <div>
           <span class="eyebrow">Post 12 / Facturas Etapa 3</span>
           <h1>KSA PRÁCTIKA</h1>
-          <p class="lead">Webapp estática para convertir el control de OC, cobros, proveedores, pagos, gastos y documentación en un sistema operativo continuo. Ya tiene menú, navegación fija, Catálogos editables, Ventas / OC, Cobros de clientes, Proveedores / Compras, Pagos a proveedores, Gastos, Notas, Facturas, mora avanzada, alertas, historial por documento, Resumen / Tablero operativo, importación inicial desde Excel, Configuración, roles básicos locales y respaldo JSON validado, exportación Excel y cierre mensual.</p>
+          <p class="lead">Webapp estática para convertir el control de OC, cobros, proveedores, pagos, gastos, Casa y documentación en un sistema operativo continuo. Ya tiene menú, navegación fija, Catálogos editables, Ventas / OC, Cobros de clientes, Proveedores / Compras, Pagos a proveedores, Gastos, Casa independiente, Notas, Facturas, mora avanzada, alertas, historial por documento, Resumen / Tablero operativo, importación inicial desde Excel, Configuración, roles básicos locales y respaldo JSON validado, exportación Excel y cierre mensual.</p>
         </div>
         <aside class="hero-status" aria-label="Estado inicial de la app">
           <h3>Estado de la app</h3>
@@ -5312,7 +5401,7 @@
       <section class="panel-grid">
         <article class="panel-card">
           <h2>Estructura preparada</h2>
-          <p class="notice">Catálogos administra las listas maestras, Ventas / OC registra documentos con saldo por cobrar, Cobros aplica abonos a OC, Proveedores / Compras registra deudas con saldo por pagar, Pagos aplica abonos a facturas/referencias, Gastos registra egresos operativos y Facturas ordena documentos manuales sin afectar cálculos.</p>
+          <p class="notice">Catálogos administra las listas maestras, Ventas / OC registra documentos con saldo por cobrar, Cobros aplica abonos a OC, Proveedores / Compras registra deudas con saldo por pagar, Pagos aplica abonos a facturas/referencias, Gastos registra egresos operativos, Casa controla gastos familiares separados y Facturas ordena documentos manuales sin afectar cálculos.</p>
           <div class="data-list">
             ${DATA_KEYS.map((key) => `<div class="data-pill"><span>${escapeHtml(key)}</span><strong>${appData[key].length}</strong></div>`).join('')}
           </div>
@@ -5338,6 +5427,7 @@
             <span class="badge">Proveedores / Compras</span>
             <span class="badge">Pagos a proveedores</span>
             <span class="badge">Gastos</span>
+            <span class="badge">Casa</span>
             <span class="badge">Notas</span>
             <span class="badge">Facturas</span>
             <span class="badge">Mora y Alertas</span>
@@ -8331,6 +8421,9 @@
       utilidadGastosPeriodo: totalGastos
     };
     const cobrosAplicadosPorDocumento = buildCobrosAplicadosForConsulta(cobrosDocumentoPeriodo);
+    const casaGastosPeriodo = getCasaGastosForExcel(range);
+    const casaCategoryTotals = getCasaCategoryTotalsForExcel(casaGastosPeriodo);
+    const casaResumen = buildCasaExcelFinancialSummary(casaCategoryTotals, utilidadDelPeriodo);
 
     return {
       filters,
@@ -8350,6 +8443,10 @@
       ventasExport: ventasPeriodo,
       comprasExport: comprasPeriodo,
       gastosExport: gastosPeriodo,
+      casaGastosPeriodo,
+      casaGastosExport: casaGastosPeriodo,
+      casaCategoryTotals,
+      casaResumen,
       cobrosDocumentoPeriodo,
       pagosDocumentoPeriodo,
       cobrosFlujoPeriodo,
@@ -8417,13 +8514,17 @@
     const gastosCorte = (Array.isArray(appData.gastos) ? appData.gastos : [])
       .map((record) => enrichGastoForExcelSnapshot(record))
       .filter((record) => record.activo && isRecordRegisteredByCutoff(record, cutoffAt));
+    const casaGastosCorte = (Array.isArray(appData.casaGastos) ? appData.casaGastos : [])
+      .map((record) => normalizeCasaGastoRecord(record))
+      .filter((record) => record.activo && isRecordRegisteredByCutoff(record, cutoffAt));
     const tempData = {
       ...appData,
       ventas: ventasCorte,
       cobros: cobrosCorte,
       comprasProveedores: comprasCorte,
       pagosProveedores: pagosCorte,
-      gastos: gastosCorte
+      gastos: gastosCorte,
+      casaGastos: casaGastosCorte
     };
     const summary = withTemporaryAppData(tempData, () => buildExcelConsultaSummaryForPeriod(month, year));
     return {
@@ -8441,7 +8542,11 @@
       comprasPeriodo: summary.comprasPeriodo.map((compra) => enrichCompraForExcelSnapshot(compra)),
       comprasExport: summary.comprasExport.map((compra) => enrichCompraForExcelSnapshot(compra)),
       gastosPeriodo: summary.gastosPeriodo.map((gasto) => enrichGastoForExcelSnapshot(gasto)),
-      gastosExport: summary.gastosExport.map((gasto) => enrichGastoForExcelSnapshot(gasto))
+      gastosExport: summary.gastosExport.map((gasto) => enrichGastoForExcelSnapshot(gasto)),
+      casaGastosPeriodo: summary.casaGastosPeriodo.map((gasto) => normalizeCasaGastoRecord(gasto)),
+      casaGastosExport: summary.casaGastosExport.map((gasto) => normalizeCasaGastoRecord(gasto)),
+      casaCategoryTotals: clonePlainObject(summary.casaCategoryTotals, []),
+      casaResumen: clonePlainObject(summary.casaResumen, {})
     };
   }
 
@@ -11105,6 +11210,10 @@
   }
 
   function getCatalogToggleLabel(catalog, record) {
+    if (catalog.id === 'categoriasCasa') {
+      if (!record.activo) return 'Restaurar';
+      return isCasaCategoriaInUse(record.id) ? 'Desactivar' : 'Eliminar';
+    }
     return record.activo
       ? (isSafeDeleteCatalog(catalog.id) ? 'Borrar seguro' : 'Desactivar')
       : (isSafeDeleteCatalog(catalog.id) ? 'Restaurar' : 'Activar');
@@ -11147,6 +11256,7 @@
   function getCobroModalId() { return 'cobro'; }
   function getPagoModalId() { return 'pago'; }
   function getGastoModalId() { return 'gasto'; }
+  function getCasaModalId() { return 'casa'; }
   function getFacturasModalId() { return 'factura'; }
 
 
@@ -15769,6 +15879,556 @@
   }
 
 
+
+  function renderCasa() {
+    const categoriasActivas = getActiveCatalogRecords('categoriasCasa');
+    const metodosActivos = getActiveCatalogRecords('metodosPago');
+    const cuentasActivas = getActiveBankRecords();
+    const casaGastos = getCasaGastosFiltrados();
+    const allCasaGastos = getCasaGastosOrdenados({ filtered: false });
+    const totals = getCasaTotals(casaGastos);
+    const utilidadKpkSummary = buildCasaUtilidadKpkSummary();
+    const casaFinancialSummary = buildCasaFinancialSummary(totals, utilidadKpkSummary);
+    const categoryTotals = getCasaCategoryTotals(casaGastos);
+    const editingRecord = casaState.editingId ? allCasaGastos.find((record) => record.id === casaState.editingId) : null;
+    const missingCatalogs = !categoriasActivas.length || !metodosActivos.length;
+    const yearOptions = getCasaYearOptions();
+    const activeFilterLabel = getCasaFilterLabel();
+
+    return `
+      <section class="hero casa-hero">
+        <div>
+          <span class="eyebrow">Módulo activo</span>
+          <h1>Casa</h1>
+          <p class="lead">Registra gastos personales y familiares con categorías propias. Esto vive separado de la parte productiva: cada cosa en su templo, porque mezclar utilidades con supermercado es invocar demonios contables.</p>
+        </div>
+        <aside class="hero-status" aria-label="Resumen de Casa">
+          <h3>Lectura actual</h3>
+          <div class="status-grid">
+            <div class="status-item"><strong>Filtro</strong><span>${escapeHtml(activeFilterLabel)}</span></div>
+            <div class="status-item"><strong>Gastos</strong><span>${totals.registros}</span></div>
+            <div class="status-item"><strong>Total global Casa</strong><span>${escapeHtml(formatMoney(totals.total))}</span></div>
+            <div class="status-item"><strong>Utilidad KPK</strong><span>${escapeHtml(formatMoney(casaFinancialSummary.utilidadKpk))}</span></div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="casa-shell">
+        ${casaState.message ? `<div class="form-message ${casaState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(casaState.message)}</div>` : ''}
+        ${renderCasaWarning(categoriasActivas, metodosActivos, cuentasActivas)}
+
+        <section class="metric-grid casa-finance-grid" aria-label="Resumen interno de Casa">
+          <article class="metric-card casa-finance-card"><span>Utilidad KPK</span><strong>${escapeHtml(formatMoney(casaFinancialSummary.utilidadKpk))}</strong><small>${escapeHtml(casaFinancialSummary.periodLabel)}</small></article>
+          <article class="metric-card casa-finance-card"><span>Total global Casa</span><strong>${escapeHtml(formatMoney(casaFinancialSummary.totalGlobalCasa))}</strong><small>${totals.registros} gastos en filtro activo</small></article>
+          <article class="metric-card casa-finance-card"><span>Disponible después de Casa</span><strong>${escapeHtml(formatMoney(casaFinancialSummary.disponibleDespuesCasa))}</strong><small>Utilidad KPK - Total global Casa</small></article>
+        </section>
+
+        <article class="panel-card casa-category-totals-card" aria-label="Totales por categoría Casa">
+          <div class="section-title-row">
+            <div>
+              <span class="eyebrow mini">Totales</span>
+              <h2>Totales por categoría</h2>
+            </div>
+            <div class="count-pill">${categoryTotals.length} categorías</div>
+          </div>
+          ${renderCasaCategoryTotals(categoryTotals)}
+        </article>
+
+        <form class="panel-card casa-filter-panel" data-casa-filters>
+          <div class="section-title-row">
+            <div>
+              <span class="eyebrow mini">Filtros</span>
+              <h2>Filtrar gastos Casa</h2>
+            </div>
+          </div>
+          <div class="casa-filter-grid resumen-filter-grid">
+            <label class="form-field">
+              <span>Mes</span>
+              <select name="month">
+                <option value="">Todos</option>
+                ${getMonthOptions().map((month) => `<option value="${escapeHtml(month.value)}" ${casaState.month === month.value ? 'selected' : ''}>${escapeHtml(month.label)}</option>`).join('')}
+              </select>
+            </label>
+            <label class="form-field">
+              <span>Año</span>
+              <select name="year">
+                <option value="">Todos</option>
+                ${yearOptions.map((year) => `<option value="${escapeHtml(year)}" ${casaState.year === year ? 'selected' : ''}>${escapeHtml(year)}</option>`).join('')}
+              </select>
+            </label>
+            <label class="form-field">
+              <span>Categoría Casa</span>
+              <select name="categoriaCasaId">
+                <option value="">Todas</option>
+                ${getSortedCatalogRecords('categoriasCasa').map((categoria) => `<option value="${escapeHtml(categoria.id)}" ${casaState.categoriaCasaId === categoria.id ? 'selected' : ''}>${escapeHtml(categoria.nombre || 'Categoría sin nombre')}${categoria.activo ? '' : ' · inactiva'}</option>`).join('')}
+              </select>
+            </label>
+            <div class="form-actions compact-filter-actions">
+              <button type="submit" class="card-action compact">Aplicar</button>
+              <button type="button" class="secondary-action compact" data-casa-clear-filters>Limpiar</button>
+            </div>
+          </div>
+        </form>
+
+        <div class="casa-layout">
+          <article class="panel-card casa-form-card">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Nuevo gasto Casa</span>
+                <h2>Registrar gasto</h2>
+              </div>
+            </div>
+            <p class="muted-text">Categoría viene de Catálogos → Categorías Casa. Método y banco reutilizan los catálogos existentes.</p>
+            ${renderCasaForm(null, categoriasActivas, metodosActivos, cuentasActivas, missingCatalogs)}
+          </article>
+
+          <article class="panel-card casa-list-card">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Listado</span>
+                <h2>Gastos Casa registrados</h2>
+              </div>
+              <div class="count-pill">${casaGastos.length} registros</div>
+            </div>
+            <label class="form-field search-field">
+              <span>Buscar por categoría, descripción, método, banco u observación</span>
+              <input type="search" placeholder="Ej. supermercado, colegio o efectivo" data-casa-search autocomplete="off" />
+            </label>
+            ${renderCasaList(casaGastos)}
+          </article>
+        </div>
+        ${editingRecord ? renderEditModal(getCasaModalId(), 'Editar gasto Casa', 'Corrige este registro sin tocar Gastos productivos ni el Resumen operativo.', renderCasaForm(editingRecord, getSelectableCatalogRecords('categoriasCasa', editingRecord.categoriaCasaId), metodosActivos, cuentasActivas, missingCatalogs)) : ''}
+      </section>
+    `;
+  }
+
+  function renderCasaWarning(categoriasActivas, metodosActivos, cuentasActivas) {
+    const missing = [];
+    if (!categoriasActivas.length) missing.push('Categorías Casa activas');
+    if (!metodosActivos.length) missing.push('métodos de pago activos');
+    if (!missing.length) return '';
+    return `
+      <article class="catalog-warning" role="status">
+        <strong>Faltan ${escapeHtml(missing.join(', '))}.</strong>
+        <p>Para guardar un gasto de Casa necesitas Categorías Casa y métodos de pago activos. Banco se solicita cuando el método elegido lo requiere.</p>
+        <button type="button" class="secondary-action compact" data-go="catalogos">Ir a Catálogos</button>
+      </article>
+    `;
+  }
+
+  function renderCasaForm(record, categoriasActivas, metodosActivos, cuentasActivas, missingCatalogs) {
+    const cannotCreate = Boolean(missingCatalogs);
+    const fecha = record?.fecha || todayInputValue();
+    const categorias = record?.categoriaCasaId ? getSelectableCatalogRecords('categoriasCasa', record.categoriaCasaId) : categoriasActivas;
+    return `
+      <form class="casa-form" data-casa-form novalidate>
+        <input type="hidden" name="id" value="${escapeHtml(record?.id || '')}" />
+        <div class="form-grid">
+          <label class="form-field">
+            <span>Fecha <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <input type="date" name="fecha" value="${escapeHtml(fecha)}" required ${cannotCreate ? 'disabled' : ''} />
+          </label>
+          <label class="form-field">
+            <span>Categoría Casa <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <select name="categoriaCasaId" required ${!categorias.length || cannotCreate ? 'disabled' : ''}>
+              <option value="">Seleccionar categoría</option>
+              ${categorias.map((categoria) => `<option value="${escapeHtml(categoria.id)}" ${categoria.id === record?.categoriaCasaId ? 'selected' : ''}>${escapeHtml(categoria.nombre || 'Categoría sin nombre')}${categoria.activo ? '' : ' · inactiva'}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Descripción</span>
+            <input type="text" name="descripcion" value="${escapeHtml(record?.descripcion || '')}" placeholder="Ej. compra semanal" autocomplete="off" ${cannotCreate ? 'disabled' : ''} />
+          </label>
+          <label class="form-field">
+            <span>Monto C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <input type="number" name="monto" value="${escapeHtml(formatNumberInput(record?.monto))}" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00" required ${cannotCreate ? 'disabled' : ''} />
+          </label>
+          <label class="form-field">
+            <span>Método de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <select name="metodoPagoId" required data-payment-method-select ${!metodosActivos.length || cannotCreate ? 'disabled' : ''}>
+              <option value="">Seleccionar método</option>
+              ${metodosActivos.map((metodo) => `<option value="${escapeHtml(metodo.id)}" ${metodo.id === record?.metodoPagoId ? 'selected' : ''}>${escapeHtml(metodo.nombre || 'Método sin nombre')}</option>`).join('')}
+            </select>
+          </label>
+          ${renderPaymentBankField(cuentasActivas, record, cannotCreate, { label: 'Banco / cuenta' })}
+        </div>
+
+        <label class="form-field">
+          <span>Observación</span>
+          <textarea name="observacion" rows="3" placeholder="Notas del gasto Casa" ${cannotCreate ? 'disabled' : ''}>${escapeHtml(record?.observacion || '')}</textarea>
+        </label>
+
+        <div class="form-actions">
+          <button type="submit" class="card-action" ${cannotCreate ? 'disabled' : ''}>${record ? 'Guardar cambios' : 'Guardar gasto Casa'}</button>
+          <button type="button" class="secondary-action" data-casa-clear>${record ? 'Cancelar' : 'Limpiar'}</button>
+        </div>
+      </form>
+    `;
+  }
+
+  function renderCasaList(gastos) {
+    if (!gastos.length) {
+      return `
+        <div class="empty-state">
+          <strong>No hay gastos de Casa registrados para este filtro.</strong>
+          <p>Guarda el primer gasto familiar cuando toque; no hay premio por sufrir con Excel paralelo.</p>
+        </div>
+      `;
+    }
+
+    return renderOperationalTableShell({
+      shellClass: 'casa-scroll-shell',
+      wrapClass: 'casa-list',
+      ariaLabel: 'Gastos Casa registrados',
+      tableClass: 'operational-table-casa',
+      headers: `
+        <th>Fecha</th>
+        <th>Categoría</th>
+        <th>Descripción</th>
+        <th class="amount-cell">Monto</th>
+        <th>Método</th>
+        <th>Banco / cuenta</th>
+        <th>Observación</th>
+        <th class="actions-cell">Acciones</th>
+      `,
+      rows: gastos.map((gasto) => renderCasaRow(gasto)).join(''),
+      colgroup: `
+        <col style="width: 92px;">
+        <col style="width: 160px;">
+        <col style="width: 180px;">
+        <col style="width: 118px;">
+        <col style="width: 126px;">
+        <col style="width: 150px;">
+        <col style="width: 180px;">
+        <col style="width: 160px;">
+      `
+    });
+  }
+
+  function renderCasaRow(gasto) {
+    const record = normalizeCasaGastoRecord(gasto);
+    const categoria = getCatalogRecordById('categoriasCasa', record.categoriaCasaId);
+    const metodo = getCatalogRecordById('metodosPago', record.metodoPagoId);
+    const cuenta = getCatalogRecordById('cuentasBancos', record.cuentaBancoId);
+    const categoriaNombre = categoria?.nombre || record.categoriaCasaNombre || 'Categoría no encontrada';
+    const searchText = normalizeNameForCompare([categoriaNombre, record.descripcion, metodo?.nombre, record.metodoPagoNombre, cuenta?.nombre, record.cuentaBancoNombre, record.observacion].join(' '));
+
+    return `
+      <tr class="compact-record-row casa-row" data-casa-card data-search-text="${escapeHtml(searchText)}">
+        <td data-label="Fecha"><span class="compact-primary">${escapeHtml(formatDate(record.fecha))}</span></td>
+        <td data-label="Categoría"><span title="${escapeHtml(categoriaNombre)}">${escapeHtml(categoriaNombre)}</span></td>
+        <td data-label="Descripción"><span title="${escapeHtml(record.descripcion || '—')}">${escapeHtml(record.descripcion || '—')}</span></td>
+        <td data-label="Monto" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.monto))}</span></td>
+        <td data-label="Método"><span>${escapeHtml(metodo?.nombre || record.metodoPagoNombre || 'Método no encontrado')}</span></td>
+        <td data-label="Banco / cuenta"><span>${escapeHtml(cuenta?.nombre || record.cuentaBancoNombre || '—')}</span></td>
+        <td data-label="Observación"><span title="${escapeHtml(record.observacion || '—')}">${escapeHtml(record.observacion || '—')}</span></td>
+        <td data-label="Acciones" class="actions-cell">
+          <div class="record-actions compact-row-actions">
+            <button type="button" class="secondary-action compact" data-casa-edit="${escapeHtml(record.id)}">Editar</button>
+            <button type="button" class="danger-action compact" data-casa-delete="${escapeHtml(record.id)}">Eliminar</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  function getCasaGastosOrdenados(options = {}) {
+    return [...(Array.isArray(appData.casaGastos) ? appData.casaGastos : [])]
+      .map((record) => normalizeCasaGastoRecord(record))
+      .filter((record) => record.activo || options.includeInactive)
+      .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)) || String(b.createdAt).localeCompare(String(a.createdAt)));
+  }
+
+  function getCasaGastosFiltrados() {
+    return getCasaGastosOrdenados().filter((record) => {
+      if (casaState.month && record.fecha.slice(5, 7) !== casaState.month) return false;
+      if (casaState.year && record.fecha.slice(0, 4) !== casaState.year) return false;
+      if (casaState.categoriaCasaId && record.categoriaCasaId !== casaState.categoriaCasaId) return false;
+      return true;
+    });
+  }
+
+  function getCasaTotals(recordsSource = null) {
+    const records = Array.isArray(recordsSource) ? recordsSource.map((record) => normalizeCasaGastoRecord(record)) : getCasaGastosFiltrados();
+    return records.reduce((totals, record) => {
+      totals.registros += 1;
+      totals.total = roundMoney(totals.total + record.monto);
+      if (record.categoriaCasaId) totals.categoriasSet.add(record.categoriaCasaId);
+      totals.categoriasUsadas = totals.categoriasSet.size;
+      return totals;
+    }, { registros: 0, total: 0, categoriasUsadas: 0, categoriasSet: new Set() });
+  }
+
+  function buildCasaFinancialSummary(totals, utilidadKpkSummary) {
+    const totalGlobalCasa = roundMoney(totals?.total || 0);
+    const utilidadKpk = roundMoney(utilidadKpkSummary?.utilidadKpk || 0);
+    return {
+      utilidadKpk,
+      totalGlobalCasa,
+      disponibleDespuesCasa: roundMoney(utilidadKpk - totalGlobalCasa),
+      periodLabel: utilidadKpkSummary?.periodLabel || getCasaFilterPeriodLabel()
+    };
+  }
+
+  function buildCasaUtilidadKpkSummary() {
+    const filters = normalizeResumenFilters({
+      month: casaState.month,
+      year: casaState.year
+    });
+
+    if (!(filters.month && !filters.year)) {
+      const summary = buildResumenSummaryForFilters(filters);
+      return {
+        utilidadKpk: roundMoney(summary.utilidadPeriodo ?? summary.utilidadDelPeriodo ?? 0),
+        periodLabel: summary.periodLabel || getCasaFilterPeriodLabel()
+      };
+    }
+
+    const ventas = recalculateVentasWithCobros(appData.ventas, appData.cobros).map((record) => normalizeVentaRecord(record));
+    const compras = recalculateComprasProveedoresWithPagos(appData.comprasProveedores, appData.pagosProveedores).map((record) => normalizeCompraProveedorRecord(record));
+    const gastos = (Array.isArray(appData.gastos) ? appData.gastos : []).map((record) => normalizeGastoRecord(record));
+    const month = filters.month;
+    const matchesMonth = (dateInput) => {
+      const safeDate = toDateInputValue(dateInput);
+      return Boolean(safeDate && safeDate.slice(5, 7) === month);
+    };
+    const ventasUtilidad = ventas.filter((venta) => venta.activo && matchesMonth(venta.fechaOc));
+    const comprasUtilidad = compras.filter((compra) => compra.activo && matchesMonth(compra.fechaCompra));
+    const gastosUtilidad = gastos.filter((gasto) => gasto.activo && matchesMonth(gasto.fecha));
+    const totalVentasAjustadas = sumMoney(ventasUtilidad, (venta) => venta.ventaNetaAjustada);
+    const totalComprasAjustadas = sumMoney(comprasUtilidad, (compra) => compra.totalAjustado ?? compra.totalCompra);
+    const totalGastos = sumMoney(gastosUtilidad, (gasto) => gasto.monto);
+
+    return {
+      utilidadKpk: roundMoney(totalVentasAjustadas - totalComprasAjustadas - totalGastos),
+      periodLabel: `${getMonthLabel(month)} · todos los años`
+    };
+  }
+
+  function getCasaCategoryTotals(recordsSource = null) {
+    const records = Array.isArray(recordsSource) ? recordsSource.map((record) => normalizeCasaGastoRecord(record)) : getCasaGastosFiltrados();
+    const totalsByCategory = new Map();
+    records.forEach((record) => {
+      const categoryId = record.categoriaCasaId || '__sin_categoria__';
+      const categoria = getCatalogRecordById('categoriasCasa', categoryId);
+      const current = totalsByCategory.get(categoryId) || {
+        id: categoryId,
+        nombre: categoria?.nombre || record.categoriaCasaNombre || 'Sin categoría',
+        total: 0,
+        registros: 0,
+        activo: categoria ? Boolean(categoria.activo) : true
+      };
+      current.total = roundMoney(current.total + record.monto);
+      current.registros += 1;
+      totalsByCategory.set(categoryId, current);
+    });
+
+    const selectedCategoryId = cleanText(casaState.categoriaCasaId);
+    const baseCategories = getSortedCatalogRecords('categoriasCasa')
+      .filter((categoria) => selectedCategoryId ? categoria.id === selectedCategoryId : categoria.activo || totalsByCategory.has(categoria.id))
+      .map((categoria) => {
+        const current = totalsByCategory.get(categoria.id);
+        return {
+          id: categoria.id,
+          nombre: categoria.nombre || 'Categoría sin nombre',
+          total: roundMoney(current?.total || 0),
+          registros: current?.registros || 0,
+          activo: Boolean(categoria.activo)
+        };
+      });
+
+    totalsByCategory.forEach((item, categoryId) => {
+      if (!baseCategories.some((categoria) => categoria.id === categoryId)) {
+        baseCategories.push(item);
+      }
+    });
+
+    return baseCategories.sort((a, b) => compareVisualText(a.nombre, b.nombre));
+  }
+
+  function renderCasaCategoryTotals(categoryTotals) {
+    if (!categoryTotals.length) {
+      return `
+        <div class="empty-state compact-empty">
+          <strong>No hay categorías Casa para totalizar.</strong>
+          <p>Agrega categorías en Catálogos → Categorías Casa para ver el desglose.</p>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="casa-category-total-list">
+        ${categoryTotals.map((item) => `
+          <div class="casa-category-total-row ${item.registros ? '' : 'is-empty'}">
+            <span title="${escapeHtml(item.nombre)}">${escapeHtml(item.nombre)}${item.activo ? '' : ' · inactiva'}</span>
+            <strong>${escapeHtml(formatMoney(item.total))}</strong>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  function getCasaFilterPeriodLabel() {
+    const parts = [];
+    if (casaState.month) parts.push(getMonthLabel(casaState.month));
+    if (casaState.year) parts.push(casaState.year);
+    return parts.join(' · ') || 'Todo el histórico';
+  }
+
+  function getCasaYearOptions() {
+    const currentYear = new Date().getFullYear();
+    const years = new Set([currentYear - 1, currentYear, currentYear + 1].map(String));
+    getCasaGastosOrdenados({ includeInactive: true }).forEach((record) => {
+      const safeDate = toDateInputValue(record.fecha);
+      if (safeDate) years.add(safeDate.slice(0, 4));
+    });
+    if (casaState.year) years.add(String(casaState.year));
+    return Array.from(years).filter((year) => /^\d{4}$/.test(year)).sort((a, b) => Number(b) - Number(a));
+  }
+
+  function getCasaFilterLabel() {
+    const parts = [];
+    if (casaState.month) parts.push(getMonthLabel(casaState.month));
+    if (casaState.year) parts.push(casaState.year);
+    const categoria = casaState.categoriaCasaId ? getCatalogRecordById('categoriasCasa', casaState.categoriaCasaId) : null;
+    if (categoria) parts.push(categoria.nombre || 'Categoría');
+    return parts.join(' · ') || 'Todos';
+  }
+
+  function buildCasaGastoFromForm(form, existingRecord) {
+    const formData = new FormData(form);
+    const timestamp = nowIso();
+    const categoria = getCatalogRecordById('categoriasCasa', cleanText(formData.get('categoriaCasaId')));
+    const metodo = getCatalogRecordById('metodosPago', cleanText(formData.get('metodoPagoId')));
+    const methodValue = metodo?.id || metodo?.nombre || formData.get('metodoPagoId');
+    const requiredBankType = getBankTypeForPaymentMethod(methodValue);
+    const cuenta = requiredBankType ? getValidBankForPaymentMethod(methodValue, formData.get('cuentaBancoId'), existingRecord) : null;
+
+    return normalizeCasaGastoRecord({
+      ...(existingRecord || {}),
+      id: existingRecord?.id || generateId('casaGasto'),
+      fecha: toDateInputValue(formData.get('fecha')),
+      categoriaCasaId: categoria?.id || '',
+      categoriaCasaNombre: categoria?.nombre || '',
+      descripcion: cleanText(formData.get('descripcion')),
+      monto: parseMoney(formData.get('monto')),
+      metodoPagoId: metodo?.id || '',
+      metodoPagoNombre: metodo?.nombre || '',
+      cuentaBancoId: requiredBankType ? (cuenta?.id || '') : '',
+      cuentaBancoNombre: requiredBankType ? (cuenta?.nombre || '') : '',
+      cuentaBancoTipo: requiredBankType ? normalizeBankType(cuenta?.tipo) : '',
+      observacion: cleanText(formData.get('observacion')),
+      estado: 'Registrado',
+      activo: true,
+      createdAt: existingRecord?.createdAt || timestamp,
+      updatedAt: timestamp
+    });
+  }
+
+  function validateCasaGastoRecord(record, existingRecord = null) {
+    if (!record.fecha) return 'La fecha del gasto Casa es obligatoria.';
+    if (!record.categoriaCasaId || !getSelectableCatalogRecords('categoriasCasa', existingRecord?.categoriaCasaId).some((item) => item.id === record.categoriaCasaId)) return 'Selecciona una Categoría Casa válida.';
+    if (!getActiveCatalogRecords('categoriasCasa').some((item) => item.id === record.categoriaCasaId) && record.categoriaCasaId !== existingRecord?.categoriaCasaId) return 'Selecciona una Categoría Casa activa.';
+    if (Number.isNaN(parseMoney(record.monto)) || record.monto <= 0) return 'El monto debe ser mayor que cero.';
+    if (!record.metodoPagoId || !getActiveCatalogRecords('metodosPago').some((item) => item.id === record.metodoPagoId)) return 'Selecciona un método de pago activo.';
+    const bankError = validateBankForPaymentMethod(record, existingRecord);
+    if (bankError) return bankError;
+    return '';
+  }
+
+  function saveCasaGastoRecord(form) {
+    const existingId = cleanText(new FormData(form).get('id'));
+    const records = Array.isArray(appData.casaGastos) ? appData.casaGastos : [];
+    const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
+    const newRecord = buildCasaGastoFromForm(form, existingRecord);
+    const validationError = validateCasaGastoRecord(newRecord, existingRecord);
+
+    if (validationError) {
+      casaState.message = validationError;
+      casaState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+
+    if (existingRecord) {
+      appData.casaGastos = records.map((record) => record.id === existingId ? newRecord : record);
+      casaState.message = `Gasto Casa actualizado: ${formatMoney(newRecord.monto)}.`;
+    } else {
+      appData.casaGastos = [newRecord, ...records];
+      casaState.message = `Gasto Casa registrado: ${formatMoney(newRecord.monto)}.`;
+    }
+
+    casaState.editingId = null;
+    casaState.messageType = 'success';
+    saveData(appData);
+    registerActivity({
+      module: 'Casa',
+      action: existingRecord ? 'Editado' : 'Creado',
+      entityType: 'Gasto Casa',
+      entityRef: newRecord.categoriaCasaNombre || newRecord.descripcion || 'Casa',
+      amount: newRecord.monto,
+      detail: buildActivityDetail([existingRecord ? 'Gasto Casa editado' : 'Gasto Casa registrado', newRecord.categoriaCasaNombre || 'Casa', formatMoney(newRecord.monto)]),
+      source: 'local'
+    });
+    renderRoute();
+  }
+
+  function editCasaGastoRecord(recordId) {
+    const record = (Array.isArray(appData.casaGastos) ? appData.casaGastos : []).find((item) => item.id === recordId);
+    if (!record) return;
+    casaState.editingId = recordId;
+    casaState.message = null;
+    renderRoute();
+  }
+
+  function deleteCasaGastoRecord(recordId) {
+    const records = Array.isArray(appData.casaGastos) ? appData.casaGastos : [];
+    const record = records.find((item) => item.id === recordId);
+    if (!record) return;
+    const ok = window.confirm('¿Eliminar este gasto de Casa? Solo se borrará este registro del módulo Casa.');
+    if (!ok) return;
+    appData.casaGastos = records.filter((item) => item.id !== recordId);
+    casaState.editingId = null;
+    casaState.message = `Gasto Casa eliminado: ${formatMoney(record.monto)}.`;
+    casaState.messageType = 'success';
+    saveData(appData);
+    renderRoute();
+  }
+
+  function clearCasaForm() {
+    casaState.editingId = null;
+    casaState.message = null;
+    renderRoute();
+  }
+
+  function updateCasaFiltersFromForm(form) {
+    const formData = new FormData(form);
+    casaState.month = /^\d{2}$/.test(String(formData.get('month') || '')) ? String(formData.get('month')) : '';
+    casaState.year = /^\d{4}$/.test(String(formData.get('year') || '')) ? String(formData.get('year')) : '';
+    casaState.categoriaCasaId = cleanText(formData.get('categoriaCasaId'));
+    casaState.message = null;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function clearCasaFilters() {
+    casaState.month = '';
+    casaState.year = String(new Date().getFullYear());
+    casaState.categoriaCasaId = '';
+    casaState.message = null;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function isCasaCategoriaInUse(categoriaId) {
+    const safeId = cleanText(categoriaId);
+    if (!safeId) return false;
+    return (Array.isArray(appData.casaGastos) ? appData.casaGastos : []).some((record) => normalizeCasaGastoRecord(record).categoriaCasaId === safeId);
+  }
+
+  function setupCasaSearch() {
+    setupAccordionSearch('[data-casa-search]', 'casa', '[data-casa-card]');
+  }
+
+
   function renderConfiguracion() {
     const config = normalizeConfiguracion(appData.configuracion);
     const currentRole = getCurrentRoleDefinition();
@@ -16220,6 +16880,7 @@
           <div class="status-item"><strong>Compras</strong><span>${preview.counts.comprasProveedores}</span></div>
           <div class="status-item"><strong>Pagos</strong><span>${preview.counts.pagosProveedores}</span></div>
           <div class="status-item"><strong>Gastos</strong><span>${preview.counts.gastos}</span></div>
+          <div class="status-item"><strong>Casa</strong><span>${preview.counts.casaGastos || 0}</span></div>
           <div class="status-item"><strong>Facturas</strong><span>${preview.counts.facturasModulo || 0}</span></div>
           <div class="status-item"><strong>Bdatos</strong><span>${preview.counts.bdatos || 0}</span></div>
           <div class="status-item"><strong>Bitácora</strong><span>${preview.counts.bitacora || 0}</span></div>
@@ -16263,6 +16924,7 @@
       comprasProveedores,
       pagosProveedores,
       gastos: Array.isArray(data.gastos) ? data.gastos.length : 0,
+      casaGastos: Array.isArray(data.casaGastos) ? data.casaGastos.length : 0,
       bdatos: Array.isArray(data.bdatos) ? data.bdatos.length : 0,
       cierresMensuales,
       exportacionesExcel: Array.isArray(data.exportacionesExcel) ? data.exportacionesExcel.length : 0,
@@ -16365,6 +17027,7 @@
         comprasProveedores: snapshot.comprasProveedores || [],
         pagosProveedores: snapshot.pagosProveedores || [],
         gastos: snapshot.gastos || [],
+        casaGastos: snapshot.casaGastos || [],
         bdatos: snapshot.bdatos || [],
         bdatosUpdatedAt: snapshot.bdatosUpdatedAt || '',
         cierres: snapshot.cierresMensuales || [],
@@ -16531,7 +17194,7 @@
     const businessArrayAliases = [
       ...CATALOGS.map((catalog) => catalog.id),
       'ventas', 'cobros', 'comprasProveedores', 'proveedoresCompras', 'compras',
-      'pagosProveedores', 'pagos', 'gastos', 'cierresMensuales', 'cierres',
+      'pagosProveedores', 'pagos', 'gastos', 'casaGastos', 'gastosCasa', 'casa', 'cierresMensuales', 'cierres',
       'bdatos', 'Bdatos', 'exportacionesExcel'
     ];
     const hasAnyBusinessArray = businessArrayAliases.some((key) => (
@@ -16611,11 +17274,13 @@
           metodosPago: Array.isArray(catalogos.metodosPago) ? catalogos.metodosPago : registros.metodosPago,
           cuentasBancos: Array.isArray(catalogos.cuentasBancos) ? catalogos.cuentasBancos : registros.cuentasBancos,
           retenciones: Array.isArray(catalogos.retenciones) ? catalogos.retenciones : (Array.isArray(registros.retenciones) ? registros.retenciones : []),
+          categoriasCasa: Array.isArray(catalogos.categoriasCasa) ? catalogos.categoriasCasa : (Array.isArray(registros.categoriasCasa) ? registros.categoriasCasa : []),
           ventas: registros.ventas,
           cobros: registros.cobros,
           comprasProveedores: registros.comprasProveedores || registros.proveedoresCompras || registros.compras || [],
           pagosProveedores: registros.pagosProveedores || registros.pagos || [],
           gastos: registros.gastos,
+          casaGastos: registros.casaGastos || registros.gastosCasa || registros.casa || [],
           bdatos: registros.bdatos || registros.Bdatos || [],
           bdatosUpdatedAt: registros.bdatosUpdatedAt || registros.bdatosLastUpdatedAt || '',
           cierresMensuales: registros.cierresMensuales || registros.cierres || [],
@@ -16640,11 +17305,13 @@
         metodosPago: raw.metodosPago,
         cuentasBancos: raw.cuentasBancos,
         retenciones: Array.isArray(raw.retenciones) ? raw.retenciones : [],
+        categoriasCasa: Array.isArray(raw.categoriasCasa) ? raw.categoriasCasa : [],
         ventas: raw.ventas,
         cobros: raw.cobros,
         comprasProveedores: raw.comprasProveedores,
         pagosProveedores: raw.pagosProveedores,
         gastos: raw.gastos,
+        casaGastos: raw.casaGastos || raw.gastosCasa || raw.casa || [],
         bdatos: raw.bdatos || raw.Bdatos || [],
         bdatosUpdatedAt: raw.bdatosUpdatedAt || raw.bdatosLastUpdatedAt || '',
         cierresMensuales: raw.cierresMensuales || [],
@@ -16733,10 +17400,10 @@
     if (incomingNotas) incoming.notasModulo = incomingNotas;
     if (incomingFacturas) incoming.facturasModulo = incomingFacturas;
     const loaded = getJsonRecordCounts(incoming);
-    const hasBusinessArraysForPartial = [...CATALOGS.map((catalog) => catalog.id), 'ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'cierresMensuales'].some((key) => Array.isArray(importData?.[key]));
+    const hasBusinessArraysForPartial = [...CATALOGS.map((catalog) => catalog.id), 'ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'casaGastos', 'cierresMensuales'].some((key) => Array.isArray(importData?.[key]));
     const isPartialModulesImport = Boolean(importData?.__partialImport || incoming.__partialImport || ((incomingNotas || incomingFacturas) && !hasBusinessArraysForPartial));
     if (isPartialModulesImport) {
-      const added = { catalogos: 0, bdatos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, cierresMensuales: 0, exportacionesExcel: 0, notasModulo: 0, notas: 0, facturasModulo: 0, facturas: 0, total: 0 };
+      const added = { catalogos: 0, bdatos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, casaGastos: 0, cierresMensuales: 0, exportacionesExcel: 0, notasModulo: 0, notas: 0, facturasModulo: 0, facturas: 0, total: 0 };
       let skipped = 0;
       if (incomingNotas) {
         if (mode === 'replace') {
@@ -16792,7 +17459,7 @@
     const idMaps = buildCatalogMergeMaps(target, incoming, timestamp);
     const ventaIdMap = new Map();
     const compraIdMap = new Map();
-    const added = { catalogos: 0, bdatos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, cierresMensuales: 0, exportacionesExcel: 0, notasModulo: 0, notas: 0, facturasModulo: 0, facturas: 0, total: 0 };
+    const added = { catalogos: 0, bdatos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, casaGastos: 0, cierresMensuales: 0, exportacionesExcel: 0, notasModulo: 0, notas: 0, facturasModulo: 0, facturas: 0, total: 0 };
     let skipped = 0;
 
     CATALOGS.forEach((catalog) => {
@@ -16896,6 +17563,23 @@
       added.gastos += 1;
     });
 
+    incoming.casaGastos.forEach((gasto) => {
+      const remapped = normalizeCasaGastoRecord({
+        ...gasto,
+        categoriaCasaId: idMaps.categoriasCasa.get(gasto.categoriaCasaId) || gasto.categoriaCasaId,
+        metodoPagoId: idMaps.metodosPago.get(gasto.metodoPagoId) || gasto.metodoPagoId,
+        cuentaBancoId: idMaps.cuentasBancos.get(gasto.cuentaBancoId) || gasto.cuentaBancoId,
+        updatedAt: gasto.updatedAt || timestamp
+      });
+      const existing = target.casaGastos.find((item) => item.id === remapped.id || getCasaGastoDuplicateKey(item) === getCasaGastoDuplicateKey(remapped));
+      if (existing) {
+        skipped += 1;
+        return;
+      }
+      target.casaGastos = [remapped, ...target.casaGastos];
+      added.casaGastos += 1;
+    });
+
     incoming.bdatos.forEach((articulo) => {
       const normalized = normalizeBdatosRecord({ ...articulo, updatedAt: articulo.updatedAt || timestamp });
       const existing = target.bdatos.find((item) => item.id === normalized.id || cleanText(item.codigo) === cleanText(normalized.codigo));
@@ -16954,7 +17638,7 @@
 
     target.ventas = recalculateVentasWithCobros(target.ventas, target.cobros);
     target.comprasProveedores = recalculateComprasProveedoresWithPagos(target.comprasProveedores, target.pagosProveedores);
-    added.total = added.catalogos + added.bdatos + added.ventas + added.cobros + added.comprasProveedores + added.pagosProveedores + added.gastos + added.cierresMensuales + added.exportacionesExcel + added.notasModulo + added.facturasModulo;
+    added.total = added.catalogos + added.bdatos + added.ventas + added.cobros + added.comprasProveedores + added.pagosProveedores + added.gastos + added.casaGastos + added.cierresMensuales + added.exportacionesExcel + added.notasModulo + added.facturasModulo;
     appData = normalizeData({
       ...target,
       configuracion: {
@@ -17966,6 +18650,69 @@
     };
   }
 
+  function getCasaGastosForExcel(range) {
+    return (Array.isArray(appData.casaGastos) ? appData.casaGastos : [])
+      .map((record) => normalizeCasaGastoRecord(record))
+      .filter((record) => record.activo && isDateInResumenRange(record.fecha, range))
+      .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || compareVisualText(a.categoriaCasaNombre || '', b.categoriaCasaNombre || '') || compareVisualText(a.descripcion || '', b.descripcion || ''));
+  }
+
+  function getCasaCategoryTotalsForExcel(recordsSource = []) {
+    const records = Array.isArray(recordsSource) ? recordsSource.map((record) => normalizeCasaGastoRecord(record)) : [];
+    const totalsByCategory = new Map();
+    records.forEach((record) => {
+      const categoryId = record.categoriaCasaId || '__sin_categoria__';
+      const categoria = getCatalogRecordById('categoriasCasa', categoryId);
+      const current = totalsByCategory.get(categoryId) || {
+        id: categoryId,
+        nombre: categoria?.nombre || record.categoriaCasaNombre || 'Sin categoría',
+        total: 0,
+        registros: 0,
+        activo: categoria ? Boolean(categoria.activo) : true
+      };
+      current.total = roundMoney(current.total + record.monto);
+      current.registros += 1;
+      totalsByCategory.set(categoryId, current);
+    });
+
+    const categories = getSortedCatalogRecords('categoriasCasa')
+      .filter((categoria) => categoria.activo || totalsByCategory.has(categoria.id))
+      .map((categoria) => {
+        const current = totalsByCategory.get(categoria.id);
+        return {
+          id: categoria.id,
+          nombre: categoria.nombre || 'Categoría sin nombre',
+          total: roundMoney(current?.total || 0),
+          registros: current?.registros || 0,
+          activo: Boolean(categoria.activo)
+        };
+      });
+
+    totalsByCategory.forEach((item, categoryId) => {
+      if (!categories.some((categoria) => categoria.id === categoryId)) {
+        categories.push({
+          id: item.id || categoryId,
+          nombre: item.nombre || 'Sin categoría',
+          total: roundMoney(item.total || 0),
+          registros: item.registros || 0,
+          activo: Boolean(item.activo)
+        });
+      }
+    });
+
+    return categories.sort((a, b) => compareVisualText(a.nombre, b.nombre));
+  }
+
+  function buildCasaExcelFinancialSummary(categoryTotals = [], utilidadKpkValue = 0) {
+    const totalGlobalCasa = sumMoney(categoryTotals, (item) => item.total);
+    const utilidadKpk = roundMoney(utilidadKpkValue || 0);
+    return {
+      utilidadKpk,
+      totalGlobalCasa,
+      disponibleDespuesCasa: roundMoney(utilidadKpk - totalGlobalCasa)
+    };
+  }
+
   function buildResumenEjercicioData(summary) {
     const source = isPlainObject(summary) ? summary : {};
     const ventasAjustadas = roundMoney(source.utilidadVentasPeriodo ?? source.totalVendido ?? source.ventaNetaAjustada ?? 0);
@@ -18041,7 +18788,28 @@
       [xlsxTotalText('Utilidad del período'), xlsxTotalMoney(ejercicio.utilidadPeriodo)]
     );
 
-    return { name: 'Resumen', rows, cols: [28, 18, 18, 16, 18, 14, 18, 18] };
+    const casaCategoryTotals = Array.isArray(summary.casaCategoryTotals)
+      ? summary.casaCategoryTotals
+      : getCasaCategoryTotalsForExcel(summary.casaGastosPeriodo || []);
+    const casaResumen = isPlainObject(summary.casaResumen)
+      ? buildCasaExcelFinancialSummary(casaCategoryTotals, summary.casaResumen.utilidadKpk)
+      : buildCasaExcelFinancialSummary(casaCategoryTotals, ejercicio.utilidadPeriodo);
+    rows.push(
+      [],
+      [xlsxSubtitle('Casa')],
+      [xlsxText('Fórmula'), xlsxText('Utilidad KPK - Total global Casa = Disponible después de Casa')],
+      xlsxHeaderRow(['Cuenta', 'Monto']),
+      [xlsxTotalText('Utilidad KPK'), xlsxTotalMoney(casaResumen.utilidadKpk)]
+    );
+    casaCategoryTotals.forEach((item) => {
+      rows.push([xlsxText(item.nombre || 'Categoría Casa'), xlsxMoney(item.total || 0)]);
+    });
+    rows.push(
+      [xlsxTotalText('Total global Casa'), xlsxTotalMoney(casaResumen.totalGlobalCasa)],
+      [xlsxTotalText('Disponible después de Casa'), xlsxTotalMoney(casaResumen.disponibleDespuesCasa)]
+    );
+
+    return { name: 'Resumen', rows, cols: [34, 18, 18, 16, 18, 14, 18, 18] };
   }
 
   function buildVentasSheet(summary) {
@@ -19204,6 +19972,11 @@ ${rowsXml}
     return [gasto.fecha, gasto.tipoGastoId || normalizeNameForCompare(gasto.tipoGastoNombre), roundMoney(gasto.monto)].join('|');
   }
 
+  function getCasaGastoDuplicateKey(record) {
+    const gasto = normalizeCasaGastoRecord(record);
+    return [gasto.fecha, gasto.categoriaCasaId || normalizeNameForCompare(gasto.categoriaCasaNombre), normalizeNameForCompare(gasto.descripcion), roundMoney(gasto.monto)].join('|');
+  }
+
   function clearExcelImportState() {
     excelImportState = {
       fileName: '',
@@ -19276,6 +20049,7 @@ ${rowsXml}
     if (catalog.id === 'metodosPago') return 'Método simple';
     if (catalog.id === 'cuentasBancos') return `Tipo: ${getBankTypeDisplay(record)}`;
     if (catalog.id === 'retenciones') return `Porcentaje: ${formatPercentageDisplay(record.porcentaje)}`;
+    if (catalog.id === 'categoriasCasa') return 'Categoría propia de Casa';
     return '';
   }
 
@@ -19288,7 +20062,8 @@ ${rowsXml}
       proveedores: ['proveedores', 'comprasProveedores', 'pagosProveedores'],
       pagos: ['proveedores', 'comprasProveedores', 'pagosProveedores', 'metodosPago', 'cuentasBancos'],
       gastos: ['tiposGasto', 'metodosPago', 'cuentasBancos', 'gastos'],
-      catalogos: ['clientes', 'sucursales', 'proveedores', 'tiposGasto', 'metodosPago', 'cuentasBancos', 'retenciones'],
+      casa: ['categoriasCasa', 'metodosPago', 'cuentasBancos', 'casaGastos'],
+      catalogos: ['clientes', 'sucursales', 'proveedores', 'tiposGasto', 'categoriasCasa', 'metodosPago', 'cuentasBancos', 'retenciones'],
       bdatos: ['bdatos'],
       excel: ['ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos'],
       respaldo: DATA_KEYS,
@@ -19430,7 +20205,7 @@ ${rowsXml}
       }
     }
 
-    const duplicate = hasCatalogDuplicate(catalog, record, existingId, catalog.id === 'cuentasBancos');
+    const duplicate = hasCatalogDuplicate(catalog, record, existingId, catalog.id === 'cuentasBancos' || catalog.id === 'categoriasCasa');
 
     if (duplicate) {
       if (catalog.id === 'cuentasBancos') {
@@ -19517,6 +20292,16 @@ ${rowsXml}
     const record = records.find((item) => item.id === recordId);
     if (!record) return;
 
+    if (catalog.id === 'categoriasCasa' && record.activo && !isCasaCategoriaInUse(record.id)) {
+      appData[catalog.id] = records.filter((item) => item.id !== recordId);
+      catalogState.editingId = null;
+      catalogState.message = `${record.nombre} eliminado de Categorías Casa.`;
+      catalogState.messageType = 'success';
+      saveData(appData);
+      renderRoute();
+      return;
+    }
+
     const shouldActivate = !record.activo;
     if (shouldActivate) {
       const duplicate = hasCatalogDuplicate(catalog, record, recordId, false);
@@ -19576,6 +20361,7 @@ ${rowsXml}
     else if (id === getCobroModalId()) clearCobroForm();
     else if (id === getPagoModalId()) clearPagoProveedorForm();
     else if (id === getGastoModalId()) clearGastoForm();
+    else if (id === getCasaModalId()) clearCasaForm();
     else if (id === getFacturasModalId()) clearFacturaForm();
     else if (id === getNotasModalId()) {
       notasState.detailType = '';
@@ -19997,6 +20783,38 @@ ${rowsXml}
       button.addEventListener('click', () => annulGastoRecord(button.dataset.gastoAnnul));
     });
 
+    viewRoot.querySelectorAll('[data-casa-filters]').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        updateCasaFiltersFromForm(form);
+      });
+      form.addEventListener('change', () => updateCasaFiltersFromForm(form));
+    });
+
+    viewRoot.querySelectorAll('[data-casa-clear-filters]').forEach((button) => {
+      button.addEventListener('click', clearCasaFilters);
+    });
+
+    viewRoot.querySelectorAll('[data-casa-form]').forEach((form) => {
+      setupPaymentBankField(form);
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveCasaGastoRecord(form);
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-casa-clear], [data-casa-cancel]').forEach((button) => {
+      button.addEventListener('click', clearCasaForm);
+    });
+
+    viewRoot.querySelectorAll('[data-casa-edit]').forEach((button) => {
+      button.addEventListener('click', () => editCasaGastoRecord(button.dataset.casaEdit));
+    });
+
+    viewRoot.querySelectorAll('[data-casa-delete]').forEach((button) => {
+      button.addEventListener('click', () => deleteCasaGastoRecord(button.dataset.casaDelete));
+    });
+
     viewRoot.querySelectorAll('[data-history-venta]').forEach((button) => {
       button.addEventListener('click', () => showDocumentHistory('venta', button.dataset.historyVenta));
     });
@@ -20111,6 +20929,7 @@ ${rowsXml}
     setupCobrosSearch();
     setupPagosSearch();
     setupGastosSearch();
+    setupCasaSearch();
 
   }
 
