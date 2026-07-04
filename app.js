@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.97-post12-casa-etapa3-fix-casa-nav';
+  const APP_VERSION = '0.17.98-post12-casa-fix-utilidad-kpk-periodo';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1047,8 +1047,8 @@
 
   let casaState = {
     editingId: null,
-    month: '',
-    year: String(new Date().getFullYear()),
+    month: getCurrentMonthValue(),
+    year: getCurrentYearValue(),
     categoriaCasaId: '',
     message: null,
     messageType: 'success'
@@ -2543,6 +2543,14 @@
 
   function todayInputValue() {
     return formatDateInput(new Date());
+  }
+
+  function getCurrentMonthValue() {
+    return String(new Date().getMonth() + 1).padStart(2, '0');
+  }
+
+  function getCurrentYearValue() {
+    return String(new Date().getFullYear());
   }
 
   function addDaysToDate(dateInput, days) {
@@ -5378,7 +5386,7 @@
     return `
       <section class="hero">
         <div>
-          <span class="eyebrow">Post 12 / Casa Etapa 3 · Fix navegación</span>
+          <span class="eyebrow">Post 12 / Casa · Fix Utilidad KPK por período</span>
           <h1>KSA PRÁCTIKA</h1>
           <p class="lead">Webapp estática para convertir el control de OC, cobros, proveedores, pagos, gastos, Casa y documentación en un sistema operativo continuo. Ya tiene menú, navegación fija, Catálogos editables, Ventas / OC, Cobros de clientes, Proveedores / Compras, Pagos a proveedores, Gastos, Casa independiente, Notas, Facturas, mora avanzada, alertas, historial por documento, Resumen / Tablero operativo, importación inicial desde Excel, Configuración, roles básicos locales y respaldo JSON validado, exportación Excel y cierre mensual.</p>
         </div>
@@ -16411,8 +16419,8 @@
   }
 
   function clearCasaFilters() {
-    casaState.month = '';
-    casaState.year = String(new Date().getFullYear());
+    casaState.month = getCurrentMonthValue();
+    casaState.year = getCurrentYearValue();
     casaState.categoriaCasaId = '';
     casaState.message = null;
     renderRoute({ preserveScroll: true });
