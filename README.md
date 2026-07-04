@@ -1,3 +1,11 @@
+## 0.17.79-post12-facturas-pagina-activa-busqueda-global
+
+- Facturas conserva la página activa al guardar, editar, cerrar modal o borrar, con ajuste automático a la última página válida cuando el total cambia.
+- La búsqueda por número revisa todas las facturas de la vista/período actual antes de paginar y muestra la página donde está cada resultado.
+- Se agregó acción compacta para ir a la página del resultado encontrado, sin guardar estado visual en JSON ni localStorage de negocio.
+- Se mantiene la retención temporal de Fecha, Cliente y Sucursal; no se toca Ventas / OC, Cobros, Excel, JSON, cierres ni saldos.
+- Versión/cache PWA actualizado a `0.17.79-post12-facturas-pagina-activa-busqueda-global`.
+
 ## 0.17.78-post12-facturas-retencion-temporal-e2
 
 - Facturas conserva temporalmente Fecha, Cliente y Sucursal en el formulario de nueva factura mientras el usuario permanece dentro del módulo.

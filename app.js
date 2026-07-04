@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.17.78-post12-facturas-retencion-temporal-e2';
+  const APP_VERSION = '0.17.79-post12-facturas-pagina-activa-busqueda-global';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -4224,6 +4224,11 @@
     }
     if (previousRoute === 'facturas' && route !== 'facturas') {
       resetFacturasTransientState();
+      facturasState.page = 1;
+      facturasState.search = '';
+    }
+    if (route === 'facturas' && previousRoute && previousRoute !== 'facturas') {
+      resetFacturasPagedView();
     }
     lastRenderedRoute = route;
     setActiveNav(route);
@@ -4721,6 +4726,11 @@
         return;
       }
       saveStoredWorkPeriodKey(match.periodo);
+      if (getRoute() === 'facturas') {
+        facturasState.page = 1;
+        facturasState.search = '';
+        facturasState.editingId = null;
+      }
       renderRoute({ preserveScroll: true });
     });
   }
@@ -5805,10 +5815,77 @@
     sucursalSelect.disabled = !selectedClienteId || !validSucursales.length;
   }
 
-  function getFacturasSearchResults(data = getFacturasData()) {
-    const query = normalizeKeyForCompare(facturasState.search);
+  function getFacturasSearchQuery() {
+    return normalizeKeyForCompare(facturasState.search);
+  }
+
+  function getFacturasSearchBase(data = getFacturasData(), periodInfo = getCurrentFacturasPeriodInfo()) {
+    const periodo = normalizeWorkPeriodKey(periodInfo?.periodo);
+    if (!periodo) {
+      return {
+        periodo: '',
+        label: 'vista actual',
+        records: [],
+        closed: false
+      };
+    }
+
+    if (isFacturaPeriodClosed(periodo)) {
+      const group = buildFacturasHistoryGroups(data).find((item) => item.periodo === periodo);
+      return {
+        periodo,
+        label: group?.label || periodInfo.label || buildWorkPeriodInfo(periodo)?.label || periodo,
+        records: sortFacturasModulo(group?.records || []),
+        closed: true
+      };
+    }
+
+    return {
+      periodo,
+      label: periodInfo.label || buildWorkPeriodInfo(periodo)?.label || periodo,
+      records: getFacturasForPeriod(periodo, data),
+      closed: false
+    };
+  }
+
+  function isFacturaSearchExactMatch(recordNo, query) {
+    const recordKey = normalizeKeyForCompare(recordNo);
+    const searchKey = normalizeKeyForCompare(query);
+    if (!recordKey || !searchKey) return false;
+    if (recordKey === searchKey) return true;
+    const recordParts = getFacturaConsecutivoParts(recordNo);
+    const queryParts = getFacturaConsecutivoParts(query);
+    return Boolean(recordParts && queryParts && recordParts.signature === queryParts.signature && recordParts.value === queryParts.value);
+  }
+
+  function getFacturasSearchResults(data = getFacturasData(), periodInfo = getCurrentFacturasPeriodInfo()) {
+    const query = getFacturasSearchQuery();
+    const base = getFacturasSearchBase(data, periodInfo);
     if (!query) return [];
-    return sortFacturasModulo(data.facturas || []).filter((record) => normalizeKeyForCompare(record.no).includes(query));
+    return base.records
+      .map((record, index) => ({
+        record: normalizeFacturaModuloRecord(record),
+        index,
+        page: Math.floor(index / FACTURAS_PAGE_SIZE) + 1,
+        exact: isFacturaSearchExactMatch(record?.no, facturasState.search),
+        scopeLabel: base.label,
+        scopePeriod: base.periodo,
+        scopeClosed: base.closed
+      }))
+      .filter((item) => normalizeKeyForCompare(item.record.no).includes(query));
+  }
+
+  function clampFacturasPageForCurrentPeriod(data = getFacturasData(), periodInfo = getCurrentFacturasPeriodInfo()) {
+    const base = getFacturasSearchBase(data, periodInfo);
+    const totalPages = Math.max(1, Math.ceil(base.records.length / FACTURAS_PAGE_SIZE));
+    facturasState.page = Math.min(Math.max(1, Number.parseInt(facturasState.page, 10) || 1), totalPages);
+    return { totalPages, records: base.records };
+  }
+
+  function resetFacturasPagedView() {
+    facturasState.page = 1;
+    facturasState.search = '';
+    facturasState.editingId = null;
   }
 
   function renderFacturas() {
@@ -5822,7 +5899,8 @@
     const safeEditingRecord = facturasState.editingId ? editingRecord : null;
     const periodRecords = currentPeriodClosed ? [] : getFacturasForPeriod(periodInfo.periodo, data);
     const summary = buildFacturasSummary(periodRecords);
-    const searchResults = getFacturasSearchResults(data);
+    const searchBase = getFacturasSearchBase(data, periodInfo);
+    const searchResults = getFacturasSearchResults(data, periodInfo);
     const historyGroups = buildFacturasHistoryGroups(data);
     if (!facturasState.historyOpenPeriod && historyGroups.length) facturasState.historyOpenPeriod = historyGroups[0].periodo;
     const totalPages = Math.max(1, Math.ceil(periodRecords.length / FACTURAS_PAGE_SIZE));
@@ -5850,7 +5928,7 @@
         ${facturasState.message ? `<div class="form-message ${facturasState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(facturasState.message)}</div>` : ''}
         ${renderFacturasSummary(periodInfo, summary, { closed: currentPeriodClosed })}
         ${renderFacturaForm(null, 'create')}
-        ${renderFacturasSearch(searchResults)}
+        ${renderFacturasSearch(searchResults, searchBase)}
         ${renderFacturasPeriodoList(periodInfo, pagedRecords, periodRecords.length, totalPages, { closed: currentPeriodClosed })}
         ${renderFacturasHistorico(historyGroups)}
         ${safeEditingRecord ? renderEditModal(getFacturasModalId(), 'Editar factura', 'Actualiza la factura sin salir del listado ni saltar al formulario principal.', renderFacturaForm(safeEditingRecord, 'edit')) : ''}
@@ -5941,8 +6019,10 @@
     `;
   }
 
-  function renderFacturasSearch(searchResults) {
+  function renderFacturasSearch(searchResults, searchBase = getFacturasSearchBase()) {
     const hasQuery = Boolean(cleanText(facturasState.search));
+    const scopeLabel = searchBase?.label || 'vista actual';
+    const totalScope = Array.isArray(searchBase?.records) ? searchBase.records.length : 0;
     return `
       <article class="panel-card facturas-search-panel">
         <div class="section-title-row">
@@ -5950,6 +6030,7 @@
             <span class="eyebrow mini">Buscar</span>
             <h2>Búsqueda por No. de factura</h2>
           </div>
+          <span class="badge">${escapeHtml(scopeLabel)}</span>
         </div>
         <form class="compact-search-row" data-factura-search-form>
           <label class="form-field compact-search-field">
@@ -5961,22 +6042,65 @@
             <button type="button" class="secondary-action compact-action" data-factura-search-clear title="Limpiar búsqueda">Limpiar</button>
           </div>
         </form>
-        ${hasQuery ? renderFacturasSearchResults(searchResults) : '<p class="compact-note muted-text">Busca globalmente en el período de trabajo, otros períodos abiertos y el histórico cerrado.</p>'}
+        ${hasQuery ? renderFacturasSearchResults(searchResults) : `<p class="compact-note muted-text">Busca en todas las facturas de ${escapeHtml(scopeLabel)} antes de aplicar paginación visual. Base actual: ${totalScope} factura(s).</p>`}
       </article>
     `;
   }
 
-  function renderFacturasSearchResults(records) {
-    if (!records.length) return '<p class="muted-text compact-note">No se encontraron facturas con ese número.</p>';
-    const rows = records.map((record) => renderFacturaRow(record, { includePeriod: true })).join('');
-    return renderOperationalTableShell({
-      shellClass: 'facturas-search-table',
-      wrapClass: 'facturas-table-wrap',
-      ariaLabel: 'Resultados de búsqueda de facturas',
-      tableClass: 'operational-table-facturas',
-      headers: '<th>No.</th><th>Período</th><th>Fecha</th><th>Cliente</th><th>Sucursal</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones>',
-      rows
-    });
+  function renderFacturasSearchResults(results) {
+    const records = Array.isArray(results) ? results : [];
+    if (!records.length) return '<p class="muted-text compact-note">No se encontraron facturas con ese número en la vista actual.</p>';
+    const uniquePages = [...new Set(records.map((item) => item.page).filter(Boolean))];
+    const pageText = uniquePages.length === 1
+      ? `Factura encontrada en página ${uniquePages[0]}.`
+      : `Coincidencias ubicadas en páginas ${uniquePages.join(', ')}.`;
+    const rows = records.map((item) => renderFacturaSearchResultRow(item)).join('');
+    return `
+      <div class="facturas-search-result-note">
+        <p class="compact-note muted-text">${escapeHtml(pageText)}</p>
+      </div>
+      ${renderOperationalTableShell({
+        shellClass: 'facturas-search-table',
+        wrapClass: 'facturas-table-wrap',
+        ariaLabel: 'Resultados de búsqueda de facturas',
+        tableClass: 'operational-table-facturas',
+        headers: '<th>No.</th><th>Período</th><th>Página</th><th>Fecha</th><th>Cliente</th><th>Sucursal</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones>',
+        rows
+      })}
+    `;
+  }
+
+  function renderFacturaSearchResultRow(result) {
+    const item = isPlainObject(result) ? result : { record: result, page: 1, scopeLabel: '' };
+    const factura = normalizeFacturaModuloRecord(item.record);
+    const periodInfo = getFacturaPeriodInfoFromDate(factura.fecha);
+    const origenLabel = getFacturaOrigenLabel(factura);
+    const clienteNombre = getFacturaClienteDisplay(factura);
+    const sucursalNombre = getFacturaSucursalDisplay(factura);
+    const closedPeriod = isFacturaPeriodClosed(factura.periodo);
+    const readonly = Boolean(closedPeriod || item.scopeClosed);
+    const page = Math.max(1, Number.parseInt(item.page, 10) || 1);
+    const actions = readonly
+      ? `<span class="muted-text compact-note">Página ${page}</span>`
+      : `<div class="record-actions compact-row-actions notas-icon-toolbar">
+          <button type="button" class="secondary-action compact-action mini" data-factura-go-page="${page}" title="Ir a página ${page}" aria-label="Ir a página ${page}">Ir pág. ${page}</button>
+          <button type="button" class="notas-icon-action mini" data-factura-edit="${escapeHtml(factura.id)}" title="Editar factura" aria-label="Editar factura ${escapeHtml(factura.no || '')}">✎</button>
+          <button type="button" class="notas-icon-action mini danger" data-factura-delete="${escapeHtml(factura.id)}" title="Borrar factura" aria-label="Borrar factura ${escapeHtml(factura.no || '')}">🗑️</button>
+        </div>`;
+    return `
+      <tr>
+        <td><span class="compact-primary" title="${escapeHtml(factura.no)}">${escapeHtml(factura.no || '—')}</span>${origenLabel ? `<small class="factura-origin-label" title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel)}</small>` : ''}</td>
+        <td><span>${escapeHtml(periodInfo.label)}</span></td>
+        <td><span class="badge subtle">Página ${page}</span></td>
+        <td><span>${escapeHtml(formatDate(factura.fecha))}</span></td>
+        <td><span title="${escapeHtml(clienteNombre || 'Sin cliente')}">${escapeHtml(clienteNombre || '—')}</span></td>
+        <td><span title="${escapeHtml(sucursalNombre || 'Sin sucursal')}">${escapeHtml(sucursalNombre || '—')}</span></td>
+        <td><span class="state-pill ${getEstadoClass(factura.estado)}">${escapeHtml(factura.estado)}</span></td>
+        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.monto || 0))}</span></td>
+        <td><small title="${escapeHtml(factura.observaciones)}">${escapeHtml(factura.observaciones || '—')}</small></td>
+        <td>${actions}</td>
+      </tr>
+    `;
   }
 
   function renderFacturasPeriodoList(periodInfo, records, totalRecords, totalPages, options = {}) {
@@ -6222,13 +6346,13 @@
     saveFacturasData(data);
     facturasState.editingId = null;
     if (!existing) {
-      facturasState.page = 1;
       facturasState.captureDraft = normalizeFacturasCaptureDraft({
         fecha,
         clienteId: catalogPayload.clienteId,
         sucursalId: catalogPayload.sucursalId
       });
     }
+    clampFacturasPageForCurrentPeriod(data);
     setFacturasMessage(existing ? 'Factura actualizada correctamente.' : 'Factura agregada correctamente.');
     renderRoute({ preserveScroll: true });
   }
@@ -6254,7 +6378,7 @@
     const record = findFacturaModuloById(id);
     if (!record) {
       setFacturasMessage('No se encontró la factura para borrar.', 'error');
-      renderRoute();
+      renderRoute({ preserveScroll: true });
       return;
     }
     if (!window.confirm(`¿Borrar la factura ${record.no || 'sin número'}? Esta acción es definitiva en el módulo Facturas y no toca Ventas, Cobros ni saldos.`)) return;
@@ -6266,19 +6390,39 @@
     const totalPages = Math.max(1, Math.ceil(periodRecords.length / FACTURAS_PAGE_SIZE));
     facturasState.page = Math.min(Math.max(1, facturasState.page), totalPages);
     setFacturasMessage('Factura borrada correctamente. Sin drama, sin tocar saldos.');
-    renderRoute();
+    renderRoute({ preserveScroll: true });
   }
 
   function updateFacturasSearch(form) {
     const formData = new FormData(form);
     facturasState.search = cleanText(formData.get('search'));
     facturasState.message = null;
-    renderRoute();
+    const results = getFacturasSearchResults(getFacturasData(), getCurrentFacturasPeriodInfo());
+    if (!facturasState.search) {
+      facturasState.page = 1;
+    } else if (results.length === 1) {
+      facturasState.page = results[0].page;
+      setFacturasMessage(`Factura encontrada en página ${results[0].page}.`);
+    } else {
+      facturasState.page = 1;
+    }
+    renderRoute({ preserveScroll: true });
   }
 
   function clearFacturasSearch() {
     facturasState.search = '';
-    renderRoute();
+    facturasState.page = 1;
+    facturasState.message = null;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function goToFacturaSearchPage(page) {
+    const data = getFacturasData();
+    const { totalPages } = clampFacturasPageForCurrentPeriod(data, getCurrentFacturasPeriodInfo());
+    const target = Math.min(Math.max(1, Number.parseInt(page, 10) || 1), totalPages);
+    facturasState.page = target;
+    setFacturasMessage(`Resultado ubicado en página ${target}.`);
+    renderRoute({ preserveScroll: true });
   }
 
   function changeFacturasPage(direction) {
@@ -18586,6 +18730,10 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-factura-page]').forEach((button) => {
       button.addEventListener('click', () => changeFacturasPage(button.dataset.facturaPage));
+    });
+
+    viewRoot.querySelectorAll('[data-factura-go-page]').forEach((button) => {
+      button.addEventListener('click', () => goToFacturaSearchPage(button.dataset.facturaGoPage));
     });
 
     viewRoot.querySelectorAll('[data-factura-history-toggle]').forEach((button) => {

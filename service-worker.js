@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_17_78_post12_facturas_retencion_temporal_e2';
+const CACHE_VERSION = 'v0_17_79_post12_facturas_pagina_activa_busqueda_global';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
