@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.07-post12-casa-etapa2-gastosporcategoria';
+  const APP_VERSION = '0.18.12-post12-firebasereal-bloquec-etapa5';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -969,7 +969,102 @@
     { key: 'fuente', description: 'local_preparado o firebase.' }
   ]);
   const USER_PREPARED_ACTIONS = Object.freeze(['Agregar usuario', 'Editar usuario', 'Desactivar usuario', 'Cambiar rol']);
-  const FIRESTORE_WORKSPACE_ID_PLACEHOLDER = 'workspace_ksa_practika';
+  const FIRESTORE_WORKSPACE_ID_PLACEHOLDER = 'ksa_practika';
+  const FIRESTORE_RULES_FILENAME = 'FIRESTORE_RULES_KSA_PRACTIKA.rules';
+  const FIRESTORE_GUIDE_FILENAME = 'GUIA_APLICAR_REGLAS_FIRESTORE.txt';
+  const FIRESTORE_WORKSPACE_NAME = 'KSA PRÁCTIKA';
+  const FIRESTORE_METADATA_SYSTEM_ID = 'sistema';
+  const FIRESTORE_VERIFY_DOC_ID = 'verificacion';
+  const FIRESTORE_IMPORT_COLLECTION_ID = 'importaciones';
+  const FIRESTORE_IMPORT_BATCH_LIMIT = 420;
+  const FIRESTORE_STARTUP_RULES_TEXT = `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isInitialAdmin() {
+      return signedIn() && request.auth.token.email == "atencion@arcano33.com";
+    }
+
+    function isWorkspaceUser(workspaceId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/usuarios/$(request.auth.uid))
+        && get(/databases/$(database)/documents/workspaces/$(workspaceId)/usuarios/$(request.auth.uid)).data.activo == true;
+    }
+
+    function isWorkspaceAdmin(workspaceId) {
+      return isWorkspaceUser(workspaceId)
+        && get(/databases/$(database)/documents/workspaces/$(workspaceId)/usuarios/$(request.auth.uid)).data.rol == "Administrador";
+    }
+
+    match /workspaces/{workspaceId} {
+      allow create: if isInitialAdmin();
+      allow read: if isInitialAdmin() || isWorkspaceUser(workspaceId);
+      allow update: if isInitialAdmin() || isWorkspaceAdmin(workspaceId);
+      allow delete: if false;
+
+      match /usuarios/{userId} {
+        allow read: if isInitialAdmin() || isWorkspaceUser(workspaceId);
+        allow create, update: if isInitialAdmin() || isWorkspaceAdmin(workspaceId);
+        allow delete: if false;
+      }
+
+      match /importaciones/{importId} {
+        allow read: if isInitialAdmin() || isWorkspaceAdmin(workspaceId);
+        allow create, update: if isInitialAdmin() || isWorkspaceAdmin(workspaceId);
+        allow delete: if false;
+      }
+
+      match /respaldosImportaciones/{importId} {
+        allow read: if isInitialAdmin() || isWorkspaceAdmin(workspaceId);
+        allow create, update: if isInitialAdmin() || isWorkspaceAdmin(workspaceId);
+        allow delete: if false;
+      }
+
+      match /{document=**} {
+        allow read: if isInitialAdmin() || isWorkspaceUser(workspaceId);
+        allow create, update: if isInitialAdmin() || isWorkspaceUser(workspaceId);
+        allow delete: if false;
+      }
+    }
+  }
+}`;
+  const FIRESTORE_GUIDE_TEXT = `GUÍA PARA APLICAR REGLAS FIRESTORE — KSA PRÁCTIKA
+
+Proyecto Firebase: ksakpk
+Project ID: ksakpk-ecb6d
+Administrador inicial: atencion@arcano33.com
+Workspace: ksa_practika
+
+Pasos:
+
+1. Entrar a Firebase Console.
+2. Abrir proyecto ksakpk.
+3. Ir a Firestore Database.
+4. Entrar a pestaña Reglas.
+5. Borrar reglas actuales.
+6. Pegar el contenido de FIRESTORE_RULES_KSA_PRACTIKA.rules.
+7. Publicar.
+8. Volver a la app.
+9. Iniciar sesión como atencion@arcano33.com.
+10. Ir a Configuración → Usuarios.
+11. Confirmar que el bloque visible se llama Usuarios.
+12. Presionar “Verificar Firestore”.
+13. Presionar “Activar nube” si la metadata importada ya está lista.
+14. Usar “Actualizar datos” para refrescar desde Firestore entre dispositivos.
+
+Notas importantes:
+
+- Firestore queda como fuente principal cuando la app muestra “Nube activa”.
+- JSON queda como respaldo auxiliar.
+- Las reglas no permiten borrado físico.
+- Usuarios e importaciones iniciales quedan reservados para Administrador.
+- Usuarios activos pueden registrar operaciones en línea.
+- No se reinician consecutivos de Excel Consulta, Excel Cierre ni JSON.
+- Si aparece el mensaje “Firestore no permite escritura todavía”, confirma que estas reglas hayan sido publicadas correctamente.`;
   const FIRESTORE_COLLECTION_CONTRACTS = Object.freeze([
     { key: 'configuracion', path: 'workspaces/{workspaceId}/configuracion/sistema', label: 'Configuración', source: 'configuracion', idPolicy: 'Documento estable por área de configuración.' },
     { key: 'usuarios', path: 'workspaces/{workspaceId}/usuarios/{uid}', label: 'Usuarios', source: 'firebase_auth_future', idPolicy: 'uid de Firebase Auth como documentId futuro.' },
@@ -987,7 +1082,8 @@
     { key: 'bitacora', path: 'workspaces/{workspaceId}/bitacora/{actividadId}', label: 'Bitácora', source: 'bitacora', idPolicy: 'Conservar id de actividad cuando exista; generar solo en etapas futuras.' },
     { key: 'consecutivos', path: 'workspaces/{workspaceId}/consecutivos/{tipo}', label: 'Consecutivos', source: 'consecutivos', idPolicy: 'Documentos separados: excelConsulta, excelCierre, json y otros.' },
     { key: 'metadata', path: 'workspaces/{workspaceId}/metadata/sistema', label: 'Metadata', source: 'metadata', idPolicy: 'Documento informativo de versión, schema, fechas y origen.' },
-    { key: 'respaldosImportaciones', path: 'workspaces/{workspaceId}/respaldosImportaciones/{importId}', label: 'Respaldos / Importaciones', source: 'jsonImportHistory', idPolicy: 'Conservar importId y marca de respaldo para evitar doble importación.' }
+    { key: 'respaldosImportaciones', path: 'workspaces/{workspaceId}/respaldosImportaciones/{importId}', label: 'Respaldos / Importaciones locales', source: 'jsonImportHistory', idPolicy: 'Conservar importId y marca de respaldo para historial local.' },
+    { key: 'importaciones', path: 'workspaces/{workspaceId}/importaciones/{importId}', label: 'Importaciones nube', source: 'cloudInitialImport', idPolicy: 'Registrar importId, hash simple, conteos, omitidos y estado final sin duplicar datos.' }
   ]);
   const FIRESTORE_RELATION_CONTRACTS = Object.freeze([
     { from: 'cobros', field: 'ventaId', to: 'ventas', purpose: 'Aplicar abonos y pagos a la OC correcta.' },
@@ -1180,6 +1276,18 @@
     preview: null,
     payload: null,
     activityLog: [],
+    message: null,
+    messageType: 'success'
+  };
+
+  let cloudInitialImportState = {
+    fileName: '',
+    rawText: '',
+    isProcessing: false,
+    preview: null,
+    prepared: null,
+    cloudStatus: null,
+    progress: null,
     message: null,
     messageType: 'success'
   };
@@ -1778,6 +1886,7 @@
         .slice(0, ACTIVITY_LOG_MAX_ENTRIES);
       localStorage.setItem(ACTIVITY_LOG_STORAGE_KEY, JSON.stringify(normalized));
       appActivityLog = normalized;
+      if (typeof scheduleCloudSnapshotSync === 'function') scheduleCloudSnapshotSync('activityLog');
       return normalized;
     } catch (error) {
       console.warn('KSA PRÁCTIKA: no se pudo guardar la bitácora local.', error);
@@ -1809,7 +1918,7 @@
         tsVisible: formatDateTime(ts),
         deviceId: identity.deviceId,
         deviceName: identity.deviceName,
-        source: 'local',
+        source: cloudOperationState.active ? 'firestore' : 'local',
         ...payload
       });
       const current = Array.isArray(appActivityLog) ? appActivityLog : loadActivityLog();
@@ -2465,6 +2574,7 @@
       const numeric = Number.parseInt(value, 10);
       const safeValue = Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
       localStorage.setItem(JSON_EXPORT_SEQUENCE_STORAGE_KEY, String(safeValue));
+      if (typeof scheduleCloudSnapshotSync === 'function') scheduleCloudSnapshotSync('jsonSequence');
     } catch (error) {
       console.warn('KSA PRÁCTIKA: no se pudo guardar el consecutivo local de exportación JSON.', error);
     }
@@ -3450,8 +3560,8 @@
     const collectionKeys = FIRESTORE_COLLECTION_CONTRACTS.map((item) => item.key);
     return Object.freeze({
       name: 'KSAFirestoreContract',
-      stage: 'Bloque A - Etapa 6/6',
-      status: 'prepared_only',
+      stage: 'Bloque C - Etapa 5/5',
+      status: 'workspace_preparation',
       firebaseConnected: false,
       firestoreActive: false,
       migrationEnabled: false,
@@ -3500,6 +3610,8 @@
         storage: 'localStorage',
         noDataMigration: true,
         noFirestoreWrites: true,
+        workspacePrepWritesEnabled: true,
+        noOperationalFirestoreWrites: true,
         noLocalStorageClear: true
       },
       getCollection: getFirestoreCollectionContract,
@@ -3511,10 +3623,20 @@
     return createKSAFirestoreContract();
   }
 
-  // BLOQUE A / Etapa 6: adaptador Firebase preparado sin configuración real.
-  // No carga SDK, no conecta Firebase, no escribe en nube y no bloquea modo local.
+  // BLOQUE C / Etapa 5: Firebase real + operación online controlada.
+  // Carga SDK modular desde CDN, activa Firebase Auth y usa Firestore como fuente principal cuando la nube está lista.
   const KSA_FIREBASE_CONFIG_GLOBAL = 'KSA_FIREBASE_CONFIG';
+  const KSA_FIREBASE_RUNTIME_GLOBAL = 'KSA_FIREBASE_RUNTIME';
+  const KSA_FIREBASE_READY_EVENT = 'ksa:firebase-runtime-ready';
   const FIREBASE_REQUIRED_CONFIG_KEYS = Object.freeze(['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId']);
+  const FIREBASE_SDK_VERSION = '12.15.0';
+  const FIREBASE_PROJECT_NAME = 'ksakpk';
+  const FIREBASE_INITIAL_ADMIN_EMAIL = 'atencion@arcano33.com';
+  const FIREBASE_SDK_IMPORTS = Object.freeze({
+    app: `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-app.js`,
+    auth: `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-auth.js`,
+    firestore: `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-firestore.js`
+  });
 
   function getRawKSAFirebaseConfig() {
     try {
@@ -3559,6 +3681,144 @@
     };
   }
 
+
+  function getKSAFirebaseProjectName() {
+    try {
+      const value = typeof window !== 'undefined' ? cleanText(window.KSA_FIREBASE_PROJECT_NAME) : '';
+      return value || FIREBASE_PROJECT_NAME;
+    } catch (_) {
+      return FIREBASE_PROJECT_NAME;
+    }
+  }
+
+  function getKSAFirebaseInitialAdminEmail() {
+    try {
+      const value = typeof window !== 'undefined' ? cleanText(window.KSA_FIREBASE_INITIAL_ADMIN) : '';
+      return value || FIREBASE_INITIAL_ADMIN_EMAIL;
+    } catch (_) {
+      return FIREBASE_INITIAL_ADMIN_EMAIL;
+    }
+  }
+
+  function getKSAFirebaseRuntime() {
+    try {
+      if (typeof window !== 'undefined' && window[KSA_FIREBASE_RUNTIME_GLOBAL] && typeof window[KSA_FIREBASE_RUNTIME_GLOBAL] === 'object') {
+        return window[KSA_FIREBASE_RUNTIME_GLOBAL];
+      }
+    } catch (_) {
+      // La app debe seguir local aunque el runtime externo falle.
+    }
+    return null;
+  }
+
+  function getKSAFirebaseErrorSummary(error) {
+    const code = cleanText(error?.code || error?.name || 'firebase/init-error');
+    const message = cleanText(error?.message || 'No se pudo inicializar Firebase. La app continúa en modo local.');
+    return { code, message };
+  }
+
+  function normalizeAuthEmail(email) {
+    return cleanText(email).toLowerCase();
+  }
+
+  function getFirebaseRoleForEmail(email) {
+    const safeEmail = normalizeAuthEmail(email);
+    const adminEmail = normalizeAuthEmail(getKSAFirebaseInitialAdminEmail());
+    if (safeEmail && adminEmail && safeEmail === adminEmail) {
+      return {
+        id: 'administrador',
+        label: 'Administrador',
+        configured: true,
+        source: 'firebase_admin_inicial'
+      };
+    }
+    if (safeEmail) {
+      return {
+        id: 'usuario',
+        label: 'Usuario normal pendiente',
+        configured: false,
+        source: 'firebase_auth_sin_permisos_configurados'
+      };
+    }
+    return {
+      id: '',
+      label: 'Sin sesión',
+      configured: false,
+      source: 'sin_sesion'
+    };
+  }
+
+  function normalizeFirebaseAuthUser(user) {
+    if (!user) return null;
+    const email = normalizeAuthEmail(user.email || '');
+    const role = getFirebaseRoleForEmail(email);
+    return {
+      uid: cleanText(user.uid || ''),
+      email,
+      displayName: cleanText(user.displayName || email || 'Usuario autenticado'),
+      emailVerified: Boolean(user.emailVerified),
+      roleId: role.id,
+      roleLabel: role.label,
+      roleConfigured: role.configured,
+      roleSource: role.source,
+      providerId: cleanText(user.providerId || 'firebase'),
+      authenticatedAt: nowIso()
+    };
+  }
+
+  function translateFirebaseAuthError(error) {
+    const code = cleanText(error?.code || error?.name || '');
+    const map = {
+      'auth/invalid-email': 'El correo no tiene un formato válido.',
+      'auth/missing-email': 'El correo es obligatorio.',
+      'auth/missing-password': 'La contraseña es obligatoria.',
+      'auth/invalid-credential': 'Correo o contraseña incorrectos.',
+      'auth/user-not-found': 'Este usuario no existe.',
+      'auth/wrong-password': 'Correo o contraseña incorrectos.',
+      'auth/network-request-failed': 'No hay conexión. Revisa internet.',
+      'auth/too-many-requests': 'Demasiados intentos. Espera un momento y prueba de nuevo.',
+      'auth/user-disabled': 'Este usuario está deshabilitado.',
+      'auth/operation-not-allowed': 'El acceso con correo y contraseña no está habilitado en Firebase.',
+      'auth/configuration-not-found': 'Firebase no está disponible. Puedes continuar en modo local.',
+      'auth/app-deleted': 'Firebase no está disponible. Puedes continuar en modo local.',
+      'firebase/init-error': 'Firebase no está disponible. Puedes continuar en modo local.'
+    };
+    return map[code] || 'Firebase no está disponible. Puedes continuar en modo local.';
+  }
+
+  function publishKSAFirebaseRuntime(payload = {}) {
+    try {
+      if (typeof window === 'undefined') return null;
+      const current = getKSAFirebaseRuntime() || {};
+      const base = { ...current, ...payload };
+      const cloudActiveFlag = Boolean(base.cloudActive);
+      const next = {
+        ...base,
+        updatedAt: nowIso(),
+        localMode: base.localMode !== undefined ? Boolean(base.localMode) : !cloudActiveFlag,
+        cloudActive: cloudActiveFlag,
+        cloudReadsEnabled: base.cloudReadsEnabled !== undefined ? Boolean(base.cloudReadsEnabled) : cloudActiveFlag,
+        cloudWritesEnabled: base.cloudWritesEnabled !== undefined ? Boolean(base.cloudWritesEnabled) : cloudActiveFlag,
+        initialImportEnabled: base.initialImportEnabled !== undefined ? Boolean(base.initialImportEnabled) : true,
+        noDataMigration: base.noDataMigration !== undefined ? Boolean(base.noDataMigration) : false,
+        noFirestoreWrites: base.noFirestoreWrites !== undefined ? Boolean(base.noFirestoreWrites) : !cloudActiveFlag,
+        noOperationalFirestoreWrites: base.noOperationalFirestoreWrites !== undefined ? Boolean(base.noOperationalFirestoreWrites) : !cloudActiveFlag,
+        workspacePrepWritesEnabled: true
+      };
+      window[KSA_FIREBASE_RUNTIME_GLOBAL] = next;
+      const { firebaseApp, auth, firestore, db, ...safeDetail } = next;
+      window.dispatchEvent(new CustomEvent(KSA_FIREBASE_READY_EVENT, { detail: safeDetail }));
+      return next;
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA Firebase: no se pudo publicar el estado del runtime.', error);
+      return null;
+    }
+  }
+
+  function buildFirebaseConfiguredMessage() {
+    return 'Firebase Auth está activo. Firestore puede operar como fuente principal cuando la importación inicial está completada.';
+  }
+
   function getFirebasePendingResult(action, extra = {}) {
     const status = getKSAFirebaseStatusSafe();
     return {
@@ -3566,8 +3826,8 @@
       action: cleanText(action) || 'firebase_pending',
       code: status.configComplete ? 'firebase/prepared_not_activated' : 'firebase/pending_configuration',
       message: status.configComplete
-        ? 'Firebase parece tener configuración, pero esta etapa no activa conexión real todavía. La app continúa en modo local.'
-        : 'Firebase pendiente de configuración. La app continúa en modo local.',
+        ? 'Firebase tiene configuración. Inicia sesión para verificar Firestore y activar nube cuando la metadata esté lista.'
+        : 'Firebase pendiente de configuración. La app puede continuar en modo local controlado.',
       localMode: true,
       cloudActive: false,
       firebaseConnected: false,
@@ -3579,126 +3839,1614 @@
   function createKSAFirebaseAdapter() {
     const state = {
       initialized: false,
+      initStarted: false,
+      initPromise: null,
+      initError: null,
+      sdkLoaded: false,
       firebaseApp: null,
       auth: null,
+      authModule: null,
+      firestoreModule: null,
+      unsubscribeAuth: null,
       firestore: null,
       currentUser: null,
       currentWorkspace: null,
-      lastCheckAt: null
+      cloudActive: false,
+      cloudMetadata: null,
+      lastSyncAt: '',
+      lastCloudReadAt: '',
+      lastCloudWriteAt: '',
+      lastSyncError: '',
+      lastCheckAt: null,
+      initializedAt: ''
     };
 
-    function getFirebaseStatus() {
-      const configStatus = inspectKSAFirebaseConfig();
-      state.lastCheckAt = nowIso();
+    function baseLocalStatus(configStatus) {
+      const runtime = getKSAFirebaseRuntime();
+      const projectId = cleanText(getRawKSAFirebaseConfig().projectId || runtime?.projectId || '');
+      const projectName = getKSAFirebaseProjectName();
+      const initialAdmin = getKSAFirebaseInitialAdminEmail();
+      const hasInitError = Boolean(state.initError || runtime?.initError);
+      const runtimeInitialized = Boolean(runtime?.initialized || state.initialized);
+      const runtimeLoading = Boolean(state.initStarted && !runtimeInitialized && !hasInitError);
+      const configured = configStatus.complete === true;
+      const errorSummary = state.initError || runtime?.initError || null;
+      const runtimeUser = isPlainObject(runtime?.currentUser) ? runtime.currentUser : null;
+      const currentUser = state.currentUser || runtimeUser || null;
+      const authState = currentUser ? 'authenticated' : 'signed_out';
+      const runtimeWorkspaceId = cleanText(runtime?.workspaceId || state.currentWorkspace?.id || FIRESTORE_WORKSPACE_ID_PLACEHOLDER);
+      const workspaceInitialized = Boolean(runtime?.workspaceInitialized || state.currentWorkspace?.initialized || state.cloudMetadata?.datosMigrados || runtime?.cloudDataReady);
+      const cloudActive = Boolean(state.cloudActive || runtime?.cloudActive || state.cloudMetadata?.cloudActive || cleanText(state.cloudMetadata?.fuentePrincipal).toLowerCase() === 'firestore');
+      const cloudDataReady = Boolean(state.cloudMetadata?.cloudDataReady || state.cloudMetadata?.cloudReady || runtime?.cloudDataReady || runtime?.cloudReady);
+      const workspaceLabel = workspaceInitialized
+        ? `${runtimeWorkspaceId || FIRESTORE_WORKSPACE_ID_PLACEHOLDER} ${cloudActive ? 'activo' : 'preparado'}`
+        : 'No activo todavía';
+      const baseOnlineLabel = cloudActive ? 'Nube activa' : (cloudDataReady ? 'Datos cargados, pendiente de activación' : (workspaceInitialized ? 'Preparada, no activa' : 'Pendiente de activación'));
+
+      if (!configured) {
+        return Object.freeze({
+          name: 'KSAFirebaseAdapter',
+          stage: 'Bloque C - Etapa 5/5',
+          mode: cloudActive ? 'cloud_active' : 'local',
+          dataMode: cloudActive ? 'Nube activa' : 'Local',
+          projectName,
+          projectId,
+          initialAdmin,
+          firebase: configStatus.incomplete ? 'Configuración incompleta' : 'Firebase pendiente de configuración',
+          firebaseLabel: configStatus.label,
+          configState: configStatus.state,
+          configComplete: false,
+          missingConfigKeys: Array.from(configStatus.missingKeys || []),
+          populatedConfigKeys: Array.from(configStatus.populatedKeys || []),
+          requiredConfigKeys: Array.from(configStatus.requiredKeys || FIREBASE_REQUIRED_CONFIG_KEYS),
+          configGlobalName: configStatus.configGlobalName,
+          configFile: configStatus.configFile,
+          sdkPolicy: `CDN modular Firebase Web SDK ${FIREBASE_SDK_VERSION}; sin npm ni build.`,
+          sdkVersion: FIREBASE_SDK_VERSION,
+          sdkImports: { ...FIREBASE_SDK_IMPORTS },
+          sdkLoaded: false,
+          firebaseAppReady: false,
+          auth: 'Pendiente',
+          authReady: false,
+          firestore: 'Pendiente',
+          firestoreReady: false,
+          connection: 'Sin conexión Firebase real',
+          connected: false,
+          firebaseConnected: false,
+          workspace: workspaceLabel,
+          workspaceId: runtimeWorkspaceId || null,
+          baseOnline: baseOnlineLabel,
+          currentUser: null,
+          authState: 'unavailable',
+          currentUserEmail: '',
+          currentUserRole: 'Sin sesión',
+          importInitialBackup: 'Pendiente',
+          cloudReadsEnabled: false,
+          cloudWritesEnabled: false,
+          initialImportEnabled: false,
+          localMode: true,
+          noDataMigration: true,
+          noFirestoreWrites: true,
+          message: configStatus.incomplete
+            ? 'Firebase tiene configuración incompleta. La app puede continuar en modo local controlado.'
+            : 'Firebase pendiente de configuración. La app puede continuar en modo local controlado hasta completar Firebase.',
+          lastCheckAt: state.lastCheckAt
+        });
+      }
+
+      if (hasInitError) {
+        return Object.freeze({
+          name: 'KSAFirebaseAdapter',
+          stage: 'Bloque C - Etapa 5/5',
+          mode: cloudActive ? 'cloud_active' : 'local',
+          dataMode: cloudActive ? 'Nube activa' : 'Local',
+          projectName,
+          projectId,
+          initialAdmin,
+          firebase: 'Configurado con advertencia',
+          firebaseLabel: 'Configurado con advertencia',
+          configState: configStatus.state,
+          configComplete: true,
+          missingConfigKeys: [],
+          populatedConfigKeys: Array.from(configStatus.populatedKeys || []),
+          requiredConfigKeys: Array.from(configStatus.requiredKeys || FIREBASE_REQUIRED_CONFIG_KEYS),
+          configGlobalName: configStatus.configGlobalName,
+          configFile: configStatus.configFile,
+          sdkPolicy: `CDN modular Firebase Web SDK ${FIREBASE_SDK_VERSION}; sin npm ni build.`,
+          sdkVersion: FIREBASE_SDK_VERSION,
+          sdkImports: { ...FIREBASE_SDK_IMPORTS },
+          sdkLoaded: false,
+          firebaseAppReady: false,
+          auth: 'Preparado pendiente de SDK',
+          authReady: false,
+          firestore: 'Preparado pendiente de SDK',
+          firestoreReady: false,
+          connection: 'Firebase configurado; SDK no disponible en este momento',
+          connected: false,
+          firebaseConnected: false,
+          workspace: workspaceLabel,
+          workspaceId: runtimeWorkspaceId || null,
+          baseOnline: baseOnlineLabel,
+          currentUser,
+          authState,
+          currentUserEmail: currentUser?.email || '',
+          currentUserRole: currentUser?.roleLabel || 'Sin sesión',
+          importInitialBackup: 'Pendiente',
+          cloudReadsEnabled: false,
+          cloudWritesEnabled: false,
+          initialImportEnabled: false,
+          localMode: true,
+          noDataMigration: true,
+          noFirestoreWrites: true,
+          initError: errorSummary,
+          message: `${buildFirebaseConfiguredMessage()} Aviso técnico: ${errorSummary?.message || 'SDK no disponible.'}`,
+          lastCheckAt: state.lastCheckAt
+        });
+      }
+
+      const ready = runtimeInitialized && Boolean(state.firebaseApp || runtime?.firebaseApp) && Boolean(state.auth || runtime?.auth) && Boolean(state.firestore || runtime?.firestore || runtime?.db);
       return Object.freeze({
         name: 'KSAFirebaseAdapter',
-        stage: 'Bloque A - Etapa 6/6',
+        stage: 'Bloque C - Etapa 5/5',
         mode: 'local',
         dataMode: 'Local',
-        firebase: configStatus.configured ? 'Configuración aparentemente completa / conexión no activada' : 'Firebase pendiente de configuración',
-        firebaseLabel: configStatus.label,
+        projectName,
+        projectId,
+        initialAdmin,
+        firebase: ready ? 'Configurado' : (runtimeLoading ? 'Configurado / inicializando SDK' : 'Configurado'),
+        firebaseLabel: ready ? 'Configurado' : (runtimeLoading ? 'Configurado / inicializando SDK' : 'Configurado'),
         configState: configStatus.state,
-        configComplete: configStatus.complete,
-        missingConfigKeys: Array.from(configStatus.missingKeys || []),
+        configComplete: true,
+        missingConfigKeys: [],
         populatedConfigKeys: Array.from(configStatus.populatedKeys || []),
         requiredConfigKeys: Array.from(configStatus.requiredKeys || FIREBASE_REQUIRED_CONFIG_KEYS),
         configGlobalName: configStatus.configGlobalName,
         configFile: configStatus.configFile,
-        sdkPolicy: 'CDN/import controlado futuro; no se carga SDK en esta etapa.',
-        sdkLoaded: false,
-        firebaseAppReady: false,
-        auth: 'Pendiente',
-        authReady: false,
-        firestore: 'Pendiente',
-        firestoreReady: false,
-        connection: 'Sin conexión Firebase real',
-        connected: false,
-        firebaseConnected: false,
-        workspace: 'No activo todavía',
-        workspaceId: null,
-        currentUser: null,
+        sdkPolicy: `CDN modular Firebase Web SDK ${FIREBASE_SDK_VERSION}; sin npm ni build.`,
+        sdkVersion: FIREBASE_SDK_VERSION,
+        sdkImports: { ...FIREBASE_SDK_IMPORTS },
+        sdkLoaded: ready || state.sdkLoaded || runtime?.sdkLoaded === true,
+        firebaseAppReady: ready,
+        auth: ready ? 'Activo' : 'Preparando',
+        authReady: ready,
+        firestore: ready ? 'Preparado' : 'Preparando',
+        firestoreReady: ready,
+        connection: ready ? (cloudActive ? 'Firebase inicializado / Firestore activo' : 'Firebase inicializado / nube preparada') : 'Firebase configurado / preparando SDK',
+        connected: ready,
+        firebaseConnected: ready,
+        workspace: workspaceLabel,
+        workspaceId: runtimeWorkspaceId || null,
+        baseOnline: baseOnlineLabel,
+        currentUser,
+        authState,
+        currentUserEmail: currentUser?.email || '',
+        currentUserRole: currentUser?.roleLabel || 'Sin sesión',
         importInitialBackup: 'Pendiente',
-        cloudReadsEnabled: false,
-        cloudWritesEnabled: false,
-        initialImportEnabled: false,
-        localMode: true,
-        noDataMigration: true,
-        noFirestoreWrites: true,
-        message: configStatus.configured
-          ? 'Firebase parece configurado, pero esta etapa no activa SDK, Auth, Firestore ni sincronización. La app continúa en modo local.'
-          : 'Firebase pendiente de configuración. La app continúa en modo local y la nube se activará en una etapa posterior.',
+        cloudReadsEnabled: cloudActive,
+        cloudWritesEnabled: cloudActive,
+        initialImportEnabled: true,
+        localMode: !cloudActive,
+        noDataMigration: false,
+        noFirestoreWrites: !cloudActive,
+        initializedAt: state.initializedAt || runtime?.initializedAt || '',
+        message: cloudActive ? 'Firestore está activo como fuente principal de datos.' : buildFirebaseConfiguredMessage(),
         lastCheckAt: state.lastCheckAt
       });
     }
 
+    function getFirebaseStatus() {
+      const configStatus = inspectKSAFirebaseConfig();
+      state.lastCheckAt = nowIso();
+      return baseLocalStatus(configStatus);
+    }
+
     function initFirebase() {
-      state.initialized = false;
-      state.firebaseApp = null;
-      state.auth = null;
-      state.firestore = null;
-      state.currentUser = null;
-      state.currentWorkspace = null;
-      return getFirebasePendingResult('initFirebase');
+      const configStatus = inspectKSAFirebaseConfig();
+      const config = getRawKSAFirebaseConfig();
+      state.lastCheckAt = nowIso();
+
+      if (!configStatus.complete) {
+        state.initialized = false;
+        state.initStarted = false;
+        state.initError = null;
+        state.firebaseApp = null;
+        state.auth = null;
+        state.authModule = null;
+        state.firestoreModule = null;
+        state.currentUser = null;
+        state.firestore = null;
+        publishKSAFirebaseRuntime({
+          initialized: false,
+          configured: false,
+          projectName: getKSAFirebaseProjectName(),
+          projectId: cleanText(config.projectId),
+          initialAdmin: getKSAFirebaseInitialAdminEmail(),
+          configState: configStatus.state,
+          sdkLoaded: false,
+          authReady: false,
+          firestoreReady: false,
+          firebaseAppReady: false,
+          message: configStatus.label
+        });
+        return getFirebasePendingResult('initFirebase');
+      }
+
+      if (state.initialized) {
+        return {
+          ok: true,
+          action: 'initFirebase',
+          code: 'firebase/configured_local_mode',
+          message: (state.cloudActive || getKSAFirebaseRuntime()?.cloudActive) ? 'Firestore está activo como fuente principal de datos.' : buildFirebaseConfiguredMessage(),
+          localMode: !(state.cloudActive || getKSAFirebaseRuntime()?.cloudActive),
+          cloudActive: Boolean(state.cloudActive || getKSAFirebaseRuntime()?.cloudActive),
+          firebaseConnected: true,
+          status: getFirebaseStatus()
+        };
+      }
+
+      if (state.initPromise) {
+        return {
+          ok: true,
+          action: 'initFirebase',
+          code: 'firebase/initializing',
+          message: 'Firebase configurado; preparando SDK.',
+          localMode: true,
+          cloudActive: false,
+          firebaseConnected: false,
+          status: getFirebaseStatus()
+        };
+      }
+
+      state.initStarted = true;
+      state.initError = null;
+      publishKSAFirebaseRuntime({
+        initialized: false,
+        configured: true,
+        projectName: getKSAFirebaseProjectName(),
+        projectId: cleanText(config.projectId),
+        initialAdmin: getKSAFirebaseInitialAdminEmail(),
+        configState: configStatus.state,
+        sdkVersion: FIREBASE_SDK_VERSION,
+        sdkLoaded: false,
+        authReady: false,
+        firestoreReady: false,
+        firebaseAppReady: false,
+        message: 'Firebase configurado; cargando SDK modular.'
+      });
+
+      state.initPromise = Promise.all([
+        import(FIREBASE_SDK_IMPORTS.app),
+        import(FIREBASE_SDK_IMPORTS.auth),
+        import(FIREBASE_SDK_IMPORTS.firestore)
+      ]).then(([appModule, authModule, firestoreModule]) => {
+        const firebaseApp = (typeof appModule.getApps === 'function' && appModule.getApps().length)
+          ? appModule.getApp()
+          : appModule.initializeApp(config);
+        const auth = authModule.getAuth(firebaseApp);
+        if (typeof authModule.setPersistence === 'function' && authModule.browserLocalPersistence) {
+          authModule.setPersistence(auth, authModule.browserLocalPersistence).catch(() => {
+            // Si el navegador no permite persistencia local, Firebase mantiene sesión en memoria sin romper la app.
+          });
+        }
+        const firestore = firestoreModule.getFirestore(firebaseApp);
+        state.initialized = true;
+        state.sdkLoaded = true;
+        state.firebaseApp = firebaseApp;
+        state.auth = auth;
+        state.authModule = authModule;
+        state.firestoreModule = firestoreModule;
+        state.firestore = firestore;
+        state.currentUser = null;
+        state.currentWorkspace = null;
+        state.initializedAt = nowIso();
+        if (typeof state.unsubscribeAuth === 'function') {
+          try { state.unsubscribeAuth(); } catch (_) {}
+          state.unsubscribeAuth = null;
+        }
+        if (typeof authModule.onAuthStateChanged === 'function') {
+          state.unsubscribeAuth = authModule.onAuthStateChanged(auth, (user) => {
+            state.currentUser = normalizeFirebaseAuthUser(user);
+            publishKSAFirebaseRuntime({
+              initialized: true,
+              configured: true,
+              firebaseAppReady: true,
+              authReady: true,
+              firestoreReady: true,
+              sdkLoaded: true,
+              sdkVersion: FIREBASE_SDK_VERSION,
+              projectName: getKSAFirebaseProjectName(),
+              projectId: cleanText(config.projectId),
+              initialAdmin: getKSAFirebaseInitialAdminEmail(),
+              firebaseApp,
+              auth,
+              firestore,
+              db: firestore,
+              currentUser: state.currentUser,
+              authState: state.currentUser ? 'authenticated' : 'signed_out',
+              initializedAt: state.initializedAt,
+              message: state.currentUser
+                ? 'Sesión iniciada con Firebase Auth. Se verificará la nube Firestore.'
+                : 'Firebase Auth activo sin sesión. Inicia sesión para operar en nube.'
+            });
+          });
+        }
+        publishKSAFirebaseRuntime({
+          initialized: true,
+          configured: true,
+          firebaseAppReady: true,
+          authReady: true,
+          firestoreReady: true,
+          sdkLoaded: true,
+          sdkVersion: FIREBASE_SDK_VERSION,
+          projectName: getKSAFirebaseProjectName(),
+          projectId: cleanText(config.projectId),
+          initialAdmin: getKSAFirebaseInitialAdminEmail(),
+          firebaseApp,
+          auth,
+          firestore,
+          db: firestore,
+          currentUser: state.currentUser,
+          authState: state.currentUser ? 'authenticated' : 'signed_out',
+          initializedAt: state.initializedAt,
+          message: buildFirebaseConfiguredMessage()
+        });
+        return getFirebaseStatus();
+      }).catch((error) => {
+        const summary = getKSAFirebaseErrorSummary(error);
+        state.initialized = false;
+        state.sdkLoaded = false;
+        state.initError = summary;
+        state.firebaseApp = null;
+        state.auth = null;
+        state.authModule = null;
+        state.firestoreModule = null;
+        state.currentUser = null;
+        state.firestore = null;
+        console.warn('KSA PRÁCTIKA Firebase: inicialización no completada; la app continúa en modo local controlado.', error);
+        publishKSAFirebaseRuntime({
+          initialized: false,
+          configured: true,
+          firebaseAppReady: false,
+          authReady: false,
+          firestoreReady: false,
+          sdkLoaded: false,
+          projectName: getKSAFirebaseProjectName(),
+          projectId: cleanText(config.projectId),
+          initialAdmin: getKSAFirebaseInitialAdminEmail(),
+          initError: summary,
+          message: `${buildFirebaseConfiguredMessage()} Aviso técnico: ${summary.message}`
+        });
+        return getFirebaseStatus();
+      }).finally(() => {
+        state.initPromise = null;
+      });
+
+      return {
+        ok: true,
+        action: 'initFirebase',
+        code: 'firebase/configured_initializing',
+        message: 'Firebase configurado; inicialización técnica en curso. Firestore se activará al confirmar sesión y metadata.',
+        localMode: true,
+        cloudActive: false,
+        firebaseConnected: false,
+        status: getFirebaseStatus()
+      };
     }
 
     function isFirebaseConfigured() {
       return inspectKSAFirebaseConfig().configured;
     }
 
-    function signIn() {
-      return getFirebasePendingResult('signIn', { auth: 'Pendiente' });
+    function ensureFirebaseAuthReady() {
+      const configStatus = inspectKSAFirebaseConfig();
+      if (!configStatus.complete) {
+        return Promise.reject({ code: 'firebase/init-error', message: 'Firebase no está configurado.' });
+      }
+      if (state.initialized && state.auth && state.authModule) {
+        return Promise.resolve(getFirebaseStatus());
+      }
+      initFirebase();
+      if (state.initPromise) {
+        return state.initPromise.then(() => {
+          if (state.initialized && state.auth && state.authModule) return getFirebaseStatus();
+          return Promise.reject({ code: 'firebase/init-error', message: 'Firebase no está disponible.' });
+        });
+      }
+      if (state.initialized && state.auth && state.authModule) return Promise.resolve(getFirebaseStatus());
+      return Promise.reject({ code: 'firebase/init-error', message: 'Firebase no está disponible.' });
     }
 
-    function signOut() {
-      state.currentUser = null;
-      return getFirebasePendingResult('signOut', { auth: 'Pendiente' });
+    async function signIn(emailInput = '', passwordInput = '') {
+      const email = normalizeAuthEmail(emailInput);
+      const password = typeof passwordInput === 'string' ? passwordInput : String(passwordInput || '');
+      if (!email) {
+        return { ok: false, action: 'signIn', code: 'auth/missing-email', message: 'El correo es obligatorio.', localMode: true, cloudActive: false, status: getFirebaseStatus() };
+      }
+      if (!password) {
+        return { ok: false, action: 'signIn', code: 'auth/missing-password', message: 'La contraseña es obligatoria.', localMode: true, cloudActive: false, status: getFirebaseStatus() };
+      }
+      try {
+        await ensureFirebaseAuthReady();
+        if (!state.auth || !state.authModule || typeof state.authModule.signInWithEmailAndPassword !== 'function') {
+          throw { code: 'firebase/init-error' };
+        }
+        const credential = await state.authModule.signInWithEmailAndPassword(state.auth, email, password);
+        state.currentUser = normalizeFirebaseAuthUser(credential?.user || state.auth?.currentUser || null);
+        publishKSAFirebaseRuntime({
+          initialized: true,
+          configured: true,
+          firebaseAppReady: true,
+          authReady: true,
+          firestoreReady: true,
+          sdkLoaded: true,
+          currentUser: state.currentUser,
+          authState: state.currentUser ? 'authenticated' : 'signed_out',
+          message: 'Sesión iniciada con Firebase Auth. Se verificará la nube Firestore.'
+        });
+        return {
+          ok: true,
+          action: 'signIn',
+          code: 'auth/signed-in',
+          message: 'Sesión iniciada correctamente.',
+          user: state.currentUser,
+          role: state.currentUser?.roleLabel || 'Usuario normal pendiente',
+          localMode: false,
+          cloudActive: true,
+          status: getFirebaseStatus()
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          action: 'signIn',
+          code: cleanText(error?.code || 'firebase/init-error'),
+          message: translateFirebaseAuthError(error),
+          localMode: true,
+          cloudActive: false,
+          status: getFirebaseStatus()
+        };
+      }
+    }
+
+    async function signOut() {
+      try {
+        await ensureFirebaseAuthReady();
+        if (state.auth && state.authModule && typeof state.authModule.signOut === 'function') {
+          await state.authModule.signOut(state.auth);
+        }
+        state.currentUser = null;
+        publishKSAFirebaseRuntime({
+          initialized: true,
+          configured: true,
+          authReady: true,
+          currentUser: null,
+          authState: 'signed_out',
+          message: 'Sesión cerrada. La nube queda desconectada hasta iniciar sesión.'
+        });
+        return {
+          ok: true,
+          action: 'signOut',
+          code: 'auth/signed-out',
+          message: 'Sesión cerrada correctamente.',
+          localMode: true,
+          cloudActive: false,
+          status: getFirebaseStatus()
+        };
+      } catch (error) {
+        state.currentUser = null;
+        publishKSAFirebaseRuntime({ currentUser: null, authState: 'signed_out' });
+        return {
+          ok: false,
+          action: 'signOut',
+          code: cleanText(error?.code || 'firebase/init-error'),
+          message: translateFirebaseAuthError(error),
+          localMode: true,
+          cloudActive: false,
+          status: getFirebaseStatus()
+        };
+      }
     }
 
     function getCurrentUser() {
-      return null;
+      const runtime = getKSAFirebaseRuntime();
+      return state.currentUser || (isPlainObject(runtime?.currentUser) ? runtime.currentUser : null);
+    }
+
+    function translateFirestorePrepError(error) {
+      const code = cleanText(error?.code || error?.name || 'firebase/firestore-error');
+      if (code === 'permission-denied' || code === 'firestore/permission-denied') {
+        return 'Firestore no permite escritura todavía. Revisa que las reglas hayan sido publicadas.';
+      }
+      if (code === 'unauthenticated' || code === 'auth/no-current-user') {
+        return 'Inicia sesión como atencion@arcano33.com antes de verificar o inicializar Firestore.';
+      }
+      if (code === 'firebase/not-initial-admin') {
+        return 'Solo Administrador puede ejecutar esta acción delicada de Firestore.';
+      }
+      if (code === 'firebase/user-inactive') {
+        return 'Tu usuario está desactivado en Configuración → Usuarios.';
+      }
+      if (code === 'firebase/user-not-registered') {
+        return 'Tu usuario no está registrado en el workspace ksa_practika.';
+      }
+      if (code === 'unavailable' || code === 'auth/network-request-failed') {
+        return 'No se pudo conectar con Firestore. Revisa internet y vuelve a intentar.';
+      }
+      return 'No se pudo completar la acción en Firestore. Revisa configuración, sesión y reglas publicadas.';
+    }
+
+    function normalizeCloudRoleValue(value) {
+      const normalized = normalizeKeyForCompare(value || '');
+      if (normalized === 'administrador' || normalized === 'admin') return ROLE_DEFINITIONS.administrador;
+      if (normalized === 'usuario' || normalized === 'usuario normal' || normalized === 'normal') return ROLE_DEFINITIONS.usuario;
+      return ROLE_DEFINITIONS.usuario;
+    }
+
+    function isCloudReadyMetadata(metadata = {}) {
+      const raw = isPlainObject(metadata) ? metadata : {};
+      return raw.datosMigrados === true
+        && (raw.cloudDataReady === true || raw.cloudReady === true)
+        && raw.importacionInicialCompletada === true;
+    }
+
+    async function ensureFirebaseFirestoreReady(options = {}) {
+      const opts = isPlainObject(options) ? options : {};
+      const requireAdmin = opts.requireAdmin !== false;
+      await ensureFirebaseAuthReady();
+      const user = normalizeFirebaseAuthUser(state.auth?.currentUser || null) || getCurrentUser();
+      if (!user?.uid || !user?.email) {
+        throw { code: 'unauthenticated' };
+      }
+      if (!state.firestore || !state.firestoreModule) {
+        throw { code: 'firebase/init-error' };
+      }
+
+      const db = state.firestore;
+      const fs = state.firestoreModule;
+      const initialRole = getFirebaseRoleForEmail(user.email);
+      let effectiveRole = initialRole.id === 'administrador' ? ROLE_DEFINITIONS.administrador : ROLE_DEFINITIONS.usuario;
+      let userDoc = null;
+      const userRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'usuarios', user.uid);
+
+      try {
+        const snap = await fs.getDoc(userRef);
+        if (snap.exists()) {
+          userDoc = { id: snap.id, ...(snap.data() || {}) };
+          effectiveRole = normalizeCloudRoleValue(userDoc.rol || userDoc.role || userDoc.tipoRol);
+          if (userDoc.activo === false) throw { code: 'firebase/user-inactive' };
+        } else if (initialRole.id === 'administrador') {
+          const stamp = getFirestoreTimestampValue(fs);
+          userDoc = {
+            uid: user.uid,
+            correo: user.email,
+            rol: 'Administrador',
+            activo: true,
+            nombre: user.displayName || 'Administrador',
+            workspaceId: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+            createdAt: stamp,
+            updatedAt: stamp,
+            origen: 'admin_inicial_auto'
+          };
+          await fs.setDoc(userRef, userDoc, { merge: true });
+          effectiveRole = ROLE_DEFINITIONS.administrador;
+        } else {
+          throw { code: 'firebase/user-not-registered' };
+        }
+      } catch (error) {
+        if (initialRole.id !== 'administrador') throw error;
+        effectiveRole = ROLE_DEFINITIONS.administrador;
+      }
+
+      if (requireAdmin && effectiveRole.id !== 'administrador') {
+        throw { code: 'firebase/not-initial-admin' };
+      }
+      state.currentUser = { ...user, role: effectiveRole.id, roleLabel: effectiveRole.label };
+      return { user: state.currentUser, role: effectiveRole, userDoc, db, fs };
+    }
+
+    function getFirestoreTimestampValue(fs) {
+      if (fs && typeof fs.serverTimestamp === 'function') return fs.serverTimestamp();
+      return nowIso();
+    }
+
+    function normalizeFirestoreValue(value) {
+      if (Array.isArray(value)) return value.map(normalizeFirestoreValue);
+      if (value && typeof value === 'object') {
+        if (typeof value.toDate === 'function') {
+          try { return value.toDate().toISOString(); } catch (_) { return nowIso(); }
+        }
+        const normalized = {};
+        Object.entries(value).forEach(([key, item]) => {
+          normalized[key] = normalizeFirestoreValue(item);
+        });
+        return normalized;
+      }
+      return value;
+    }
+
+    function normalizeFirestoreDoc(docSnap) {
+      const raw = typeof docSnap?.data === 'function' ? docSnap.data() : {};
+      return normalizeFirestoreValue({ id: docSnap?.id, ...(isPlainObject(raw) ? raw : {}) });
+    }
+
+    async function readCollectionDocs(db, fs, ...pathSegments) {
+      const ref = fs.collection(db, ...pathSegments);
+      const snap = await fs.getDocs(ref);
+      const records = [];
+      snap.forEach((docSnap) => records.push(normalizeFirestoreDoc(docSnap)));
+      return records;
+    }
+
+    function getCloudDocumentId(record, fallbackPrefix = 'doc') {
+      const raw = isPlainObject(record) ? record : {};
+      return sanitizeFirestoreDocId(cleanText(raw.id || raw.periodo || raw.tipo || raw.no || raw.numero || raw.numeroFactura), `${fallbackPrefix}_${simpleHashText(JSON.stringify(raw)).slice(0, 12)}`);
+    }
+
+    function buildCloudNotasRecords(notasData) {
+      const normalized = normalizeNotasData(notasData || {});
+      return [
+        ...normalized.notas.map((record) => ({ ...record, tipoRegistro: 'nota', _docPrefix: 'nota' })),
+        ...normalized.pendientes.map((record) => ({ ...record, tipoRegistro: 'pendiente', _docPrefix: 'pendiente' })),
+        ...normalized.recordatorios.map((record) => ({ ...record, tipoRegistro: 'recordatorio', _docPrefix: 'recordatorio' }))
+      ];
+    }
+
+    function rebuildNotasDataFromCloud(records = []) {
+      const buckets = { notas: [], pendientes: [], recordatorios: [] };
+      (Array.isArray(records) ? records : []).forEach((record) => {
+        const rawType = cleanText(record.tipoRegistro || record.tipo || record.kind || record._docPrefix).toLowerCase();
+        if (rawType.includes('pendiente')) buckets.pendientes.push(record);
+        else if (rawType.includes('recordatorio')) buckets.recordatorios.push(record);
+        else buckets.notas.push(record);
+      });
+      return normalizeNotasData(buckets);
+    }
+
+    function buildCloudSnapshotPayload(dataInput = null) {
+      const source = normalizeData(dataInput || appData || createInitialData());
+      return {
+        data: source,
+        notasModulo: cloneNotasModuleData(),
+        facturasModulo: cloneFacturasModuleData(),
+        bitacora: Array.isArray(appActivityLog) ? appActivityLog.map((entry) => normalizeActivityEntry(entry)) : [],
+        consecutivos: {
+          json: readCloudSequenceValue(JSON_EXPORT_SEQUENCE_STORAGE_KEY),
+          excelConsulta: readCloudSequenceValue(EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY),
+          excelCierre: readCloudSequenceValue(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY)
+        }
+      };
+    }
+
+    function readCloudSequenceValue(storageKey) {
+      try {
+        const raw = localStorage.getItem(storageKey);
+        if (raw === null || raw === '') return null;
+        const numberValue = Number(raw);
+        return Number.isFinite(numberValue) ? numberValue : cleanText(raw);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function writeCloudSequenceMirror(consecutivos = {}) {
+      const pairs = [
+        ['json', JSON_EXPORT_SEQUENCE_STORAGE_KEY],
+        ['excelConsulta', EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY],
+        ['excelCierre', EXCEL_CIERRE_SEQUENCE_STORAGE_KEY]
+      ];
+      pairs.forEach(([key, storageKey]) => {
+        const value = consecutivos?.[key];
+        if (value === null || value === undefined || value === '') return;
+        try { localStorage.setItem(storageKey, String(value)); } catch (_) {}
+      });
+    }
+
+    async function readCloudOperationalSnapshot(options = {}) {
+      const opts = isPlainObject(options) ? options : {};
+      try {
+        const { user, role, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: false });
+        const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
+        const metadataRef = fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
+        const metadataSnap = await fs.getDoc(metadataRef);
+        const metadata = metadataSnap.exists() ? normalizeFirestoreDoc(metadataSnap) : {};
+        const ready = isCloudReadyMetadata(metadata);
+        const activeByMetadata = cleanText(metadata.fuentePrincipal).toLowerCase() === 'firestore' || metadata.cloudActive === true;
+        if (!ready) {
+          state.cloudActive = false;
+          state.cloudMetadata = metadata;
+          state.lastSyncError = 'La nube aún no tiene importación inicial completada.';
+          publishKSAFirebaseRuntime({
+            cloudActive: false,
+            cloudReadsEnabled: false,
+            cloudWritesEnabled: false,
+            cloudDataReady: false,
+            workspaceId,
+            workspaceInitialized: Boolean(metadataSnap.exists()),
+            message: state.lastSyncError
+          });
+          return { ok: false, action: 'readCloudOperationalSnapshot', code: 'cloud/not-ready', message: state.lastSyncError, snapshot: null, metadata, user, role };
+        }
+        if (!activeByMetadata && opts.requireActive !== false) {
+          state.cloudActive = false;
+          state.cloudMetadata = metadata;
+          state.lastSyncError = 'La importación existe, pero falta activar Firestore como fuente principal.';
+          publishKSAFirebaseRuntime({
+            cloudActive: false,
+            cloudReadsEnabled: false,
+            cloudWritesEnabled: false,
+            cloudDataReady: true,
+            workspaceId,
+            workspaceInitialized: true,
+            message: state.lastSyncError
+          });
+          return { ok: false, action: 'readCloudOperationalSnapshot', code: 'cloud/not-active', message: state.lastSyncError, snapshot: null, metadata, user, role };
+        }
+
+        const snapshot = createInitialData();
+        CATALOGS.forEach((catalog) => { snapshot[catalog.id] = []; });
+        for (const catalog of CATALOGS) {
+          const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'catalogos', catalog.id, 'items');
+          snapshot[catalog.id] = records.map((record) => normalizeCatalogRecord(record, catalog));
+        }
+
+        const listReaders = [
+          ['ventas', normalizeVentaRecord],
+          ['cobros', normalizeCobroRecord],
+          ['comprasProveedores', normalizeCompraProveedorRecord],
+          ['pagosProveedores', normalizePagoProveedorRecord],
+          ['gastos', normalizeGastoRecord],
+          ['casaGastos', normalizeCasaGastoRecord],
+          ['cierresMensuales', normalizeCierreMensualRecord],
+          ['exportacionesExcel', normalizeExcelExportRecord]
+        ];
+        for (const [key, normalizer] of listReaders) {
+          const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, key);
+          snapshot[key] = records.map((record) => normalizer(record));
+        }
+
+        const configSnap = await fs.getDoc(fs.doc(db, 'workspaces', workspaceId, 'configuracion', 'sistema'));
+        snapshot.configuracion = configSnap.exists()
+          ? normalizeConfiguracion(normalizeFirestoreDoc(configSnap))
+          : normalizeConfiguracion(appData?.configuracion || {});
+        snapshot.metadata = {
+          ...(isPlainObject(appData?.metadata) ? appData.metadata : {}),
+          ...metadata,
+          fuentePrincipal: 'firestore',
+          cloudActive: true,
+          lastCloudReadAt: nowIso()
+        };
+
+        const facturasRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'facturasModulo');
+        const notasRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'notasModulo');
+        const bitacoraRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'bitacora');
+        const consecutivosRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'consecutivos');
+        const consecutivos = {};
+        consecutivosRecords.forEach((record) => {
+          const key = cleanText(record.tipo || record.id);
+          if (key) consecutivos[key] = record.valor ?? record.value ?? record.consecutivo ?? '';
+        });
+
+        const normalized = normalizeData(snapshot);
+        normalized.bdatos = normalizeBdatosList(snapshot.bdatos || normalized.bdatos);
+        normalized.bdatosUpdatedAt = cleanText(snapshot.bdatosUpdatedAt || normalized.bdatosUpdatedAt);
+        state.cloudActive = true;
+        state.cloudMetadata = snapshot.metadata;
+        state.lastCloudReadAt = nowIso();
+        state.lastSyncAt = state.lastCloudReadAt;
+        state.lastSyncError = '';
+        publishKSAFirebaseRuntime({
+          cloudActive: true,
+          cloudReadsEnabled: true,
+          cloudWritesEnabled: true,
+          cloudDataReady: true,
+          cloudReady: true,
+          fuentePrincipal: 'firestore',
+          dataMode: 'Nube activa',
+          workspaceId,
+          workspace: workspaceId,
+          workspaceInitialized: true,
+          lastSyncAt: state.lastSyncAt,
+          message: 'Firestore activo como fuente principal.'
+        });
+        return {
+          ok: true,
+          action: 'readCloudOperationalSnapshot',
+          code: 'cloud/read-ok',
+          message: 'Datos leídos desde Firestore.',
+          snapshot: normalized,
+          notasModulo: rebuildNotasDataFromCloud(notasRecords),
+          facturasModulo: normalizeFacturasData({ facturas: facturasRecords }),
+          bitacora: bitacoraRecords.map((entry) => normalizeActivityEntry(entry)),
+          consecutivos,
+          metadata: snapshot.metadata,
+          user,
+          role,
+          lastSyncAt: state.lastSyncAt
+        };
+      } catch (error) {
+        const message = translateFirestorePrepError(error);
+        state.lastSyncError = message;
+        publishKSAFirebaseRuntime({
+          cloudActive: false,
+          cloudReadsEnabled: false,
+          cloudWritesEnabled: false,
+          message
+        });
+        return { ok: false, action: 'readCloudOperationalSnapshot', code: cleanText(error?.code || 'firebase/firestore-error'), message, snapshot: null, error };
+      }
+    }
+
+    async function activateCloudOperation(options = {}) {
+      try {
+        const { user, role, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: true });
+        const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
+        const metadataRef = fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
+        const metadataSnap = await fs.getDoc(metadataRef);
+        const metadata = metadataSnap.exists() ? normalizeFirestoreDoc(metadataSnap) : {};
+        if (!isCloudReadyMetadata(metadata)) {
+          return { ok: false, action: 'activateCloudOperation', code: 'cloud/not-ready', message: 'No se activa nube: falta importación inicial completada en Firestore.', metadata };
+        }
+        const stamp = getFirestoreTimestampValue(fs);
+        await fs.setDoc(metadataRef, {
+          ...metadata,
+          modo: 'online_controlada',
+          modoDatos: 'nube_activa',
+          fuentePrincipal: 'firestore',
+          cloudActive: true,
+          cloudDataReady: true,
+          cloudReady: true,
+          activatedAt: stamp,
+          activatedAtLocal: nowIso(),
+          activatedBy: user.email,
+          updatedAt: stamp,
+          appVersion: APP_VERSION
+        }, { merge: true });
+        state.cloudActive = true;
+        state.cloudMetadata = { ...metadata, fuentePrincipal: 'firestore', cloudActive: true, cloudDataReady: true, cloudReady: true };
+        state.lastSyncAt = nowIso();
+        publishKSAFirebaseRuntime({
+          cloudActive: true,
+          cloudReadsEnabled: true,
+          cloudWritesEnabled: true,
+          cloudDataReady: true,
+          cloudReady: true,
+          fuentePrincipal: 'firestore',
+          dataMode: 'Nube activa',
+          workspaceId,
+          workspace: workspaceId,
+          workspaceInitialized: true,
+          lastSyncAt: state.lastSyncAt,
+          message: 'Operación online activada con Firestore como fuente principal.'
+        });
+        return { ok: true, action: 'activateCloudOperation', code: 'cloud/active', message: 'Nube activa. Firestore queda como fuente principal.', user, role, metadata: state.cloudMetadata };
+      } catch (error) {
+        return { ok: false, action: 'activateCloudOperation', code: cleanText(error?.code || 'firebase/firestore-error'), message: translateFirestorePrepError(error), error };
+      }
+    }
+
+    async function writeCloudOperationalSnapshot(snapshotInput = null, options = {}) {
+      const opts = isPlainObject(options) ? options : {};
+      if (opts.force !== true && !(state.cloudActive || getKSAFirebaseRuntime()?.cloudActive)) {
+        return { ok: false, action: 'writeCloudOperationalSnapshot', code: 'cloud/not-active', message: 'Nube no activa; no se escribe a Firestore.' };
+      }
+      try {
+        const { user, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: false });
+        const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
+        const stamp = getFirestoreTimestampValue(fs);
+        const payload = snapshotInput && isPlainObject(snapshotInput) && snapshotInput.data ? snapshotInput : buildCloudSnapshotPayload(appData);
+        const data = normalizeData(payload.data || appData);
+        let batch = fs.writeBatch(db);
+        let count = 0;
+        let totalQueued = 0;
+        const commit = async () => {
+          if (!count) return;
+          await batch.commit();
+          batch = fs.writeBatch(db);
+          count = 0;
+        };
+        const queueSet = async (ref, value, merge = true) => {
+          batch.set(ref, stripUndefinedForFirestore(value), { merge });
+          count += 1;
+          totalQueued += 1;
+          if (count >= FIRESTORE_IMPORT_BATCH_LIMIT) await commit();
+        };
+
+        await queueSet(fs.doc(db, 'workspaces', workspaceId), {
+          id: workspaceId,
+          nombre: FIRESTORE_WORKSPACE_NAME,
+          proyectoFirebase: FIREBASE_PROJECT_NAME,
+          projectId: cleanText(getRawKSAFirebaseConfig().projectId),
+          estado: 'activo',
+          fuentePrincipal: 'firestore',
+          updatedAt: stamp,
+          appVersion: APP_VERSION
+        });
+        await queueSet(fs.doc(db, 'workspaces', workspaceId, 'configuracion', 'sistema'), {
+          ...normalizeConfiguracion(data.configuracion),
+          id: 'sistema',
+          updatedAt: stamp,
+          fuentePrincipal: 'firestore'
+        });
+
+        for (const catalog of CATALOGS) {
+          const list = Array.isArray(data[catalog.id]) ? data[catalog.id] : [];
+          for (const record of list) {
+            const docId = getCloudDocumentId(record, catalog.id);
+            await queueSet(fs.doc(db, 'workspaces', workspaceId, 'catalogos', catalog.id, 'items', docId), {
+              ...normalizeCatalogRecord(record, catalog),
+              catalogoId: catalog.id,
+              updatedAt: record.updatedAt || nowIso(),
+              _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
+            });
+          }
+        }
+
+        const listWriters = [
+          ['ventas', data.ventas || [], normalizeVentaRecord],
+          ['cobros', data.cobros || [], normalizeCobroRecord],
+          ['comprasProveedores', data.comprasProveedores || [], normalizeCompraProveedorRecord],
+          ['pagosProveedores', data.pagosProveedores || [], normalizePagoProveedorRecord],
+          ['gastos', data.gastos || [], normalizeGastoRecord],
+          ['casaGastos', data.casaGastos || [], normalizeCasaGastoRecord],
+          ['cierresMensuales', data.cierresMensuales || [], normalizeCierreMensualRecord],
+          ['exportacionesExcel', data.exportacionesExcel || [], normalizeExcelExportRecord]
+        ];
+        for (const [key, list, normalizer] of listWriters) {
+          for (const rawRecord of list) {
+            const record = normalizer(rawRecord);
+            const docId = getCloudDocumentId(record, key);
+            await queueSet(fs.doc(db, 'workspaces', workspaceId, key, docId), {
+              ...record,
+              updatedAt: record.updatedAt || nowIso(),
+              _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
+            });
+          }
+        }
+
+        const notasRecords = buildCloudNotasRecords(payload.notasModulo || cloneNotasModuleData());
+        for (const rawRecord of notasRecords) {
+          const prefix = cleanText(rawRecord._docPrefix || rawRecord.tipoRegistro || 'nota');
+          const record = { ...rawRecord };
+          delete record._docPrefix;
+          const docId = sanitizeFirestoreDocId(`${prefix}_${cleanText(record.id) || simpleHashText(JSON.stringify(record)).slice(0, 12)}`, 'nota');
+          await queueSet(fs.doc(db, 'workspaces', workspaceId, 'notasModulo', docId), {
+            ...record,
+            updatedAt: record.updatedAt || nowIso(),
+            _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
+          });
+        }
+
+        const facturasData = normalizeFacturasData(payload.facturasModulo || cloneFacturasModuleData());
+        for (const rawRecord of facturasData.facturas) {
+          const record = normalizeFacturaModuloRecord(rawRecord);
+          const docId = getCloudDocumentId(record, 'factura');
+          await queueSet(fs.doc(db, 'workspaces', workspaceId, 'facturasModulo', docId), {
+            ...record,
+            updatedAt: record.updatedAt || nowIso(),
+            _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
+          });
+        }
+
+        const activityEntries = Array.isArray(payload.bitacora) ? payload.bitacora : [];
+        for (const entry of activityEntries.slice(0, ACTIVITY_LOG_MAX_ENTRIES)) {
+          const record = normalizeActivityEntry(entry);
+          const docId = getCloudDocumentId(record, 'actividad');
+          await queueSet(fs.doc(db, 'workspaces', workspaceId, 'bitacora', docId), {
+            ...record,
+            _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
+          });
+        }
+
+        const consecutivos = isPlainObject(payload.consecutivos) ? payload.consecutivos : {};
+        for (const [key, value] of Object.entries(consecutivos)) {
+          if (value === null || value === undefined || value === '') continue;
+          const docId = sanitizeFirestoreDocId(key, 'consecutivo');
+          await queueSet(fs.doc(db, 'workspaces', workspaceId, 'consecutivos', docId), {
+            id: docId,
+            tipo: key,
+            valor: value,
+            updatedAt: stamp,
+            _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
+          });
+        }
+
+        await queueSet(fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID), {
+          ...(isPlainObject(data.metadata) ? data.metadata : {}),
+          id: FIRESTORE_METADATA_SYSTEM_ID,
+          appName: APP_NAME,
+          appVersion: APP_VERSION,
+          schemaVersion: SCHEMA_VERSION,
+          datosMigrados: true,
+          importacionInicialCompletada: true,
+          cloudDataReady: true,
+          cloudReady: true,
+          cloudActive: true,
+          modo: 'online_controlada',
+          modoDatos: 'nube_activa',
+          fuentePrincipal: 'firestore',
+          lastSyncAt: stamp,
+          lastSyncAtLocal: nowIso(),
+          lastSyncBy: user.email,
+          updatedAt: stamp
+        });
+        await commit();
+        state.cloudActive = true;
+        state.lastCloudWriteAt = nowIso();
+        state.lastSyncAt = state.lastCloudWriteAt;
+        state.lastSyncError = '';
+        publishKSAFirebaseRuntime({
+          cloudActive: true,
+          cloudReadsEnabled: true,
+          cloudWritesEnabled: true,
+          cloudDataReady: true,
+          cloudReady: true,
+          fuentePrincipal: 'firestore',
+          dataMode: 'Nube activa',
+          workspaceId,
+          workspace: workspaceId,
+          workspaceInitialized: true,
+          lastSyncAt: state.lastSyncAt,
+          message: 'Cambios sincronizados en Firestore.'
+        });
+        return { ok: true, action: 'writeCloudOperationalSnapshot', code: 'cloud/write-ok', message: 'Cambios guardados en Firestore.', count: totalQueued, lastSyncAt: state.lastSyncAt };
+      } catch (error) {
+        const message = translateFirestorePrepError(error);
+        state.lastSyncError = message;
+        publishKSAFirebaseRuntime({ lastSyncError: message, message });
+        return { ok: false, action: 'writeCloudOperationalSnapshot', code: cleanText(error?.code || 'firebase/firestore-error'), message, error };
+      }
+    }
+
+    async function writeCloudDocument(collectionKey, documentId, dataInput = {}, options = {}) {
+      const key = cleanText(collectionKey);
+      const docId = sanitizeFirestoreDocId(documentId || dataInput?.id, `${key}_doc`);
+      if (!key || !docId) return { ok: false, action: 'writeCloudDocument', code: 'cloud/invalid-document', message: 'Documento nube inválido.' };
+      try {
+        const { db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: options?.requireAdmin !== false });
+        const segments = key === 'configuracion'
+          ? ['workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'configuracion', docId]
+          : ['workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, key, docId];
+        await fs.setDoc(fs.doc(db, ...segments), stripUndefinedForFirestore({ ...dataInput, id: cleanText(dataInput?.id) || docId, updatedAt: getFirestoreTimestampValue(fs) }), { merge: true });
+        return { ok: true, action: 'writeCloudDocument', code: 'cloud/document-written', collectionKey: key, documentId: docId, message: 'Documento guardado en Firestore.' };
+      } catch (error) {
+        return { ok: false, action: 'writeCloudDocument', code: cleanText(error?.code || 'firebase/firestore-error'), message: translateFirestorePrepError(error), collectionKey: key, documentId: docId };
+      }
+    }
+
+    function getCloudRuntimeStatus() {
+      const runtime = getKSAFirebaseRuntime();
+      const metadata = clonePlainObject(state.cloudMetadata || {}, {});
+      const cloudActive = Boolean(state.cloudActive || runtime?.cloudActive || metadata.cloudActive || cleanText(metadata.fuentePrincipal).toLowerCase() === 'firestore');
+      const cloudDataReady = Boolean(metadata.cloudDataReady || metadata.cloudReady || runtime?.cloudDataReady || runtime?.cloudReady);
+      return {
+        active: cloudActive,
+        cloudActive,
+        cloudDataReady,
+        cloudReady: cloudDataReady,
+        datosMigrados: metadata.datosMigrados === true || runtime?.datosMigrados === true,
+        workspaceInitialized: Boolean(runtime?.workspaceInitialized || state.currentWorkspace?.initialized || cloudDataReady),
+        workspaceId: cleanText(runtime?.workspaceId || state.currentWorkspace?.id || FIRESTORE_WORKSPACE_ID_PLACEHOLDER),
+        role: cleanText(state.currentUser?.roleLabel || state.currentUser?.role || ''),
+        metadata,
+        lastSyncAt: state.lastSyncAt || cleanText(runtime?.lastSyncAt || ''),
+        lastCloudReadAt: state.lastCloudReadAt || cleanText(runtime?.lastCloudReadAt || ''),
+        lastCloudWriteAt: state.lastCloudWriteAt || cleanText(runtime?.lastCloudWriteAt || ''),
+        lastSyncError: state.lastSyncError || cleanText(runtime?.lastSyncError || '')
+      };
+    }
+
+    async function verifyFirestoreWorkspace() {
+      try {
+        const { user, db, fs } = await ensureFirebaseFirestoreReady();
+        const stamp = getFirestoreTimestampValue(fs);
+        const ref = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'metadata', FIRESTORE_VERIFY_DOC_ID);
+        await fs.setDoc(ref, {
+          tipo: 'verificacion_firestore',
+          workspaceId: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+          proyectoFirebase: FIREBASE_PROJECT_NAME,
+          projectId: cleanText(getRawKSAFirebaseConfig().projectId),
+          checkedBy: user.email,
+          checkedAt: stamp,
+          checkedAtLocal: nowIso(),
+          versionApp: APP_VERSION,
+          modoDatos: 'verificacion_firestore',
+          baseOnline: 'verificada',
+          datosOperativosTocados: false
+        }, { merge: true });
+        const snap = await fs.getDoc(ref);
+        publishKSAFirebaseRuntime({
+          workspaceId: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+          workspace: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+          workspaceVerified: snap.exists(),
+          workspaceVerifiedAt: nowIso(),
+          baseOnline: snap.exists() ? 'Firestore verificado' : 'Pendiente de verificación',
+          message: snap.exists()
+            ? 'Firestore verificado. La operación online se activa cuando metadata/importación esté lista.'
+            : 'Firestore respondió, pero no confirmó la metadata de verificación.'
+        });
+        return {
+          ok: snap.exists(),
+          action: 'verifyFirestoreWorkspace',
+          code: snap.exists() ? 'firestore/verified' : 'firestore/not-confirmed',
+          message: snap.exists()
+            ? 'Firestore verificado correctamente. Puede activarse nube si los datos migrados están listos.'
+            : 'Firestore respondió, pero no confirmó la verificación.',
+          localMode: true,
+          cloudActive: false,
+          workspaceId: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+          status: getFirebaseStatus()
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          action: 'verifyFirestoreWorkspace',
+          code: cleanText(error?.code || 'firebase/firestore-error'),
+          message: translateFirestorePrepError(error),
+          localMode: true,
+          cloudActive: false,
+          status: getFirebaseStatus()
+        };
+      }
+    }
+
+    async function initializeWorkspaceBase() {
+      try {
+        const { user, db, fs } = await ensureFirebaseFirestoreReady();
+        const stamp = getFirestoreTimestampValue(fs);
+        const workspaceRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER);
+        const userRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'usuarios', user.uid);
+        const metadataRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
+        const [workspaceSnap, userSnap, metadataSnap] = await Promise.all([
+          fs.getDoc(workspaceRef),
+          fs.getDoc(userRef),
+          fs.getDoc(metadataRef)
+        ]);
+        const workspaceExists = workspaceSnap.exists();
+        if (!workspaceExists) {
+          await fs.setDoc(workspaceRef, {
+            id: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+            nombre: FIRESTORE_WORKSPACE_NAME,
+            proyectoFirebase: FIREBASE_PROJECT_NAME,
+            projectId: cleanText(getRawKSAFirebaseConfig().projectId),
+            createdAt: stamp,
+            updatedAt: stamp,
+            estado: 'activo',
+            versionApp: APP_VERSION
+          }, { merge: false });
+        }
+        if (!userSnap.exists()) {
+          await fs.setDoc(userRef, {
+            uid: user.uid,
+            correo: FIREBASE_INITIAL_ADMIN_EMAIL,
+            rol: 'Administrador',
+            activo: true,
+            nombre: 'Administrador',
+            createdAt: stamp,
+            updatedAt: stamp,
+            origen: 'admin_inicial'
+          }, { merge: false });
+        } else {
+          await fs.setDoc(userRef, {
+            uid: user.uid,
+            correo: FIREBASE_INITIAL_ADMIN_EMAIL,
+            rol: 'Administrador',
+            activo: true,
+            updatedAt: stamp,
+            origen: 'admin_inicial'
+          }, { merge: true });
+        }
+        if (!metadataSnap.exists()) {
+          await fs.setDoc(metadataRef, {
+            modo: 'preparacion',
+            datosMigrados: false,
+            importacionInicialCompletada: false,
+            fuentePrincipal: 'local',
+            cloudReady: true,
+            createdAt: stamp,
+            updatedAt: stamp,
+            versionApp: APP_VERSION
+          }, { merge: false });
+        } else {
+          await fs.setDoc(metadataRef, {
+            modo: 'preparacion',
+            datosMigrados: false,
+            importacionInicialCompletada: false,
+            fuentePrincipal: 'local',
+            cloudReady: true,
+            updatedAt: stamp,
+            versionApp: APP_VERSION
+          }, { merge: true });
+        }
+        state.currentWorkspace = {
+          id: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+          initialized: true,
+          active: false,
+          createdNow: !workspaceExists,
+          updatedAt: nowIso()
+        };
+        publishKSAFirebaseRuntime({
+          workspaceId: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+          workspace: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+          workspaceInitialized: true,
+          workspaceInitializedAt: nowIso(),
+          baseOnline: 'Preparada, no activa',
+          message: workspaceExists
+            ? 'Workspace base ya existe. No se duplicó ni se migraron datos operativos.'
+            : 'Workspace base inicializado. La nube queda lista para importar/activar datos.'
+        });
+        return {
+          ok: true,
+          action: 'initializeWorkspaceBase',
+          code: workspaceExists ? 'workspace/already-exists' : 'workspace/created',
+          message: workspaceExists
+            ? 'Workspace ya existe. No se duplicó ni se migraron datos operativos.'
+            : 'Workspace base inicializado correctamente. La nube queda lista para importar/activar datos.',
+          existed: workspaceExists,
+          localMode: true,
+          cloudActive: false,
+          workspaceId: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+          status: getFirebaseStatus()
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          action: 'initializeWorkspaceBase',
+          code: cleanText(error?.code || 'firebase/firestore-error'),
+          message: translateFirestorePrepError(error),
+          localMode: true,
+          cloudActive: false,
+          status: getFirebaseStatus()
+        };
+      }
     }
 
     function getCurrentWorkspace() {
+      const runtime = getKSAFirebaseRuntime();
+      if (state.currentWorkspace) return { ...state.currentWorkspace };
+      if (runtime?.workspaceInitialized || runtime?.workspaceId) {
+        return {
+          id: cleanText(runtime.workspaceId || FIRESTORE_WORKSPACE_ID_PLACEHOLDER),
+          initialized: Boolean(runtime.workspaceInitialized),
+          active: false,
+          updatedAt: cleanText(runtime.workspaceInitializedAt || runtime.workspaceVerifiedAt || '')
+        };
+      }
       return null;
     }
 
     function getUserRole() {
+      const user = getCurrentUser();
+      if (!user) {
+        return {
+          ok: false,
+          role: 'local_owner',
+          label: 'Modo local controlado',
+          source: 'sin_sesion_firebase',
+          message: 'Sin sesión Firebase. La nube no se usa silenciosamente.'
+        };
+      }
+      if (user.role && ROLE_DEFINITIONS[user.role]) {
+        const roleDef = ROLE_DEFINITIONS[user.role];
+        return {
+          ok: roleDef.id === 'administrador',
+          role: roleDef.id,
+          label: roleDef.label,
+          source: 'firestore_usuario',
+          message: roleDef.id === 'administrador'
+            ? 'Administrador reconocido desde Firestore.'
+            : 'Usuario normal activo reconocido desde Firestore.'
+        };
+      }
+      const role = getFirebaseRoleForEmail(user.email);
       return {
-        ok: false,
-        role: 'local_owner',
-        source: 'modo_local_preparado',
-        message: 'Rol local preparado. Roles reales llegarán con Firebase Auth y Firestore.'
+        ok: role.id === 'administrador',
+        role: role.id || 'usuario',
+        label: role.label,
+        source: role.source,
+        message: role.id === 'administrador'
+          ? 'Administrador inicial reconocido por Firebase Auth.'
+          : 'Usuario autenticado pendiente de validación en Usuarios.'
       };
     }
 
-    function readCloudCollection(collectionKey) {
-      return getFirebasePendingResult('readCloudCollection', {
-        collectionKey: cleanText(collectionKey),
-        records: [],
-        readEnabled: false
-      });
+    async function readCloudCollection(collectionKey) {
+      const key = cleanText(collectionKey);
+      const result = await readCloudOperationalSnapshot({ requireActive: true });
+      if (!result.ok) {
+        return { ...result, action: 'readCloudCollection', collectionKey: key, records: [] };
+      }
+      if (key === 'facturasModulo') return { ok: true, action: 'readCloudCollection', collectionKey: key, records: normalizeFacturasData(result.facturasModulo).facturas };
+      if (key === 'notasModulo') return { ok: true, action: 'readCloudCollection', collectionKey: key, records: buildCloudNotasRecords(result.notasModulo) };
+      if (key === 'metadata') return { ok: true, action: 'readCloudCollection', collectionKey: key, records: [result.metadata || {}] };
+      if (key === 'consecutivos') return { ok: true, action: 'readCloudCollection', collectionKey: key, records: [result.consecutivos || {}] };
+      const records = Array.isArray(result.snapshot?.[key]) ? result.snapshot[key] : [];
+      return { ok: true, action: 'readCloudCollection', collectionKey: key, records };
     }
 
-    function writeCloudDocument(collectionKey, documentId) {
-      return getFirebasePendingResult('writeCloudDocument', {
-        collectionKey: cleanText(collectionKey),
-        documentId: cleanText(documentId),
-        writeEnabled: false
-      });
+    async function getInitialCloudImportStatus(hashSimple = '') {
+      try {
+        const { db, fs } = await ensureFirebaseFirestoreReady();
+        const metadataRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
+        const metadataSnap = await fs.getDoc(metadataRef);
+        const metadata = metadataSnap.exists() ? (metadataSnap.data() || {}) : {};
+        let previousImport = null;
+        const hash = cleanText(hashSimple);
+        if (hash && typeof fs.collection === 'function' && typeof fs.query === 'function' && typeof fs.where === 'function' && typeof fs.getDocs === 'function') {
+          const importQuery = fs.query(
+            fs.collection(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, FIRESTORE_IMPORT_COLLECTION_ID),
+            fs.where('hashSimple', '==', hash),
+            fs.limit(1)
+          );
+          const querySnap = await fs.getDocs(importQuery);
+          querySnap.forEach((docSnap) => {
+            if (!previousImport) previousImport = { id: docSnap.id, ...(docSnap.data() || {}) };
+          });
+        }
+        return {
+          ok: true,
+          action: 'getInitialCloudImportStatus',
+          code: previousImport ? 'firestore/import-previous-match' : (metadata?.importacionInicialCompletada ? 'firestore/import-previous' : 'firestore/import-none'),
+          importacionInicialCompletada: metadata?.importacionInicialCompletada === true,
+          datosMigrados: metadata?.datosMigrados === true,
+          cloudDataReady: metadata?.cloudDataReady === true || metadata?.cloudReady === true,
+          fuentePrincipal: cleanText(metadata?.fuentePrincipal || 'local') || 'local',
+          ultimaImportacionAt: cleanText(metadata?.ultimaImportacionAt || ''),
+          previousImport,
+          localMode: !(metadata?.cloudActive === true || cleanText(metadata?.fuentePrincipal).toLowerCase() === 'firestore'),
+          cloudActive: metadata?.cloudActive === true || cleanText(metadata?.fuentePrincipal).toLowerCase() === 'firestore',
+          message: previousImport
+            ? 'Este JSON parece haber sido importado antes. Se podrán omitir duplicados sin sobrescribir.'
+            : (metadata?.importacionInicialCompletada ? 'Ya existe una importación inicial registrada. La nueva importación solo creará faltantes.' : 'No se detectó importación inicial previa con esta firma.'),
+          status: getFirebaseStatus()
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          action: 'getInitialCloudImportStatus',
+          code: cleanText(error?.code || 'firebase/firestore-error'),
+          message: translateFirestorePrepError(error),
+          localMode: true,
+          cloudActive: false,
+          status: getFirebaseStatus()
+        };
+      }
     }
 
-    function importInitialBackupToCloud() {
-      return getFirebasePendingResult('importInitialBackupToCloud', {
-        importEnabled: false
-      });
+    function normalizePreparedFirestoreRecord(record) {
+      const raw = isPlainObject(record) ? record : {};
+      const segments = Array.isArray(raw.pathSegments) ? raw.pathSegments.map((segment) => cleanText(segment)).filter(Boolean) : [];
+      const data = isPlainObject(raw.data) ? raw.data : {};
+      return {
+        collectionKey: cleanText(raw.collectionKey),
+        label: cleanText(raw.label),
+        documentId: cleanText(raw.documentId || segments[segments.length - 1]),
+        pathSegments: segments,
+        data
+      };
+    }
+
+    async function importInitialBackupToCloud(preparedImport = {}, options = {}) {
+      const prepared = isPlainObject(preparedImport) ? preparedImport : {};
+      const importRecords = Array.isArray(prepared.records) ? prepared.records.map(normalizePreparedFirestoreRecord).filter((record) => record.pathSegments.length >= 4 && record.documentId) : [];
+      const importOptions = isPlainObject(options) ? options : {};
+      const onProgress = typeof importOptions.onProgress === 'function' ? importOptions.onProgress : null;
+      const progress = (payload) => {
+        if (onProgress) {
+          try { onProgress(payload); } catch (_) { /* Progreso visual no debe romper importación. */ }
+        }
+      };
+
+      if (!importRecords.length) {
+        return {
+          ok: false,
+          action: 'importInitialBackupToCloud',
+          code: 'firebase/import-empty',
+          message: 'El JSON validado no contiene registros para copiar a Firestore.',
+          localMode: true,
+          cloudActive: false,
+          imported: 0,
+          skipped: 0,
+          errors: []
+        };
+      }
+
+      try {
+        const { user, db, fs } = await ensureFirebaseFirestoreReady();
+        const stamp = getFirestoreTimestampValue(fs);
+        const importStartedAtLocal = nowIso();
+        const baseImportId = cleanText(prepared.importId) || `import_${Date.now().toString(36)}`;
+        let importId = baseImportId;
+        const workspaceRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER);
+        const workspaceSnap = await fs.getDoc(workspaceRef);
+        if (!workspaceSnap.exists()) {
+          await fs.setDoc(workspaceRef, {
+            id: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+            nombre: FIRESTORE_WORKSPACE_NAME,
+            proyectoFirebase: FIREBASE_PROJECT_NAME,
+            projectId: cleanText(getRawKSAFirebaseConfig().projectId),
+            createdAt: stamp,
+            updatedAt: stamp,
+            estado: 'activo',
+            versionApp: APP_VERSION,
+            origen: 'importacion_inicial_json_firestore'
+          }, { merge: false });
+        }
+        const userRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'usuarios', user.uid);
+        const userSnap = await fs.getDoc(userRef);
+        if (!userSnap.exists()) {
+          await fs.setDoc(userRef, {
+            uid: user.uid,
+            correo: user.email || FIREBASE_INITIAL_ADMIN_EMAIL,
+            rol: 'Administrador',
+            activo: true,
+            nombre: user.displayName || 'Administrador',
+            createdAt: stamp,
+            updatedAt: stamp,
+            origen: 'importacion_inicial_json_firestore'
+          }, { merge: false });
+        }
+        let importRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, FIRESTORE_IMPORT_COLLECTION_ID, importId);
+        const existingImportSnap = await fs.getDoc(importRef);
+        if (existingImportSnap.exists()) {
+          importId = `${baseImportId}_${Date.now().toString(36)}`;
+          importRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, FIRESTORE_IMPORT_COLLECTION_ID, importId);
+        }
+
+        const total = importRecords.length;
+        let processed = 0;
+        let imported = 0;
+        let skipped = 0;
+        let batch = fs.writeBatch(db);
+        let batchCount = 0;
+        const errors = [];
+        const skippedByCollection = {};
+        const importedByCollection = {};
+
+        const commitBatch = async () => {
+          if (!batchCount) return;
+          await batch.commit();
+          batch = fs.writeBatch(db);
+          batchCount = 0;
+          progress({ phase: 'Importando', processed, total, imported, skipped, errors: errors.length });
+        };
+
+        progress({ phase: 'Preparando', processed: 0, total, imported: 0, skipped: 0, errors: 0 });
+
+        for (const record of importRecords) {
+          try {
+            const ref = fs.doc(db, ...record.pathSegments);
+            const snap = await fs.getDoc(ref);
+            processed += 1;
+            if (snap.exists()) {
+              skipped += 1;
+              skippedByCollection[record.collectionKey] = (skippedByCollection[record.collectionKey] || 0) + 1;
+              progress({ phase: 'Importando', processed, total, imported, skipped, errors: errors.length });
+              continue;
+            }
+            batch.set(ref, record.data);
+            batchCount += 1;
+            imported += 1;
+            importedByCollection[record.collectionKey] = (importedByCollection[record.collectionKey] || 0) + 1;
+            if (batchCount >= FIRESTORE_IMPORT_BATCH_LIMIT) await commitBatch();
+          } catch (recordError) {
+            processed += 1;
+            errors.push({
+              documentId: record.documentId,
+              collectionKey: record.collectionKey,
+              message: cleanText(recordError?.message || recordError?.code || 'Error de escritura')
+            });
+          }
+        }
+
+        await commitBatch();
+        progress({ phase: 'Finalizando', processed, total, imported, skipped, errors: errors.length });
+
+        const importMetadata = {
+          importId,
+          fecha: stamp,
+          fechaLocal: importStartedAtLocal,
+          usuarioUid: user.uid,
+          usuarioCorreo: user.email,
+          workspaceId: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+          archivoNombre: cleanText(prepared.fileName),
+          appVersionOrigen: cleanText(prepared.appVersionOrigen),
+          appVersionImportador: APP_VERSION,
+          exportedAt: cleanText(prepared.exportedAt),
+          conteos: clonePlainObject(prepared.counts, {}),
+          totalRegistros: Number(prepared.totalRegistros) || total,
+          registrosPreparados: total,
+          registrosImportados: imported,
+          duplicadosOmitidos: skipped,
+          omitidosPorColeccion: skippedByCollection,
+          importadosPorColeccion: importedByCollection,
+          estado: errors.length ? 'finalizado_con_errores' : 'finalizado',
+          errores: errors.slice(0, 80),
+          sourceDeviceName: cleanText(prepared.sourceDeviceName),
+          periodoTrabajoSeleccionado: cleanText(prepared.periodoTrabajoSeleccionado),
+          hashSimple: cleanText(prepared.hashSimple),
+          modoImportacion: 'crear_faltantes_omitir_existentes',
+          fuentePrincipal: 'firestore',
+          cloudActive: true,
+          localStorageTocado: false
+        };
+        await fs.setDoc(importRef, importMetadata, { merge: false });
+
+        const metadataRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
+        await fs.setDoc(metadataRef, {
+          importacionInicialCompletada: true,
+          ultimaImportacionAt: stamp,
+          ultimaImportacionAtLocal: importStartedAtLocal,
+          ultimaImportacionId: importId,
+          ultimaImportacionArchivo: cleanText(prepared.fileName),
+          periodoTrabajoOrigen: cleanText(prepared.periodoTrabajoSeleccionado),
+          fuentePrincipal: 'firestore',
+          modoDatos: 'nube_activa',
+          modo: 'online_controlada',
+          datosMigrados: true,
+          cloudDataReady: true,
+          cloudReady: true,
+          cloudActive: true,
+          updatedAt: stamp,
+          appVersion: APP_VERSION
+        }, { merge: true });
+
+        publishKSAFirebaseRuntime({
+          workspaceId: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+          workspaceInitialized: true,
+          cloudDataReady: true,
+          cloudActive: true,
+          cloudReadsEnabled: true,
+          cloudWritesEnabled: true,
+          localMode: false,
+          noFirestoreWrites: false,
+          noOperationalFirestoreWrites: false,
+          baseOnline: 'Nube activa',
+          message: 'Importación inicial a Firestore finalizada. Firestore queda listo como fuente principal.'
+        });
+        progress({ phase: 'Finalizado', processed, total, imported, skipped, errors: errors.length });
+        return {
+          ok: errors.length === 0,
+          action: 'importInitialBackupToCloud',
+          code: errors.length ? 'firestore/import-finished-with-errors' : 'firestore/import-finished',
+          message: errors.length
+            ? `Importación finalizada con ${errors.length} error(es). Importados: ${imported}. Omitidos por duplicado: ${skipped}. Firestore queda listo para operación online controlada.`
+            : `Importación finalizada. Importados: ${imported}. Omitidos por duplicado: ${skipped}. Firestore queda listo como fuente principal.`,
+          importId,
+          imported,
+          skipped,
+          processed,
+          total,
+          errors,
+          importedByCollection,
+          skippedByCollection,
+          localMode: false,
+          cloudActive: true,
+          status: getFirebaseStatus()
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          action: 'importInitialBackupToCloud',
+          code: cleanText(error?.code || 'firebase/firestore-error'),
+          message: translateFirestorePrepError(error),
+          imported: 0,
+          skipped: 0,
+          errors: [{ message: cleanText(error?.message || error?.code || 'Error Firestore') }],
+          localMode: true,
+          cloudActive: false,
+          status: getFirebaseStatus()
+        };
+      }
     }
 
     return Object.freeze({
       name: 'KSAFirebaseAdapter',
-      stage: 'Bloque A - Etapa 6/6',
+      stage: 'Bloque C - Etapa 5/5',
       configGlobalName: KSA_FIREBASE_CONFIG_GLOBAL,
+      runtimeGlobalName: KSA_FIREBASE_RUNTIME_GLOBAL,
       configFile: 'firebase-config.js',
       requiredConfigKeys: Array.from(FIREBASE_REQUIRED_CONFIG_KEYS),
+      sdkVersion: FIREBASE_SDK_VERSION,
+      sdkImports: { ...FIREBASE_SDK_IMPORTS },
       initFirebase,
       isFirebaseConfigured,
       getFirebaseStatus,
@@ -3708,8 +5456,15 @@
       getCurrentUser,
       getCurrentWorkspace,
       getUserRole,
+      verifyFirestoreWorkspace,
+      initializeWorkspaceBase,
+      getInitialCloudImportStatus,
       readCloudCollection,
+      readCloudOperationalSnapshot,
+      activateCloudOperation,
       writeCloudDocument,
+      writeCloudOperationalSnapshot,
+      getCloudRuntimeStatus,
       importInitialBackupToCloud
     });
   }
@@ -3739,8 +5494,21 @@
       workspace: 'No activo todavía',
       workspaceId: null,
       localMode: true,
-      message: 'Firebase pendiente de configuración. La app continúa en modo local.'
+      message: 'Firebase pendiente de configuración. La app puede continuar en modo local controlado.'
     };
+  }
+
+
+  function getCloudRuntimeStatusSafe() {
+    try {
+      if (typeof KSAFirebaseAdapter !== 'undefined' && KSAFirebaseAdapter && typeof KSAFirebaseAdapter.getCloudRuntimeStatus === 'function') {
+        const status = KSAFirebaseAdapter.getCloudRuntimeStatus();
+        return isPlainObject(status) ? status : {};
+      }
+    } catch (_) {
+      // Estado nube auxiliar; no debe romper la app si Firebase no responde.
+    }
+    return {};
   }
 
   function normalizeExcelCierreSnapshotSummary(summary) {
@@ -4394,9 +6162,168 @@
         updatedAt: nowIso()
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      scheduleCloudSnapshotSync('saveData');
     } catch (error) {
       console.error('KSA PRÁCTIKA: no se pudo guardar en localStorage.', error);
     }
+  }
+
+  let cloudOperationState = {
+    runtimeReady: false,
+    active: false,
+    isHydrating: false,
+    isWriting: false,
+    isReading: false,
+    timer: null,
+    lastSyncAt: '',
+    lastRefreshAt: '',
+    lastError: '',
+    message: '',
+    bootstrappedForUid: ''
+  };
+
+  function applyCloudConsecutivosMirror(consecutivos = {}) {
+    const pairs = [
+      ['json', JSON_EXPORT_SEQUENCE_STORAGE_KEY],
+      ['excelConsulta', EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY],
+      ['excelCierre', EXCEL_CIERRE_SEQUENCE_STORAGE_KEY]
+    ];
+    pairs.forEach(([key, storageKey]) => {
+      const value = consecutivos?.[key];
+      if (value === null || value === undefined || value === '') return;
+      try { localStorage.setItem(storageKey, String(value)); } catch (_) {}
+    });
+  }
+
+  function scheduleCloudSnapshotSync(reason = '') {
+    if (!cloudOperationState.runtimeReady || cloudOperationState.isHydrating || !cloudOperationState.active) return;
+    if (typeof window === 'undefined') return;
+    if (cloudOperationState.timer) window.clearTimeout(cloudOperationState.timer);
+    cloudOperationState.timer = window.setTimeout(() => {
+      cloudOperationState.timer = null;
+      flushCloudSnapshotSync(reason);
+    }, 900);
+  }
+
+  async function flushCloudSnapshotSync(reason = '') {
+    if (!cloudOperationState.runtimeReady || cloudOperationState.isHydrating || cloudOperationState.isWriting) return null;
+    if (!cloudOperationState.active) return null;
+    try {
+      if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.writeCloudOperationalSnapshot) return null;
+      cloudOperationState.isWriting = true;
+      const result = await KSAFirebaseAdapter.writeCloudOperationalSnapshot(null, { reason: cleanText(reason) });
+      cloudOperationState.isWriting = false;
+      cloudOperationState.lastSyncAt = result?.lastSyncAt || nowIso();
+      cloudOperationState.lastError = result?.ok ? '' : cleanText(result?.message || 'No se pudo sincronizar con Firestore.');
+      cloudOperationState.message = result?.message || '';
+      return result;
+    } catch (error) {
+      cloudOperationState.isWriting = false;
+      cloudOperationState.lastError = cleanText(error?.message || 'No se pudo sincronizar con Firestore.');
+      return { ok: false, message: cloudOperationState.lastError };
+    }
+  }
+
+  function applyCloudSnapshotToRuntime(result) {
+    if (!result?.ok || !isPlainObject(result.snapshot)) return false;
+    cloudOperationState.isHydrating = true;
+    try {
+      appData = normalizeData(result.snapshot);
+      appData.metadata = {
+        ...(isPlainObject(appData.metadata) ? appData.metadata : {}),
+        fuentePrincipal: 'firestore',
+        cloudActive: true,
+        cloudDataReady: true,
+        lastCloudHydratedAt: nowIso()
+      };
+      saveData(appData);
+      if (result.notasModulo) saveNotasData(result.notasModulo);
+      if (result.facturasModulo) saveFacturasData(result.facturasModulo);
+      if (Array.isArray(result.bitacora)) {
+        appActivityLog = result.bitacora.map((entry) => normalizeActivityEntry(entry));
+        saveActivityLog(appActivityLog);
+      }
+      applyCloudConsecutivosMirror(result.consecutivos || {});
+      reconcileWorkPeriodSelectionAfterDataChange();
+      syncCasaFiltersWithActiveWorkPeriod({ force: true, preserveCategory: true });
+      cloudOperationState.active = true;
+      cloudOperationState.lastRefreshAt = result.lastSyncAt || nowIso();
+      cloudOperationState.lastSyncAt = result.lastSyncAt || cloudOperationState.lastSyncAt || nowIso();
+      cloudOperationState.lastError = '';
+      cloudOperationState.message = result.message || 'Datos actualizados desde Firestore.';
+      return true;
+    } finally {
+      cloudOperationState.isHydrating = false;
+    }
+  }
+
+  async function activateAndLoadCloudOperation(options = {}) {
+    const opts = isPlainObject(options) ? options : {};
+    if (!cloudOperationState.runtimeReady) return { ok: false, message: 'Firebase todavía está preparando el runtime.' };
+    if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.readCloudOperationalSnapshot) {
+      return { ok: false, message: 'Adaptador Firestore no disponible.' };
+    }
+    if (cloudOperationState.isReading) return { ok: false, message: 'Ya hay una actualización de nube en curso.' };
+    cloudOperationState.isReading = true;
+    cloudOperationState.message = 'Verificando Firestore…';
+    try {
+      let result = await KSAFirebaseAdapter.readCloudOperationalSnapshot({ requireActive: true });
+      if (!result.ok && result.code === 'cloud/not-active' && opts.activateIfReady !== false && KSAFirebaseAdapter.activateCloudOperation) {
+        const activated = await KSAFirebaseAdapter.activateCloudOperation({ source: 'auto_bootstrap' });
+        if (activated.ok) result = await KSAFirebaseAdapter.readCloudOperationalSnapshot({ requireActive: true });
+        else result = { ...result, message: activated.message || result.message };
+      }
+      if (result.ok) {
+        applyCloudSnapshotToRuntime(result);
+      } else {
+        cloudOperationState.active = false;
+        cloudOperationState.lastError = cleanText(result.message || 'No se pudo activar nube.');
+        cloudOperationState.message = cloudOperationState.lastError;
+      }
+      if (opts.render === true && typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
+      return result;
+    } catch (error) {
+      cloudOperationState.active = false;
+      cloudOperationState.lastError = cleanText(error?.message || 'No se pudo leer Firestore.');
+      if (opts.render === true && typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
+      return { ok: false, message: cloudOperationState.lastError, error };
+    } finally {
+      cloudOperationState.isReading = false;
+    }
+  }
+
+  async function handleCloudDataRefresh(button = null) {
+    if (button) button.disabled = true;
+    configState.message = 'Actualizando datos desde Firestore…';
+    configState.messageType = 'success';
+    renderRoute({ preserveScroll: true });
+    const result = await activateAndLoadCloudOperation({ activateIfReady: false, render: false });
+    configState.message = result.ok ? 'Datos actualizados desde Firestore.' : (result.message || 'No se pudo actualizar desde Firestore.');
+    configState.messageType = result.ok ? 'success' : 'error';
+    renderRoute({ preserveScroll: true });
+  }
+
+  async function handleCloudOperationActivate(button = null) {
+    if (button) button.disabled = true;
+    configState.message = 'Activando operación online con Firestore…';
+    configState.messageType = 'success';
+    renderRoute({ preserveScroll: true });
+    try {
+      const activated = await KSAFirebaseAdapter.activateCloudOperation({ source: 'manual_configuracion_usuarios' });
+      if (!activated.ok) {
+        configState.message = activated.message || 'No se pudo activar nube.';
+        configState.messageType = 'error';
+        renderRoute({ preserveScroll: true });
+        return;
+      }
+      const result = await activateAndLoadCloudOperation({ activateIfReady: false, render: false });
+      configState.message = result.ok ? 'Nube activa. Firestore queda como fuente principal.' : (result.message || 'Nube activada, pero no se pudo refrescar datos.');
+      configState.messageType = result.ok ? 'success' : 'error';
+    } catch (error) {
+      configState.message = cleanText(error?.message || 'No se pudo activar nube.');
+      configState.messageType = 'error';
+    }
+    renderRoute({ preserveScroll: true });
   }
 
   // BLOQUE A / Etapa 1: capa preparatoria nube/local.
@@ -4422,6 +6349,11 @@
     }
 
     function detectMode() {
+      const runtime = getKSAFirebaseRuntime();
+      if (cloudOperationState.active || runtime?.cloudActive === true || appData?.metadata?.cloudActive === true || cleanText(appData?.metadata?.fuentePrincipal).toLowerCase() === 'firestore') {
+        return 'cloud_active';
+      }
+      if (runtime?.cloudDataReady === true || runtime?.cloudReady === true || appData?.metadata?.cloudDataReady === true) return 'cloud_ready';
       const cloudConfig = isPlainObject(appData?.configuracion?.nube)
         ? appData.configuracion.nube
         : (isPlainObject(appData?.configuracion?.cloudSync) ? appData.configuracion.cloudSync : {});
@@ -4540,7 +6472,7 @@
         const contract = getFirestoreCollectionContract(key);
         acc[key] = {
           count: getCollectionCount(key, snapshot),
-          source: ['facturasModulo', 'notasModulo', 'bitacora', 'consecutivos', 'respaldosImportaciones'].includes(key) ? 'localStorage_auxiliar' : (key === 'usuarios' ? 'contrato_preparado' : 'localStorage_principal'),
+          source: ['facturasModulo', 'notasModulo', 'bitacora', 'consecutivos', 'respaldosImportaciones', 'importaciones'].includes(key) ? 'localStorage_auxiliar' : (key === 'usuarios' ? 'contrato_preparado' : 'localStorage_principal'),
           futurePath: contract?.path || '',
           idPolicy: contract?.idPolicy || ''
         };
@@ -4562,6 +6494,7 @@
 
     function getDiagnostics() {
       const snapshot = readLocalSnapshot();
+      const firebaseStatus = getKSAFirebaseStatusSafe();
       return {
         ok: true,
         appName: APP_NAME,
@@ -4570,8 +6503,9 @@
         mode: detectMode(),
         availableModes: [...MODES],
         localOnly: detectMode() === 'local',
-        cloudConnected: false,
-        firebaseConnected: false,
+        cloudConnected: detectMode() === 'cloud_active',
+        firebaseConnected: firebaseStatus.firebaseConnected === true,
+        firebaseConfigured: firebaseStatus.configComplete === true,
         collectionSummary: summarizeCollections(snapshot),
         firestoreContract: getKSAFirestoreContract(),
         metadata: cloneForLayer(snapshot.metadata, {}),
@@ -4610,7 +6544,7 @@
 
     return Object.freeze({
       name: 'KSADataLayer',
-      stage: 'Bloque A - Etapa 6/6',
+      stage: 'Bloque C - Etapa 5/5',
       modes: MODES,
       collectionKeys: COLLECTION_KEYS,
       firestoreContract: getKSAFirestoreContract(),
@@ -4620,14 +6554,17 @@
         return {
           mode: detectMode(),
           localOnly: detectMode() === 'local',
-          cloudConnected: false,
-          firebaseConnected: false,
+          cloudConnected: detectMode() === 'cloud_active',
+          firebaseConnected: firebaseStatus.firebaseConnected === true,
           firebase: firebaseStatus.firebaseLabel || 'Firebase pendiente de configuración',
           firebaseConfigState: firebaseStatus.configState || 'missing',
           firebaseConfigComplete: firebaseStatus.configComplete === true,
           auth: firebaseStatus.auth || 'Pendiente',
           firestore: firebaseStatus.firestore || 'Pendiente',
-          workspace: firebaseStatus.workspace || 'No activo todavía'
+          workspace: firebaseStatus.workspace || 'No activo todavía',
+          projectId: firebaseStatus.projectId || '',
+          projectName: firebaseStatus.projectName || '',
+          baseOnline: firebaseStatus.baseOnline || 'Pendiente de activación'
         };
       },
       readLocalSnapshot,
@@ -4650,14 +6587,29 @@
   let appDeviceIdentity = loadDeviceIdentity();
   let appActivityLog = loadActivityLog();
   const KSAFirebaseAdapter = createKSAFirebaseAdapter();
-  if (typeof window !== 'undefined') window.KSAFirebaseAdapter = KSAFirebaseAdapter;
+  if (typeof window !== 'undefined') {
+    window.KSAFirebaseAdapter = KSAFirebaseAdapter;
+    window.addEventListener(KSA_FIREBASE_READY_EVENT, (event) => {
+      const detail = isPlainObject(event?.detail) ? event.detail : {};
+      const uid = cleanText(detail?.currentUser?.uid || detail?.currentUser?.id || '');
+      if (detail.authState === 'authenticated' && uid && cloudOperationState.bootstrappedForUid !== uid) {
+        cloudOperationState.bootstrappedForUid = uid;
+        activateAndLoadCloudOperation({ activateIfReady: true, render: true });
+      }
+      if (detail.authState === 'signed_out') {
+        cloudOperationState.active = false;
+        cloudOperationState.bootstrappedForUid = '';
+      }
+    });
+  }
+  cloudOperationState.runtimeReady = true;
+  KSAFirebaseAdapter.initFirebase();
   const KSADataLayer = createKSADataLayer();
   if (typeof window !== 'undefined') window.KSADataLayer = KSADataLayer;
   const KSAFirestoreContract = getKSAFirestoreContract();
   if (typeof window !== 'undefined') window.KSAFirestoreContract = KSAFirestoreContract;
 
-  // BLOQUE A / Etapa 3: acceso preparado sin autenticación real.
-  // Mantiene la operación local y deja un contrato claro para Firebase Auth futuro.
+  // BLOQUE C / Etapa 2: acceso real con Firebase Auth, operación local intacta.
   function isFirebaseAuthConfigured() {
     return getKSAFirebaseStatusSafe().authReady === true;
   }
@@ -4711,19 +6663,41 @@
   let appAuthSession = loadPreparedAuthSession();
 
   function getPreparedAuthStatus() {
-    const firebaseConfigured = isFirebaseAuthConfigured();
+    const firebaseStatus = getKSAFirebaseStatusSafe();
+    const firebaseConfigured = firebaseStatus.configComplete === true;
+    const authReady = firebaseStatus.authReady === true;
+    const firebaseUser = KSAFirebaseAdapter.getCurrentUser ? KSAFirebaseAdapter.getCurrentUser() : null;
+    const role = firebaseUser ? getFirebaseRoleForEmail(firebaseUser.email) : getFirebaseRoleForEmail('');
+    if (firebaseUser) {
+      return {
+        ...createPreparedAuthSession(appAuthSession),
+        authMode: 'firebase',
+        user: firebaseUser,
+        role: role.id || 'usuario',
+        roleLabel: role.label,
+        roleConfigured: role.configured,
+        firebaseConfigured,
+        firebaseAuthStatus: 'signed_in',
+        localAccessAccepted: true,
+        accessLabel: 'Sesión iniciada',
+        firebaseAuthLabel: authReady ? 'Activo' : 'Preparando',
+        message: cloudOperationState.active ? 'Sesión iniciada. Nube activa con Firestore como fuente principal.' : 'Sesión iniciada con Firebase Auth. Firestore se activará si la nube importada está lista.'
+      };
+    }
     return {
       ...createPreparedAuthSession(appAuthSession),
       authMode: 'local',
       user: appAuthSession?.user || null,
       role: cleanText(appAuthSession?.role) || 'local_owner',
+      roleLabel: appAuthSession?.localAccessAccepted ? 'Modo local' : 'Sin sesión',
+      roleConfigured: false,
       firebaseConfigured,
-      firebaseAuthStatus: firebaseConfigured ? 'configured' : 'pending_configuration',
-      accessLabel: 'Modo local',
-      firebaseAuthLabel: firebaseConfigured ? 'Configurado' : 'Pendiente de configuración',
+      firebaseAuthStatus: firebaseConfigured ? 'signed_out' : 'pending_configuration',
+      accessLabel: appAuthSession?.localAccessAccepted ? 'Modo local' : 'Sin sesión',
+      firebaseAuthLabel: authReady ? 'Activo' : (firebaseConfigured ? 'Preparando' : 'Pendiente de configuración'),
       message: firebaseConfigured
-        ? 'Firebase Auth está preparado para una etapa futura.'
-        : 'Firebase aún no está configurado. Puedes continuar trabajando en modo local.'
+        ? 'Firebase Auth está activo. Inicia sesión para operar con Firestore cuando la nube esté lista.'
+        : 'Firebase aún no está configurado. Puedes continuar trabajando en modo local controlado.'
     };
   }
 
@@ -4752,9 +6726,11 @@
     return overlay;
   }
 
-  function renderPreparedAccessScreen(message = '') {
+  function renderPreparedAccessScreen(message = '', options = {}) {
     const status = getPreparedAuthStatus();
     const detailMessage = cleanText(message) || status.message;
+    const emailValue = normalizeAuthEmail(options.email || '');
+    const isSignedIn = status.authMode === 'firebase' && status.user?.email;
     return `
       <div class="access-prepared-panel" role="dialog" aria-modal="true" aria-labelledby="accessPreparedTitle" aria-describedby="accessPreparedNotice">
         <div class="access-prepared-brand">
@@ -4762,24 +6738,45 @@
           <div>
             <span class="eyebrow mini">Acceso</span>
             <h1 id="accessPreparedTitle">KSA PRÁCTIKA</h1>
-            <p>Acceso preparado para base en línea</p>
+            <p>Firebase Auth / Firestore</p>
           </div>
         </div>
         <form class="access-prepared-form" data-access-prepared-form novalidate>
           <div class="access-prepared-info" role="note">
-            <strong>Firebase Auth pendiente</strong>
-            <span>No se solicita correo ni contraseña real en modo local.</span>
+            <strong>Firebase Auth ${status.firebaseConfigured ? 'activo' : 'pendiente'}</strong>
+            <span>${status.firebaseConfigured ? 'El login es real; Firestore se usa como fuente principal cuando la nube está activa.' : 'Firebase no está disponible; usa modo local controlado.'}</span>
           </div>
           <div id="accessPreparedNotice" class="access-prepared-notice" role="status">${escapeHtml(detailMessage)}</div>
+          ${isSignedIn ? `
+            <div class="access-current-user" role="status">
+              <strong>Sesión iniciada</strong>
+              <span>${escapeHtml(status.user.email)}</span>
+              <small>${escapeHtml(status.roleLabel || 'Usuario autenticado')}</small>
+            </div>
+          ` : `
+            <div class="access-login-fields">
+              <label class="form-field">
+                <span>Correo electrónico</span>
+                <input type="email" name="email" value="${escapeHtml(emailValue)}" autocomplete="username" inputmode="email" placeholder="correo@dominio.com" ${status.firebaseConfigured ? '' : 'disabled'} />
+              </label>
+              <label class="form-field">
+                <span>Contraseña</span>
+                <input type="password" name="password" autocomplete="current-password" placeholder="Contraseña" ${status.firebaseConfigured ? '' : 'disabled'} />
+              </label>
+            </div>
+          `}
           <div class="access-prepared-actions">
-            <button type="button" class="card-action compact" data-access-login disabled title="Disponible cuando Firebase esté activo">Iniciar sesión</button>
-            <button type="button" class="secondary-action compact" data-access-local>Continuar en modo local</button>
+            ${isSignedIn
+              ? '<button type="button" class="card-action compact" data-access-enter>Entrar a la app</button>'
+              : `<button type="submit" class="card-action compact" data-access-login ${status.firebaseConfigured ? '' : 'disabled'}>Iniciar sesión</button>`}
+            <button type="button" class="secondary-action compact" data-access-local>Continuar en modo local controlado</button>
           </div>
-          <button type="button" class="link-button access-menu-link" data-access-menu>Ir al Menú principal en modo local</button>
+          <button type="button" class="link-button access-menu-link" data-access-menu>Ir al Menú principal sin nube activa</button>
         </form>
         <div class="access-prepared-status" aria-label="Estado de acceso">
           <div class="status-item"><strong>Acceso</strong><span>${escapeHtml(status.accessLabel)}</span></div>
           <div class="status-item"><strong>Firebase Auth</strong><span>${escapeHtml(status.firebaseAuthLabel)}</span></div>
+          <div class="status-item"><strong>Modo de datos</strong><span>${escapeHtml(cloudOperationState.active ? 'Nube activa' : 'Local controlado')}</span></div>
         </div>
       </div>
     `;
@@ -4792,9 +6789,9 @@
     document.body.classList.remove('access-prepared-open');
   }
 
-  function openPreparedAccessScreen(message = '') {
+  function openPreparedAccessScreen(message = '', options = {}) {
     const overlay = getPreparedAccessOverlay();
-    overlay.innerHTML = renderPreparedAccessScreen(message);
+    overlay.innerHTML = renderPreparedAccessScreen(message, options);
     overlay.classList.remove('is-hidden');
     overlay.setAttribute('aria-hidden', 'false');
     document.body.classList.add('access-prepared-open');
@@ -4807,11 +6804,51 @@
     setRoute('home');
   }
 
+  function setAccessNotice(form, message, type = 'info') {
+    const notice = form?.querySelector?.('#accessPreparedNotice');
+    if (!notice) return;
+    notice.textContent = cleanText(message) || '';
+    notice.classList.toggle('is-error', type === 'error');
+    notice.classList.toggle('is-success', type === 'success');
+  }
+
+  async function handlePreparedLogin(form) {
+    const formData = new FormData(form);
+    const email = normalizeAuthEmail(formData.get('email'));
+    const password = typeof formData.get('password') === 'string' ? formData.get('password') : '';
+    const button = form.querySelector('[data-access-login]');
+    if (button) button.disabled = true;
+    setAccessNotice(form, 'Verificando acceso…', 'info');
+    try {
+      const result = await KSAAuthLayer.signIn(email, password);
+      if (!result.ok) {
+        setAccessNotice(form, result.message, 'error');
+        if (button) button.disabled = false;
+        form.querySelector('input[name="password"]')?.focus({ preventScroll: true });
+        return;
+      }
+      const cloudResult = await activateAndLoadCloudOperation({ activateIfReady: true, render: false });
+      const noticeMessage = cloudResult.ok
+        ? 'Sesión iniciada. Nube activa con Firestore como fuente principal.'
+        : (result.message || 'Sesión iniciada correctamente.');
+      setAccessNotice(form, noticeMessage, cloudResult.ok ? 'success' : 'info');
+      closePreparedAccessScreen();
+      renderRoute({ preserveScroll: true });
+    } catch (error) {
+      setAccessNotice(form, translateFirebaseAuthError(error), 'error');
+      if (button) button.disabled = false;
+    }
+  }
+
   function bindPreparedAccessActions(overlay) {
     const target = overlay || getPreparedAccessOverlay();
     target.querySelector('[data-access-prepared-form]')?.addEventListener('submit', (event) => {
       event.preventDefault();
-      openPreparedAccessScreen('Firebase aún no está configurado. Puedes continuar trabajando en modo local.');
+      handlePreparedLogin(event.currentTarget);
+    });
+    target.querySelector('[data-access-enter]')?.addEventListener('click', () => {
+      closePreparedAccessScreen();
+      setRoute('home');
     });
     target.querySelector('[data-access-local]')?.addEventListener('click', continuePreparedLocalMode);
     target.querySelector('[data-access-menu]')?.addEventListener('click', continuePreparedLocalMode);
@@ -4821,7 +6858,8 @@
     const overlay = getPreparedAccessOverlay();
     overlay.innerHTML = renderPreparedAccessScreen();
     bindPreparedAccessActions(overlay);
-    if (getPreparedAuthStatus().localAccessAccepted) {
+    const status = getPreparedAuthStatus();
+    if (status.authMode === 'firebase' || status.localAccessAccepted) {
       closePreparedAccessScreen();
       return;
     }
@@ -4831,8 +6869,10 @@
   function createKSAAuthLayer() {
     return Object.freeze({
       name: 'KSAAuthLayer',
-      stage: 'Bloque A - Etapa 6/6',
+      stage: 'Bloque C - Etapa 5/5',
       getStatus: getPreparedAuthStatus,
+      signIn: (email, password) => KSAFirebaseAdapter.signIn(email, password),
+      signOut: () => KSAFirebaseAdapter.signOut(),
       continueLocal: continuePreparedLocalMode,
       isFirebaseConfigured: isFirebaseAuthConfigured
     });
@@ -4842,12 +6882,13 @@
   if (typeof window !== 'undefined') window.KSAAuthLayer = KSAAuthLayer;
 
   function createKSAUsersLayer() {
+    const firebaseStatus = getKSAFirebaseStatusSafe();
     return Object.freeze({
       name: 'KSAUsersLayer',
-      stage: 'Bloque A - Etapa 5/6',
-      mode: 'local_preparado',
-      firebaseAuthStatus: 'pending_configuration',
-      databaseStatus: 'local',
+      stage: 'Bloque C - Etapa 5/5',
+      mode: cloudOperationState.active ? 'cloud_active' : 'local_controlado',
+      firebaseAuthStatus: firebaseStatus.authReady ? 'active' : 'preparing',
+      databaseStatus: cloudOperationState.active ? 'firestore' : 'local_controlado',
       roles: ROLE_ORDER.map((roleId) => {
         const role = ROLE_DEFINITIONS[roleId];
         return {
@@ -4866,29 +6907,68 @@
   function getPreparedUsersStatus() {
     const authStatus = getPreparedAuthStatus();
     const firebaseStatus = getKSAFirebaseStatusSafe();
-    const role = getCurrentRoleDefinition();
+    const runtimeStatus = getCloudRuntimeStatusSafe();
+    const signedUser = authStatus.authMode === 'firebase' ? authStatus.user : null;
+    const userRole = signedUser ? getFirebaseRoleForEmail(signedUser.email) : getFirebaseRoleForEmail('');
+    const firebaseConfigured = firebaseStatus.configComplete === true;
+    const isInitialAdminSignedIn = Boolean(signedUser?.email && normalizeAuthEmail(signedUser.email) === normalizeAuthEmail(getKSAFirebaseInitialAdminEmail()));
+    const workspaceReady = Boolean(firebaseStatus.workspaceId || getKSAFirebaseRuntime()?.workspaceInitialized || runtimeStatus.workspaceInitialized);
+    const cloudActive = Boolean(cloudOperationState.active || runtimeStatus.cloudActive || firebaseStatus.cloudActive);
+    const cloudReady = Boolean(runtimeStatus.cloudDataReady || firebaseStatus.cloudDataReady || runtimeStatus.datosMigrados);
+    const isAdmin = Boolean(isInitialAdminSignedIn || userRole.id === 'administrador' || cleanText(runtimeStatus.role).toLowerCase().includes('admin'));
+    const workspaceLabel = firebaseStatus.workspace || runtimeStatus.workspaceId || 'ksa_practika';
+    const lastSyncAt = cloudOperationState.lastSyncAt || runtimeStatus.lastSyncAt || runtimeStatus.lastCloudReadAt || runtimeStatus.lastCloudWriteAt || '';
     return {
-      accessState: 'Modo local / Firebase pendiente',
-      currentUser: authStatus.user?.displayName || 'Usuario local o sesión local',
-      currentRole: `${role.label} local / Preparación`,
-      firebaseAuth: firebaseStatus.auth || 'Pendiente',
-      database: 'Local actualmente / Firestore pendiente',
-      firestore: firebaseStatus.firestore || 'Pendiente',
-      workspace: firebaseStatus.workspace || 'No activo todavía',
-      message: 'Usuarios y roles están preparados. Firebase Auth está pendiente y la gestión real se activará después de configurar Firebase.',
-      firebaseConfigured: false,
-      actionsEnabled: false,
+      accessState: signedUser ? 'Sesión iniciada' : 'Sin sesión',
+      currentUser: signedUser?.email || '—',
+      currentRole: signedUser ? (runtimeStatus.role || userRole.label) : (authStatus.localAccessAccepted ? 'Modo local controlado' : '—'),
+      projectName: firebaseStatus.projectName || getKSAFirebaseProjectName(),
+      projectId: firebaseStatus.projectId || cleanText(getRawKSAFirebaseConfig().projectId),
+      initialAdmin: firebaseStatus.initialAdmin || getKSAFirebaseInitialAdminEmail(),
+      firebase: firebaseStatus.firebaseLabel || (firebaseConfigured ? 'Configurado' : 'Pendiente'),
+      firebaseAuth: firebaseStatus.authReady ? 'Activo' : (firebaseConfigured ? 'Preparando' : 'Pendiente'),
+      database: cloudActive ? 'Firestore' : 'Local controlado',
+      firestore: firebaseConfigured ? (firebaseStatus.firestore || (cloudActive ? 'Activo' : 'Preparado')) : 'Pendiente',
+      workspace: workspaceReady ? workspaceLabel : 'Pendiente de reglas y workspace',
+      dataMode: cloudActive ? 'Nube activa' : (cloudReady ? 'Nube preparada' : (firebaseStatus.dataMode || 'Local controlado')),
+      baseOnline: cloudActive ? 'Nube activa' : (cloudReady ? 'Datos cargados, pendiente de activación' : 'No activa todavía'),
+      sourcePrincipal: cloudActive ? 'Firestore' : 'Local controlado',
+      datosMigrados: cloudReady ? 'Sí' : 'No',
+      lastSyncAt,
+      firebaseConnection: firebaseStatus.connection || (cloudActive ? 'Firestore conectado' : 'Sin conexión Firebase real'),
+      message: cloudActive
+        ? 'Firestore está activo como fuente principal. JSON queda como respaldo auxiliar y los datos locales no se borran.'
+        : (cloudReady
+          ? 'La nube ya tiene datos importados. El Administrador puede activar Firestore como fuente principal.'
+          : (firebaseConfigured
+            ? 'Firebase Auth está activo. Firestore está preparado; falta confirmar nube importada/metadata para activar operación online.'
+            : 'El bloque Usuarios está preparado. Firebase Auth está pendiente y la gestión real se activará después de configurar Firebase.')),
+      firebaseConfigured,
+      signedIn: Boolean(signedUser),
+      canSignOut: Boolean(signedUser),
+      canVerifyFirestore: Boolean(firebaseConfigured && signedUser),
+      canInitializeWorkspace: isAdmin,
+      canActivateCloud: Boolean(firebaseConfigured && signedUser && isAdmin),
+      canRefreshCloud: Boolean(firebaseConfigured && signedUser && (cloudActive || cloudReady)),
+      isInitialAdminSignedIn,
+      isAdmin,
+      cloudActive,
+      cloudReady,
+      workspaceReady,
+      rulesFile: FIRESTORE_RULES_FILENAME,
+      guideFile: FIRESTORE_GUIDE_FILENAME,
+      actionsEnabled: true,
       userTemplate: {
-        uid: 'uid futuro',
-        correo: '',
-        nombre: 'Usuario local',
-        rol: role.id,
+        uid: signedUser?.uid || 'uid Firebase',
+        correo: signedUser?.email || '',
+        nombre: signedUser?.displayName || 'Usuario autenticado',
+        rol: signedUser ? (userRole.id || 'usuario') : 'pendiente',
         activo: true,
         workspaceId: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
         createdAt: 'pendiente',
         updatedAt: 'pendiente',
         ultimoAcceso: 'pendiente',
-        fuente: 'local_preparado / firebase'
+        fuente: cloudActive ? 'firestore' : 'local_controlado / firebase'
       }
     };
   }
@@ -4896,7 +6976,517 @@
   const KSAUsersLayer = createKSAUsersLayer();
   if (typeof window !== 'undefined') window.KSAUsersLayer = KSAUsersLayer;
 
+  async function handleFirestoreVerify(button = null) {
+    if (button) button.disabled = true;
+    configState.message = 'Verificando Firestore…';
+    configState.messageType = 'success';
+    renderRoute({ preserveScroll: true });
+    try {
+      const result = await KSAFirebaseAdapter.verifyFirestoreWorkspace();
+      configState.message = result.message;
+      configState.messageType = result.ok ? 'success' : 'error';
+    } catch (error) {
+      configState.message = 'Firestore no permite escritura todavía. Revisa que las reglas hayan sido publicadas.';
+      configState.messageType = 'error';
+    }
+    renderRoute({ preserveScroll: true });
+  }
+
+  async function handleFirestoreInitializeWorkspace(button = null) {
+    if (button) button.disabled = true;
+    configState.message = 'Inicializando workspace base…';
+    configState.messageType = 'success';
+    renderRoute({ preserveScroll: true });
+    try {
+      const result = await KSAFirebaseAdapter.initializeWorkspaceBase();
+      configState.message = result.message;
+      configState.messageType = result.ok ? 'success' : 'error';
+    } catch (error) {
+      configState.message = 'Firestore no permite escritura todavía. Revisa que las reglas hayan sido publicadas.';
+      configState.messageType = 'error';
+    }
+    renderRoute({ preserveScroll: true });
+  }
+
+  async function copyFirestoreText(kind = 'guide') {
+    const isRules = cleanText(kind) === 'rules';
+    const copied = await copyTextToClipboard(isRules ? FIRESTORE_STARTUP_RULES_TEXT : FIRESTORE_GUIDE_TEXT);
+    configState.message = copied
+      ? `${isRules ? 'Reglas Firestore' : 'Guía Firestore'} copiadas al portapapeles.`
+      : `No se pudo copiar automáticamente. Usa el archivo ${isRules ? FIRESTORE_RULES_FILENAME : FIRESTORE_GUIDE_FILENAME}.`;
+    configState.messageType = copied ? 'success' : 'error';
+    renderRoute({ preserveScroll: true });
+  }
+
+  function resetCloudInitialImportState(message = '') {
+    cloudInitialImportState = {
+      fileName: '',
+      rawText: '',
+      isProcessing: false,
+      preview: null,
+      prepared: null,
+      cloudStatus: null,
+      progress: null,
+      message: cleanText(message),
+      messageType: message ? 'success' : 'success'
+    };
+    renderRoute({ preserveScroll: true });
+  }
+
+  function simpleHashText(value) {
+    const text = String(value ?? '');
+    let hash = 2166136261;
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `h${(hash >>> 0).toString(16).padStart(8, '0')}_${text.length.toString(36)}`;
+  }
+
+  function sanitizeFirestoreDocId(value, fallback = 'doc') {
+    const raw = cleanText(value);
+    const safe = raw
+      .replace(/[\/]+/g, '_')
+      .replace(/[\u0000-\u001f\u007f]/g, '')
+      .trim();
+    const candidate = safe && safe !== '.' && safe !== '..' ? safe : cleanText(fallback);
+    return candidate.slice(0, 900) || `doc_${Date.now().toString(36)}`;
+  }
+
+  function stripUndefinedForFirestore(value) {
+    if (Array.isArray(value)) {
+      return value.map(stripUndefinedForFirestore).filter((item) => item !== undefined);
+    }
+    if (value && typeof value === 'object') {
+      if (value instanceof Date) return value.toISOString();
+      const cleaned = {};
+      Object.entries(value).forEach(([key, item]) => {
+        if (item === undefined || typeof item === 'function') return;
+        cleaned[key] = stripUndefinedForFirestore(item);
+      });
+      return cleaned;
+    }
+    if (Number.isNaN(value)) return null;
+    return value;
+  }
+
+  function getRawArrayFromCloudImportData(data, key) {
+    const source = isPlainObject(data) ? data : {};
+    return Array.isArray(source[key]) ? source[key] : [];
+  }
+
+  function extractConsecutivosFromCloudJson(raw) {
+    const source = isPlainObject(raw) ? raw : {};
+    const registros = isPlainObject(source.registros) ? source.registros : {};
+    const metadata = isPlainObject(source.metadata) ? source.metadata : {};
+    const config = isPlainObject(registros.configuracion) ? registros.configuracion : (isPlainObject(source.configuracion) ? source.configuracion : {});
+    const candidates = [source.consecutivos, registros.consecutivos, metadata.consecutivos, config.consecutivos, config.sequences, metadata.sequences];
+    return candidates.find((item) => isPlainObject(item)) || {};
+  }
+
+  function buildCloudImportSnapshot(extractedData, raw, activityEntries = []) {
+    const data = isPlainObject(extractedData) ? extractedData : {};
+    const snapshot = {};
+    CATALOGS.forEach((catalog) => {
+      snapshot[catalog.id] = getRawArrayFromCloudImportData(data, catalog.id).map((record) => normalizeCatalogRecord(record, catalog));
+    });
+    snapshot.ventas = getRawArrayFromCloudImportData(data, 'ventas').map((record) => normalizeVentaRecord(record));
+    snapshot.cobros = getRawArrayFromCloudImportData(data, 'cobros').map((record) => normalizeCobroRecord(record));
+    snapshot.comprasProveedores = getRawArrayFromCloudImportData(data, 'comprasProveedores').map((record) => normalizeCompraProveedorRecord(record));
+    snapshot.pagosProveedores = getRawArrayFromCloudImportData(data, 'pagosProveedores').map((record) => normalizePagoProveedorRecord(record));
+    snapshot.gastos = getRawArrayFromCloudImportData(data, 'gastos').map((record) => normalizeGastoRecord(record));
+    snapshot.casaGastos = getRawArrayFromCloudImportData(data, 'casaGastos').map((record) => normalizeCasaGastoRecord(record));
+    snapshot.cierresMensuales = getRawArrayFromCloudImportData(data, 'cierresMensuales').map((record) => normalizeCierreMensualRecord(record));
+    snapshot.exportacionesExcel = getRawArrayFromCloudImportData(data, 'exportacionesExcel').map((record) => normalizeExcelExportRecord(record));
+    snapshot.bdatos = getRawArrayFromCloudImportData(data, 'bdatos').map((record) => clonePlainObject(record, record));
+    snapshot.notasModulo = getNotasBackupFromSource(data) || getNotasBackupFromSource(raw) || normalizeNotasData({});
+    snapshot.facturasModulo = getFacturasBackupFromSource(data) || getFacturasBackupFromSource(raw) || normalizeFacturasData({});
+    snapshot.bitacora = Array.isArray(activityEntries) ? activityEntries.map((entry) => normalizeActivityEntry(entry)) : [];
+    snapshot.consecutivos = extractConsecutivosFromCloudJson(raw);
+    snapshot.configuracion = isPlainObject(data.configuracion) ? normalizeConfiguracion(data.configuracion) : {};
+    snapshot.metadata = isPlainObject(raw?.metadata) ? clonePlainObject(raw.metadata, {}) : {};
+    return snapshot;
+  }
+
+  function getCloudImportCounts(snapshot) {
+    const safe = isPlainObject(snapshot) ? snapshot : {};
+    const catalogos = CATALOGS.reduce((sum, catalog) => sum + (Array.isArray(safe[catalog.id]) ? safe[catalog.id].length : 0), 0);
+    const counts = {
+      ventas: Array.isArray(safe.ventas) ? safe.ventas.length : 0,
+      cobros: Array.isArray(safe.cobros) ? safe.cobros.length : 0,
+      comprasProveedores: Array.isArray(safe.comprasProveedores) ? safe.comprasProveedores.length : 0,
+      pagosProveedores: Array.isArray(safe.pagosProveedores) ? safe.pagosProveedores.length : 0,
+      gastos: Array.isArray(safe.gastos) ? safe.gastos.length : 0,
+      casaGastos: Array.isArray(safe.casaGastos) ? safe.casaGastos.length : 0,
+      facturasModulo: countFacturasModuleRecords(safe.facturasModulo || {}),
+      catalogos,
+      notasModulo: countNotasModuleRecords(safe.notasModulo || {}),
+      cierresMensuales: Array.isArray(safe.cierresMensuales) ? safe.cierresMensuales.length : 0,
+      exportacionesExcel: Array.isArray(safe.exportacionesExcel) ? safe.exportacionesExcel.length : 0,
+      bitacora: Array.isArray(safe.bitacora) ? safe.bitacora.length : 0
+    };
+    counts.total = Object.values(counts).reduce((sum, value) => sum + (Number(value) || 0), 0);
+    return counts;
+  }
+
+  function pushLimitedWarning(target, message, limit = 40) {
+    if (!Array.isArray(target)) return;
+    if (target.length < limit) target.push(message);
+  }
+
+  function buildIdSet(records) {
+    const set = new Set();
+    (Array.isArray(records) ? records : []).forEach((record) => {
+      const id = cleanText(record?.id);
+      if (id) set.add(id);
+    });
+    return set;
+  }
+
+  function validateCloudImportRelations(snapshot) {
+    const warnings = [];
+    const ventas = buildIdSet(snapshot.ventas);
+    const compras = buildIdSet(snapshot.comprasProveedores);
+    const clientes = buildIdSet(snapshot.clientes);
+    const sucursales = buildIdSet(snapshot.sucursales);
+    const proveedores = buildIdSet(snapshot.proveedores);
+    const categoriasCasa = buildIdSet(snapshot.categoriasCasa);
+    let hidden = 0;
+    const warn = (condition, message) => {
+      if (!condition) return;
+      if (warnings.length < 40) warnings.push(message);
+      else hidden += 1;
+    };
+    (snapshot.cobros || []).forEach((record) => warn(record.ventaId && !ventas.has(record.ventaId), `Cobro ${record.id || 'sin ID'} refiere ventaId no encontrado: ${record.ventaId}.`));
+    (snapshot.pagosProveedores || []).forEach((record) => warn(record.compraProveedorId && !compras.has(record.compraProveedorId), `Pago ${record.id || 'sin ID'} refiere compraProveedorId no encontrado: ${record.compraProveedorId}.`));
+    (snapshot.ventas || []).forEach((record) => {
+      warn(record.clienteId && !clientes.has(record.clienteId), `Venta ${record.id || 'sin ID'} refiere clienteId no encontrado: ${record.clienteId}.`);
+      warn(record.sucursalId && !sucursales.has(record.sucursalId), `Venta ${record.id || 'sin ID'} refiere sucursalId no encontrado: ${record.sucursalId}.`);
+    });
+    (snapshot.comprasProveedores || []).forEach((record) => warn(record.proveedorId && !proveedores.has(record.proveedorId), `Compra ${record.id || 'sin ID'} refiere proveedorId no encontrado: ${record.proveedorId}.`));
+    (snapshot.casaGastos || []).forEach((record) => warn(record.categoriaCasaId && !categoriasCasa.has(record.categoriaCasaId), `Casa ${record.id || 'sin ID'} refiere categoriaCasaId no encontrada: ${record.categoriaCasaId}.`));
+    normalizeFacturasData(snapshot.facturasModulo || {}).facturas.forEach((record) => {
+      warn(record.ventaId && !ventas.has(record.ventaId), `Factura ${record.id || record.no || 'sin ID'} refiere ventaId no encontrado: ${record.ventaId}.`);
+      warn(record.clienteId && !clientes.has(record.clienteId), `Factura ${record.id || record.no || 'sin ID'} refiere clienteId no encontrado: ${record.clienteId}.`);
+      warn(record.sucursalId && !sucursales.has(record.sucursalId), `Factura ${record.id || record.no || 'sin ID'} refiere sucursalId no encontrado: ${record.sucursalId}.`);
+    });
+    if (hidden > 0) warnings.push(`${hidden} advertencia(s) adicionales de relación no mostradas.`);
+    return warnings;
+  }
+
+  function addCloudImportRecord(records, duplicates, collectionKey, label, pathSegments, data, stableId, options = {}) {
+    const documentId = sanitizeFirestoreDocId(pathSegments[pathSegments.length - 1] || stableId, `${collectionKey}_${records.length + 1}`);
+    const finalSegments = [...pathSegments.slice(0, -1), documentId];
+    const pathKey = finalSegments.join('/');
+    if (duplicates.seen.has(pathKey)) {
+      duplicates.count += 1;
+      pushLimitedWarning(duplicates.messages, `${label}: documento duplicado dentro del JSON (${documentId}); se importará solo una vez.`, 60);
+      return;
+    }
+    duplicates.seen.add(pathKey);
+    records.push({
+      collectionKey,
+      label,
+      documentId,
+      pathSegments: finalSegments,
+      data: stripUndefinedForFirestore({
+        ...(isPlainObject(data) ? data : {}),
+        id: cleanText(data?.id) || cleanText(stableId) || documentId,
+        _cloudImport: {
+          collectionKey,
+          importedFromJson: true,
+          source: 'importacion_inicial_json_firestore',
+          preparedAt: nowIso()
+        }
+      }),
+      sourceId: cleanText(stableId)
+    });
+  }
+
+  function buildPreparedCloudImport(previewBase, snapshot, rawText, fileName) {
+    const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
+    const records = [];
+    const duplicates = { seen: new Set(), count: 0, messages: [] };
+    const hashSimple = simpleHashText(rawText);
+    const safeFileName = cleanText(fileName) || 'JSON maestro';
+    const addStandardList = (key, label, list, idResolver = (record) => record.id) => {
+      (Array.isArray(list) ? list : []).forEach((record, index) => {
+        const stableId = cleanText(idResolver(record, index)) || `${key}_${simpleHashText(JSON.stringify(record)).slice(0, 16)}`;
+        addCloudImportRecord(records, duplicates, key, label, ['workspaces', workspaceId, key, stableId], record, stableId);
+      });
+    };
+
+    CATALOGS.forEach((catalog) => {
+      (Array.isArray(snapshot[catalog.id]) ? snapshot[catalog.id] : []).forEach((record, index) => {
+        const stableId = cleanText(record.id) || `${catalog.id}_${simpleHashText(JSON.stringify(record)).slice(0, 16)}`;
+        addCloudImportRecord(records, duplicates, 'catalogos', catalog.label, ['workspaces', workspaceId, 'catalogos', catalog.id, 'items', stableId], { ...record, catalogoId: catalog.id }, stableId);
+      });
+    });
+
+    addStandardList('ventas', 'Ventas', snapshot.ventas);
+    addStandardList('cobros', 'Cobros', snapshot.cobros);
+    addStandardList('comprasProveedores', 'Compras/Proveedores', snapshot.comprasProveedores);
+    addStandardList('pagosProveedores', 'Pagos proveedores', snapshot.pagosProveedores);
+    addStandardList('gastos', 'Gastos productivos', snapshot.gastos);
+    addStandardList('casaGastos', 'Casa', snapshot.casaGastos);
+    addStandardList('cierresMensuales', 'Cierres', snapshot.cierresMensuales, (record, index) => record.periodo || record.id || `${record.year || '0000'}-${record.month || String(index + 1).padStart(2, '0')}`);
+    addStandardList('exportacionesExcel', 'Exportaciones Excel', snapshot.exportacionesExcel, (record, index) => record.id || record.exportacionId || record.nombreArchivo || `exportacion_${index + 1}`);
+    normalizeNotasData(snapshot.notasModulo || {}).notas.forEach((record, index) => {
+      const stableId = cleanText(record.id) || `nota_${index + 1}`;
+      addCloudImportRecord(records, duplicates, 'notasModulo', 'Notas', ['workspaces', workspaceId, 'notasModulo', `nota_${stableId}`], { ...record, tipoRegistro: 'nota' }, stableId);
+    });
+    normalizeNotasData(snapshot.notasModulo || {}).pendientes.forEach((record, index) => {
+      const stableId = cleanText(record.id) || `pendiente_${index + 1}`;
+      addCloudImportRecord(records, duplicates, 'notasModulo', 'Pendientes', ['workspaces', workspaceId, 'notasModulo', `pendiente_${stableId}`], { ...record, tipoRegistro: 'pendiente' }, stableId);
+    });
+    normalizeNotasData(snapshot.notasModulo || {}).recordatorios.forEach((record, index) => {
+      const stableId = cleanText(record.id) || `recordatorio_${index + 1}`;
+      addCloudImportRecord(records, duplicates, 'notasModulo', 'Recordatorios', ['workspaces', workspaceId, 'notasModulo', `recordatorio_${stableId}`], { ...record, tipoRegistro: 'recordatorio' }, stableId);
+    });
+    normalizeFacturasData(snapshot.facturasModulo || {}).facturas.forEach((record, index) => {
+      const stableId = cleanText(record.id) || cleanText(record.no) || `factura_${index + 1}`;
+      addCloudImportRecord(records, duplicates, 'facturasModulo', 'Facturas', ['workspaces', workspaceId, 'facturasModulo', stableId], record, stableId);
+    });
+    (Array.isArray(snapshot.bitacora) ? snapshot.bitacora : []).forEach((record, index) => {
+      const stableId = cleanText(record.id) || simpleHashText([record.ts, record.deviceId, record.module, record.action, record.detail, index].join('|'));
+      addCloudImportRecord(records, duplicates, 'bitacora', 'Bitácora', ['workspaces', workspaceId, 'bitacora', stableId], record, stableId);
+    });
+
+    if (isPlainObject(snapshot.consecutivos)) {
+      Object.entries(snapshot.consecutivos).forEach(([key, value]) => {
+        const stableId = sanitizeFirestoreDocId(key, 'consecutivo');
+        addCloudImportRecord(records, duplicates, 'consecutivos', 'Consecutivos', ['workspaces', workspaceId, 'consecutivos', stableId], { tipo: key, valor: value, fuente: 'json_maestro' }, stableId);
+      });
+    }
+
+    const counts = getCloudImportCounts(snapshot);
+    return {
+      importId: `import_${hashSimple}_${Date.now().toString(36)}`,
+      hashSimple,
+      fileName: safeFileName,
+      exportedAt: cleanText(previewBase.exportedAt || ''),
+      appVersionOrigen: cleanText(previewBase.appVersionOrigen || ''),
+      sourceDeviceName: cleanText(previewBase.sourceDeviceName || ''),
+      periodoTrabajoSeleccionado: cleanText(previewBase.periodoTrabajoSeleccionado || ''),
+      counts,
+      totalRegistros: records.length,
+      records,
+      duplicateCount: duplicates.count,
+      duplicateWarnings: duplicates.messages
+    };
+  }
+
+  function collectCloudImportIdWarnings(rawData, snapshot) {
+    const warnings = [];
+    const inspectList = (label, records, idResolver = (record) => record?.id) => {
+      const seen = new Set();
+      (Array.isArray(records) ? records : []).forEach((record, index) => {
+        const id = cleanText(idResolver(record, index));
+        if (!id) {
+          pushLimitedWarning(warnings, `${label}: registro ${index + 1} no trae ID estable; se usará clave segura derivada para Firestore.`, 50);
+          return;
+        }
+        const safe = sanitizeFirestoreDocId(id, 'doc');
+        if (safe !== id) pushLimitedWarning(warnings, `${label}: ID “${id}” contiene caracteres no seguros para documentId; se conservará en el campo id y se usará “${safe}” como documentId.`, 50);
+        if (seen.has(safe)) pushLimitedWarning(warnings, `${label}: ID duplicado dentro del JSON (${id}); se omitirá el duplicado al preparar la copia.`, 50);
+        seen.add(safe);
+      });
+    };
+    const data = isPlainObject(rawData) ? rawData : {};
+    CATALOGS.forEach((catalog) => inspectList(catalog.label, data[catalog.id]));
+    inspectList('Ventas', data.ventas);
+    inspectList('Cobros', data.cobros);
+    inspectList('Compras/Proveedores', data.comprasProveedores);
+    inspectList('Pagos proveedores', data.pagosProveedores);
+    inspectList('Gastos productivos', data.gastos);
+    inspectList('Casa', data.casaGastos);
+    inspectList('Cierres', data.cierresMensuales, (record) => record?.periodo || record?.id || (record?.year && record?.month ? `${record.year}-${record.month}` : ''));
+    inspectList('Exportaciones Excel', data.exportacionesExcel, (record) => record?.id || record?.exportacionId || record?.nombreArchivo);
+    const notas = normalizeNotasData(snapshot?.notasModulo || {});
+    inspectList('Notas', notas.notas);
+    inspectList('Pendientes', notas.pendientes);
+    inspectList('Recordatorios', notas.recordatorios);
+    inspectList('Facturas', normalizeFacturasData(snapshot?.facturasModulo || {}).facturas, (record) => record?.id || record?.no);
+    return warnings;
+  }
+
+  function validateCloudMasterJsonPayload(raw, rawText = '', fileName = '') {
+    const errors = [];
+    const warnings = [];
+    if (!isPlainObject(raw)) {
+      errors.push('La raíz del archivo debe ser un objeto JSON válido.');
+      return { preview: { isValid: false, errors, warnings, counts: getCloudImportCounts({}), totalRecords: 0 }, prepared: null };
+    }
+    const metadata = isPlainObject(raw.metadata) ? raw.metadata : {};
+    const appName = cleanText(raw.appName || metadata.appName || raw?.registros?.configuracion?.appName || raw?.configuracion?.appName);
+    const schemaVersion = cleanText(raw.schemaVersion || metadata.schemaVersion || raw?.registros?.configuracion?.schemaVersion || raw?.configuracion?.schemaVersion || SCHEMA_VERSION);
+    const exportedAt = cleanText(raw.fechaExportacion || raw.exportedAt || metadata.exportedAt || metadata.fechaExportacion || metadata.updatedAt || metadata.createdAt);
+    const appVersionOrigen = cleanText(metadata.appVersion || raw.appVersion || raw?.registros?.configuracion?.appVersion || raw?.configuracion?.appVersion);
+    const sourceDeviceName = cleanText(metadata.sourceDeviceName || metadata.deviceName || metadata.equipo || raw.sourceDeviceName);
+    const periodoTrabajoSeleccionado = normalizeWorkPeriodKey(metadata.periodoTrabajoSeleccionado || metadata.periodoTrabajo?.periodo || raw?.registros?.configuracion?.periodoTrabajoSeleccionado || raw?.configuracion?.periodoTrabajoSeleccionado || '');
+    const extracted = extractDataFromJsonBackup(raw);
+    const data = extracted.data;
+    const activityLog = extractActivityLogFromJsonBackup(raw);
+    const recognizedCollections = ['ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'casaGastos', 'cierresMensuales', 'exportacionesExcel', 'bdatos'];
+    const hasRecognizedData = Boolean(data) && (
+      CATALOGS.some((catalog) => Array.isArray(data[catalog.id]))
+      || recognizedCollections.some((key) => Array.isArray(data[key]))
+      || Boolean(getNotasBackupFromSource(data) || getNotasBackupFromSource(raw))
+      || Boolean(getFacturasBackupFromSource(data) || getFacturasBackupFromSource(raw))
+      || activityLog.length > 0
+    );
+    if (!hasRecognizedData) errors.push('No se encontró estructura reconocible de KSA PRÁCTIKA dentro del JSON.');
+    if (!appName) warnings.push('El JSON no trae appName explícito; se validó por estructura compatible.');
+    if (appName && normalizeNameForCompare(appName) !== normalizeNameForCompare(APP_NAME)) warnings.push(`El appName del archivo es “${appName}”; se acepta solo si la estructura es compatible con KSA PRÁCTIKA.`);
+    if (!schemaVersion) warnings.push('El JSON no trae schemaVersion explícito; se importará con el contrato actual.');
+    if (!exportedAt) warnings.push('El JSON no trae fecha de exportación; la metadata se guardará sin exportedAt.');
+
+    const missingCollections = ['catalogos', 'ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'casaGastos', 'facturasModulo', 'notasModulo', 'cierresMensuales', 'exportacionesExcel', 'bitacora'].filter((key) => {
+      if (key === 'catalogos') return !CATALOGS.some((catalog) => Array.isArray(data?.[catalog.id]));
+      if (key === 'notasModulo') return !getNotasBackupFromSource(data || {}) && !getNotasBackupFromSource(raw);
+      if (key === 'facturasModulo') return !getFacturasBackupFromSource(data || {}) && !getFacturasBackupFromSource(raw);
+      if (key === 'bitacora') return activityLog.length <= 0;
+      return !Array.isArray(data?.[key]);
+    });
+    missingCollections.forEach((key) => warnings.push(`${key}: no encontrada; se mostrará/importará como 0 registros.`));
+
+    const snapshot = hasRecognizedData ? buildCloudImportSnapshot(data || {}, raw, activityLog) : {};
+    const idWarnings = hasRecognizedData ? collectCloudImportIdWarnings(data || {}, snapshot) : [];
+    if (idWarnings.length) warnings.push(...idWarnings);
+    const relationWarnings = hasRecognizedData ? validateCloudImportRelations(snapshot) : [];
+    const preparedBase = {
+      exportedAt,
+      appVersionOrigen,
+      sourceDeviceName,
+      periodoTrabajoSeleccionado
+    };
+    const prepared = hasRecognizedData ? buildPreparedCloudImport(preparedBase, snapshot, rawText, fileName) : null;
+    if (prepared?.duplicateWarnings?.length) warnings.push(...prepared.duplicateWarnings);
+    if (prepared?.duplicateCount > 0) warnings.push(`Se detectaron ${prepared.duplicateCount} duplicado(s) internos por ID/ruta dentro del JSON; se preparó solo un documento por clave.`);
+
+    const preview = {
+      isValid: errors.length === 0,
+      appName: appName || APP_NAME,
+      schemaVersion: schemaVersion || SCHEMA_VERSION,
+      exportedAt,
+      appVersionOrigen,
+      sourceDeviceName,
+      periodoTrabajoSeleccionado,
+      fileName: cleanText(fileName),
+      hashSimple: prepared?.hashSimple || simpleHashText(rawText),
+      counts: prepared?.counts || getCloudImportCounts(snapshot),
+      totalRecords: prepared?.totalRegistros || 0,
+      duplicateCount: prepared?.duplicateCount || 0,
+      idWarnings,
+      errors,
+      warnings,
+      relationWarnings
+    };
+    return { preview, prepared, activityLog };
+  }
+
+  async function refreshCloudInitialImportStatus(hashSimple = '') {
+    if (!hashSimple) return null;
+    if (!KSAFirebaseAdapter || typeof KSAFirebaseAdapter.getInitialCloudImportStatus !== 'function') return null;
+    const result = await KSAFirebaseAdapter.getInitialCloudImportStatus(hashSimple);
+    cloudInitialImportState.cloudStatus = result;
+    return result;
+  }
+
+  async function handleCloudJsonFileSelected(file) {
+    if (!file) return;
+    cloudInitialImportState = {
+      fileName: file.name || '',
+      rawText: '',
+      isProcessing: true,
+      preview: null,
+      prepared: null,
+      cloudStatus: null,
+      progress: { phase: 'Validando', processed: 0, total: 0, imported: 0, skipped: 0, errors: 0 },
+      message: 'Leyendo JSON maestro para vista previa…',
+      messageType: 'success'
+    };
+    renderRoute({ preserveScroll: true });
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const validation = validateCloudMasterJsonPayload(parsed, text, file.name || '');
+      cloudInitialImportState.rawText = text;
+      cloudInitialImportState.preview = validation.preview;
+      cloudInitialImportState.prepared = validation.prepared;
+      cloudInitialImportState.progress = null;
+      cloudInitialImportState.isProcessing = false;
+      cloudInitialImportState.message = validation.preview.isValid
+        ? 'JSON validado. Revisa conteos, advertencias y estado de nube antes de importar.'
+        : 'JSON bloqueado por errores de validación.';
+      cloudInitialImportState.messageType = validation.preview.isValid ? 'success' : 'error';
+      renderRoute({ preserveScroll: true });
+      if (validation.preview.isValid) {
+        await refreshCloudInitialImportStatus(validation.preview.hashSimple);
+        renderRoute({ preserveScroll: true });
+      }
+    } catch (error) {
+      cloudInitialImportState.isProcessing = false;
+      cloudInitialImportState.preview = null;
+      cloudInitialImportState.prepared = null;
+      cloudInitialImportState.progress = null;
+      cloudInitialImportState.message = error instanceof SyntaxError ? 'El archivo no contiene JSON válido.' : (error.message || 'No se pudo leer el JSON seleccionado.');
+      cloudInitialImportState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+    }
+  }
+
+  async function confirmCloudInitialImport() {
+    if (!canCurrentRole('initialJsonToCloud')) {
+      cloudInitialImportState.message = 'Solo Administrador puede importar JSON maestro a Firestore.';
+      cloudInitialImportState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (!cloudInitialImportState.preview?.isValid || !cloudInitialImportState.prepared) {
+      cloudInitialImportState.message = 'Primero selecciona y valida un JSON maestro correcto.';
+      cloudInitialImportState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    const ok = window.confirm('Esta acción copiará el JSON seleccionado a Firestore. No borrará datos locales y dejará la nube lista para operación online controlada. ¿Deseas continuar?');
+    if (!ok) return;
+
+    cloudInitialImportState.isProcessing = true;
+    cloudInitialImportState.message = 'Importación inicial a Firestore en curso…';
+    cloudInitialImportState.messageType = 'success';
+    cloudInitialImportState.progress = { phase: 'Preparando', processed: 0, total: cloudInitialImportState.prepared.totalRegistros || 0, imported: 0, skipped: 0, errors: 0 };
+    renderRoute({ preserveScroll: true });
+    const result = await KSAFirebaseAdapter.importInitialBackupToCloud(cloudInitialImportState.prepared, {
+      onProgress: (progress) => {
+        cloudInitialImportState.progress = progress;
+        renderRoute({ preserveScroll: true });
+      }
+    });
+    cloudInitialImportState.isProcessing = false;
+    cloudInitialImportState.progress = {
+      phase: 'Finalizado',
+      processed: result.processed || 0,
+      total: result.total || cloudInitialImportState.prepared.totalRegistros || 0,
+      imported: result.imported || 0,
+      skipped: result.skipped || 0,
+      errors: Array.isArray(result.errors) ? result.errors.length : 0
+    };
+    cloudInitialImportState.message = result.message || 'Importación finalizada. Firestore queda listo para operación online controlada.';
+    cloudInitialImportState.messageType = result.ok ? 'success' : (result.imported > 0 ? 'success' : 'error');
+    await refreshCloudInitialImportStatus(cloudInitialImportState.preview.hashSimple);
+    renderRoute({ preserveScroll: true });
+  }
+
   function getCurrentRole() {
+    const authStatus = getPreparedAuthStatus();
+    if (authStatus.authMode === 'firebase' && authStatus.user?.email) {
+      const cloudUser = KSAFirebaseAdapter?.getCurrentUser ? KSAFirebaseAdapter.getCurrentUser() : null;
+      const cloudRole = cleanText(cloudUser?.role || '').toLowerCase();
+      if (ROLE_DEFINITIONS[cloudRole]) return cloudRole;
+      const firebaseRole = getFirebaseRoleForEmail(authStatus.user.email);
+      return ROLE_DEFINITIONS[firebaseRole.id] ? firebaseRole.id : 'usuario';
+    }
     const role = appData?.configuracion?.currentRole;
     return ROLE_DEFINITIONS[role] ? role : 'administrador';
   }
@@ -4906,7 +7496,8 @@
   }
 
   function canCurrentRole(permission) {
-    if (!isFirebaseAuthConfigured()) return true;
+    const authStatus = getPreparedAuthStatus();
+    if (authStatus.authMode !== 'firebase') return true;
     const role = getCurrentRoleDefinition();
     return Boolean(role?.permissions?.has(permission));
   }
@@ -6440,6 +9031,7 @@
         updatedAt: nowIso()
       };
       window.localStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify(normalized));
+      scheduleCloudSnapshotSync('saveNotasData');
       return normalized;
     } catch (error) {
       console.error('KSA PRÁCTIKA: no se pudo guardar el módulo Notas.', error);
@@ -6703,6 +9295,7 @@
       normalized.facturas = sortFacturasModulo(normalized.facturas);
       normalized.metadata.updatedAt = nowIso();
       localStorage.setItem(FACTURAS_STORAGE_KEY, JSON.stringify(normalized));
+      scheduleCloudSnapshotSync('saveFacturasData');
       return normalized;
     } catch (error) {
       console.error('KSA PRÁCTIKA: no se pudo guardar el módulo Facturas.', error);
@@ -17415,7 +20008,7 @@
         firebase: 'Pendiente de configuración',
         nube: 'Nube no activa todavía',
         badgeClass: 'is-pending',
-        message: 'Firebase está preparado para una etapa futura, pero la operación sigue usando datos locales.'
+        message: 'Firebase está preparado. La nube se usa como fuente principal cuando se activa Firestore.'
       },
       cloud_ready: {
         estado: 'Nube preparada',
@@ -17443,21 +20036,36 @@
 
     const authStatus = getPreparedAuthStatus();
     const firebaseStatus = getKSAFirebaseStatusSafe();
+    const runtimeStatus = getCloudRuntimeStatusSafe();
+    const cloudActive = Boolean(cloudOperationState.active || runtimeStatus.cloudActive || firebaseStatus.cloudActive || mode === 'cloud_active');
+    const cloudReady = Boolean(runtimeStatus.cloudDataReady || firebaseStatus.cloudDataReady || runtimeStatus.datosMigrados || mode === 'cloud_ready' || cloudActive);
+    const lastSyncAt = cloudOperationState.lastSyncAt || runtimeStatus.lastSyncAt || runtimeStatus.lastCloudReadAt || runtimeStatus.lastCloudWriteAt || '';
 
     return {
       ...info,
       mode,
+      estado: cloudActive ? 'Nube activa' : info.estado,
+      fuente: cloudActive ? 'Firestore' : info.fuente,
+      nube: cloudActive ? 'Activa' : info.nube,
+      badgeClass: cloudActive ? 'is-cloud' : info.badgeClass,
+      message: cloudActive ? 'Firestore está activo como fuente principal. JSON queda como respaldo auxiliar.' : info.message,
       lastCheck: nowIso(),
+      lastSyncAt,
       diagnosticsOk: diagnostics?.ok === true,
       localRecords,
       access: authStatus.accessLabel,
       firebase: firebaseStatus.firebaseLabel || info.firebase,
       firebaseAuth: firebaseStatus.auth || authStatus.firebaseAuthLabel,
-      firestore: firebaseStatus.firestore || 'Pendiente',
-      workspace: firebaseStatus.workspace || 'No activo todavía',
-      firebaseConnection: firebaseStatus.connection || 'Sin conexión Firebase real',
+      firestore: firebaseStatus.firestore || (cloudActive ? 'Activo' : 'Pendiente'),
+      workspace: firebaseStatus.workspace || runtimeStatus.workspaceId || 'ksa_practika',
+      firebaseConnection: firebaseStatus.connection || (cloudActive ? 'Firestore conectado' : 'Sin conexión Firebase real'),
       firebaseConfigState: firebaseStatus.configState || 'missing',
-      firebaseMessage: firebaseStatus.message || info.message
+      firebaseMessage: firebaseStatus.message || info.message,
+      projectName: firebaseStatus.projectName || getKSAFirebaseProjectName(),
+      projectId: firebaseStatus.projectId || cleanText(getRawKSAFirebaseConfig().projectId),
+      sourcePrincipal: cloudActive ? 'Firestore' : 'Local controlado',
+      datosMigrados: cloudReady ? 'Sí' : 'No',
+      canRefreshCloud: Boolean(authStatus.authMode === 'firebase' && authStatus.user?.email && cloudReady)
     };
   }
 
@@ -17474,16 +20082,21 @@
         </div>
         <p class="notice">${escapeHtml(info.message)}</p>
         <div class="import-summary-grid compact-summary data-sync-grid">
-          <div class="status-item"><strong>Modo de datos</strong><span>Local</span></div>
+          <div class="status-item"><strong>Modo de datos</strong><span>${escapeHtml(info.estado)}</span></div>
           <div class="status-item"><strong>Fuente de datos</strong><span>${escapeHtml(info.fuente)}</span></div>
           <div class="status-item"><strong>Firebase</strong><span>${escapeHtml(info.firebase)}</span></div>
           <div class="status-item"><strong>Auth</strong><span>${escapeHtml(info.firebaseAuth || 'Pendiente')}</span></div>
           <div class="status-item"><strong>Firestore</strong><span>${escapeHtml(info.firestore || 'Pendiente')}</span></div>
-          <div class="status-item"><strong>Workspace</strong><span>${escapeHtml(info.workspace || 'No activo todavía')}</span></div>
+          <div class="status-item"><strong>Workspace</strong><span>${escapeHtml(info.workspace || 'ksa_practika')}</span></div>
           <div class="status-item"><strong>Acceso</strong><span>${escapeHtml(info.access || 'Modo local')}</span></div>
           <div class="status-item"><strong>Última comprobación</strong><span>${escapeHtml(formatDateTime(info.lastCheck))}</span></div>
           <div class="status-item"><strong>Nube</strong><span>${escapeHtml(info.nube)}</span></div>
+          <div class="status-item"><strong>Proyecto</strong><span>${escapeHtml(info.projectName || 'ksakpk')}</span></div>
+          <div class="status-item"><strong>Fuente principal</strong><span>${escapeHtml(info.sourcePrincipal || 'Local controlado')}</span></div>
+          <div class="status-item"><strong>Datos migrados</strong><span>${escapeHtml(info.datosMigrados || 'No')}</span></div>
+          <div class="status-item"><strong>Última sincronización</strong><span>${escapeHtml(info.lastSyncAt ? formatDateTime(info.lastSyncAt) : '—')}</span></div>
           ${Number.isFinite(info.localRecords) ? `<div class="status-item"><strong>Conteos locales</strong><span>${escapeHtml(String(info.localRecords))}</span><small>Solo informativo</small></div>` : ''}
+          ${info.canRefreshCloud ? '<button type="button" class="secondary-action compact" data-cloud-refresh>Actualizar datos</button>' : ''}
         </div>
       </article>
     `;
@@ -17493,6 +20106,8 @@
   function renderFirestoreContractCard() {
     const contract = getKSAFirestoreContract();
     const collections = getFirestoreCollectionContracts();
+    const status = getPreparedUsersStatus();
+    const cloudActive = Boolean(status.cloudActive);
     const collectionRows = collections.map((item) => `
       <div class="firestore-collection-pill">
         <strong>${escapeHtml(item.label)}</strong>
@@ -17500,24 +20115,24 @@
       </div>
     `).join('');
     return `
-      <article class="panel-card config-card full-span firestore-contract-card" aria-label="Modelo nube preparado">
+      <article class="panel-card config-card full-span firestore-contract-card" aria-label="Modelo nube operativo">
         <div class="section-title-row">
           <div>
-            <span class="eyebrow mini">Nube futura</span>
-            <h2>Modelo nube preparado</h2>
+            <span class="eyebrow mini">Firestore</span>
+            <h2>Modelo nube operativo</h2>
           </div>
-          <span class="sync-mode-badge is-pending">Firestore pendiente</span>
+          <span class="sync-mode-badge ${cloudActive ? 'is-cloud' : 'is-pending'}">${cloudActive ? 'Nube activa' : 'Pendiente'}</span>
         </div>
-        <p class="notice">Firestore todavía no está activo. Esta etapa solo deja definido el mapa interno para conectar la nube después, sin mover ni alterar datos locales.</p>
+        <p class="notice">Firestore queda como fuente principal cuando la metadata está lista. JSON continúa como respaldo auxiliar y los IDs actuales se conservan para evitar duplicados.</p>
         <div class="import-summary-grid compact-summary firestore-contract-summary">
           <div class="status-item"><strong>Workspace</strong><span>${escapeHtml(contract.workspace.placeholderId)}</span><small>${escapeHtml(contract.workspace.path)}</small></div>
-          <div class="status-item"><strong>Colecciones previstas</strong><span>${escapeHtml(String(collections.length))}</span><small>Dentro de workspaces/{workspaceId}</small></div>
+          <div class="status-item"><strong>Colecciones</strong><span>${escapeHtml(String(collections.length))}</span><small>Dentro de workspaces/{workspaceId}</small></div>
           <div class="status-item"><strong>IDs actuales</strong><span>Se conservan</span><small>No se rompen relaciones entre módulos.</small></div>
           <div class="status-item"><strong>Consecutivos</strong><span>Separados</span><small>Consulta, Cierre, JSON y otros.</small></div>
-          <div class="status-item"><strong>Importación inicial</strong><span>No activa</span><small>Prevista con protección contra doble importación.</small></div>
-          <div class="status-item"><strong>Operación actual</strong><span>Modo local</span><small>Sin escrituras en Firestore.</small></div>
+          <div class="status-item"><strong>Importación inicial</strong><span>${escapeHtml(status.datosMigrados || 'No')}</span><small>Validada con protección anti-duplicados.</small></div>
+          <div class="status-item"><strong>Operación actual</strong><span>${escapeHtml(status.dataMode || 'Local controlado')}</span><small>Fuente principal: ${escapeHtml(status.sourcePrincipal || 'Local controlado')}.</small></div>
         </div>
-        <div class="firestore-collection-list" aria-label="Colecciones futuras previstas">
+        <div class="firestore-collection-list" aria-label="Colecciones Firestore previstas">
           ${collectionRows}
         </div>
       </article>
@@ -17529,7 +20144,9 @@
     const status = getKSAFirebaseStatusSafe();
     const missingKeys = Array.isArray(status.missingConfigKeys) && status.missingConfigKeys.length
       ? status.missingConfigKeys.join(', ')
-      : 'Ninguna si configuración futura está completa';
+      : 'Ninguna';
+    const badgeClass = status.configComplete === true ? 'is-cloud' : 'is-pending';
+    const badgeText = status.configComplete === true ? 'Configurado' : 'Pendiente';
     return `
       <article class="panel-card config-card full-span firebase-adapter-card" aria-label="Adaptador Firebase preparado">
         <div class="section-title-row">
@@ -17537,25 +20154,141 @@
             <span class="eyebrow mini">Firebase</span>
             <h2>Adaptador Firebase preparado</h2>
           </div>
-          <span class="sync-mode-badge is-pending">Pendiente</span>
+          <span class="sync-mode-badge ${escapeHtml(badgeClass)}">${escapeHtml(badgeText)}</span>
         </div>
-        <p class="notice">${escapeHtml(status.message || 'Firebase pendiente de configuración. La app continúa en modo local.')}</p>
+        <p class="notice">${escapeHtml(status.message || buildFirebaseConfiguredMessage())}</p>
         <div class="import-summary-grid compact-summary firebase-adapter-grid">
-          <div class="status-item"><strong>Config futura</strong><span>${escapeHtml(status.configFile || 'firebase-config.js')}</span><small>${escapeHtml(status.configGlobalName || 'KSA_FIREBASE_CONFIG')}</small></div>
-          <div class="status-item"><strong>Firebase App</strong><span>${escapeHtml(status.firebaseAppReady ? 'Preparada' : 'Pendiente')}</span></div>
+          <div class="status-item"><strong>Proyecto Firebase</strong><span>${escapeHtml(status.projectName || getKSAFirebaseProjectName())}</span></div>
+          <div class="status-item"><strong>Project ID</strong><span>${escapeHtml(status.projectId || cleanText(getRawKSAFirebaseConfig().projectId))}</span></div>
+          <div class="status-item"><strong>Config</strong><span>${escapeHtml(status.configFile || 'firebase-config.js')}</span><small>${escapeHtml(status.configGlobalName || 'KSA_FIREBASE_CONFIG')}</small></div>
+          <div class="status-item"><strong>SDK</strong><span>${escapeHtml(status.sdkLoaded ? 'Cargado' : (status.configComplete ? 'Preparando' : 'Pendiente'))}</span><small>Firebase Web SDK ${escapeHtml(status.sdkVersion || FIREBASE_SDK_VERSION)}</small></div>
+          <div class="status-item"><strong>Firebase App</strong><span>${escapeHtml(status.firebaseAppReady ? 'Preparada' : (status.configComplete ? 'Preparando' : 'Pendiente'))}</span></div>
           <div class="status-item"><strong>Auth</strong><span>${escapeHtml(status.auth || 'Pendiente')}</span></div>
           <div class="status-item"><strong>Firestore</strong><span>${escapeHtml(status.firestore || 'Pendiente')}</span></div>
           <div class="status-item"><strong>Conexión</strong><span>${escapeHtml(status.connection || 'Sin conexión Firebase real')}</span></div>
-          <div class="status-item"><strong>Workspace</strong><span>${escapeHtml(status.workspace || 'No activo todavía')}</span></div>
-          <div class="status-item"><strong>Lectura nube</strong><span>${escapeHtml(status.cloudReadsEnabled ? 'Activa' : 'Pendiente')}</span></div>
-          <div class="status-item"><strong>Escritura nube</strong><span>${escapeHtml(status.cloudWritesEnabled ? 'Activa' : 'Pendiente')}</span></div>
-          <div class="status-item"><strong>Importación inicial</strong><span>${escapeHtml(status.importInitialBackup || 'Pendiente')}</span></div>
+          <div class="status-item"><strong>Modo de datos</strong><span>${escapeHtml(status.dataMode || (status.cloudActive ? 'Nube activa' : 'Local controlado'))}</span></div>
+          <div class="status-item"><strong>Base en línea</strong><span>${escapeHtml(status.baseOnline || 'Pendiente de activación')}</span></div>
+          <div class="status-item"><strong>Lectura nube</strong><span>${escapeHtml(status.cloudReadsEnabled ? 'Activa' : 'No activa')}</span></div>
+          <div class="status-item"><strong>Escritura nube</strong><span>${escapeHtml(status.cloudWritesEnabled ? 'Activa' : 'No activa')}</span></div>
+          <div class="status-item"><strong>Administrador inicial</strong><span>${escapeHtml(status.initialAdmin || getKSAFirebaseInitialAdminEmail())}</span></div>
           <div class="status-item"><strong>Campos pendientes</strong><span>${escapeHtml(missingKeys)}</span></div>
         </div>
       </article>
     `;
   }
 
+
+  function renderCloudImportCountsTable(preview) {
+    const counts = isPlainObject(preview?.counts) ? preview.counts : {};
+    const rows = [
+      ['Ventas', counts.ventas],
+      ['Cobros', counts.cobros],
+      ['Compras/Proveedores', counts.comprasProveedores],
+      ['Pagos a proveedores', counts.pagosProveedores],
+      ['Gastos productivos', counts.gastos],
+      ['Casa', counts.casaGastos],
+      ['Facturas', counts.facturasModulo],
+      ['Catálogos', counts.catalogos],
+      ['Notas', counts.notasModulo],
+      ['Cierres', counts.cierresMensuales],
+      ['Exportaciones Excel', counts.exportacionesExcel],
+      ['Bitácora', counts.bitacora]
+    ].map(([label, value]) => `
+      <tr class="compact-record-row">
+        <td><span class="compact-primary">${escapeHtml(label)}</span></td>
+        <td class="amount-cell"><span>${escapeHtml(String(Number(value) || 0))}</span></td>
+      </tr>
+    `).join('');
+    return renderOperationalTableShell({
+      shellClass: 'cloud-import-scroll-shell',
+      wrapClass: 'cloud-import-table-wrap',
+      ariaLabel: 'Conteos del JSON maestro para Firestore',
+      tableClass: 'cloud-import-counts-table',
+      headers: '<th>Colección</th><th class="amount-cell">Registros</th>',
+      rows
+    });
+  }
+
+  function renderCloudImportList(title, items, className = '') {
+    const list = Array.isArray(items) ? items.filter(Boolean) : [];
+    if (!list.length) return '';
+    return `
+      <div class="cloud-import-list ${escapeHtml(className)}">
+        <strong>${escapeHtml(title)}</strong>
+        <ul>${list.slice(0, 12).map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+        ${list.length > 12 ? `<small>${escapeHtml(String(list.length - 12))} aviso(s) adicional(es) no mostrados para mantener la vista compacta.</small>` : ''}
+      </div>
+    `;
+  }
+
+  function renderCloudInitialImportPanel(status) {
+    const state = cloudInitialImportState;
+    const preview = state.preview;
+    const prepared = state.prepared;
+    const cloudStatus = state.cloudStatus;
+    const canImport = canCurrentRole('initialJsonToCloud') && status.isAdmin && preview?.isValid && prepared && !state.isProcessing;
+    const progress = state.progress;
+    const cloudBadge = cloudStatus?.ok
+      ? (cloudStatus.previousImport || cloudStatus.importacionInicialCompletada ? 'Importación previa detectada' : 'Sin importación previa')
+      : (status.signedIn ? 'Pendiente de verificar' : 'Requiere sesión admin');
+    const cloudBadgeClass = cloudStatus?.ok
+      ? (cloudStatus.previousImport || cloudStatus.importacionInicialCompletada ? 'is-warning' : 'is-cloud')
+      : 'is-pending';
+    const messageClass = state.messageType === 'error' ? 'is-error' : 'is-success';
+    const previewHtml = preview ? `
+      <div class="cloud-import-preview">
+        <div class="import-summary-grid compact-summary cloud-import-summary-grid">
+          <div class="status-item"><strong>Archivo</strong><span>${escapeHtml(state.fileName || preview.fileName || 'JSON maestro')}</span></div>
+          <div class="status-item"><strong>App</strong><span>${escapeHtml(preview.appName || APP_NAME)}</span></div>
+          <div class="status-item"><strong>Schema</strong><span>${escapeHtml(preview.schemaVersion || SCHEMA_VERSION)}</span></div>
+          <div class="status-item"><strong>Exportado</strong><span>${escapeHtml(formatDateTimeOrText(preview.exportedAt, 'No indicado'))}</span></div>
+          <div class="status-item"><strong>Origen</strong><span>${escapeHtml(preview.sourceDeviceName || 'No indicado')}</span></div>
+          <div class="status-item"><strong>Período trabajo</strong><span>${escapeHtml(preview.periodoTrabajoSeleccionado || 'No indicado')}</span></div>
+          <div class="status-item"><strong>Firma</strong><span>${escapeHtml(preview.hashSimple || '—')}</span></div>
+          <div class="status-item"><strong>Total estimado</strong><span>${escapeHtml(String(preview.totalRecords || preview.counts?.total || 0))}</span></div>
+          <div class="status-item"><strong>Duplicados internos</strong><span>${escapeHtml(String(preview.duplicateCount || 0))}</span></div>
+          <div class="status-item"><strong>Modo de datos</strong><span>${escapeHtml(status.dataMode || 'Nube preparada')}</span><small>La importación habilita operación online controlada.</small></div>
+          <div class="status-item"><strong>Nube</strong><span>${escapeHtml(cloudBadge)}</span><small>${escapeHtml(cloudStatus?.message || 'Se verificará al seleccionar un JSON válido.')}</small></div>
+        </div>
+        ${renderCloudImportCountsTable(preview)}
+        ${renderCloudImportList('Errores', preview.errors, 'is-error')}
+        ${renderCloudImportList('Advertencias', preview.warnings, 'is-warning')}
+        ${renderCloudImportList('Relaciones revisadas', preview.relationWarnings, 'is-warning')}
+      </div>
+    ` : '<p class="notice compact-notice">Selecciona un JSON maestro para validar estructura, IDs, relaciones y conteos antes de copiarlo a Firestore.</p>';
+    const progressHtml = progress ? `
+      <div class="cloud-import-progress" role="status" aria-live="polite">
+        <strong>${escapeHtml(progress.phase || 'Preparando')}</strong>
+        <span>${escapeHtml(String(progress.processed || 0))}/${escapeHtml(String(progress.total || 0))} revisados</span>
+        <small>Importados: ${escapeHtml(String(progress.imported || 0))} · Omitidos por duplicado: ${escapeHtml(String(progress.skipped || 0))} · Errores: ${escapeHtml(String(progress.errors || 0))}</small>
+      </div>
+    ` : '';
+
+    return `
+      <section class="users-prep-panel cloud-initial-import-panel" aria-label="Importación inicial JSON a Firestore">
+        <div class="compact-title-row">
+          <div>
+            <span class="eyebrow mini">Base en línea</span>
+            <h3>Importar JSON maestro a nube</h3>
+          </div>
+          <span class="sync-mode-badge ${escapeHtml(cloudBadgeClass)}">${escapeHtml(cloudBadge)}</span>
+        </div>
+        <p class="notice">Copia controlada hacia Firestore: crea faltantes, omite existentes, conserva IDs y deja la nube lista para operación online controlada.</p>
+        ${renderRolePermissionNotice('initialJsonToCloud', 'Importar JSON maestro a Firestore queda reservado para Administrador.')}
+        <div class="config-actions-row cloud-import-actions-row">
+          <label class="secondary-action compact file-action-label ${state.isProcessing ? 'is-disabled' : ''}">
+            <span>Seleccionar JSON maestro</span>
+            <input type="file" accept="application/json,.json" data-cloud-json-file ${state.isProcessing ? 'disabled' : ''} />
+          </label>
+          <button type="button" class="card-action compact" data-cloud-json-import-confirm ${canImport ? '' : 'disabled'}>Importar a Firestore</button>
+          <button type="button" class="secondary-action compact" data-cloud-json-import-clear ${state.isProcessing ? 'disabled' : ''}>Limpiar vista</button>
+        </div>
+        ${state.message ? `<div class="form-message ${escapeHtml(messageClass)}" role="status">${escapeHtml(state.message)}</div>` : ''}
+        ${progressHtml}
+        ${previewHtml}
+      </section>
+    `;
+  }
 
   function renderUsersConfigCard(currentRole) {
     const status = getPreparedUsersStatus();
@@ -17571,9 +20304,24 @@
     const schemaRows = USER_FUTURE_SCHEMA_FIELDS.map((field) => `
       <dt>${escapeHtml(field.key)}</dt><dd>${escapeHtml(field.description)}</dd>
     `).join('');
+    const sessionAction = status.signedIn
+      ? '<button type="button" class="secondary-action compact" data-auth-signout>Cerrar sesión</button>'
+      : '<button type="button" class="card-action compact" data-open-access>Abrir acceso</button>';
     const disabledActions = USER_PREPARED_ACTIONS.map((label) => `
-      <button type="button" class="secondary-action compact" disabled title="Disponible cuando Firebase esté activo">${escapeHtml(label)}</button>
+      <button type="button" class="secondary-action compact" disabled title="Gestión de usuarios disponible en etapa futura">${escapeHtml(label)}</button>
     `).join('');
+    const usersBadgeClass = status.cloudActive ? 'is-cloud' : (status.firebaseConfigured ? 'is-pending' : 'is-pending');
+    const usersBadgeText = status.cloudActive ? 'Nube activa' : (status.firebaseConfigured ? 'Firebase configurado' : 'Firebase pendiente');
+    const verifyDisabled = status.canVerifyFirestore ? '' : 'disabled';
+    const initWorkspaceHtml = status.canInitializeWorkspace
+      ? '<button type="button" class="card-action compact" data-firestore-init-workspace>Inicializar workspace base</button>'
+      : '';
+    const cloudActivateHtml = status.canActivateCloud
+      ? `<button type="button" class="card-action compact" data-cloud-activate ${status.cloudActive ? 'disabled' : ''}>${status.cloudActive ? 'Nube activa' : 'Activar nube'}</button>`
+      : '';
+    const cloudRefreshHtml = status.canRefreshCloud
+      ? '<button type="button" class="secondary-action compact" data-cloud-refresh>Actualizar datos</button>'
+      : '';
 
     return `
       <article class="panel-card config-card full-span users-prep-card" aria-label="Usuarios">
@@ -17582,22 +20330,63 @@
             <span class="eyebrow mini">Configuración</span>
             <h2>Usuarios</h2>
           </div>
-          <span class="sync-mode-badge is-pending">Firebase pendiente</span>
+          <span class="sync-mode-badge ${escapeHtml(usersBadgeClass)}">${escapeHtml(usersBadgeText)}</span>
         </div>
         <p class="notice">${escapeHtml(status.message)}</p>
         <div class="import-summary-grid compact-summary users-status-grid">
-          <div class="status-item"><strong>Estado de acceso</strong><span>${escapeHtml(status.accessState)}</span></div>
           <div class="status-item"><strong>Usuario actual</strong><span>${escapeHtml(status.currentUser)}</span></div>
-          <div class="status-item"><strong>Rol actual</strong><span>${escapeHtml(status.currentRole)}</span></div>
+          <div class="status-item"><strong>Rol</strong><span>${escapeHtml(status.currentRole)}</span></div>
+          <div class="status-item"><strong>Modo de datos</strong><span>${escapeHtml(status.dataMode || 'Local controlado')}</span></div>
+          <div class="status-item"><strong>Workspace</strong><span>${escapeHtml(status.workspace || 'ksa_practika')}</span></div>
+          <div class="status-item"><strong>Proyecto Firebase</strong><span>${escapeHtml(status.projectName || 'ksakpk')}</span></div>
+          <div class="status-item"><strong>Project ID</strong><span>${escapeHtml(status.projectId || 'ksakpk-ecb6d')}</span></div>
+          <div class="status-item"><strong>Última sincronización</strong><span>${escapeHtml(status.lastSyncAt ? formatDateTime(status.lastSyncAt) : '—')}</span></div>
+          <div class="status-item"><strong>Datos migrados</strong><span>${escapeHtml(status.datosMigrados || 'No')}</span></div>
+          <div class="status-item"><strong>Fuente principal</strong><span>${escapeHtml(status.sourcePrincipal || 'Local controlado')}</span></div>
           <div class="status-item"><strong>Firebase Auth</strong><span>${escapeHtml(status.firebaseAuth)}</span></div>
-          <div class="status-item"><strong>Firestore</strong><span>${escapeHtml(status.firestore || 'Pendiente')}</span></div>
-          <div class="status-item"><strong>Workspace</strong><span>${escapeHtml(status.workspace || 'No activo todavía')}</span></div>
+          <div class="status-item"><strong>Firestore</strong><span>${escapeHtml(status.firestore || 'Preparado')}</span></div>
+          <div class="status-item"><strong>Base en línea</strong><span>${escapeHtml(status.baseOnline || 'Pendiente de activación')}</span></div>
+          <div class="status-item"><strong>Administrador inicial esperado</strong><span>${escapeHtml(status.initialAdmin || getKSAFirebaseInitialAdminEmail())}</span></div>
+          <div class="status-item"><strong>Estado de acceso</strong><span>${escapeHtml(status.accessState)}</span></div>
+          <div class="status-item"><strong>Archivo reglas</strong><span>${escapeHtml(status.rulesFile || FIRESTORE_RULES_FILENAME)}</span></div>
+          <div class="status-item"><strong>Archivo guía</strong><span>${escapeHtml(status.guideFile || FIRESTORE_GUIDE_FILENAME)}</span></div>
           <div class="status-item"><strong>Base de datos</strong><span>${escapeHtml(status.database)}</span></div>
-          <div class="status-item"><strong>Seguridad</strong><span>Sin contraseñas locales</span><small>Auth real llegará con Firebase Auth y reglas de Firestore.</small></div>
+          <div class="status-item"><strong>Seguridad</strong><span>Sin contraseñas locales</span><small>No se guardan contraseñas en localStorage, JSON ni archivos.</small></div>
         </div>
-        <div class="users-prep-actions" aria-label="Acciones futuras de usuarios">
+        <div class="users-prep-actions" aria-label="Acciones de acceso y usuarios">
+          ${sessionAction}
+          <button type="button" class="secondary-action compact" data-firestore-copy-guide>Copiar guía</button>
+          <button type="button" class="secondary-action compact" data-firestore-copy-rules>Copiar reglas</button>
+          <button type="button" class="secondary-action compact" data-firestore-verify ${verifyDisabled}>Verificar Firestore</button>
+          ${initWorkspaceHtml}
+          ${cloudActivateHtml}
+          ${cloudRefreshHtml}
           ${disabledActions}
-          <small>Disponible cuando Firebase esté activo.</small>
+          <small>Las acciones delicadas quedan reservadas para Administrador. Firestore puede operar como fuente principal cuando la nube está activa.</small>
+        </div>
+        ${renderCloudInitialImportPanel(status)}
+        <div class="users-firestore-guide" aria-label="Guía Firestore">
+          <details>
+            <summary>Ver instrucciones para reglas Firestore</summary>
+            <ol>
+              <li>Entrar a Firebase Console.</li>
+              <li>Abrir proyecto ksakpk.</li>
+              <li>Ir a Firestore Database.</li>
+              <li>Entrar a pestaña Reglas.</li>
+              <li>Borrar reglas actuales.</li>
+              <li>Pegar el contenido de ${escapeHtml(FIRESTORE_RULES_FILENAME)}.</li>
+              <li>Publicar.</li>
+              <li>Volver a la app.</li>
+              <li>Iniciar sesión como ${escapeHtml(getKSAFirebaseInitialAdminEmail())}.</li>
+              <li>Ir a Configuración → Usuarios.</li>
+              <li>Presionar “Verificar Firestore”.</li>
+              <li>Presionar “Inicializar workspace base” si corresponde.</li>
+            </ol>
+          </details>
+          <details>
+            <summary>Ver reglas iniciales preparadas</summary>
+            <pre>${escapeHtml(FIRESTORE_STARTUP_RULES_TEXT)}</pre>
+          </details>
         </div>
         <div class="users-prep-grid">
           <section class="users-prep-panel" aria-label="Roles preparados">
@@ -17649,7 +20438,7 @@
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Configuración</h1>
-          <p class="lead">Centraliza parámetros generales, Usuarios, respaldo JSON validado e información del sistema. La gestión real de usuarios queda preparada para Firebase, sin login obligatorio ni bloqueo real todavía.</p>
+          <p class="lead">Centraliza parámetros generales, Usuarios, respaldo JSON validado e información del sistema. Firebase Auth permite login real y Firestore puede operar como fuente principal cuando la nube está activa.</p>
         </div>
         <aside class="hero-status" aria-label="Estado de configuración">
           <h3>Sistema</h3>
@@ -17674,7 +20463,7 @@
                 <h2>Parámetros generales</h2>
               </div>
             </div>
-            ${renderRolePermissionNotice('changeConfig', 'Solo Administrador puede cambiar parámetros generales. El rol puede cambiarse abajo porque esta etapa aún no tiene login real.')}
+            ${renderRolePermissionNotice('changeConfig', 'Solo Administrador puede cambiar parámetros generales.')}
             <form class="config-form" data-config-form novalidate>
               <div class="form-grid">
                 <label class="form-field">
@@ -18178,7 +20967,7 @@
         periodoTrabajoSeleccionado: workPeriodInfo.periodo,
         counts,
         recordCounts: counts,
-        source: 'KSA PRÁCTIKA respaldo JSON manual'
+        source: cloudOperationState.active ? 'KSA PRÁCTIKA respaldo JSON manual desde Firestore' : 'KSA PRÁCTIKA respaldo JSON manual local'
       },
       appName: APP_NAME,
       schemaVersion: SCHEMA_VERSION,
@@ -18215,6 +21004,9 @@
       return;
     }
 
+    if (cloudOperationState.active) {
+      await flushCloudSnapshotSync('exportJsonBackup');
+    }
     const exportedAt = nowIso();
     const { fileName, sequence } = buildJsonExportFileName(exportedAt);
     const payload = buildJsonBackupPayload({ exportedAt, fileName });
@@ -19484,6 +22276,7 @@
     try {
       const safe = Number.isFinite(Number(sequence)) && Number(sequence) > 0 ? Math.floor(Number(sequence)) : 1;
       window.localStorage.setItem(EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY, String(safe));
+      if (typeof scheduleCloudSnapshotSync === 'function') scheduleCloudSnapshotSync('excelConsultaSequence');
       return true;
     } catch (error) {
       console.warn('KSA PRÁCTIKA: no se pudo guardar el consecutivo local de Excel de consulta.', error);
@@ -19515,6 +22308,7 @@
     try {
       const safe = Number.isFinite(Number(sequence)) && Number(sequence) > 0 ? Math.floor(Number(sequence)) : 1;
       window.localStorage.setItem(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY, String(safe));
+      if (typeof scheduleCloudSnapshotSync === 'function') scheduleCloudSnapshotSync('excelCierreSequence');
       return true;
     } catch (error) {
       console.warn('KSA PRÁCTIKA: no se pudo guardar el consecutivo local de Excel de cierre.', error);
@@ -22073,6 +24867,61 @@ ${rowsXml}
       select.addEventListener('change', (event) => setCurrentRole(event.target.value));
     });
 
+    viewRoot.querySelectorAll('[data-open-access]').forEach((button) => {
+      button.addEventListener('click', () => openPreparedAccessScreen());
+    });
+
+    viewRoot.querySelectorAll('[data-auth-signout]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        const result = await KSAAuthLayer.signOut();
+        cloudOperationState.active = false;
+        cloudOperationState.bootstrappedForUid = '';
+        configState.message = result.message || (result.ok ? 'Sesión cerrada correctamente.' : 'No se pudo cerrar sesión.');
+        configState.messageType = result.ok ? 'success' : 'error';
+        renderRoute({ preserveScroll: true });
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-firestore-copy-guide]').forEach((button) => {
+      button.addEventListener('click', () => copyFirestoreText('guide'));
+    });
+
+    viewRoot.querySelectorAll('[data-firestore-copy-rules]').forEach((button) => {
+      button.addEventListener('click', () => copyFirestoreText('rules'));
+    });
+
+    viewRoot.querySelectorAll('[data-firestore-verify]').forEach((button) => {
+      button.addEventListener('click', () => handleFirestoreVerify(button));
+    });
+
+    viewRoot.querySelectorAll('[data-firestore-init-workspace]').forEach((button) => {
+      button.addEventListener('click', () => handleFirestoreInitializeWorkspace(button));
+    });
+
+    viewRoot.querySelectorAll('[data-cloud-activate]').forEach((button) => {
+      button.addEventListener('click', () => handleCloudOperationActivate(button));
+    });
+
+    viewRoot.querySelectorAll('[data-cloud-refresh]').forEach((button) => {
+      button.addEventListener('click', () => handleCloudDataRefresh(button));
+    });
+
+    viewRoot.querySelectorAll('[data-cloud-json-file]').forEach((input) => {
+      input.addEventListener('change', (event) => {
+        const file = event.target.files && event.target.files[0];
+        handleCloudJsonFileSelected(file);
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-cloud-json-import-confirm]').forEach((button) => {
+      button.addEventListener('click', () => confirmCloudInitialImport());
+    });
+
+    viewRoot.querySelectorAll('[data-cloud-json-import-clear]').forEach((button) => {
+      button.addEventListener('click', () => resetCloudInitialImportState('Vista de importación inicial limpiada.'));
+    });
+
     viewRoot.querySelectorAll('[data-pwa-check-update]').forEach((button) => {
       button.addEventListener('click', checkForPwaUpdate);
     });
@@ -22109,6 +24958,24 @@ ${rowsXml}
     setupGastosSearch();
     setupCasaSearch();
 
+  }
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener(KSA_FIREBASE_READY_EVENT, () => {
+      try {
+        const overlay = document.getElementById('accessPreparedOverlay');
+        const authStatus = getPreparedAuthStatus();
+        if (authStatus.authMode === 'firebase' && overlay && !overlay.classList.contains('is-hidden')) {
+          closePreparedAccessScreen();
+        } else if (overlay && !overlay.classList.contains('is-hidden')) {
+          overlay.innerHTML = renderPreparedAccessScreen();
+          bindPreparedAccessActions(overlay);
+        }
+        if (isConfigRoute(getRoute())) renderRoute({ preserveScroll: true });
+      } catch (error) {
+        console.warn('KSA PRÁCTIKA Firebase: estado actualizado sin bloquear modo local.', error);
+      }
+    });
   }
 
   bindRouteScrollShield();

@@ -9546,6 +9546,49 @@ body,
   line-height: 1.35;
 }
 
+.access-prepared-notice.is-error {
+  border-color: rgba(185, 28, 28, 0.28);
+  background: #fff1f2;
+  color: #7f1d1d;
+}
+
+.access-prepared-notice.is-success {
+  border-color: rgba(46, 125, 50, 0.26);
+  background: #eaf8ef;
+  color: #14532d;
+}
+
+.access-login-fields,
+.access-current-user {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.access-current-user {
+  padding: 12px;
+  border: 1px solid rgba(46, 125, 50, 0.22);
+  border-radius: 18px;
+  background: #eaf8ef;
+}
+
+.access-current-user strong,
+.access-current-user span,
+.access-current-user small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.access-current-user span {
+  font-weight: 900;
+  color: var(--ink);
+}
+
+.access-current-user small {
+  color: var(--muted);
+  font-weight: 800;
+}
+
 .access-prepared-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -9579,7 +9622,7 @@ body,
 
 .access-prepared-status {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -9744,4 +9787,144 @@ body,
   .firestore-collection-list {
     grid-template-columns: 1fr;
   }
+}
+
+/* Bloque C / Etapa 3 — Firestore reglas + workspace base */
+.users-firestore-guide {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 14px;
+  min-width: 0;
+}
+
+.users-firestore-guide details {
+  border: 1px dashed rgba(185, 135, 43, 0.34);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 10px 12px;
+  min-width: 0;
+}
+
+.users-firestore-guide summary {
+  cursor: pointer;
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.users-firestore-guide ol {
+  margin: 10px 0 0 18px;
+  padding: 0;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.users-firestore-guide pre {
+  max-width: 100%;
+  overflow: auto;
+  margin: 10px 0 0;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--ink);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+/* Bloque C / Etapa 4 — Importación inicial JSON a Firestore */
+.cloud-initial-import-panel {
+  margin: 14px 0;
+  display: grid;
+  gap: 12px;
+}
+
+.cloud-import-actions-row {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.file-action-label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.file-action-label input[type="file"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.file-action-label.is-disabled,
+.file-action-label.is-disabled input[type="file"] {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.cloud-import-preview {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.cloud-import-summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.cloud-import-progress {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  background: rgba(239, 246, 255, 0.72);
+  font-weight: 800;
+}
+
+.cloud-import-progress span,
+.cloud-import-progress small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.cloud-import-list {
+  padding: 10px 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+  min-width: 0;
+}
+
+.cloud-import-list strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.cloud-import-list ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.cloud-import-list li,
+.cloud-import-list small {
+  overflow-wrap: anywhere;
+}
+
+.cloud-import-list.is-error {
+  border-color: rgba(185, 28, 28, 0.2);
+  background: rgba(254, 242, 242, 0.76);
+}
+
+.cloud-import-list.is-warning {
+  border-color: rgba(180, 83, 9, 0.2);
+  background: rgba(255, 251, 235, 0.76);
+}
+
+.cloud-import-counts-table {
+  min-width: 360px;
 }

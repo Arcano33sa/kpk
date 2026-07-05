@@ -38,3 +38,35 @@ Bloque A / Etapa 3/6: se agregó una pantalla de acceso preparada para Firebase 
 - La edición de gastos Casa conserva la fecha guardada y solo cambia si el usuario la modifica manualmente.
 - No se modificó Excel Consulta, Excel Cierre, Firebase, usuarios, cierres, JSON, consecutivos ni lógica productiva.
 - Cache PWA actualizado a 0.18.06.
+
+## Bloque C / Etapa 2/5 — Login real con administrador inicial
+- Activado Firebase Authentication real con correo y contraseña mediante SDK modular.
+- Reconocido `atencion@arcano33.com` como Administrador inicial.
+- Agregado inicio/cierre de sesión real y estado visible en Configuración → Usuarios.
+- Firestore queda preparado / pendiente de reglas y workspace; no se leen ni escriben datos en nube.
+- Modo de datos se mantiene en Local, sin migración, sin limpieza de localStorage y sin alterar JSON, Excel ni consecutivos.
+- Cache PWA actualizado a 0.18.09.
+
+## Bloque C / Etapa 3/5 — Reglas Firestore y workspace base
+- Agregados `FIRESTORE_RULES_KSA_PRACTIKA.rules` y `GUIA_APLICAR_REGLAS_FIRESTORE.txt`.
+- Configuración → Usuarios ahora muestra guía/reglas, permite copiar instrucciones, verificar Firestore e inicializar `workspaces/ksa_practika` con usuario administrador inicial.
+- La inicialización es idempotente: si el workspace ya existe, no duplica ni migra datos operativos.
+- Modo de datos sigue Local; base en línea queda preparada, no activa.
+- No se modificaron JSON, Excel, consecutivos ni módulos operativos.
+- Cache PWA actualizado a 0.18.10.
+
+## Bloque C / Etapa 4/5 — Importación inicial JSON a Firestore
+- Agregada herramienta manual en Configuración → Usuarios → Base en línea para seleccionar JSON maestro, validar estructura, IDs, relaciones y conteos antes de importar.
+- La importación a Firestore crea solo documentos faltantes, omite existentes por documentId y registra metadata en `workspaces/ksa_practika/importaciones/{importId}`.
+- Actualiza `workspaces/ksa_practika/metadata/sistema` con `fuentePrincipal: "local"`, `datosMigrados: true` y `cloudDataReady: true`, sin activar operación online.
+- Se conserva modo Local; no borra localStorage, no modifica JSON local, Excel, consecutivos ni datos productivos locales.
+- Cache PWA actualizado a 0.18.11.
+
+## Bloque C / Etapa 5/5 — Operación online controlada con Firestore
+- Firestore puede quedar como fuente principal cuando la metadata importada confirma datosMigrados, cloudDataReady e importacionInicialCompletada.
+- Configuración → Usuarios muestra Nube activa, fuente Firestore, workspace ksa_practika, proyecto ksakpk, última sincronización y datos migrados.
+- Se agregó acción Actualizar datos para refrescar desde Firestore y acción Activar nube reservada para Administrador.
+- Las operaciones guardan en local como respaldo operativo y sincronizan snapshot controlado hacia Firestore cuando la nube está activa.
+- JSON queda como respaldo auxiliar y exporta desde la fuente activa visible en la app.
+- Reglas Firestore actualizadas: sin borrado físico, usuarios/importación reservados para Administrador y usuarios activos con escritura operativa.
+- Cache PWA actualizado a 0.18.12.

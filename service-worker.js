@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_07_post12_casa_etapa2_gastosporcategoria';
+const CACHE_VERSION = 'v0_18_12_post12_firebasereal_bloquec_etapa5';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
@@ -8,6 +8,8 @@ const APP_SHELL = [
   './styles.css',
   './app.js',
   './firebase-config.js',
+  './FIRESTORE_RULES_KSA_PRACTIKA.rules',
+  './GUIA_APLICAR_REGLAS_FIRESTORE.txt',
   './vendor/jszip.min.js',
   './manifest.webmanifest',
   './assets/icon-192.svg',

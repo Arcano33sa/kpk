@@ -1,0 +1,33 @@
+GUÍA PARA APLICAR REGLAS FIRESTORE — KSA PRÁCTIKA
+
+Proyecto Firebase: ksakpk
+Project ID: ksakpk-ecb6d
+Administrador inicial: atencion@arcano33.com
+Workspace: ksa_practika
+
+Pasos:
+
+1. Entrar a Firebase Console.
+2. Abrir proyecto ksakpk.
+3. Ir a Firestore Database.
+4. Entrar a pestaña Reglas.
+5. Borrar reglas actuales.
+6. Pegar el contenido de FIRESTORE_RULES_KSA_PRACTIKA.rules.
+7. Publicar.
+8. Volver a la app.
+9. Iniciar sesión como atencion@arcano33.com.
+10. Ir a Configuración → Usuarios.
+11. Confirmar que el bloque visible se llama Usuarios.
+12. Presionar “Verificar Firestore”.
+13. Presionar “Activar nube” si la metadata importada ya está lista.
+14. Usar “Actualizar datos” para refrescar desde Firestore entre dispositivos.
+
+Notas importantes:
+
+- Firestore queda como fuente principal cuando la app muestra “Nube activa”.
+- JSON queda como respaldo auxiliar.
+- Las reglas no permiten borrado físico.
+- Usuarios e importaciones iniciales quedan reservados para Administrador.
+- Usuarios activos pueden registrar operaciones en línea.
+- No se reinician consecutivos de Excel Consulta, Excel Cierre ni JSON.
+- Si aparece el mensaje “Firestore no permite escritura todavía”, confirma que estas reglas hayan sido publicadas correctamente.

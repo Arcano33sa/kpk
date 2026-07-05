@@ -1,0 +1,55 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isInitialAdmin() {
+      return signedIn() && request.auth.token.email == "atencion@arcano33.com";
+    }
+
+    function isWorkspaceUser(workspaceId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/usuarios/$(request.auth.uid))
+        && get(/databases/$(database)/documents/workspaces/$(workspaceId)/usuarios/$(request.auth.uid)).data.activo == true;
+    }
+
+    function isWorkspaceAdmin(workspaceId) {
+      return isWorkspaceUser(workspaceId)
+        && get(/databases/$(database)/documents/workspaces/$(workspaceId)/usuarios/$(request.auth.uid)).data.rol == "Administrador";
+    }
+
+    match /workspaces/{workspaceId} {
+      allow create: if isInitialAdmin();
+      allow read: if isInitialAdmin() || isWorkspaceUser(workspaceId);
+      allow update: if isInitialAdmin() || isWorkspaceAdmin(workspaceId);
+      allow delete: if false;
+
+      match /usuarios/{userId} {
+        allow read: if isInitialAdmin() || isWorkspaceUser(workspaceId);
+        allow create, update: if isInitialAdmin() || isWorkspaceAdmin(workspaceId);
+        allow delete: if false;
+      }
+
+      match /importaciones/{importId} {
+        allow read: if isInitialAdmin() || isWorkspaceAdmin(workspaceId);
+        allow create, update: if isInitialAdmin() || isWorkspaceAdmin(workspaceId);
+        allow delete: if false;
+      }
+
+      match /respaldosImportaciones/{importId} {
+        allow read: if isInitialAdmin() || isWorkspaceAdmin(workspaceId);
+        allow create, update: if isInitialAdmin() || isWorkspaceAdmin(workspaceId);
+        allow delete: if false;
+      }
+
+      match /{document=**} {
+        allow read: if isInitialAdmin() || isWorkspaceUser(workspaceId);
+        allow create, update: if isInitialAdmin() || isWorkspaceUser(workspaceId);
+        allow delete: if false;
+      }
+    }
+  }
+}
