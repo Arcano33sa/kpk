@@ -70,3 +70,31 @@ Bloque A / Etapa 3/6: se agregó una pantalla de acceso preparada para Firebase 
 - JSON queda como respaldo auxiliar y exporta desde la fuente activa visible en la app.
 - Reglas Firestore actualizadas: sin borrado físico, usuarios/importación reservados para Administrador y usuarios activos con escritura operativa.
 - Cache PWA actualizado a 0.18.12.
+
+## Bloque D / Etapa 2/4 — Usuarios autorizados por UID
+- Configuración → Usuarios ahora incluye el subbloque “Usuarios autorizados”.
+- La app lista autorizaciones desde `workspaces/ksa_practika/usuarios/{uid}` en Firestore.
+- Permite agregar autorización por UID, editar nombre, editar rol, activar/desactivar y refrescar listado.
+- No crea cuentas Firebase Auth, no pide contraseña y no usa creación de usuarios desde la app.
+- `atencion@arcano33.com` queda protegido como Administrador principal: no se puede desactivar ni bajar a Usuario normal.
+- No se tocaron módulos operativos, datos productivos, Excel, JSON auxiliar ni consecutivos.
+- Cache PWA actualizado a 0.18.14.
+
+
+## Bloque D / Etapa 3/4 — Permisos por rol en la app
+
+- Se aplicaron permisos de app para los roles únicos Administrador y Usuario normal.
+- Se protegieron acciones críticas con validación visual e interna: Usuarios, diagnóstico online, importación JSON maestro a nube, herramientas Firestore, cierre de período, Excel Cierre, configuración delicada, catálogos y anulaciones.
+- Usuario normal conserva operación diaria: módulos operativos, lectura de datos, búsqueda global, Facturas, Casa, Catálogos en consulta, actualización de datos y Excel Consulta.
+- El administrador principal atencion@arcano33.com queda protegido para evitar desactivación, pérdida de rol o sistema sin administrador.
+- Cache PWA actualizado a 0.18.15.
+
+## Bloque D / Etapa 4/4 — JSON auxiliar desde nube
+
+- En modo “Nube activa”, la exportación JSON auxiliar se arma leyendo Firestore como fuente principal, no datos locales viejos.
+- El JSON exportado incluye metadata de fuente, workspace, projectId, usuario exportador, conteos, `fuentePrincipal: "cloud"` y `respaldoTipo: "auxiliar"`.
+- Se reforzaron advertencias anti-reimportación cuando ya existe importación inicial completada o nube activa.
+- La importación JSON local queda bloqueada visual e internamente cuando Firestore está activo como fuente principal.
+- Se agregó `GUIA_JSON_AUXILIAR_NUBE_KSA_PRACTIKA.txt`.
+- Consecutivo JSON permanece separado de Excel Consulta y Excel Cierre; no avanza si se cancela o falla la exportación.
+- Cache PWA actualizado a 0.18.16.

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.12-post12-firebasereal-bloquec-etapa5';
+  const APP_VERSION = '0.18.16-post12-firebaseonline-bloqued-etapa4';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -143,7 +143,7 @@
       icon: '⚙',
       title: 'Configuración',
       short: 'Config.',
-      description: 'Parámetros generales, Usuarios preparados, respaldo JSON validado e información del sistema.',
+      description: 'Parámetros generales, Usuarios autorizados, respaldo JSON validado e información del sistema.',
       placeholder: 'Configuración activa con Usuarios, parámetros generales, respaldo JSON validado e historial de cierres/exportaciones.'
     }
   ];
@@ -944,39 +944,83 @@
     administrador: {
       id: 'administrador',
       label: 'Administrador',
-      description: 'Contrato futuro: podrá gestionar usuarios, importar JSON inicial a nube, exportar respaldos, cerrar períodos, anular movimientos, modificar catálogos y acceder a configuración delicada.',
-      permissions: new Set(['manageUsers', 'initialJsonToCloud', 'editCatalogs', 'annulMovements', 'importExcel', 'exportExcel', 'exportJson', 'importJson', 'changeConfig', 'sensitiveConfig', 'closeMonth'])
+      description: 'Puede gestionar usuarios, importar JSON maestro a nube, exportar respaldos, cerrar períodos, anular movimientos, modificar catálogos y acceder a configuración delicada.',
+      permissions: new Set([
+        'manageUsers',
+        'initialJsonToCloud',
+        'editCatalogs',
+        'annulMovements',
+        'importExcel',
+        'exportExcelConsulta',
+        'exportExcelCierre',
+        'exportJson',
+        'importJson',
+        'changeConfig',
+        'sensitiveConfig',
+        'closeMonth',
+        'onlineDiagnostic',
+        'firestoreTools',
+        'changeDataSource',
+        'recoveryActions',
+        'updateData',
+        'viewCatalogs'
+      ])
     },
     usuario: {
       id: 'usuario',
       label: 'Usuario normal',
-      description: 'Contrato futuro: podrá registrar operaciones, consultar datos y trabajar módulos operativos, sin tocar partes delicadas.',
-      permissions: new Set(['registerOperations', 'viewDashboard', 'workOperationalModules'])
+      description: 'Puede registrar operaciones, consultar datos, trabajar módulos operativos y exportar Excel de consulta, sin tocar partes delicadas.',
+      permissions: new Set([
+        'registerOperations',
+        'viewDashboard',
+        'workOperationalModules',
+        'viewCatalogs',
+        'exportExcelConsulta',
+        'updateData'
+      ])
     }
   };
 
+  const ADMIN_RESTRICTED_MESSAGE = 'Acción reservada para Administrador.';
+
   const ROLE_ORDER = ['administrador', 'usuario'];
   const USER_FUTURE_SCHEMA_FIELDS = Object.freeze([
-    { key: 'uid', description: 'Identificador que vendrá desde Firebase Auth.' },
-    { key: 'correo', description: 'Correo del usuario cuando Firebase esté activo.' },
+    { key: 'uid', description: 'Identificador UID de Firebase Auth.' },
+    { key: 'correo', description: 'Correo del usuario autorizado.' },
+    { key: 'correoNormalizado', description: 'Correo en minúsculas para validar duplicados activos.' },
     { key: 'nombre', description: 'Nombre visible del usuario.' },
     { key: 'rol', description: 'Administrador o Usuario normal.' },
-    { key: 'activo', description: 'Indicador para activar o desactivar acceso futuro.' },
-    { key: 'workspaceId', description: 'Empresa o espacio de trabajo al que pertenece.' },
-    { key: 'createdAt', description: 'Fecha de creación futura.' },
-    { key: 'updatedAt', description: 'Fecha de actualización futura.' },
-    { key: 'ultimoAcceso', description: 'Último acceso futuro, si aplica.' },
-    { key: 'fuente', description: 'local_preparado o firebase.' }
+    { key: 'activo', description: 'Indicador para activar o desactivar acceso.' },
+    { key: 'workspaceId', description: 'Workspace al que pertenece.' },
+    { key: 'createdAt', description: 'Fecha de creación.' },
+    { key: 'updatedAt', description: 'Fecha de actualización.' },
+    { key: 'creadoPorUid', description: 'UID del administrador que creó la autorización.' },
+    { key: 'creadoPorCorreo', description: 'Correo del administrador que creó la autorización.' },
+    { key: 'origen', description: 'Origen interno de la autorización.' }
   ]);
   const USER_PREPARED_ACTIONS = Object.freeze(['Agregar usuario', 'Editar usuario', 'Desactivar usuario', 'Cambiar rol']);
   const FIRESTORE_WORKSPACE_ID_PLACEHOLDER = 'ksa_practika';
   const FIRESTORE_RULES_FILENAME = 'FIRESTORE_RULES_KSA_PRACTIKA.rules';
   const FIRESTORE_GUIDE_FILENAME = 'GUIA_APLICAR_REGLAS_FIRESTORE.txt';
+  const JSON_AUXILIAR_NUBE_GUIDE_FILENAME = 'GUIA_JSON_AUXILIAR_NUBE_KSA_PRACTIKA.txt';
   const FIRESTORE_WORKSPACE_NAME = 'KSA PRÁCTIKA';
   const FIRESTORE_METADATA_SYSTEM_ID = 'sistema';
   const FIRESTORE_VERIFY_DOC_ID = 'verificacion';
   const FIRESTORE_IMPORT_COLLECTION_ID = 'importaciones';
+  const FIRESTORE_ONLINE_DIAGNOSTIC_DOC_ID = 'diagnostico';
   const FIRESTORE_IMPORT_BATCH_LIMIT = 420;
+  const ONLINE_DIAGNOSTIC_COLLECTIONS = Object.freeze([
+    { key: 'ventas', label: 'Ventas' },
+    { key: 'cobros', label: 'Cobros' },
+    { key: 'comprasProveedores', label: 'Compras proveedores' },
+    { key: 'pagosProveedores', label: 'Pagos proveedores' },
+    { key: 'gastos', label: 'Gastos' },
+    { key: 'casaGastos', label: 'Casa gastos' },
+    { key: 'facturasModulo', label: 'Facturas' },
+    { key: 'catalogos', label: 'Catálogos' },
+    { key: 'cierresMensuales', label: 'Cierres mensuales' },
+    { key: 'usuarios', label: 'Usuarios' }
+  ]);
   const FIRESTORE_STARTUP_RULES_TEXT = `rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -1079,6 +1123,7 @@ Notas importantes:
     { key: 'notasModulo', path: 'workspaces/{workspaceId}/notasModulo/{notaId}', label: 'Notas', source: 'notasModulo', idPolicy: 'Conservar ids de notas, pendientes, recordatorios e históricos.' },
     { key: 'cierresMensuales', path: 'workspaces/{workspaceId}/cierresMensuales/{periodo}', label: 'Cierres mensuales', source: 'cierresMensuales', idPolicy: 'Usar período YYYY-MM como id o campo estable, sin reabrir históricos.' },
     { key: 'exportacionesExcel', path: 'workspaces/{workspaceId}/exportacionesExcel/{exportacionId}', label: 'Exportaciones Excel', source: 'exportacionesExcel', idPolicy: 'Conservar id de exportación, tipo consulta/cierre y consecutivo correspondiente.' },
+    { key: 'exportacionesJson', path: 'workspaces/{workspaceId}/exportacionesJson/{exportId}', label: 'Exportaciones JSON auxiliar', source: 'jsonAuxiliarNube', idPolicy: 'Registrar solo metadata de respaldo auxiliar desde Firestore; no contiene datos operativos.' },
     { key: 'bitacora', path: 'workspaces/{workspaceId}/bitacora/{actividadId}', label: 'Bitácora', source: 'bitacora', idPolicy: 'Conservar id de actividad cuando exista; generar solo en etapas futuras.' },
     { key: 'consecutivos', path: 'workspaces/{workspaceId}/consecutivos/{tipo}', label: 'Consecutivos', source: 'consecutivos', idPolicy: 'Documentos separados: excelConsulta, excelCierre, json y otros.' },
     { key: 'metadata', path: 'workspaces/{workspaceId}/metadata/sistema', label: 'Metadata', source: 'metadata', idPolicy: 'Documento informativo de versión, schema, fechas y origen.' },
@@ -1289,6 +1334,33 @@ Notas importantes:
     cloudStatus: null,
     progress: null,
     message: null,
+    messageType: 'success'
+  };
+
+  let onlineDiagnosticState = {
+    isReading: false,
+    isWriting: false,
+    autoRequestedForUid: '',
+    lastReadStatus: 'Pendiente',
+    lastWriteStatus: 'Pendiente',
+    readMessage: 'Sin prueba de lectura todavía.',
+    writeMessage: 'Sin prueba de escritura todavía.',
+    lastUpdatedAt: '',
+    lastReadAt: '',
+    lastWriteAt: '',
+    metadata: null,
+    counts: {},
+    workspaceFound: null
+  };
+
+  let usersAuthState = {
+    isLoading: false,
+    isSaving: false,
+    records: [],
+    loadedAt: '',
+    loadedForUid: '',
+    editingUid: '',
+    message: '',
     messageType: 'success'
   };
 
@@ -2028,6 +2100,10 @@ Notas importantes:
       sourceDeviceId: cleanText(raw.sourceDeviceId || raw.deviceId),
       sourceDeviceName: cleanText(raw.sourceDeviceName || raw.deviceName || raw.equipo) || 'Equipo no identificado',
       fileName: cleanText(raw.fileName || raw.nombreArchivo),
+      source: cleanText(raw.source || raw.fuente),
+      respaldoTipo: cleanText(raw.respaldoTipo || raw.tipo),
+      workspaceId: cleanText(raw.workspaceId),
+      projectId: cleanText(raw.projectId),
       counts,
       lastActivity
     };
@@ -2252,10 +2328,16 @@ Notas importantes:
     const lastActivityText = lastActivity
       ? (lastActivity.detail || buildActivityDetail([lastActivity.module, lastActivity.action, lastActivity.entityRef]))
       : 'Sin última actividad incluida.';
+    const sourceLine = buildActivityDetail([
+      normalized.source ? `Fuente: ${normalized.source}` : '',
+      normalized.respaldoTipo ? `Tipo: ${normalized.respaldoTipo}` : '',
+      normalized.workspaceId ? `Workspace: ${normalized.workspaceId}` : ''
+    ]);
     return `
       <div class="status-item device-backup-summary">
         <strong>Último respaldo JSON exportado</strong>
         <span>${escapeHtml(originLine || 'Origen no identificado')}</span>
+        ${sourceLine ? `<small>${escapeHtml(sourceLine)}</small>` : ''}
         <small>Incluye: ${escapeHtml(formatBackupCountsSummary(normalized.counts))}</small>
         <small>Última actividad incluida: ${escapeHtml(lastActivityText)}</small>
       </div>
@@ -2569,12 +2651,13 @@ Notas importantes:
     }
   }
 
-  function saveJsonExportSequence(value) {
+  function saveJsonExportSequence(value, options = {}) {
+    const opts = isPlainObject(options) ? options : {};
     try {
       const numeric = Number.parseInt(value, 10);
       const safeValue = Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
       localStorage.setItem(JSON_EXPORT_SEQUENCE_STORAGE_KEY, String(safeValue));
-      if (typeof scheduleCloudSnapshotSync === 'function') scheduleCloudSnapshotSync('jsonSequence');
+      if (opts.scheduleCloud !== false && typeof scheduleCloudSnapshotSync === 'function') scheduleCloudSnapshotSync('jsonSequence');
     } catch (error) {
       console.warn('KSA PRÁCTIKA: no se pudo guardar el consecutivo local de exportación JSON.', error);
     }
@@ -2586,14 +2669,74 @@ Notas importantes:
     return String(safeValue).padStart(4, '0');
   }
 
-  function buildJsonExportFileName(exportedAt) {
-    const sequence = getJsonExportSequence();
+  function buildJsonExportFileName(exportedAt, options = {}) {
+    const opts = isPlainObject(options) ? options : {};
+    const sequenceCandidate = Number.parseInt(opts.sequence, 10);
+    const sequence = Number.isFinite(sequenceCandidate) && sequenceCandidate >= 0 ? sequenceCandidate : getJsonExportSequence();
     const rawDeviceName = cleanText(appDeviceIdentity?.deviceName);
     const deviceName = sanitizeFileNameSegment(rawDeviceName === 'Este equipo' ? '' : rawDeviceName, 'Equipo sin nombre');
     const dateStamp = formatJsonExportDateStamp(exportedAt);
     return {
       fileName: `${formatJsonExportSequence(sequence)}- ${deviceName} ${dateStamp}.json`,
       sequence
+    };
+  }
+
+
+  function isCloudDataSourceActive() {
+    const runtime = getCloudRuntimeStatusSafe();
+    const firebaseStatus = getKSAFirebaseStatusSafe();
+    return Boolean(
+      cloudOperationState?.active
+      || runtime?.cloudActive === true
+      || firebaseStatus?.cloudActive === true
+      || cleanText(appData?.metadata?.fuentePrincipal).toLowerCase() === 'firestore'
+      || appData?.metadata?.cloudActive === true
+    );
+  }
+
+  function getCurrentJsonExportUserInfo(fallbackUser = null) {
+    let user = isPlainObject(fallbackUser) ? fallbackUser : null;
+    try {
+      if (!user && typeof KSAFirebaseAdapter !== 'undefined' && KSAFirebaseAdapter?.getCurrentUser) {
+        user = KSAFirebaseAdapter.getCurrentUser();
+      }
+    } catch (_) {}
+    try {
+      const authStatus = getPreparedAuthStatus();
+      if (!user && authStatus?.authMode === 'firebase') user = authStatus.user;
+    } catch (_) {}
+    return {
+      uid: cleanText(user?.uid || user?.id || ''),
+      correo: cleanText(user?.email || user?.correo || '')
+    };
+  }
+
+  function getCloudJsonSequence(consecutivos = {}) {
+    const candidates = [
+      consecutivos?.json,
+      consecutivos?.JSON,
+      consecutivos?.respaldoJson,
+      getJsonExportSequence()
+    ];
+    for (const value of candidates) {
+      const numeric = Number.parseInt(value, 10);
+      if (Number.isFinite(numeric) && numeric >= 0) return numeric;
+    }
+    return 0;
+  }
+
+  function getJsonAuxiliaryStatusInfo() {
+    const cloudActive = isCloudDataSourceActive();
+    const firebaseStatus = getKSAFirebaseStatusSafe();
+    const runtimeStatus = getCloudRuntimeStatusSafe();
+    return {
+      cloudActive,
+      fuentePrincipal: cloudActive ? 'Firestore' : 'Local controlado',
+      jsonTipo: cloudActive ? 'Respaldo auxiliar' : 'Respaldo local/manual',
+      exportSource: cloudActive ? 'Firestore' : 'Datos locales',
+      workspaceId: runtimeStatus?.workspaceId || firebaseStatus?.workspaceId || FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+      projectId: firebaseStatus?.projectId || cleanText(getRawKSAFirebaseConfig().projectId) || 'ksakpk-ecb6d'
     };
   }
 
@@ -3560,7 +3703,7 @@ Notas importantes:
     const collectionKeys = FIRESTORE_COLLECTION_CONTRACTS.map((item) => item.key);
     return Object.freeze({
       name: 'KSAFirestoreContract',
-      stage: 'Bloque C - Etapa 5/5',
+      stage: 'Bloque D - Etapa 4/4',
       status: 'workspace_preparation',
       firebaseConnected: false,
       firestoreActive: false,
@@ -3719,6 +3862,66 @@ Notas importantes:
 
   function normalizeAuthEmail(email) {
     return cleanText(email).toLowerCase();
+  }
+
+  function isValidEmailAddress(email) {
+    const safe = normalizeAuthEmail(email);
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(safe);
+  }
+
+  function normalizeAuthorizedRoleLabel(value) {
+    const normalized = normalizeKeyForCompare(value || '');
+    if (normalized === 'administrador' || normalized === 'admin') return ROLE_DEFINITIONS.administrador.label;
+    if (normalized === 'usuario' || normalized === 'usuario normal' || normalized === 'normal') return ROLE_DEFINITIONS.usuario.label;
+    return '';
+  }
+
+  function normalizeAuthorizedRoleId(value) {
+    return normalizeAuthorizedRoleLabel(value) === ROLE_DEFINITIONS.administrador.label ? 'administrador' : 'usuario';
+  }
+
+  function isProtectedAuthorizedUser(record = {}) {
+    const adminEmail = normalizeAuthEmail(getKSAFirebaseInitialAdminEmail());
+    const email = normalizeAuthEmail(record.correoNormalizado || record.correo || record.email);
+    return Boolean(adminEmail && email === adminEmail);
+  }
+
+  function normalizeAuthorizedUserRecord(record = {}) {
+    const raw = isPlainObject(record) ? record : {};
+    const uid = cleanText(raw.uid || raw.id || raw.userId);
+    const correo = normalizeAuthEmail(raw.correo || raw.email || raw.correoElectronico);
+    const roleLabel = normalizeAuthorizedRoleLabel(raw.rol || raw.role || raw.tipoRol) || ROLE_DEFINITIONS.usuario.label;
+    const timestamp = nowIso();
+    return {
+      id: uid || cleanText(raw.id),
+      uid,
+      correo,
+      correoNormalizado: normalizeAuthEmail(raw.correoNormalizado || correo),
+      nombre: cleanText(raw.nombre || raw.displayName || raw.name) || (correo ? correo.split('@')[0] : 'Usuario'),
+      rol: roleLabel,
+      rolId: normalizeAuthorizedRoleId(roleLabel),
+      activo: typeof raw.activo === 'boolean' ? raw.activo : raw.activo !== false,
+      workspaceId: cleanText(raw.workspaceId || FIRESTORE_WORKSPACE_ID_PLACEHOLDER) || FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+      createdAt: cleanText(raw.createdAt || raw.creadoAt || raw.fechaCreacion) || '',
+      updatedAt: cleanText(raw.updatedAt || raw.actualizadoAt || raw.fechaActualizacion) || cleanText(raw.createdAt || '') || '',
+      creadoPorUid: cleanText(raw.creadoPorUid || raw.createdByUid),
+      creadoPorCorreo: normalizeAuthEmail(raw.creadoPorCorreo || raw.createdByEmail),
+      origen: cleanText(raw.origen || 'ksa_configuracion_usuarios')
+    };
+  }
+
+  function sortAuthorizedUsers(records = []) {
+    return (Array.isArray(records) ? records : [])
+      .map((record) => normalizeAuthorizedUserRecord(record))
+      .sort((a, b) => {
+        const protectedCompare = Number(isProtectedAuthorizedUser(b)) - Number(isProtectedAuthorizedUser(a));
+        if (protectedCompare) return protectedCompare;
+        const roleCompare = Number(b.rolId === 'administrador') - Number(a.rolId === 'administrador');
+        if (roleCompare) return roleCompare;
+        const activeCompare = Number(b.activo) - Number(a.activo);
+        if (activeCompare) return activeCompare;
+        return compareVisualText(a.nombre, b.nombre) || compareVisualText(a.correo, b.correo) || compareVisualText(a.uid, b.uid);
+      });
   }
 
   function getFirebaseRoleForEmail(email) {
@@ -3886,7 +4089,7 @@ Notas importantes:
       if (!configured) {
         return Object.freeze({
           name: 'KSAFirebaseAdapter',
-          stage: 'Bloque C - Etapa 5/5',
+          stage: 'Bloque D - Etapa 4/4',
           mode: cloudActive ? 'cloud_active' : 'local',
           dataMode: cloudActive ? 'Nube activa' : 'Local',
           projectName,
@@ -3937,7 +4140,7 @@ Notas importantes:
       if (hasInitError) {
         return Object.freeze({
           name: 'KSAFirebaseAdapter',
-          stage: 'Bloque C - Etapa 5/5',
+          stage: 'Bloque D - Etapa 4/4',
           mode: cloudActive ? 'cloud_active' : 'local',
           dataMode: cloudActive ? 'Nube activa' : 'Local',
           projectName,
@@ -3987,7 +4190,7 @@ Notas importantes:
       const ready = runtimeInitialized && Boolean(state.firebaseApp || runtime?.firebaseApp) && Boolean(state.auth || runtime?.auth) && Boolean(state.firestore || runtime?.firestore || runtime?.db);
       return Object.freeze({
         name: 'KSAFirebaseAdapter',
-        stage: 'Bloque C - Etapa 5/5',
+        stage: 'Bloque D - Etapa 4/4',
         mode: 'local',
         dataMode: 'Local',
         projectName,
@@ -4360,7 +4563,7 @@ Notas importantes:
         return 'Inicia sesión como atencion@arcano33.com antes de verificar o inicializar Firestore.';
       }
       if (code === 'firebase/not-initial-admin') {
-        return 'Solo Administrador puede ejecutar esta acción delicada de Firestore.';
+        return ADMIN_RESTRICTED_MESSAGE;
       }
       if (code === 'firebase/user-inactive') {
         return 'Tu usuario está desactivado en Configuración → Usuarios.';
@@ -4412,18 +4615,40 @@ Notas importantes:
         if (snap.exists()) {
           userDoc = { id: snap.id, ...(snap.data() || {}) };
           effectiveRole = normalizeCloudRoleValue(userDoc.rol || userDoc.role || userDoc.tipoRol);
+          if (initialRole.id === 'administrador') {
+            const stamp = getFirestoreTimestampValue(fs);
+            const protectedAdminPatch = {
+              uid: user.uid,
+              correo: user.email,
+              correoNormalizado: normalizeAuthEmail(user.email),
+              rol: 'Administrador',
+              activo: true,
+              nombre: cleanText(userDoc.nombre || user.displayName || 'Administrador'),
+              workspaceId: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+              updatedAt: stamp,
+              creadoPorUid: userDoc.creadoPorUid || user.uid,
+              creadoPorCorreo: userDoc.creadoPorCorreo || user.email,
+              origen: userDoc.origen || 'admin_inicial_auto'
+            };
+            await fs.setDoc(userRef, protectedAdminPatch, { merge: true });
+            userDoc = { ...userDoc, ...protectedAdminPatch };
+            effectiveRole = ROLE_DEFINITIONS.administrador;
+          }
           if (userDoc.activo === false) throw { code: 'firebase/user-inactive' };
         } else if (initialRole.id === 'administrador') {
           const stamp = getFirestoreTimestampValue(fs);
           userDoc = {
             uid: user.uid,
             correo: user.email,
+            correoNormalizado: normalizeAuthEmail(user.email),
             rol: 'Administrador',
             activo: true,
             nombre: user.displayName || 'Administrador',
             workspaceId: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
             createdAt: stamp,
             updatedAt: stamp,
+            creadoPorUid: user.uid,
+            creadoPorCorreo: user.email,
             origen: 'admin_inicial_auto'
           };
           await fs.setDoc(userRef, userDoc, { merge: true });
@@ -5017,20 +5242,28 @@ Notas importantes:
           await fs.setDoc(userRef, {
             uid: user.uid,
             correo: FIREBASE_INITIAL_ADMIN_EMAIL,
+            correoNormalizado: normalizeAuthEmail(FIREBASE_INITIAL_ADMIN_EMAIL),
             rol: 'Administrador',
             activo: true,
             nombre: 'Administrador',
+            workspaceId: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
             createdAt: stamp,
             updatedAt: stamp,
+            creadoPorUid: user.uid,
+            creadoPorCorreo: user.email,
             origen: 'admin_inicial'
           }, { merge: false });
         } else {
           await fs.setDoc(userRef, {
             uid: user.uid,
             correo: FIREBASE_INITIAL_ADMIN_EMAIL,
+            correoNormalizado: normalizeAuthEmail(FIREBASE_INITIAL_ADMIN_EMAIL),
             rol: 'Administrador',
             activo: true,
+            workspaceId: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
             updatedAt: stamp,
+            creadoPorUid: user.uid,
+            creadoPorCorreo: user.email,
             origen: 'admin_inicial'
           }, { merge: true });
         }
@@ -5193,9 +5426,9 @@ Notas importantes:
           previousImport,
           localMode: !(metadata?.cloudActive === true || cleanText(metadata?.fuentePrincipal).toLowerCase() === 'firestore'),
           cloudActive: metadata?.cloudActive === true || cleanText(metadata?.fuentePrincipal).toLowerCase() === 'firestore',
-          message: previousImport
-            ? 'Este JSON parece haber sido importado antes. Se podrán omitir duplicados sin sobrescribir.'
-            : (metadata?.importacionInicialCompletada ? 'Ya existe una importación inicial registrada. La nueva importación solo creará faltantes.' : 'No se detectó importación inicial previa con esta firma.'),
+          message: previousImport || metadata?.importacionInicialCompletada
+            ? 'La nube ya tiene una importación inicial completada. No reimportes JSON salvo recuperación controlada. Reimportar puede crear duplicados o mezclar datos.'
+            : 'No se detectó importación inicial previa con esta firma.',
           status: getFirebaseStatus()
         };
       } catch (error) {
@@ -5438,9 +5671,429 @@ Notas importantes:
       }
     }
 
+    function translateOnlineDiagnosticError(error) {
+      const code = cleanText(error?.code || error?.name || 'firebase/firestore-error');
+      if (code === 'unauthenticated' || code === 'auth/no-current-user') {
+        return { code, message: 'Falta sesión.' };
+      }
+      if (code === 'permission-denied' || code === 'firestore/permission-denied' || code === 'firebase/not-initial-admin') {
+        return { code, message: ADMIN_RESTRICTED_MESSAGE };
+      }
+      if (code === 'workspace/not-found' || code === 'not-found') {
+        return { code, message: 'Workspace no encontrado.' };
+      }
+      if (code === 'unavailable' || code === 'deadline-exceeded' || code === 'auth/network-request-failed') {
+        return { code, message: 'Error de conexión.' };
+      }
+      if (code === 'firebase/user-inactive') {
+        return { code, message: 'Permiso denegado.' };
+      }
+      if (code === 'firebase/user-not-registered') {
+        return { code, message: 'Permiso denegado.' };
+      }
+      return { code, message: 'Error de conexión.' };
+    }
+
+    async function ensureFirebaseDiagnosticReady() {
+      await ensureFirebaseAuthReady();
+      const user = normalizeFirebaseAuthUser(state.auth?.currentUser || null) || getCurrentUser();
+      if (!user?.uid || !user?.email) throw { code: 'unauthenticated' };
+      if (!state.firestore || !state.firestoreModule) throw { code: 'firebase/init-error' };
+
+      const db = state.firestore;
+      const fs = state.firestoreModule;
+      const initialRole = getFirebaseRoleForEmail(user.email);
+      let effectiveRole = initialRole.id === 'administrador' ? ROLE_DEFINITIONS.administrador : ROLE_DEFINITIONS.usuario;
+      let userDoc = null;
+      try {
+        const userRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'usuarios', user.uid);
+        const userSnap = await fs.getDoc(userRef);
+        if (userSnap.exists()) {
+          userDoc = { id: userSnap.id, ...(userSnap.data() || {}) };
+          effectiveRole = normalizeCloudRoleValue(userDoc.rol || userDoc.role || userDoc.tipoRol);
+          if (userDoc.activo === false) throw { code: 'firebase/user-inactive' };
+        } else if (initialRole.id !== 'administrador') {
+          throw { code: 'firebase/user-not-registered' };
+        }
+      } catch (error) {
+        if (initialRole.id !== 'administrador') throw error;
+        effectiveRole = ROLE_DEFINITIONS.administrador;
+      }
+      if (effectiveRole.id !== 'administrador') throw { code: 'firebase/not-initial-admin' };
+      state.currentUser = { ...user, role: effectiveRole.id, roleLabel: effectiveRole.label };
+      return { user: state.currentUser, role: effectiveRole, userDoc, db, fs };
+    }
+
+    async function countFirestoreCollection(db, fs, ...pathSegments) {
+      const ref = fs.collection(db, ...pathSegments);
+      if (typeof fs.getCountFromServer === 'function') {
+        const countSnap = await fs.getCountFromServer(ref);
+        const value = Number(countSnap?.data?.()?.count);
+        return Number.isFinite(value) ? value : 0;
+      }
+      const snap = await fs.getDocs(ref);
+      if (Number.isFinite(Number(snap?.size))) return Number(snap.size);
+      let count = 0;
+      snap.forEach(() => { count += 1; });
+      return count;
+    }
+
+    async function readOnlineDiagnosticCounts(db, fs) {
+      const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
+      const counts = {};
+      for (const item of ONLINE_DIAGNOSTIC_COLLECTIONS) {
+        if (item.key === 'catalogos') {
+          let total = 0;
+          for (const catalog of CATALOGS) {
+            total += await countFirestoreCollection(db, fs, 'workspaces', workspaceId, 'catalogos', catalog.id, 'items');
+          }
+          counts.catalogos = total;
+        } else {
+          counts[item.key] = await countFirestoreCollection(db, fs, 'workspaces', workspaceId, item.key);
+        }
+      }
+      return counts;
+    }
+
+    async function readOnlineDiagnostic() {
+      try {
+        const { user, role, db, fs } = await ensureFirebaseDiagnosticReady();
+        const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
+        const workspaceRef = fs.doc(db, 'workspaces', workspaceId);
+        const metadataRef = fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
+        const diagnosticRef = fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_ONLINE_DIAGNOSTIC_DOC_ID);
+        const [workspaceSnap, metadataSnap, diagnosticSnap] = await Promise.all([
+          fs.getDoc(workspaceRef),
+          fs.getDoc(metadataRef),
+          fs.getDoc(diagnosticRef)
+        ]);
+        if (!workspaceSnap.exists()) throw { code: 'workspace/not-found' };
+        const metadata = metadataSnap.exists() ? normalizeFirestoreDoc(metadataSnap) : {};
+        const diagnostic = diagnosticSnap.exists() ? normalizeFirestoreDoc(diagnosticSnap) : {};
+        const counts = await readOnlineDiagnosticCounts(db, fs);
+        const ready = isCloudReadyMetadata(metadata);
+        const activeByMetadata = cleanText(metadata.fuentePrincipal).toLowerCase() === 'firestore' || metadata.cloudActive === true;
+        const checkedAt = nowIso();
+        publishKSAFirebaseRuntime({
+          workspaceId,
+          workspace: workspaceId,
+          workspaceInitialized: true,
+          lastDiagnosticReadAt: checkedAt,
+          cloudDataReady: ready,
+          cloudReady: ready,
+          cloudActive: activeByMetadata,
+          fuentePrincipal: activeByMetadata ? 'firestore' : cleanText(metadata.fuentePrincipal || 'local'),
+          message: 'Diagnóstico online leído correctamente.'
+        });
+        return {
+          ok: true,
+          action: 'readOnlineDiagnostic',
+          code: 'diagnostic/read-ok',
+          message: 'Lectura correcta.',
+          user,
+          role,
+          workspaceId,
+          workspaceFound: true,
+          projectName: getKSAFirebaseProjectName(),
+          projectId: cleanText(getRawKSAFirebaseConfig().projectId),
+          metadata,
+          diagnostic,
+          counts,
+          importacionInicialCompletada: metadata.importacionInicialCompletada === true,
+          cloudActive: activeByMetadata,
+          fuentePrincipal: activeByMetadata ? 'Firestore' : cleanText(metadata.fuentePrincipal || 'Local'),
+          lastSyncAt: checkedAt,
+          status: getFirebaseStatus()
+        };
+      } catch (error) {
+        const summary = translateOnlineDiagnosticError(error);
+        return {
+          ok: false,
+          action: 'readOnlineDiagnostic',
+          code: summary.code,
+          message: summary.message,
+          workspaceFound: summary.message !== 'Workspace no encontrado.' ? null : false,
+          counts: {},
+          status: getFirebaseStatus()
+        };
+      }
+    }
+
+    function getDiagnosticDeviceInfo() {
+      if (typeof navigator === 'undefined') return 'Dispositivo no identificado';
+      return cleanText([
+        navigator.platform || '',
+        navigator.userAgent || ''
+      ].filter(Boolean).join(' · ')).slice(0, 500) || 'Dispositivo no identificado';
+    }
+
+    async function writeOnlineDiagnosticTest() {
+      try {
+        const { user, role, db, fs } = await ensureFirebaseDiagnosticReady();
+        const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
+        const workspaceRef = fs.doc(db, 'workspaces', workspaceId);
+        const workspaceSnap = await fs.getDoc(workspaceRef);
+        if (!workspaceSnap.exists()) throw { code: 'workspace/not-found' };
+        const stamp = getFirestoreTimestampValue(fs);
+        const payload = {
+          lastTestAt: stamp,
+          lastTestAtLocal: nowIso(),
+          lastTestByUid: user.uid,
+          lastTestByCorreo: user.email,
+          result: 'ok',
+          deviceInfo: getDiagnosticDeviceInfo(),
+          workspaceId,
+          projectName: getKSAFirebaseProjectName(),
+          projectId: cleanText(getRawKSAFirebaseConfig().projectId),
+          appVersion: APP_VERSION,
+          datosOperativosTocados: false
+        };
+        const diagnosticRef = fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_ONLINE_DIAGNOSTIC_DOC_ID);
+        await fs.setDoc(diagnosticRef, payload, { merge: true });
+        const snap = await fs.getDoc(diagnosticRef);
+        const checkedAt = nowIso();
+        publishKSAFirebaseRuntime({
+          workspaceId,
+          workspace: workspaceId,
+          workspaceInitialized: true,
+          lastDiagnosticWriteAt: checkedAt,
+          message: snap.exists() ? 'Escritura de diagnóstico correcta.' : 'Firestore respondió sin confirmar diagnóstico.'
+        });
+        return {
+          ok: snap.exists(),
+          action: 'writeOnlineDiagnosticTest',
+          code: snap.exists() ? 'diagnostic/write-ok' : 'diagnostic/write-not-confirmed',
+          message: snap.exists() ? 'Escritura correcta.' : 'Error de conexión.',
+          user,
+          role,
+          workspaceId,
+          diagnostic: snap.exists() ? normalizeFirestoreDoc(snap) : {},
+          lastSyncAt: checkedAt,
+          status: getFirebaseStatus()
+        };
+      } catch (error) {
+        const summary = translateOnlineDiagnosticError(error);
+        return {
+          ok: false,
+          action: 'writeOnlineDiagnosticTest',
+          code: summary.code,
+          message: summary.message,
+          status: getFirebaseStatus()
+        };
+      }
+    }
+
+    function hasActiveAdminAfterChange(records, targetUid, nextRecord = null) {
+      const safeTargetUid = cleanText(targetUid);
+      const next = nextRecord ? normalizeAuthorizedUserRecord(nextRecord) : null;
+      return (Array.isArray(records) ? records : []).some((record) => {
+        const normalized = normalizeAuthorizedUserRecord(record);
+        const candidate = normalized.uid === safeTargetUid && next ? next : normalized;
+        return candidate.activo === true && candidate.rolId === 'administrador';
+      });
+    }
+
+    function buildAuthorizedUserValidationError(payload = {}) {
+      const record = normalizeAuthorizedUserRecord(payload);
+      const rawRole = cleanText(payload.rol || payload.role || payload.tipoRol);
+      if (!record.nombre) return 'Nombre obligatorio.';
+      if (!record.correo) return 'Correo obligatorio.';
+      if (!isValidEmailAddress(record.correo)) return 'Correo válido obligatorio.';
+      if (!record.uid) return 'UID obligatorio.';
+      if (!normalizeAuthorizedRoleLabel(rawRole)) return 'Rol obligatorio.';
+      return '';
+    }
+
+    async function listAuthorizedUsers() {
+      try {
+        const { user, role, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: true });
+        const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
+        const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'usuarios');
+        const normalized = sortAuthorizedUsers(records);
+        const checkedAt = nowIso();
+        publishKSAFirebaseRuntime({
+          workspaceId,
+          workspace: workspaceId,
+          lastUsersReadAt: checkedAt,
+          message: 'Usuarios autorizados leídos desde Firestore.'
+        });
+        return {
+          ok: true,
+          action: 'listAuthorizedUsers',
+          code: 'users/list-ok',
+          message: normalized.length ? 'Usuarios autorizados actualizados.' : 'No hay usuarios autorizados registrados todavía.',
+          records: normalized,
+          user,
+          role,
+          lastSyncAt: checkedAt,
+          status: getFirebaseStatus()
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          action: 'listAuthorizedUsers',
+          code: cleanText(error?.code || 'firebase/firestore-error'),
+          message: translateFirestorePrepError(error),
+          records: [],
+          status: getFirebaseStatus()
+        };
+      }
+    }
+
+    async function saveAuthorizedUser(payload = {}) {
+      try {
+        const validationError = buildAuthorizedUserValidationError(payload);
+        if (validationError) return { ok: false, action: 'saveAuthorizedUser', code: 'users/validation-error', message: validationError };
+        const { user, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: true });
+        const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
+        const inputRecord = normalizeAuthorizedUserRecord(payload);
+        const usersRef = fs.collection(db, 'workspaces', workspaceId, 'usuarios');
+        const usersSnap = await fs.getDocs(usersRef);
+        const currentRecords = [];
+        usersSnap.forEach((docSnap) => currentRecords.push(normalizeAuthorizedUserRecord(normalizeFirestoreDoc(docSnap))));
+        const existing = currentRecords.find((record) => record.uid === inputRecord.uid) || null;
+        const isEdit = Boolean(existing);
+        if (!isEdit && currentRecords.some((record) => record.uid === inputRecord.uid)) {
+          return { ok: false, action: 'saveAuthorizedUser', code: 'users/duplicate-uid', message: 'No se puede duplicar UID.' };
+        }
+        const duplicateActiveEmail = currentRecords.find((record) => (
+          record.uid !== inputRecord.uid
+          && record.activo === true
+          && inputRecord.activo === true
+          && normalizeAuthEmail(record.correoNormalizado || record.correo) === inputRecord.correoNormalizado
+        ));
+        if (duplicateActiveEmail) {
+          return { ok: false, action: 'saveAuthorizedUser', code: 'users/duplicate-active-email', message: 'Ya existe un usuario activo con ese correo.' };
+        }
+        if (isEdit && normalizeAuthEmail(existing.correoNormalizado || existing.correo) !== inputRecord.correoNormalizado) {
+          return { ok: false, action: 'saveAuthorizedUser', code: 'users/email-readonly', message: 'El correo no se edita en una autorización existente. Crea otra autorización para otro correo.' };
+        }
+        const isProtected = isProtectedAuthorizedUser(existing || inputRecord);
+        if (isProtected && inputRecord.rolId !== 'administrador') {
+          return { ok: false, action: 'saveAuthorizedUser', code: 'users/protected-admin-role', message: 'El administrador principal no puede cambiarse a Usuario normal.' };
+        }
+        if (isProtected && inputRecord.activo !== true) {
+          return { ok: false, action: 'saveAuthorizedUser', code: 'users/protected-admin-active', message: 'El administrador principal no puede desactivarse.' };
+        }
+        const nextRecord = {
+          ...(existing || {}),
+          ...inputRecord,
+          rol: inputRecord.rol,
+          activo: inputRecord.activo
+        };
+        if (existing?.rolId === 'administrador' && !hasActiveAdminAfterChange(currentRecords, inputRecord.uid, nextRecord)) {
+          return { ok: false, action: 'saveAuthorizedUser', code: 'users/no-admin-left', message: 'No se puede dejar el sistema sin administrador activo.' };
+        }
+        const stamp = getFirestoreTimestampValue(fs);
+        const document = stripUndefinedForFirestore({
+          uid: inputRecord.uid,
+          correo: isEdit ? existing.correo : inputRecord.correo,
+          correoNormalizado: isEdit ? normalizeAuthEmail(existing.correoNormalizado || existing.correo) : inputRecord.correoNormalizado,
+          nombre: inputRecord.nombre,
+          rol: inputRecord.rol,
+          activo: inputRecord.activo === true,
+          workspaceId,
+          createdAt: existing?.createdAt || stamp,
+          updatedAt: stamp,
+          creadoPorUid: existing?.creadoPorUid || user.uid,
+          creadoPorCorreo: existing?.creadoPorCorreo || user.email,
+          actualizadoPorUid: user.uid,
+          actualizadoPorCorreo: user.email,
+          origen: 'ksa_configuracion_usuarios'
+        });
+        await fs.setDoc(fs.doc(db, 'workspaces', workspaceId, 'usuarios', inputRecord.uid), document, { merge: true });
+        const snap = await fs.getDoc(fs.doc(db, 'workspaces', workspaceId, 'usuarios', inputRecord.uid));
+        const saved = snap.exists() ? normalizeAuthorizedUserRecord(normalizeFirestoreDoc(snap)) : normalizeAuthorizedUserRecord(document);
+        publishKSAFirebaseRuntime({
+          workspaceId,
+          workspace: workspaceId,
+          lastUsersWriteAt: nowIso(),
+          message: isEdit ? 'Autorización de usuario actualizada.' : 'Autorización de usuario creada.'
+        });
+        return {
+          ok: true,
+          action: 'saveAuthorizedUser',
+          code: isEdit ? 'users/updated' : 'users/created',
+          message: isEdit ? 'Usuario autorizado actualizado.' : 'Usuario autorizado agregado.',
+          record: saved,
+          status: getFirebaseStatus()
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          action: 'saveAuthorizedUser',
+          code: cleanText(error?.code || 'firebase/firestore-error'),
+          message: translateFirestorePrepError(error),
+          status: getFirebaseStatus()
+        };
+      }
+    }
+
+    async function setAuthorizedUserActive(uidInput = '', activeInput = true) {
+      try {
+        const uid = cleanText(uidInput);
+        if (!uid) return { ok: false, action: 'setAuthorizedUserActive', code: 'users/missing-uid', message: 'UID obligatorio.' };
+        const { user, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: true });
+        const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
+        const usersRef = fs.collection(db, 'workspaces', workspaceId, 'usuarios');
+        const usersSnap = await fs.getDocs(usersRef);
+        const currentRecords = [];
+        usersSnap.forEach((docSnap) => currentRecords.push(normalizeAuthorizedUserRecord(normalizeFirestoreDoc(docSnap))));
+        const existing = currentRecords.find((record) => record.uid === uid) || null;
+        if (!existing) return { ok: false, action: 'setAuthorizedUserActive', code: 'users/not-found', message: 'Usuario autorizado no encontrado.' };
+        const nextActive = activeInput === true;
+        if (isProtectedAuthorizedUser(existing) && !nextActive) {
+          return { ok: false, action: 'setAuthorizedUserActive', code: 'users/protected-admin-active', message: 'El administrador principal no puede desactivarse.' };
+        }
+        const nextRecord = { ...existing, activo: nextActive };
+        if (existing.rolId === 'administrador' && !hasActiveAdminAfterChange(currentRecords, uid, nextRecord)) {
+          return { ok: false, action: 'setAuthorizedUserActive', code: 'users/no-admin-left', message: 'No se puede dejar el sistema sin administrador activo.' };
+        }
+        if (nextActive) {
+          const duplicateActiveEmail = currentRecords.find((record) => (
+            record.uid !== uid
+            && record.activo === true
+            && normalizeAuthEmail(record.correoNormalizado || record.correo) === normalizeAuthEmail(existing.correoNormalizado || existing.correo)
+          ));
+          if (duplicateActiveEmail) {
+            return { ok: false, action: 'setAuthorizedUserActive', code: 'users/duplicate-active-email', message: 'Ya existe un usuario activo con ese correo.' };
+          }
+        }
+        const stamp = getFirestoreTimestampValue(fs);
+        await fs.setDoc(fs.doc(db, 'workspaces', workspaceId, 'usuarios', uid), stripUndefinedForFirestore({
+          activo: nextActive,
+          updatedAt: stamp,
+          actualizadoPorUid: user.uid,
+          actualizadoPorCorreo: user.email,
+          origen: existing.origen || 'ksa_configuracion_usuarios'
+        }), { merge: true });
+        publishKSAFirebaseRuntime({
+          workspaceId,
+          workspace: workspaceId,
+          lastUsersWriteAt: nowIso(),
+          message: nextActive ? 'Usuario reactivado.' : 'Usuario desactivado.'
+        });
+        return {
+          ok: true,
+          action: 'setAuthorizedUserActive',
+          code: nextActive ? 'users/reactivated' : 'users/deactivated',
+          message: nextActive ? 'Usuario reactivado.' : 'Usuario desactivado.',
+          status: getFirebaseStatus()
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          action: 'setAuthorizedUserActive',
+          code: cleanText(error?.code || 'firebase/firestore-error'),
+          message: translateFirestorePrepError(error),
+          status: getFirebaseStatus()
+        };
+      }
+    }
+
     return Object.freeze({
       name: 'KSAFirebaseAdapter',
-      stage: 'Bloque C - Etapa 5/5',
+      stage: 'Bloque D - Etapa 4/4',
       configGlobalName: KSA_FIREBASE_CONFIG_GLOBAL,
       runtimeGlobalName: KSA_FIREBASE_RUNTIME_GLOBAL,
       configFile: 'firebase-config.js',
@@ -5465,7 +6118,12 @@ Notas importantes:
       writeCloudDocument,
       writeCloudOperationalSnapshot,
       getCloudRuntimeStatus,
-      importInitialBackupToCloud
+      importInitialBackupToCloud,
+      readOnlineDiagnostic,
+      writeOnlineDiagnosticTest,
+      listAuthorizedUsers,
+      saveAuthorizedUser,
+      setAuthorizedUserActive
     });
   }
 
@@ -6293,6 +6951,7 @@ Notas importantes:
   }
 
   async function handleCloudDataRefresh(button = null) {
+    if (!requireRolePermission('updateData', configState, { preserveScroll: true })) return null;
     if (button) button.disabled = true;
     configState.message = 'Actualizando datos desde Firestore…';
     configState.messageType = 'success';
@@ -6304,6 +6963,7 @@ Notas importantes:
   }
 
   async function handleCloudOperationActivate(button = null) {
+    if (!requireRolePermission('changeDataSource', configState, { preserveScroll: true })) return null;
     if (button) button.disabled = true;
     configState.message = 'Activando operación online con Firestore…';
     configState.messageType = 'success';
@@ -6544,7 +7204,7 @@ Notas importantes:
 
     return Object.freeze({
       name: 'KSADataLayer',
-      stage: 'Bloque C - Etapa 5/5',
+      stage: 'Bloque D - Etapa 4/4',
       modes: MODES,
       collectionKeys: COLLECTION_KEYS,
       firestoreContract: getKSAFirestoreContract(),
@@ -6869,7 +7529,7 @@ Notas importantes:
   function createKSAAuthLayer() {
     return Object.freeze({
       name: 'KSAAuthLayer',
-      stage: 'Bloque C - Etapa 5/5',
+      stage: 'Bloque D - Etapa 4/4',
       getStatus: getPreparedAuthStatus,
       signIn: (email, password) => KSAFirebaseAdapter.signIn(email, password),
       signOut: () => KSAFirebaseAdapter.signOut(),
@@ -6885,7 +7545,7 @@ Notas importantes:
     const firebaseStatus = getKSAFirebaseStatusSafe();
     return Object.freeze({
       name: 'KSAUsersLayer',
-      stage: 'Bloque C - Etapa 5/5',
+      stage: 'Bloque D - Etapa 4/4',
       mode: cloudOperationState.active ? 'cloud_active' : 'local_controlado',
       firebaseAuthStatus: firebaseStatus.authReady ? 'active' : 'preparing',
       databaseStatus: cloudOperationState.active ? 'firestore' : 'local_controlado',
@@ -6899,8 +7559,11 @@ Notas importantes:
         };
       }),
       schema: USER_FUTURE_SCHEMA_FIELDS.map((field) => ({ ...field })),
-      actionsEnabled: false,
-      getStatus: getPreparedUsersStatus
+      actionsEnabled: true,
+      getStatus: getPreparedUsersStatus,
+      listAuthorizedUsers: () => KSAFirebaseAdapter.listAuthorizedUsers(),
+      saveAuthorizedUser: (payload) => KSAFirebaseAdapter.saveAuthorizedUser(payload),
+      setAuthorizedUserActive: (uid, active) => KSAFirebaseAdapter.setAuthorizedUserActive(uid, active)
     });
   }
 
@@ -6909,19 +7572,21 @@ Notas importantes:
     const firebaseStatus = getKSAFirebaseStatusSafe();
     const runtimeStatus = getCloudRuntimeStatusSafe();
     const signedUser = authStatus.authMode === 'firebase' ? authStatus.user : null;
-    const userRole = signedUser ? getFirebaseRoleForEmail(signedUser.email) : getFirebaseRoleForEmail('');
+    const currentRoleId = signedUser ? getCurrentRole() : 'usuario';
+    const currentRoleDef = ROLE_DEFINITIONS[currentRoleId] || ROLE_DEFINITIONS.usuario;
+    const userRole = signedUser ? currentRoleDef : getFirebaseRoleForEmail('');
     const firebaseConfigured = firebaseStatus.configComplete === true;
     const isInitialAdminSignedIn = Boolean(signedUser?.email && normalizeAuthEmail(signedUser.email) === normalizeAuthEmail(getKSAFirebaseInitialAdminEmail()));
     const workspaceReady = Boolean(firebaseStatus.workspaceId || getKSAFirebaseRuntime()?.workspaceInitialized || runtimeStatus.workspaceInitialized);
     const cloudActive = Boolean(cloudOperationState.active || runtimeStatus.cloudActive || firebaseStatus.cloudActive);
     const cloudReady = Boolean(runtimeStatus.cloudDataReady || firebaseStatus.cloudDataReady || runtimeStatus.datosMigrados);
-    const isAdmin = Boolean(isInitialAdminSignedIn || userRole.id === 'administrador' || cleanText(runtimeStatus.role).toLowerCase().includes('admin'));
+    const isAdmin = currentRoleDef.id === 'administrador';
     const workspaceLabel = firebaseStatus.workspace || runtimeStatus.workspaceId || 'ksa_practika';
     const lastSyncAt = cloudOperationState.lastSyncAt || runtimeStatus.lastSyncAt || runtimeStatus.lastCloudReadAt || runtimeStatus.lastCloudWriteAt || '';
     return {
       accessState: signedUser ? 'Sesión iniciada' : 'Sin sesión',
       currentUser: signedUser?.email || '—',
-      currentRole: signedUser ? (runtimeStatus.role || userRole.label) : (authStatus.localAccessAccepted ? 'Modo local controlado' : '—'),
+      currentRole: signedUser ? currentRoleDef.label : (authStatus.localAccessAccepted ? 'Modo local controlado' : '—'),
       projectName: firebaseStatus.projectName || getKSAFirebaseProjectName(),
       projectId: firebaseStatus.projectId || cleanText(getRawKSAFirebaseConfig().projectId),
       initialAdmin: firebaseStatus.initialAdmin || getKSAFirebaseInitialAdminEmail(),
@@ -6942,7 +7607,7 @@ Notas importantes:
           ? 'La nube ya tiene datos importados. El Administrador puede activar Firestore como fuente principal.'
           : (firebaseConfigured
             ? 'Firebase Auth está activo. Firestore está preparado; falta confirmar nube importada/metadata para activar operación online.'
-            : 'El bloque Usuarios está preparado. Firebase Auth está pendiente y la gestión real se activará después de configurar Firebase.')),
+            : 'El bloque Usuarios gestiona autorizaciones por UID cuando Firebase Auth y Firestore están disponibles.')),
       firebaseConfigured,
       signedIn: Boolean(signedUser),
       canSignOut: Boolean(signedUser),
@@ -6962,7 +7627,7 @@ Notas importantes:
         uid: signedUser?.uid || 'uid Firebase',
         correo: signedUser?.email || '',
         nombre: signedUser?.displayName || 'Usuario autenticado',
-        rol: signedUser ? (userRole.id || 'usuario') : 'pendiente',
+        rol: signedUser ? (currentRoleDef.id || 'usuario') : 'pendiente',
         activo: true,
         workspaceId: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
         createdAt: 'pendiente',
@@ -6973,10 +7638,321 @@ Notas importantes:
     };
   }
 
+  function applyAuthorizedUsersListResult(result = {}) {
+    usersAuthState.isLoading = false;
+    if (result?.ok) {
+      usersAuthState.records = sortAuthorizedUsers(result.records || []);
+      usersAuthState.loadedAt = cleanText(result.lastSyncAt || nowIso());
+      usersAuthState.message = cleanText(result.message || 'Usuarios autorizados actualizados.');
+      usersAuthState.messageType = 'success';
+      const currentUid = cleanText(getPreparedAuthStatus()?.user?.uid || '');
+      usersAuthState.loadedForUid = currentUid;
+      return;
+    }
+    usersAuthState.message = cleanText(result?.message || 'No se pudo leer Usuarios autorizados.');
+    usersAuthState.messageType = 'error';
+  }
+
+  async function handleAuthorizedUsersRefresh(button = null, options = {}) {
+    if (!canCurrentRole('manageUsers')) {
+      usersAuthState.message = ADMIN_RESTRICTED_MESSAGE;
+      usersAuthState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return { ok: false, message: ADMIN_RESTRICTED_MESSAGE };
+    }
+    const opts = isPlainObject(options) ? options : {};
+    if (usersAuthState.isLoading) return null;
+    if (!KSAFirebaseAdapter?.listAuthorizedUsers) {
+      usersAuthState.message = 'Adaptador de Usuarios no disponible.';
+      usersAuthState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return { ok: false, message: usersAuthState.message };
+    }
+    if (button) button.disabled = true;
+    usersAuthState.isLoading = true;
+    if (!opts.silent) {
+      usersAuthState.message = 'Leyendo Usuarios autorizados desde Firestore…';
+      usersAuthState.messageType = 'success';
+    }
+    renderRoute({ preserveScroll: true });
+    try {
+      const result = await KSAFirebaseAdapter.listAuthorizedUsers();
+      applyAuthorizedUsersListResult(result);
+      renderRoute({ preserveScroll: true });
+      return result;
+    } catch (error) {
+      applyAuthorizedUsersListResult({ ok: false, message: cleanText(error?.message || 'No se pudo leer Usuarios autorizados.') });
+      renderRoute({ preserveScroll: true });
+      return { ok: false, message: usersAuthState.message };
+    }
+  }
+
+  function scheduleAuthorizedUsersAutoRead() {
+    const status = getPreparedUsersStatus();
+    const uid = cleanText(status?.userTemplate?.uid || getPreparedAuthStatus()?.user?.uid || '');
+    if (!status.signedIn || !status.firebaseConfigured || !uid || !canCurrentRole('manageUsers')) return;
+    if (usersAuthState.isLoading || usersAuthState.loadedForUid === uid) return;
+    usersAuthState.loadedForUid = uid;
+    window.setTimeout(() => {
+      if (isConfigRoute(getRoute())) handleAuthorizedUsersRefresh(null, { silent: true });
+    }, 200);
+  }
+
+  function startAuthorizedUserEdit(uidInput = '') {
+    if (!requireRolePermission('manageUsers', usersAuthState, { preserveScroll: true })) return;
+    const uid = cleanText(uidInput);
+    const existing = usersAuthState.records.find((record) => normalizeAuthorizedUserRecord(record).uid === uid);
+    if (!existing) {
+      usersAuthState.message = 'No se encontró ese usuario autorizado. Refresca el listado.';
+      usersAuthState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    usersAuthState.editingUid = uid;
+    usersAuthState.message = `Editando autorización de ${normalizeAuthorizedUserRecord(existing).correo}.`;
+    usersAuthState.messageType = 'success';
+    renderRoute({ preserveScroll: true });
+  }
+
+  function cancelAuthorizedUserEdit() {
+    usersAuthState.editingUid = '';
+    usersAuthState.message = '';
+    usersAuthState.messageType = 'success';
+    renderRoute({ preserveScroll: true });
+  }
+
+  function getAuthorizedUserPayloadFromForm(form) {
+    const data = new FormData(form);
+    const editingUid = cleanText(usersAuthState.editingUid);
+    const existing = editingUid ? usersAuthState.records.find((record) => normalizeAuthorizedUserRecord(record).uid === editingUid) : null;
+    const normalizedExisting = existing ? normalizeAuthorizedUserRecord(existing) : null;
+    return {
+      uid: cleanText(data.get('uid')) || normalizedExisting?.uid || '',
+      correo: normalizeAuthEmail(data.get('correo')) || normalizedExisting?.correo || '',
+      nombre: cleanText(data.get('nombre')),
+      rol: cleanText(data.get('rol')),
+      activo: form.querySelector('input[name="activo"]')?.checked === true,
+      createdAt: normalizedExisting?.createdAt || '',
+      updatedAt: normalizedExisting?.updatedAt || ''
+    };
+  }
+
+  function validateAuthorizedUserPayload(payload = {}) {
+    const rawRole = cleanText(payload.rol || payload.role || payload.tipoRol);
+    const record = normalizeAuthorizedUserRecord(payload);
+    if (!record.nombre) return 'Nombre obligatorio.';
+    if (!record.correo) return 'Correo obligatorio.';
+    if (!isValidEmailAddress(record.correo)) return 'Correo válido obligatorio.';
+    if (!record.uid) return 'UID obligatorio.';
+    if (!normalizeAuthorizedRoleLabel(rawRole)) return 'Rol obligatorio.';
+    const duplicateUid = !usersAuthState.editingUid && usersAuthState.records.some((item) => normalizeAuthorizedUserRecord(item).uid === record.uid);
+    if (duplicateUid) return 'No se puede duplicar UID.';
+    const duplicateActiveEmail = usersAuthState.records.some((item) => {
+      const current = normalizeAuthorizedUserRecord(item);
+      return current.uid !== record.uid
+        && current.activo === true
+        && record.activo === true
+        && normalizeAuthEmail(current.correoNormalizado || current.correo) === record.correoNormalizado;
+    });
+    if (duplicateActiveEmail) return 'Ya existe un usuario activo con ese correo.';
+    if (usersAuthState.editingUid) {
+      const existing = usersAuthState.records.find((item) => normalizeAuthorizedUserRecord(item).uid === usersAuthState.editingUid);
+      const normalized = normalizeAuthorizedUserRecord(existing || {});
+      if (normalized.uid && normalized.uid !== record.uid) return 'El UID no se puede editar.';
+      if (normalized.correoNormalizado && normalized.correoNormalizado !== record.correoNormalizado) return 'El correo no se edita en una autorización existente.';
+      if (isProtectedAuthorizedUser(normalized) && record.rolId !== 'administrador') return 'El administrador principal no puede cambiarse a Usuario normal.';
+      if (isProtectedAuthorizedUser(normalized) && record.activo !== true) return 'El administrador principal no puede desactivarse.';
+    }
+    return '';
+  }
+
+  async function handleAuthorizedUserSubmit(form) {
+    if (!requireRolePermission('manageUsers', usersAuthState, { preserveScroll: true })) return null;
+    if (usersAuthState.isSaving) return null;
+    const payload = getAuthorizedUserPayloadFromForm(form);
+    const validation = validateAuthorizedUserPayload(payload);
+    if (validation) {
+      usersAuthState.message = validation;
+      usersAuthState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return { ok: false, message: validation };
+    }
+    usersAuthState.isSaving = true;
+    usersAuthState.message = 'Guardando autorización en Firestore…';
+    usersAuthState.messageType = 'success';
+    renderRoute({ preserveScroll: true });
+    try {
+      const result = await KSAFirebaseAdapter.saveAuthorizedUser(payload);
+      usersAuthState.isSaving = false;
+      usersAuthState.message = result.message || (result.ok ? 'Autorización guardada.' : 'No se pudo guardar autorización.');
+      usersAuthState.messageType = result.ok ? 'success' : 'error';
+      if (result.ok) {
+        usersAuthState.editingUid = '';
+        await handleAuthorizedUsersRefresh(null, { silent: true });
+      } else {
+        renderRoute({ preserveScroll: true });
+      }
+      return result;
+    } catch (error) {
+      usersAuthState.isSaving = false;
+      usersAuthState.message = cleanText(error?.message || 'No se pudo guardar autorización.');
+      usersAuthState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return { ok: false, message: usersAuthState.message };
+    }
+  }
+
+  async function toggleAuthorizedUserActive(uidInput = '', nextActiveInput = '') {
+    if (!requireRolePermission('manageUsers', usersAuthState, { preserveScroll: true })) return null;
+    const uid = cleanText(uidInput);
+    const existing = usersAuthState.records.find((record) => normalizeAuthorizedUserRecord(record).uid === uid);
+    const record = normalizeAuthorizedUserRecord(existing || {});
+    if (!uid || !record.uid) {
+      usersAuthState.message = 'Usuario autorizado no encontrado.';
+      usersAuthState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    const nextActive = cleanText(nextActiveInput).toLowerCase() === 'true';
+    if (isProtectedAuthorizedUser(record) && !nextActive) {
+      usersAuthState.message = 'El administrador principal no puede desactivarse.';
+      usersAuthState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    usersAuthState.isSaving = true;
+    usersAuthState.message = nextActive ? 'Reactivando usuario…' : 'Desactivando usuario…';
+    usersAuthState.messageType = 'success';
+    renderRoute({ preserveScroll: true });
+    try {
+      const result = await KSAFirebaseAdapter.setAuthorizedUserActive(uid, nextActive);
+      usersAuthState.isSaving = false;
+      usersAuthState.message = result.message || (result.ok ? 'Estado actualizado.' : 'No se pudo actualizar estado.');
+      usersAuthState.messageType = result.ok ? 'success' : 'error';
+      if (result.ok) {
+        await handleAuthorizedUsersRefresh(null, { silent: true });
+      } else {
+        renderRoute({ preserveScroll: true });
+      }
+      return result;
+    } catch (error) {
+      usersAuthState.isSaving = false;
+      usersAuthState.message = cleanText(error?.message || 'No se pudo actualizar estado.');
+      usersAuthState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return { ok: false, message: usersAuthState.message };
+    }
+  }
+
   const KSAUsersLayer = createKSAUsersLayer();
   if (typeof window !== 'undefined') window.KSAUsersLayer = KSAUsersLayer;
 
+  function applyOnlineDiagnosticReadResult(result = {}) {
+    const ok = result?.ok === true;
+    onlineDiagnosticState.isReading = false;
+    onlineDiagnosticState.lastReadStatus = ok ? 'Lectura correcta' : getOnlineDiagnosticStatusLabel(result?.message, 'Error de conexión');
+    onlineDiagnosticState.readMessage = cleanText(result?.message || (ok ? 'Lectura correcta.' : 'Error de conexión.'));
+    onlineDiagnosticState.lastReadAt = ok ? cleanText(result.lastSyncAt || nowIso()) : onlineDiagnosticState.lastReadAt;
+    onlineDiagnosticState.lastUpdatedAt = nowIso();
+    onlineDiagnosticState.metadata = ok && isPlainObject(result.metadata) ? result.metadata : onlineDiagnosticState.metadata;
+    onlineDiagnosticState.counts = ok && isPlainObject(result.counts) ? result.counts : onlineDiagnosticState.counts;
+    onlineDiagnosticState.workspaceFound = result?.workspaceFound === true ? true : (result?.workspaceFound === false ? false : onlineDiagnosticState.workspaceFound);
+  }
+
+  async function handleOnlineDiagnosticRead(button = null, options = {}) {
+    const opts = isPlainObject(options) ? options : {};
+    if (!canCurrentRole('onlineDiagnostic')) {
+      if (!opts.silent) setPermissionDeniedMessage(configState, { preserveScroll: true });
+      return { ok: false, message: ADMIN_RESTRICTED_MESSAGE };
+    }
+    if (onlineDiagnosticState.isReading || onlineDiagnosticState.isWriting) return null;
+    if (button) button.disabled = true;
+    onlineDiagnosticState.isReading = true;
+    onlineDiagnosticState.lastReadStatus = 'Leyendo…';
+    onlineDiagnosticState.readMessage = 'Probando lectura Firestore…';
+    if (!opts.silent) {
+      configState.message = 'Probando lectura Firestore…';
+      configState.messageType = 'success';
+    }
+    renderRoute({ preserveScroll: true });
+    try {
+      const result = await KSAFirebaseAdapter.readOnlineDiagnostic();
+      applyOnlineDiagnosticReadResult(result);
+      if (!opts.silent) {
+        configState.message = result.message || (result.ok ? 'Lectura correcta.' : 'Error de conexión.');
+        configState.messageType = result.ok ? 'success' : 'error';
+      }
+      renderRoute({ preserveScroll: true });
+      return result;
+    } catch (error) {
+      const message = 'Error de conexión.';
+      applyOnlineDiagnosticReadResult({ ok: false, message, code: cleanText(error?.code || 'diagnostic/error') });
+      if (!opts.silent) {
+        configState.message = message;
+        configState.messageType = 'error';
+      }
+      renderRoute({ preserveScroll: true });
+      return { ok: false, message };
+    }
+  }
+
+  async function handleOnlineDiagnosticWrite(button = null) {
+    if (!requireRolePermission('onlineDiagnostic', configState, { preserveScroll: true })) return null;
+    if (onlineDiagnosticState.isReading || onlineDiagnosticState.isWriting) return null;
+    if (button) button.disabled = true;
+    onlineDiagnosticState.isWriting = true;
+    onlineDiagnosticState.lastWriteStatus = 'Escribiendo…';
+    onlineDiagnosticState.writeMessage = 'Probando escritura de diagnóstico…';
+    configState.message = 'Probando escritura de diagnóstico…';
+    configState.messageType = 'success';
+    renderRoute({ preserveScroll: true });
+    try {
+      const result = await KSAFirebaseAdapter.writeOnlineDiagnosticTest();
+      onlineDiagnosticState.isWriting = false;
+      onlineDiagnosticState.lastWriteStatus = result.ok ? 'Escritura correcta' : getOnlineDiagnosticStatusLabel(result.message, 'Error de conexión');
+      onlineDiagnosticState.writeMessage = cleanText(result.message || (result.ok ? 'Escritura correcta.' : 'Error de conexión.'));
+      onlineDiagnosticState.lastWriteAt = result.ok ? cleanText(result.lastSyncAt || nowIso()) : onlineDiagnosticState.lastWriteAt;
+      onlineDiagnosticState.lastUpdatedAt = nowIso();
+      configState.message = result.message || (result.ok ? 'Escritura correcta.' : 'Error de conexión.');
+      configState.messageType = result.ok ? 'success' : 'error';
+      if (result.ok && typeof KSAFirebaseAdapter.readOnlineDiagnostic === 'function') {
+        const readResult = await KSAFirebaseAdapter.readOnlineDiagnostic();
+        applyOnlineDiagnosticReadResult(readResult);
+      }
+      renderRoute({ preserveScroll: true });
+      return result;
+    } catch (error) {
+      const message = 'Error de conexión.';
+      onlineDiagnosticState.isWriting = false;
+      onlineDiagnosticState.lastWriteStatus = message.replace(/\.$/, '');
+      onlineDiagnosticState.writeMessage = message;
+      onlineDiagnosticState.lastUpdatedAt = nowIso();
+      configState.message = message;
+      configState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return { ok: false, message };
+    }
+  }
+
+  function scheduleOnlineDiagnosticAutoRead() {
+    if (!isConfigRoute(getRoute())) return;
+    if (onlineDiagnosticState.isReading || onlineDiagnosticState.isWriting) return;
+    const status = getPreparedUsersStatus();
+    const authStatus = getPreparedAuthStatus();
+    const signedUser = authStatus.authMode === 'firebase' ? authStatus.user : null;
+    const uid = cleanText(signedUser?.uid || signedUser?.email || '');
+    if (!uid || !status.firebaseConfigured || !status.cloudActive || !canCurrentRole('onlineDiagnostic')) return;
+    if (onlineDiagnosticState.autoRequestedForUid === uid && Object.keys(onlineDiagnosticState.counts || {}).length) return;
+    onlineDiagnosticState.autoRequestedForUid = uid;
+    window.setTimeout(() => {
+      if (isConfigRoute(getRoute()) && !onlineDiagnosticState.isReading && !onlineDiagnosticState.isWriting) {
+        handleOnlineDiagnosticRead(null, { silent: true });
+      }
+    }, 350);
+  }
+
   async function handleFirestoreVerify(button = null) {
+    if (!requireRolePermission('firestoreTools', configState, { preserveScroll: true })) return null;
     if (button) button.disabled = true;
     configState.message = 'Verificando Firestore…';
     configState.messageType = 'success';
@@ -6993,6 +7969,7 @@ Notas importantes:
   }
 
   async function handleFirestoreInitializeWorkspace(button = null) {
+    if (!requireRolePermission('firestoreTools', configState, { preserveScroll: true })) return null;
     if (button) button.disabled = true;
     configState.message = 'Inicializando workspace base…';
     configState.messageType = 'success';
@@ -7395,6 +8372,7 @@ Notas importantes:
 
   async function handleCloudJsonFileSelected(file) {
     if (!file) return;
+    if (!requireRolePermission('initialJsonToCloud', cloudInitialImportState, { preserveScroll: true })) return;
     cloudInitialImportState = {
       fileName: file.name || '',
       rawText: '',
@@ -7438,13 +8416,20 @@ Notas importantes:
 
   async function confirmCloudInitialImport() {
     if (!canCurrentRole('initialJsonToCloud')) {
-      cloudInitialImportState.message = 'Solo Administrador puede importar JSON maestro a Firestore.';
+      cloudInitialImportState.message = ADMIN_RESTRICTED_MESSAGE;
       cloudInitialImportState.messageType = 'error';
       renderRoute({ preserveScroll: true });
       return;
     }
     if (!cloudInitialImportState.preview?.isValid || !cloudInitialImportState.prepared) {
       cloudInitialImportState.message = 'Primero selecciona y valida un JSON maestro correcto.';
+      cloudInitialImportState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    const cloudStatus = cloudInitialImportState.cloudStatus || await refreshCloudInitialImportStatus(cloudInitialImportState.preview.hashSimple);
+    if (cloudStatus?.importacionInicialCompletada || cloudStatus?.cloudActive || isCloudDataSourceActive()) {
+      cloudInitialImportState.message = 'La nube ya tiene una importación inicial completada. No reimportes JSON salvo recuperación controlada. Reimportar puede crear duplicados o mezclar datos.';
       cloudInitialImportState.messageType = 'error';
       renderRoute({ preserveScroll: true });
       return;
@@ -7508,9 +8493,42 @@ Notas importantes:
     return `
       <article class="catalog-warning permission-warning" role="status">
         <strong>Permiso limitado: ${escapeHtml(role.label)}.</strong>
-        <p>${escapeHtml(detail || 'Esta acción queda reservada para Administrador en esta protección local.')}</p>
+        <p>${escapeHtml(detail || ADMIN_RESTRICTED_MESSAGE)}</p>
         <button type="button" class="secondary-action compact" data-go="configuracion">Ir a Configuración</button>
       </article>
+    `;
+  }
+
+  function setPermissionDeniedMessage(targetState = null, options = {}) {
+    const opts = isPlainObject(options) ? options : {};
+    const stateTarget = targetState || configState;
+    if (stateTarget) {
+      stateTarget.message = ADMIN_RESTRICTED_MESSAGE;
+      stateTarget.messageType = 'error';
+    }
+    if (opts.render !== false) renderRoute({ preserveScroll: opts.preserveScroll === true });
+    return { ok: false, code: 'app/admin-only', message: ADMIN_RESTRICTED_MESSAGE };
+  }
+
+  function requireRolePermission(permission, targetState = null, options = {}) {
+    if (canCurrentRole(permission)) return true;
+    setPermissionDeniedMessage(targetState, options);
+    return false;
+  }
+
+  function renderAdminOnlyPanel(title, detail = '') {
+    return `
+      <section class="users-prep-panel admin-only-panel" aria-label="${escapeHtml(title)}">
+        <div class="compact-title-row">
+          <div>
+            <span class="eyebrow mini">Administrador</span>
+            <h3>${escapeHtml(title)}</h3>
+          </div>
+          <span class="sync-mode-badge is-warning">Restringido</span>
+        </div>
+        <div class="form-message is-error" role="status">${escapeHtml(ADMIN_RESTRICTED_MESSAGE)}</div>
+        ${detail ? `<p class="notice compact-notice">${escapeHtml(detail)}</p>` : ''}
+      </section>
     `;
   }
 
@@ -13906,6 +14924,7 @@ Notas importantes:
     const allRecords = getBdatosRecords();
     const filteredRecords = getFilteredBdatosRecords(allRecords);
     const editingRecord = bdatosState.editingId ? allRecords.find((record) => record.id === bdatosState.editingId) : null;
+    const canEditBdatos = canCurrentRole('editCatalogs');
 
     return `
       <section class="hero bdatos-hero">
@@ -13926,6 +14945,7 @@ Notas importantes:
 
       <section class="bdatos-shell">
         ${bdatosState.message ? `<div class="form-message ${bdatosState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(bdatosState.message)}</div>` : ''}
+        ${renderRolePermissionNotice('editCatalogs', 'Usuario normal puede consultar Bdatos, pero agregar, editar o borrar artículos queda reservado para Administrador.')}
 
         <div class="bdatos-layout">
           <article class="panel-card bdatos-form-card">
@@ -13936,7 +14956,7 @@ Notas importantes:
               </div>
             </div>
             <p class="muted-text">Este formulario solo crea artículos nuevos. La edición se hace en ventana modal para evitar cruces raros.</p>
-            ${renderBdatosForm(null, 'create')}
+            ${renderBdatosForm(null, 'create', !canEditBdatos)}
           </article>
 
           <article class="panel-card bdatos-search-card">
@@ -13957,30 +14977,30 @@ Notas importantes:
             ${renderBdatosList(filteredRecords, allRecords.length)}
           </article>
         </div>
-        ${editingRecord ? renderEditModal(getBdatosModalId(), 'Editar artículo', 'Modifica Código, Descripción y Precio sin usar el formulario de ingreso.', renderBdatosForm(editingRecord, 'edit')) : ''}
+        ${editingRecord ? renderEditModal(getBdatosModalId(), 'Editar artículo', 'Modifica Código, Descripción y Precio sin usar el formulario de ingreso.', renderBdatosForm(editingRecord, 'edit', !canEditBdatos)) : ''}
       </section>
     `;
   }
 
-  function renderBdatosForm(record, mode = 'create') {
+  function renderBdatosForm(record, mode = 'create', disabled = false) {
     const isEdit = mode === 'edit';
     return `
       <form class="catalog-form bdatos-form" ${isEdit ? 'data-bdatos-edit-form' : 'data-bdatos-create-form'} novalidate>
         <input type="hidden" name="id" value="${escapeHtml(record?.id || '')}" />
         <label class="form-field">
           <span>Código <span class="required-dot" aria-label="obligatorio">*</span></span>
-          <input type="text" name="codigo" value="${escapeHtml(record?.codigo || '')}" placeholder="Ej. ART-001" required autocomplete="off" />
+          <input type="text" name="codigo" value="${escapeHtml(record?.codigo || '')}" placeholder="Ej. ART-001" required autocomplete="off" ${disabled ? 'disabled' : ''} />
         </label>
         <label class="form-field">
           <span>Descripción <span class="required-dot" aria-label="obligatorio">*</span></span>
-          <input type="text" name="descripcion" value="${escapeHtml(record?.descripcion || '')}" placeholder="Descripción del artículo" required autocomplete="off" />
+          <input type="text" name="descripcion" value="${escapeHtml(record?.descripcion || '')}" placeholder="Descripción del artículo" required autocomplete="off" ${disabled ? 'disabled' : ''} />
         </label>
         <label class="form-field">
           <span>Precio <span class="required-dot" aria-label="obligatorio">*</span></span>
-          <input type="number" name="precio" value="${escapeHtml(record ? String(roundMoney(record.precio)) : '')}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required autocomplete="off" />
+          <input type="number" name="precio" value="${escapeHtml(record ? String(roundMoney(record.precio)) : '')}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required autocomplete="off" ${disabled ? 'disabled' : ''} />
         </label>
         <div class="form-actions">
-          <button type="submit" class="card-action">${isEdit ? 'Guardar cambios' : 'Agregar artículo'}</button>
+          <button type="submit" class="card-action" ${disabled ? 'disabled' : ''}>${isEdit ? 'Guardar cambios' : 'Agregar artículo'}</button>
           <button type="button" class="secondary-action" ${isEdit ? 'data-bdatos-edit-cancel' : 'data-bdatos-clear'}>${isEdit ? 'Cancelar' : 'Limpiar'}</button>
         </div>
       </form>
@@ -14040,8 +15060,8 @@ Notas importantes:
         <td class="actions-cell">
           <div class="record-actions compact-row-actions">
             <button type="button" class="secondary-action compact bdatos-icon-action" data-bdatos-copy="${escapeHtml(record.id)}" aria-label="Copiar artículo" title="Copiar artículo"><span aria-hidden="true">📋</span></button>
-            <button type="button" class="secondary-action compact bdatos-icon-action" data-bdatos-edit="${escapeHtml(record.id)}" aria-label="Editar artículo" title="Editar artículo"><span aria-hidden="true">✏️</span></button>
-            <button type="button" class="danger-action compact bdatos-icon-action" data-bdatos-delete="${escapeHtml(record.id)}" aria-label="Borrar artículo" title="Borrar artículo"><span aria-hidden="true">🗑️</span></button>
+            ${canCurrentRole('editCatalogs') ? `<button type="button" class="secondary-action compact bdatos-icon-action" data-bdatos-edit="${escapeHtml(record.id)}" aria-label="Editar artículo" title="Editar artículo"><span aria-hidden="true">✏️</span></button>` : ''}
+            ${canCurrentRole('editCatalogs') ? `<button type="button" class="danger-action compact bdatos-icon-action" data-bdatos-delete="${escapeHtml(record.id)}" aria-label="Borrar artículo" title="Borrar artículo"><span aria-hidden="true">🗑️</span></button>` : ''}
           </div>
         </td>
       </tr>
@@ -14071,6 +15091,12 @@ Notas importantes:
   }
 
   function saveBdatosCreate(form) {
+    if (!canCurrentRole('editCatalogs')) {
+      bdatosState.message = ADMIN_RESTRICTED_MESSAGE;
+      bdatosState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
     const payload = readBdatosForm(form);
     const validationError = validateBdatosPayload(payload);
     if (validationError) {
@@ -14108,6 +15134,12 @@ Notas importantes:
   }
 
   function saveBdatosEdit(form) {
+    if (!canCurrentRole('editCatalogs')) {
+      bdatosState.message = ADMIN_RESTRICTED_MESSAGE;
+      bdatosState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
     const payload = readBdatosForm(form);
     const currentId = payload.id || bdatosState.editingId;
     const existing = getBdatosRecords().find((record) => record.id === currentId);
@@ -14154,6 +15186,12 @@ Notas importantes:
   }
 
   function editBdatosRecord(recordId) {
+    if (!canCurrentRole('editCatalogs')) {
+      bdatosState.message = ADMIN_RESTRICTED_MESSAGE;
+      bdatosState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
     const record = getBdatosRecords().find((item) => item.id === recordId);
     if (!record) return;
     bdatosState.editingId = record.id;
@@ -14162,6 +15200,12 @@ Notas importantes:
   }
 
   function deleteBdatosRecord(recordId) {
+    if (!canCurrentRole('editCatalogs')) {
+      bdatosState.message = ADMIN_RESTRICTED_MESSAGE;
+      bdatosState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
     const record = getBdatosRecords().find((item) => item.id === recordId);
     if (!record) return;
     const ok = window.confirm(`Vas a borrar el artículo ${record.codigo} — ${record.descripcion}. Esta acción no toca ventas, compras ni cálculos. ¿Continuar?`);
@@ -15716,7 +16760,7 @@ Notas importantes:
 
   function deleteVentaAjuste(ventaId, ajusteId) {
     if (!canCurrentRole('annulMovements')) {
-      ventasState.message = 'Solo Administrador puede eliminar ajustes/notas.';
+      ventasState.message = ADMIN_RESTRICTED_MESSAGE;
       ventasState.messageType = 'error';
       renderRoute();
       return;
@@ -15858,7 +16902,7 @@ Notas importantes:
 
   function toggleVentaRecord(recordId) {
     if (!canCurrentRole('annulMovements')) {
-      ventasState.message = 'Solo Administrador puede anular o reactivar OC.';
+      ventasState.message = ADMIN_RESTRICTED_MESSAGE;
       ventasState.messageType = 'error';
       renderRoute();
       return;
@@ -17043,7 +18087,7 @@ Notas importantes:
 
   function annulCobroRecord(cobroId) {
     if (!canCurrentRole('annulMovements')) {
-      cobrosState.message = 'Solo Administrador puede anular cobros.';
+      cobrosState.message = ADMIN_RESTRICTED_MESSAGE;
       cobrosState.messageType = 'error';
       renderRoute();
       return;
@@ -17933,7 +18977,7 @@ Notas importantes:
 
   function toggleCompraProveedorRecord(recordId) {
     if (!canCurrentRole('annulMovements')) {
-      proveedoresState.message = 'Solo Administrador puede anular o reactivar compras/deudas.';
+      proveedoresState.message = ADMIN_RESTRICTED_MESSAGE;
       proveedoresState.messageType = 'error';
       renderRoute();
       return;
@@ -18073,7 +19117,7 @@ Notas importantes:
 
   function deleteCompraProveedorAjuste(compraProveedorId, ajusteId) {
     if (!canCurrentRole('annulMovements')) {
-      proveedoresState.message = 'Solo Administrador puede eliminar ajustes/notas.';
+      proveedoresState.message = ADMIN_RESTRICTED_MESSAGE;
       proveedoresState.messageType = 'error';
       renderRoute();
       return;
@@ -18901,7 +19945,7 @@ Notas importantes:
 
   function annulPagoProveedorRecord(pagoId) {
     if (!canCurrentRole('annulMovements')) {
-      pagosState.message = 'Solo Administrador puede anular pagos.';
+      pagosState.message = ADMIN_RESTRICTED_MESSAGE;
       pagosState.messageType = 'error';
       renderRoute();
       return;
@@ -19306,7 +20350,7 @@ Notas importantes:
 
   function annulGastoRecord(recordId) {
     if (!canCurrentRole('annulMovements')) {
-      gastosState.message = 'Solo Administrador puede anular gastos.';
+      gastosState.message = ADMIN_RESTRICTED_MESSAGE;
       gastosState.messageType = 'error';
       renderRoute();
       return;
@@ -20221,12 +21265,102 @@ Notas importantes:
     `;
   }
 
+  function getOnlineDiagnosticStatusLabel(value, fallback = 'Pendiente') {
+    const text = cleanText(value);
+    return text || fallback;
+  }
+
+  function renderOnlineDiagnosticCountsTable(countsInput = {}) {
+    const counts = isPlainObject(countsInput) ? countsInput : {};
+    const rows = ONLINE_DIAGNOSTIC_COLLECTIONS.map((item) => {
+      const hasValue = Object.prototype.hasOwnProperty.call(counts, item.key);
+      const value = hasValue ? Number(counts[item.key]) : null;
+      return `
+        <tr class="compact-record-row">
+          <td><span class="compact-primary">${escapeHtml(item.label)}</span></td>
+          <td class="amount-cell"><span>${escapeHtml(hasValue && Number.isFinite(value) ? String(value) : '—')}</span></td>
+        </tr>
+      `;
+    }).join('');
+    return renderOperationalTableShell({
+      shellClass: 'online-diagnostic-scroll-shell',
+      wrapClass: 'online-diagnostic-table-wrap',
+      ariaLabel: 'Conteo resumido de colecciones principales desde Firestore',
+      tableClass: 'online-diagnostic-counts-table',
+      headers: '<th>Colección</th><th class="amount-cell">Registros</th>',
+      rows
+    });
+  }
+
+  function renderOnlineDiagnosticPanel(status) {
+    const state = onlineDiagnosticState;
+    const authStatus = getPreparedAuthStatus();
+    const signedUser = authStatus.authMode === 'firebase' ? authStatus.user : null;
+    const metadata = isPlainObject(state.metadata) ? state.metadata : {};
+    const metadataLoaded = Boolean(state.lastReadAt || Object.keys(metadata).length);
+    const importCompleted = metadataLoaded
+      ? metadata.importacionInicialCompletada === true
+      : Boolean(status.cloudReady || status.cloudActive);
+    const sourcePrincipal = metadataLoaded
+      ? (cleanText(metadata.fuentePrincipal).toLowerCase() === 'firestore' || metadata.cloudActive === true ? 'Firestore' : cleanText(metadata.fuentePrincipal || 'Local'))
+      : (status.cloudActive ? 'Firestore' : (status.sourcePrincipal || 'Local controlado'));
+    const dataMode = status.cloudActive || cleanText(sourcePrincipal).toLowerCase() === 'firestore' ? 'Nube activa' : (status.dataMode || 'Local controlado');
+    const lastSyncAt = state.lastReadAt || state.lastWriteAt || status.lastSyncAt || '';
+    const readStatus = state.isReading ? 'Leyendo…' : getOnlineDiagnosticStatusLabel(state.lastReadStatus);
+    const writeStatus = state.isWriting ? 'Escribiendo…' : getOnlineDiagnosticStatusLabel(state.lastWriteStatus);
+    const readBadgeClass = state.lastReadStatus === 'Lectura correcta' ? 'is-cloud' : (state.lastReadStatus === 'Pendiente' ? 'is-pending' : 'is-warning');
+    const canDiagnostic = canCurrentRole('onlineDiagnostic') && status.isAdmin === true;
+    const canRead = Boolean(canDiagnostic && status.signedIn && status.firebaseConfigured && !state.isReading && !state.isWriting);
+    const canWrite = Boolean(canDiagnostic && status.signedIn && status.firebaseConfigured && !state.isReading && !state.isWriting);
+    const messageHtml = state.readMessage || state.writeMessage ? `
+      <div class="online-diagnostic-messages" aria-live="polite">
+        <div class="form-message ${state.lastReadStatus === 'Lectura correcta' || state.lastReadStatus === 'Pendiente' ? 'is-success' : 'is-error'}">Lectura: ${escapeHtml(state.readMessage || 'Pendiente.')}</div>
+        <div class="form-message ${state.lastWriteStatus === 'Escritura correcta' || state.lastWriteStatus === 'Pendiente' ? 'is-success' : 'is-error'}">Escritura: ${escapeHtml(state.writeMessage || 'Pendiente.')}</div>
+      </div>
+    ` : '';
+
+    return `
+      <section class="users-prep-panel online-diagnostic-panel" aria-label="Diagnóstico online">
+        <div class="compact-title-row">
+          <div>
+            <span class="eyebrow mini">Firestore seguro</span>
+            <h3>Diagnóstico online</h3>
+          </div>
+          <span class="sync-mode-badge ${escapeHtml(readBadgeClass)}">${escapeHtml(readStatus)}</span>
+        </div>
+        <p class="notice">Validación liviana de Firestore. Solo lee datos y la prueba de escritura usa metadata/diagnostico; los módulos operativos ni se despeinan.</p>
+        <div class="import-summary-grid compact-summary online-diagnostic-grid">
+          <div class="status-item"><strong>Usuario actual</strong><span>${escapeHtml(signedUser?.displayName || signedUser?.email || status.currentUser || '—')}</span></div>
+          <div class="status-item"><strong>Correo actual</strong><span>${escapeHtml(signedUser?.email || status.currentUser || '—')}</span></div>
+          <div class="status-item"><strong>Rol actual</strong><span>${escapeHtml(status.currentRole || '—')}</span></div>
+          <div class="status-item"><strong>Proyecto Firebase</strong><span>ksakpk</span></div>
+          <div class="status-item"><strong>Project ID</strong><span>ksakpk-ecb6d</span></div>
+          <div class="status-item"><strong>Workspace</strong><span>ksa_practika</span></div>
+          <div class="status-item"><strong>Modo de datos</strong><span>${escapeHtml(dataMode)}</span></div>
+          <div class="status-item"><strong>Fuente principal</strong><span>${escapeHtml(sourcePrincipal)}</span></div>
+          <div class="status-item"><strong>Importación inicial</strong><span>${escapeHtml(importCompleted ? 'Completada' : 'Pendiente')}</span></div>
+          <div class="status-item"><strong>Última sincronización</strong><span>${escapeHtml(lastSyncAt ? formatDateTime(lastSyncAt) : '—')}</span></div>
+          <div class="status-item"><strong>Estado de lectura Firestore</strong><span>${escapeHtml(readStatus)}</span></div>
+          <div class="status-item"><strong>Estado de escritura de diagnóstico</strong><span>${escapeHtml(writeStatus)}</span></div>
+        </div>
+        <div class="config-actions-row online-diagnostic-actions">
+          <button type="button" class="secondary-action compact" data-online-diagnostic-read ${canRead ? '' : 'disabled'}>Probar lectura Firestore</button>
+          <button type="button" class="card-action compact" data-online-diagnostic-write ${canWrite ? '' : 'disabled'}>Probar escritura de diagnóstico</button>
+          <small>La escritura se limita a workspaces/ksa_practika/metadata/diagnostico.</small>
+        </div>
+        ${messageHtml}
+        ${renderOnlineDiagnosticCountsTable(state.counts)}
+      </section>
+    `;
+  }
+
   function renderCloudInitialImportPanel(status) {
     const state = cloudInitialImportState;
     const preview = state.preview;
     const prepared = state.prepared;
     const cloudStatus = state.cloudStatus;
-    const canImport = canCurrentRole('initialJsonToCloud') && status.isAdmin && preview?.isValid && prepared && !state.isProcessing;
+    const cloudAlreadyImported = Boolean(cloudStatus?.importacionInicialCompletada || status.cloudActive || status.cloudReady || cloudStatus?.cloudActive);
+    const canImport = canCurrentRole('initialJsonToCloud') && status.isAdmin && preview?.isValid && prepared && !state.isProcessing && !cloudAlreadyImported;
     const progress = state.progress;
     const cloudBadge = cloudStatus?.ok
       ? (cloudStatus.previousImport || cloudStatus.importacionInicialCompletada ? 'Importación previa detectada' : 'Sin importación previa')
@@ -20263,6 +21397,9 @@ Notas importantes:
         <small>Importados: ${escapeHtml(String(progress.imported || 0))} · Omitidos por duplicado: ${escapeHtml(String(progress.skipped || 0))} · Errores: ${escapeHtml(String(progress.errors || 0))}</small>
       </div>
     ` : '';
+    const antiReimportHtml = cloudAlreadyImported ? `
+      <div class="form-message is-error" role="alert">La nube ya tiene una importación inicial completada. No reimportes JSON salvo recuperación controlada. Reimportar puede crear duplicados o mezclar datos.</div>
+    ` : '';
 
     return `
       <section class="users-prep-panel cloud-initial-import-panel" aria-label="Importación inicial JSON a Firestore">
@@ -20274,11 +21411,12 @@ Notas importantes:
           <span class="sync-mode-badge ${escapeHtml(cloudBadgeClass)}">${escapeHtml(cloudBadge)}</span>
         </div>
         <p class="notice">Copia controlada hacia Firestore: crea faltantes, omite existentes, conserva IDs y deja la nube lista para operación online controlada.</p>
+        ${antiReimportHtml}
         ${renderRolePermissionNotice('initialJsonToCloud', 'Importar JSON maestro a Firestore queda reservado para Administrador.')}
         <div class="config-actions-row cloud-import-actions-row">
-          <label class="secondary-action compact file-action-label ${state.isProcessing ? 'is-disabled' : ''}">
+          <label class="secondary-action compact file-action-label ${state.isProcessing || !canCurrentRole('initialJsonToCloud') ? 'is-disabled' : ''}">
             <span>Seleccionar JSON maestro</span>
-            <input type="file" accept="application/json,.json" data-cloud-json-file ${state.isProcessing ? 'disabled' : ''} />
+            <input type="file" accept="application/json,.json" data-cloud-json-file ${state.isProcessing || !canCurrentRole('initialJsonToCloud') ? 'disabled' : ''} />
           </label>
           <button type="button" class="card-action compact" data-cloud-json-import-confirm ${canImport ? '' : 'disabled'}>Importar a Firestore</button>
           <button type="button" class="secondary-action compact" data-cloud-json-import-clear ${state.isProcessing ? 'disabled' : ''}>Limpiar vista</button>
@@ -20286,6 +21424,162 @@ Notas importantes:
         ${state.message ? `<div class="form-message ${escapeHtml(messageClass)}" role="status">${escapeHtml(state.message)}</div>` : ''}
         ${progressHtml}
         ${previewHtml}
+      </section>
+    `;
+  }
+
+  function getAuthorizedUsersFormRecord() {
+    const editingUid = cleanText(usersAuthState.editingUid);
+    if (!editingUid) return normalizeAuthorizedUserRecord({ activo: true, rol: ROLE_DEFINITIONS.usuario.label });
+    const existing = usersAuthState.records.find((record) => normalizeAuthorizedUserRecord(record).uid === editingUid);
+    return normalizeAuthorizedUserRecord(existing || { uid: editingUid, activo: true, rol: ROLE_DEFINITIONS.usuario.label });
+  }
+
+  function renderAuthorizedUsersGuide() {
+    return `
+      <div class="authorized-users-guide" role="note">
+        <strong>Guía breve para agregar usuario</strong>
+        <ol>
+          <li>Crear el usuario en Firebase Console → Authentication → Usuarios.</li>
+          <li>Copiar el UID del usuario.</li>
+          <li>Volver a KSA PRÁCTIKA.</li>
+          <li>Agregar autorización usando correo, nombre, UID y rol.</li>
+          <li>El usuario podrá entrar si su cuenta Auth existe y su autorización está activa.</li>
+        </ol>
+      </div>
+    `;
+  }
+
+  function renderAuthorizedUsersForm(canManage) {
+    const record = getAuthorizedUsersFormRecord();
+    const editing = Boolean(cleanText(usersAuthState.editingUid));
+    const protectedRecord = editing && isProtectedAuthorizedUser(record);
+    const disabled = canManage && !usersAuthState.isSaving ? '' : 'disabled';
+    const readonlyEdit = editing ? 'readonly' : '';
+    const roleOptions = ROLE_ORDER.map((roleId) => {
+      const role = ROLE_DEFINITIONS[roleId];
+      const selected = normalizeAuthorizedRoleLabel(record.rol) === role.label ? 'selected' : '';
+      const disabledRole = protectedRecord && role.id !== 'administrador' ? 'disabled' : '';
+      return `<option value="${escapeHtml(role.label)}" ${selected} ${disabledRole}>${escapeHtml(role.label)}</option>`;
+    }).join('');
+    return `
+      <form class="authorized-users-form" data-authorized-user-form novalidate>
+        <div class="section-title-row compact-title-row">
+          <div>
+            <span class="eyebrow mini">${editing ? 'Editar autorización' : 'Agregar autorización'}</span>
+            <h3>${editing ? escapeHtml(record.nombre || 'Usuario autorizado') : 'Nueva autorización'}</h3>
+          </div>
+          ${editing ? '<button type="button" class="secondary-action compact" data-authorized-user-cancel>Cancelar edición</button>' : ''}
+        </div>
+        <div class="form-grid authorized-users-form-grid">
+          <label class="form-field">
+            <span>Nombre</span>
+            <input type="text" name="nombre" value="${escapeHtml(editing ? record.nombre : '')}" autocomplete="off" ${disabled} required />
+          </label>
+          <label class="form-field">
+            <span>Correo electrónico</span>
+            <input type="email" name="correo" value="${escapeHtml(editing ? record.correo : '')}" autocomplete="off" inputmode="email" ${readonlyEdit} ${disabled} required />
+          </label>
+          <label class="form-field authorized-uid-field">
+            <span>UID de Firebase Authentication</span>
+            <input type="text" name="uid" value="${escapeHtml(editing ? record.uid : '')}" autocomplete="off" ${readonlyEdit} ${disabled} required />
+          </label>
+          <label class="form-field">
+            <span>Rol</span>
+            <select name="rol" ${disabled} required>
+              <option value="">Seleccionar rol</option>
+              ${roleOptions}
+            </select>
+          </label>
+          <label class="checkbox-field authorized-active-field ${protectedRecord ? 'is-disabled' : ''}">
+            <input type="checkbox" name="activo" ${record.activo ? 'checked' : ''} ${protectedRecord ? 'disabled' : disabled} />
+            <span>Activo</span>
+          </label>
+        </div>
+        <div class="form-actions authorized-users-form-actions">
+          <button type="submit" class="card-action compact" ${disabled}>${usersAuthState.isSaving ? 'Guardando…' : (editing ? 'Guardar cambios' : 'Agregar autorización')}</button>
+        </div>
+        ${protectedRecord ? '<p class="compact-note">Administrador principal protegido: no puede desactivarse ni bajarse a Usuario normal.</p>' : ''}
+      </form>
+    `;
+  }
+
+  function renderAuthorizedUsersTable(canManage) {
+    const rows = usersAuthState.records.length
+      ? usersAuthState.records.map((raw) => {
+          const record = normalizeAuthorizedUserRecord(raw);
+          const protectedRecord = isProtectedAuthorizedUser(record);
+          const statusClass = record.activo ? 'is-active' : 'is-inactive';
+          const statusText = record.activo ? 'Activo' : 'Inactivo';
+          const actionDisabled = canManage && !usersAuthState.isSaving && !usersAuthState.isLoading ? '' : 'disabled';
+          const toggleLabel = record.activo ? 'Desactivar' : 'Reactivar';
+          const toggleDisabled = protectedRecord && record.activo ? 'disabled' : actionDisabled;
+          const uidShort = record.uid ? `${record.uid.slice(0, 8)}…${record.uid.slice(-6)}` : '—';
+          return `
+            <tr class="compact-record-row ${protectedRecord ? 'is-protected-user' : ''}">
+              <td data-label="Nombre"><span class="compact-primary">${escapeHtml(record.nombre)}</span>${protectedRecord ? '<small>Administrador principal protegido</small>' : ''}</td>
+              <td data-label="Correo"><span>${escapeHtml(record.correo || '—')}</span></td>
+              <td data-label="Rol"><span>${escapeHtml(record.rol)}</span></td>
+              <td data-label="Estado"><span class="state-pill ${statusClass}">${escapeHtml(statusText)}</span></td>
+              <td data-label="UID"><span title="${escapeHtml(record.uid)}">${escapeHtml(uidShort)}</span><small>${escapeHtml(record.uid || '—')}</small></td>
+              <td data-label="Actualizado"><span>${escapeHtml(record.updatedAt ? formatDateTime(record.updatedAt) : '—')}</span><small>Creado: ${escapeHtml(record.createdAt ? formatDateTime(record.createdAt) : '—')}</small></td>
+              <td data-label="Acciones" class="actions-cell">
+                <div class="record-actions compact-row-actions">
+                  <button type="button" class="secondary-action compact" data-authorized-user-edit="${escapeHtml(record.uid)}" ${actionDisabled}>Editar</button>
+                  <button type="button" class="secondary-action compact" data-authorized-user-toggle="${escapeHtml(record.uid)}" data-authorized-user-next-active="${record.activo ? 'false' : 'true'}" ${toggleDisabled} title="${protectedRecord && record.activo ? 'El administrador principal no puede desactivarse' : ''}">${escapeHtml(toggleLabel)}</button>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('')
+      : `
+        <tr class="compact-record-row">
+          <td colspan="7"><span class="compact-primary">Sin listado cargado todavía.</span><small>Usa Refrescar listado para leer Usuarios desde Firestore.</small></td>
+        </tr>
+      `;
+    return renderOperationalTableShell({
+      shellClass: 'authorized-users-scroll-shell',
+      wrapClass: 'authorized-users-table-wrap',
+      ariaLabel: 'Usuarios autorizados por UID en Firestore',
+      tableClass: 'authorized-users-table',
+      headers: `
+        <th>Nombre</th>
+        <th>Correo</th>
+        <th>Rol</th>
+        <th>Estado</th>
+        <th>UID</th>
+        <th>Actualizado</th>
+        <th>Acciones</th>
+      `,
+      rows
+    });
+  }
+
+  function renderAuthorizedUsersManagement(status = {}) {
+    const canManage = Boolean(status.signedIn && status.isAdmin && status.firebaseConfigured && canCurrentRole('manageUsers'));
+    if (!canManage) {
+      return renderAdminOnlyPanel('Usuarios autorizados', 'Agregar usuarios, editar roles y activar/desactivar accesos queda reservado para Administrador.');
+    }
+    const listStatus = usersAuthState.isLoading ? 'Leyendo…' : (usersAuthState.loadedAt ? `Actualizado: ${formatDateTime(usersAuthState.loadedAt)}` : 'Pendiente de refrescar');
+    const messageClass = usersAuthState.messageType === 'error' ? 'is-error' : 'is-success';
+    return `
+      <section class="authorized-users-panel" aria-label="Usuarios autorizados">
+        <div class="section-title-row">
+          <div>
+            <span class="eyebrow mini">Firestore</span>
+            <h3>Usuarios autorizados</h3>
+          </div>
+          <div class="authorized-users-toolbar">
+            <span class="sync-mode-badge ${usersAuthState.isLoading ? 'is-pending' : 'is-cloud'}">${escapeHtml(listStatus)}</span>
+            <button type="button" class="secondary-action compact" data-authorized-users-refresh ${status.signedIn && status.firebaseConfigured ? '' : 'disabled'}>Refrescar listado</button>
+          </div>
+        </div>
+        <p class="notice">La app no crea cuentas Firebase Auth. Solo autoriza o desactiva el acceso dentro de Firestore en <strong>workspaces/ksa_practika/usuarios/{uid}</strong>.</p>
+        ${!canManage ? '<div class="form-message is-error" role="status">Para agregar, editar rol o desactivar usuarios debes iniciar sesión como Administrador.</div>' : ''}
+        ${usersAuthState.message ? `<div class="form-message ${messageClass}" role="status">${escapeHtml(usersAuthState.message)}</div>` : ''}
+        ${renderAuthorizedUsersGuide()}
+        ${renderAuthorizedUsersForm(canManage)}
+        ${renderAuthorizedUsersTable(canManage)}
       </section>
     `;
   }
@@ -20307,21 +21601,29 @@ Notas importantes:
     const sessionAction = status.signedIn
       ? '<button type="button" class="secondary-action compact" data-auth-signout>Cerrar sesión</button>'
       : '<button type="button" class="card-action compact" data-open-access>Abrir acceso</button>';
-    const disabledActions = USER_PREPARED_ACTIONS.map((label) => `
-      <button type="button" class="secondary-action compact" disabled title="Gestión de usuarios disponible en etapa futura">${escapeHtml(label)}</button>
-    `).join('');
     const usersBadgeClass = status.cloudActive ? 'is-cloud' : (status.firebaseConfigured ? 'is-pending' : 'is-pending');
     const usersBadgeText = status.cloudActive ? 'Nube activa' : (status.firebaseConfigured ? 'Firebase configurado' : 'Firebase pendiente');
-    const verifyDisabled = status.canVerifyFirestore ? '' : 'disabled';
-    const initWorkspaceHtml = status.canInitializeWorkspace
+    const canManageUsers = canCurrentRole('manageUsers') && status.isAdmin === true;
+    const canUseFirestoreTools = canCurrentRole('firestoreTools') && status.isAdmin === true;
+    const canChangeDataSource = canCurrentRole('changeDataSource') && status.isAdmin === true;
+    const canRefreshData = canCurrentRole('updateData');
+    const verifyDisabled = status.canVerifyFirestore && canUseFirestoreTools ? '' : 'disabled';
+    const initWorkspaceHtml = status.canInitializeWorkspace && canUseFirestoreTools
       ? '<button type="button" class="card-action compact" data-firestore-init-workspace>Inicializar workspace base</button>'
       : '';
-    const cloudActivateHtml = status.canActivateCloud
+    const cloudActivateHtml = status.canActivateCloud && canChangeDataSource
       ? `<button type="button" class="card-action compact" data-cloud-activate ${status.cloudActive ? 'disabled' : ''}>${status.cloudActive ? 'Nube activa' : 'Activar nube'}</button>`
       : '';
-    const cloudRefreshHtml = status.canRefreshCloud
+    const cloudRefreshHtml = status.canRefreshCloud && canRefreshData
       ? '<button type="button" class="secondary-action compact" data-cloud-refresh>Actualizar datos</button>'
       : '';
+    const adminToolsHtml = canUseFirestoreTools ? `
+          <button type="button" class="secondary-action compact" data-firestore-copy-guide>Copiar guía</button>
+          <button type="button" class="secondary-action compact" data-firestore-copy-rules>Copiar reglas</button>
+          <button type="button" class="secondary-action compact" data-firestore-verify ${verifyDisabled}>Verificar Firestore</button>
+          ${initWorkspaceHtml}
+          ${cloudActivateHtml}
+        ` : '';
 
     return `
       <article class="panel-card config-card full-span users-prep-card" aria-label="Usuarios">
@@ -20355,17 +21657,14 @@ Notas importantes:
         </div>
         <div class="users-prep-actions" aria-label="Acciones de acceso y usuarios">
           ${sessionAction}
-          <button type="button" class="secondary-action compact" data-firestore-copy-guide>Copiar guía</button>
-          <button type="button" class="secondary-action compact" data-firestore-copy-rules>Copiar reglas</button>
-          <button type="button" class="secondary-action compact" data-firestore-verify ${verifyDisabled}>Verificar Firestore</button>
-          ${initWorkspaceHtml}
-          ${cloudActivateHtml}
+          ${adminToolsHtml}
           ${cloudRefreshHtml}
-          ${disabledActions}
           <small>Las acciones delicadas quedan reservadas para Administrador. Firestore puede operar como fuente principal cuando la nube está activa.</small>
         </div>
-        ${renderCloudInitialImportPanel(status)}
-        <div class="users-firestore-guide" aria-label="Guía Firestore">
+        ${renderAuthorizedUsersManagement(status)}
+        ${canManageUsers ? renderOnlineDiagnosticPanel(status) : renderAdminOnlyPanel('Diagnóstico online', 'Probar lectura/escritura de diagnóstico en Firestore queda reservado para Administrador.')}
+        ${canManageUsers ? renderCloudInitialImportPanel(status) : renderAdminOnlyPanel('Importar JSON maestro a nube', 'La importación inicial o reimportación hacia Firestore queda reservada para Administrador.')}
+        ${canUseFirestoreTools ? `<div class="users-firestore-guide" aria-label="Guía Firestore">
           <details>
             <summary>Ver instrucciones para reglas Firestore</summary>
             <ol>
@@ -20387,14 +21686,14 @@ Notas importantes:
             <summary>Ver reglas iniciales preparadas</summary>
             <pre>${escapeHtml(FIRESTORE_STARTUP_RULES_TEXT)}</pre>
           </details>
-        </div>
+        </div>` : ''}
         <div class="users-prep-grid">
-          <section class="users-prep-panel" aria-label="Roles preparados">
-            <h3>Roles preparados</h3>
+          <section class="users-prep-panel" aria-label="Roles disponibles">
+            <h3>Roles disponibles</h3>
             <div class="role-list users-role-list">${rolesHtml}</div>
           </section>
-          <section class="users-prep-panel" aria-label="Estructura futura de usuario">
-            <h3>Estructura futura</h3>
+          <section class="users-prep-panel" aria-label="Campos guardados de usuario">
+            <h3>Campos guardados</h3>
             <dl class="definition-list users-schema-list">${schemaRows}</dl>
           </section>
         </div>
@@ -20407,10 +21706,12 @@ Notas importantes:
     const config = normalizeConfiguracion(appData.configuracion);
     const currentRole = getCurrentRoleDefinition();
     const counts = getJsonRecordCounts(appData);
+    const jsonAuxInfo = getJsonAuxiliaryStatusInfo();
+    const jsonImportLockedByCloud = jsonAuxInfo.cloudActive;
     const preview = jsonBackupState.preview;
     const hasPreview = Boolean(preview);
     const canExport = canCurrentRole('exportJson');
-    const canImport = canCurrentRole('importJson');
+    const canImport = canCurrentRole('importJson') && !jsonImportLockedByCloud;
     const canConfig = canCurrentRole('changeConfig');
     const modeOptions = getOperationalRecordCount() > 0
       ? `
@@ -20463,7 +21764,7 @@ Notas importantes:
                 <h2>Parámetros generales</h2>
               </div>
             </div>
-            ${renderRolePermissionNotice('changeConfig', 'Solo Administrador puede cambiar parámetros generales.')}
+            ${renderRolePermissionNotice('changeConfig', ADMIN_RESTRICTED_MESSAGE)}
             <form class="config-form" data-config-form novalidate>
               <div class="form-grid">
                 <label class="form-field">
@@ -20495,9 +21796,9 @@ Notas importantes:
 
           ${renderDataSyncStatusCard()}
 
-          ${renderFirestoreContractCard()}
+          ${canCurrentRole('firestoreTools') ? renderFirestoreContractCard() : ''}
 
-          ${renderFirebaseAdapterCard()}
+          ${canCurrentRole('firestoreTools') ? renderFirebaseAdapterCard() : ''}
 
           ${renderDeviceIdentityCard(config)}
 
@@ -20505,13 +21806,20 @@ Notas importantes:
             <div class="section-title-row">
               <div>
                 <span class="eyebrow mini">Respaldo JSON</span>
-                <h2>Exportar respaldo</h2>
+                <h2>${jsonAuxInfo.cloudActive ? 'Exportar JSON auxiliar' : 'Exportar respaldo'}</h2>
               </div>
             </div>
             ${renderRolePermissionNotice('exportJson', 'Exportar JSON queda reservado para Administrador.')}
-            <p class="notice">JSON es respaldo y traslado manual entre dispositivos. No sincroniza automáticamente: si en dos iPads se trabaja a la vez, el JSON no hace telepatía.</p>
+            <p class="notice">${jsonAuxInfo.cloudActive ? 'Fuente principal: Firestore. JSON: respaldo auxiliar. La exportación se arma leyendo Firestore, no datos locales viejos.' : 'JSON es respaldo y traslado manual entre dispositivos. No sincroniza automáticamente: si en dos iPads se trabaja a la vez, el JSON no hace telepatía.'}</p>
+            <div class="import-summary-grid compact-summary">
+              <div class="status-item"><strong>Fuente principal</strong><span>${escapeHtml(jsonAuxInfo.fuentePrincipal)}</span></div>
+              <div class="status-item"><strong>JSON</strong><span>${escapeHtml(jsonAuxInfo.jsonTipo)}</span></div>
+              <div class="status-item"><strong>Exporta desde</strong><span>${escapeHtml(jsonAuxInfo.exportSource)}</span></div>
+              <div class="status-item"><strong>Workspace</strong><span>${escapeHtml(jsonAuxInfo.workspaceId)}</span></div>
+              <div class="status-item"><strong>Project ID</strong><span>${escapeHtml(jsonAuxInfo.projectId || 'ksakpk-ecb6d')}</span></div>
+            </div>
             <div class="config-actions-row">
-              <button type="button" class="card-action" data-json-export ${canExport ? '' : 'disabled'}>Exportar JSON</button>
+              <button type="button" class="card-action" data-json-export ${canExport ? '' : 'disabled'}>${jsonAuxInfo.cloudActive ? 'Exportar JSON auxiliar' : 'Exportar JSON'}</button>
               <div class="data-pill"><span>Último respaldo</span><strong>${escapeHtml(formatDateTime(config.lastBackupAt))}</strong></div>
               <div class="data-pill"><span>Última importación</span><strong>${escapeHtml(formatDateTime(config.lastImportAt))}</strong></div>
             </div>
@@ -20535,14 +21843,15 @@ Notas importantes:
               ${hasPreview ? '<button type="button" class="secondary-action compact" data-json-import-cancel>Cancelar vista previa</button>' : ''}
             </div>
             ${renderRolePermissionNotice('importJson', 'Importar JSON queda reservado para Administrador.')}
+            ${jsonImportLockedByCloud ? '<div class="form-message is-error" role="alert">La nube ya está activa. No reimportes JSON salvo recuperación técnica controlada; primero revisa sesión, Nube activa y Actualizar datos.</div>' : ''}
             <label class="form-field">
               <span>Seleccionar respaldo .json</span>
               <input type="file" accept=".json,application/json" data-json-file ${canImport ? '' : 'disabled'} />
             </label>
             ${hasPreview ? renderJsonPreview(preview, modeOptions, canImport) : `
               <div class="empty-state">
-                <strong>Selecciona un JSON para validar.</strong>
-                <p>Primero se revisa estructura, metadata, versión y conteos; después se permite reemplazar o fusionar. Sin validación no hay importación, porque la cartera no es piñata.</p>
+                <strong>${jsonImportLockedByCloud ? 'Importación bloqueada con nube activa.' : 'Selecciona un JSON para validar.'}</strong>
+                <p>${jsonImportLockedByCloud ? 'Firestore es la fuente principal y el JSON queda como respaldo auxiliar. Reimportar puede crear duplicados o mezclar datos.' : 'Primero se revisa estructura, metadata, versión y conteos; después se permite reemplazar o fusionar. Sin validación no hay importación, porque la cartera no es piñata.'}</p>
               </div>
             `}
           </article>
@@ -20564,7 +21873,7 @@ Notas importantes:
               <dt>localStorage</dt><dd>${escapeHtml(STORAGE_KEY)}</dd>
               <dt>Creado</dt><dd>${escapeHtml(formatDateTime(appData.metadata?.createdAt))}</dd>
               <dt>Actualizado</dt><dd>${escapeHtml(formatDateTime(appData.metadata?.updatedAt))}</dd>
-              <dt>Nota</dt><dd>Sin conexión Firebase real todavía; Usuarios queda preparado y la operación local sigue intacta.</dd>
+              <dt>Nota</dt><dd>Firestore opera como fuente principal cuando la app muestra Nube activa; JSON queda como respaldo auxiliar.</dd>
             </dl>
           </article>
         </div>
@@ -20930,12 +22239,18 @@ Notas importantes:
   }
 
   function buildJsonBackupPayload(exportOptions = {}) {
-    const snapshot = normalizeData(appData);
-    const exportedAt = cleanText(exportOptions.exportedAt) || nowIso();
+    const opts = isPlainObject(exportOptions) ? exportOptions : {};
+    const cloudSource = cleanText(opts.source).toLowerCase() === 'firestore' || opts.cloudSource === true;
+    const sourceData = isPlainObject(opts.sourceData) ? opts.sourceData : appData;
+    const snapshot = normalizeData(sourceData);
+    const exportedAt = cleanText(opts.exportedAt) || nowIso();
     const identity = normalizeDeviceIdentity(appDeviceIdentity);
-    const activityEntries = getRecentActivityEntries(ACTIVITY_LOG_MAX_ENTRIES);
-    const notasModulo = cloneNotasModuleData();
-    const facturasModulo = cloneFacturasModuleData();
+    const exportUser = getCurrentJsonExportUserInfo(opts.user);
+    const activityEntries = Array.isArray(opts.activityEntries)
+      ? opts.activityEntries.map((entry) => normalizeActivityEntry(entry)).slice(0, ACTIVITY_LOG_MAX_ENTRIES)
+      : getRecentActivityEntries(ACTIVITY_LOG_MAX_ENTRIES);
+    const notasModulo = opts.notasModulo ? normalizeNotasData(opts.notasModulo) : cloneNotasModuleData();
+    const facturasModulo = opts.facturasModulo ? normalizeFacturasData(opts.facturasModulo) : cloneFacturasModuleData();
     const workPeriodInfo = getWorkPeriodBackupInfo();
     snapshot.notasModulo = notasModulo;
     snapshot.facturasModulo = facturasModulo;
@@ -20943,12 +22258,22 @@ Notas importantes:
       ...snapshot.configuracion,
       periodoTrabajoSeleccionado: workPeriodInfo.periodo
     });
+    snapshot.metadata = {
+      ...(isPlainObject(snapshot.metadata) ? snapshot.metadata : {}),
+      fuentePrincipal: cloudSource ? 'firestore' : cleanText(snapshot.metadata?.fuentePrincipal || 'local'),
+      cloudActive: cloudSource ? true : Boolean(snapshot.metadata?.cloudActive)
+    };
     const lastActivity = normalizeActivitySummary(activityEntries[0] || identity.lastActivity);
     const counts = getJsonRecordCounts(snapshot, activityEntries);
     const catalogos = CATALOGS.reduce((acc, catalog) => {
       acc[catalog.id] = snapshot[catalog.id] || [];
       return acc;
     }, {});
+    const projectId = cleanText(opts.projectId || getRawKSAFirebaseConfig().projectId || 'ksakpk-ecb6d');
+    const workspaceId = cleanText(opts.workspaceId || FIRESTORE_WORKSPACE_ID_PLACEHOLDER);
+    const sourceLabel = cloudSource ? 'Firestore' : 'Local';
+    const fuentePrincipal = cloudSource ? 'cloud' : 'local';
+    const respaldoTipo = cloudSource ? 'auxiliar' : 'manual';
 
     return {
       metadata: {
@@ -20961,18 +22286,38 @@ Notas importantes:
         fechaExportacion: exportedAt,
         sourceDeviceId: identity.deviceId,
         sourceDeviceName: identity.deviceName,
-        fileName: cleanText(exportOptions.fileName),
+        fileName: cleanText(opts.fileName),
         lastActivity,
         periodoTrabajo: workPeriodInfo,
         periodoTrabajoSeleccionado: workPeriodInfo.periodo,
         counts,
         recordCounts: counts,
-        source: cloudOperationState.active ? 'KSA PRÁCTIKA respaldo JSON manual desde Firestore' : 'KSA PRÁCTIKA respaldo JSON manual local'
+        source: sourceLabel,
+        workspaceId,
+        projectId,
+        exportedByUid: exportUser.uid,
+        exportedByCorreo: exportUser.correo,
+        fuentePrincipal,
+        respaldoTipo,
+        cloudActive: cloudSource,
+        notaUso: cloudSource
+          ? 'Firestore es la fuente principal. Este JSON es respaldo auxiliar; no usar para mover datos diarios ni reimportar salvo recuperación técnica controlada.'
+          : 'Respaldo JSON local/manual.'
       },
       appName: APP_NAME,
+      appVersion: APP_VERSION,
       schemaVersion: SCHEMA_VERSION,
       fechaExportacion: exportedAt,
       exportedAt,
+      exportedAtDisplay: formatDateTime(exportedAt),
+      source: sourceLabel,
+      workspaceId,
+      projectId,
+      exportedByUid: exportUser.uid,
+      exportedByCorreo: exportUser.correo,
+      counts,
+      fuentePrincipal,
+      respaldoTipo,
       registros: {
         catalogos,
         ventas: snapshot.ventas || [],
@@ -20996,20 +22341,98 @@ Notas importantes:
     };
   }
 
+  async function registerJsonAuxiliaryExportMetadata(payload, fileName, sequence) {
+    if (!payload?.metadata || payload.metadata.source !== 'Firestore') return null;
+    if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.writeCloudDocument) return null;
+    try {
+      const exportId = sanitizeFirestoreDocId(`json_${formatJsonExportSequence(sequence)}_${Date.now().toString(36)}`, 'json_export');
+      const counts = normalizeBackupCounts(payload.metadata.counts || payload.counts || {});
+      const totalRegistros = getBackupCountsTotal(counts);
+      return await KSAFirebaseAdapter.writeCloudDocument('exportacionesJson', exportId, {
+        exportId,
+        fecha: payload.metadata.exportedAt,
+        fechaLocal: nowIso(),
+        usuarioUid: payload.metadata.exportedByUid,
+        usuarioCorreo: payload.metadata.exportedByCorreo,
+        nombreArchivo: fileName,
+        conteos: counts,
+        totalRegistros,
+        fuente: 'Firestore',
+        tipo: 'respaldo_auxiliar',
+        workspaceId: payload.metadata.workspaceId,
+        projectId: payload.metadata.projectId,
+        appVersion: APP_VERSION,
+        schemaVersion: SCHEMA_VERSION,
+        consecutivoJson: sequence
+      }, { requireAdmin: false });
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo registrar bitácora de exportación JSON auxiliar.', error);
+      return { ok: false, message: cleanText(error?.message || 'No se pudo registrar metadata de exportación JSON.') };
+    }
+  }
+
   async function exportJsonBackup() {
     if (!canCurrentRole('exportJson')) {
-      configState.message = 'Solo Administrador puede exportar respaldos JSON.';
+      configState.message = ADMIN_RESTRICTED_MESSAGE;
       configState.messageType = 'error';
       renderRoute();
       return;
     }
 
-    if (cloudOperationState.active) {
-      await flushCloudSnapshotSync('exportJsonBackup');
+    const cloudExport = isCloudDataSourceActive();
+    let cloudResult = null;
+    let exportSourceData = appData;
+    let exportNotasModulo = null;
+    let exportFacturasModulo = null;
+    let exportActivityEntries = null;
+    let exportUser = null;
+    let exportProjectId = cleanText(getRawKSAFirebaseConfig().projectId || 'ksakpk-ecb6d');
+    let exportWorkspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
+    let sequence = getJsonExportSequence();
+
+    if (cloudExport) {
+      if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.readCloudOperationalSnapshot) {
+        configState.message = 'No se puede exportar JSON auxiliar: adaptador Firestore no disponible.';
+        configState.messageType = 'error';
+        renderRoute();
+        return;
+      }
+      configState.message = 'Leyendo Firestore para preparar JSON auxiliar…';
+      configState.messageType = 'success';
+      renderRoute({ preserveScroll: true });
+      cloudResult = await KSAFirebaseAdapter.readCloudOperationalSnapshot({ requireActive: true });
+      if (!cloudResult?.ok || !isPlainObject(cloudResult.snapshot)) {
+        configState.message = cloudResult?.message || 'No se pudo leer Firestore. El JSON no se exportó y el consecutivo no cambió.';
+        configState.messageType = 'error';
+        renderRoute({ preserveScroll: true });
+        return;
+      }
+      applyCloudSnapshotToRuntime(cloudResult);
+      exportSourceData = cloudResult.snapshot;
+      exportNotasModulo = cloudResult.notasModulo;
+      exportFacturasModulo = cloudResult.facturasModulo;
+      exportActivityEntries = Array.isArray(cloudResult.bitacora) ? cloudResult.bitacora : null;
+      exportUser = cloudResult.user;
+      exportWorkspaceId = cleanText(cloudResult.metadata?.workspaceId || FIRESTORE_WORKSPACE_ID_PLACEHOLDER) || FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
+      exportProjectId = cleanText(cloudResult.metadata?.projectId || getRawKSAFirebaseConfig().projectId || 'ksakpk-ecb6d') || 'ksakpk-ecb6d';
+      sequence = getCloudJsonSequence(cloudResult.consecutivos || {});
     }
+
     const exportedAt = nowIso();
-    const { fileName, sequence } = buildJsonExportFileName(exportedAt);
-    const payload = buildJsonBackupPayload({ exportedAt, fileName });
+    const { fileName } = buildJsonExportFileName(exportedAt, { sequence });
+    const payload = buildJsonBackupPayload({
+      exportedAt,
+      fileName,
+      sourceData: exportSourceData,
+      notasModulo: exportNotasModulo,
+      facturasModulo: exportFacturasModulo,
+      activityEntries: exportActivityEntries,
+      source: cloudExport ? 'Firestore' : 'Local',
+      cloudSource: cloudExport,
+      user: exportUser,
+      workspaceId: exportWorkspaceId,
+      projectId: exportProjectId
+    });
     const json = JSON.stringify(payload, null, 2);
     const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
 
@@ -21029,14 +22452,31 @@ Notas importantes:
       return;
     }
 
-    saveJsonExportSequence(sequence + 1);
+    const nextSequence = sequence + 1;
+    saveJsonExportSequence(nextSequence, { scheduleCloud: !cloudExport });
+    if (cloudExport && typeof KSAFirebaseAdapter !== 'undefined' && KSAFirebaseAdapter?.writeCloudDocument) {
+      try {
+        await KSAFirebaseAdapter.writeCloudDocument('consecutivos', 'json', {
+          id: 'json',
+          tipo: 'json',
+          valor: nextSequence,
+          fuente: 'Firestore',
+          updatedAtLocal: nowIso(),
+          updatedByCorreo: payload.metadata.exportedByCorreo,
+          appVersion: APP_VERSION
+        }, { requireAdmin: false });
+        await registerJsonAuxiliaryExportMetadata(payload, fileName, sequence);
+      } catch (error) {
+        console.warn('KSA PRÁCTIKA: el JSON se exportó, pero no se pudo registrar metadata auxiliar en Firestore.', error);
+      }
+    }
     const exportActivity = registerActivity({
       module: 'JSON',
-      action: 'Exportado',
-      entityType: 'Respaldo JSON',
+      action: cloudExport ? 'Auxiliar exportado' : 'Exportado',
+      entityType: cloudExport ? 'Respaldo JSON auxiliar' : 'Respaldo JSON',
       entityRef: fileName,
-      detail: buildActivityDetail(['JSON exportado', fileName]),
-      source: 'local'
+      detail: buildActivityDetail([cloudExport ? 'JSON auxiliar exportado desde Firestore' : 'JSON exportado', fileName]),
+      source: cloudExport ? 'firestore' : 'local'
     });
 
     appData.configuracion = {
@@ -21049,11 +22489,17 @@ Notas importantes:
         sourceDeviceName: payload.metadata.sourceDeviceName,
         fileName,
         counts: payload.metadata.counts,
+        source: payload.metadata.source,
+        workspaceId: payload.metadata.workspaceId,
+        projectId: payload.metadata.projectId,
+        respaldoTipo: payload.metadata.respaldoTipo,
         lastActivity: normalizeActivitySummary(exportActivity || payload.metadata.lastActivity)
       }),
       updatedAt: nowIso()
     };
-    configState.message = `Respaldo JSON exportado: ${fileName}. El próximo consecutivo será ${formatJsonExportSequence(sequence + 1)}.`;
+    configState.message = cloudExport
+      ? `JSON auxiliar exportado desde Firestore: ${fileName}. El próximo consecutivo JSON será ${formatJsonExportSequence(nextSequence)}.`
+      : `Respaldo JSON exportado: ${fileName}. El próximo consecutivo será ${formatJsonExportSequence(nextSequence)}.`;
     configState.messageType = 'success';
     saveData(appData);
     renderRoute();
@@ -21062,7 +22508,13 @@ Notas importantes:
   async function handleJsonFileSelected(file) {
     if (!file) return;
     if (!canCurrentRole('importJson')) {
-      jsonBackupState.message = 'Solo Administrador puede importar respaldos JSON.';
+      jsonBackupState.message = ADMIN_RESTRICTED_MESSAGE;
+      jsonBackupState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+    if (isCloudDataSourceActive()) {
+      jsonBackupState.message = 'La nube ya está activa. No reimportes JSON salvo recuperación técnica controlada; primero revisa sesión, Nube activa y Actualizar datos.';
       jsonBackupState.messageType = 'error';
       renderRoute();
       return;
@@ -21281,13 +22733,19 @@ Notas importantes:
 
   function confirmJsonImport(mode) {
     if (!canCurrentRole('importJson')) {
-      jsonBackupState.message = 'Solo Administrador puede importar respaldos JSON.';
+      jsonBackupState.message = ADMIN_RESTRICTED_MESSAGE;
       jsonBackupState.messageType = 'error';
       renderRoute();
       return;
     }
     if (!jsonBackupState.payload || !jsonBackupState.preview?.isValid) {
       jsonBackupState.message = 'Primero selecciona y valida un JSON correcto.';
+      jsonBackupState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+    if (isCloudDataSourceActive()) {
+      jsonBackupState.message = 'La nube ya está activa. No se reimporta JSON desde esta herramienta; el JSON queda solo como respaldo auxiliar.';
       jsonBackupState.messageType = 'error';
       renderRoute();
       return;
@@ -21658,7 +23116,7 @@ Notas importantes:
 
   function updateConfigFromForm(form) {
     if (!canCurrentRole('changeConfig')) {
-      configState.message = 'Solo Administrador puede cambiar la configuración general.';
+      configState.message = ADMIN_RESTRICTED_MESSAGE;
       configState.messageType = 'error';
       renderRoute();
       return;
@@ -22091,7 +23549,8 @@ Notas importantes:
     const cierre = getCierreMensualForPeriod(closeMonth, closeYear);
     const cierreStatus = buildPeriodClosingStatus(closeMonth, closeYear);
     const hasClosingBlock = hasPeriodClosingBlock(cierreStatus);
-    const canExportExcel = canCurrentRole('exportExcel');
+    const canExportConsulta = canCurrentRole('exportExcelConsulta');
+    const canExportCierre = canCurrentRole('exportExcelCierre');
     const canClose = canCurrentRole('closeMonth');
     const cierres = getCierresMensuales().slice(0, 8);
 
@@ -22105,7 +23564,7 @@ Notas importantes:
             </div>
           </div>
           ${excelExportState.message ? `<div class="form-message ${excelExportState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(excelExportState.message)}</div>` : ''}
-          ${renderRolePermissionNotice('exportExcel', 'Exportar Excel queda reservado para Administrador en esta protección local.')}
+          ${renderRolePermissionNotice('exportExcelCierre', 'Exportar Excel de cierre queda reservado para Administrador. El Excel de consulta permanece disponible para Usuario normal.')}
           <p class="notice">Genera un .xlsx como fotografía del período. La base viva sigue siendo la webapp; el Excel es reporte, no el trono.</p>
           <form class="period-form" data-excel-export-form novalidate>
             <div class="form-grid compact-period-grid">
@@ -22123,8 +23582,8 @@ Notas importantes:
               </label>
             </div>
             <div class="form-actions">
-              <button type="button" class="secondary-action" data-excel-consulta-export ${canExportExcel ? '' : 'disabled'}>Exportar Excel de consulta</button>
-              <button type="submit" class="card-action" ${canExportExcel ? '' : 'disabled'}>Exportar Excel de cierre</button>
+              <button type="button" class="secondary-action" data-excel-consulta-export ${canExportConsulta ? '' : 'disabled'}>Exportar Excel de consulta</button>
+              <button type="submit" class="card-action" ${canExportCierre ? '' : 'disabled'}>Exportar Excel de cierre</button>
             </div>
           </form>
           <div class="badge-row">
@@ -22326,8 +23785,8 @@ Notas importantes:
   }
 
   async function handleExcelConsultaExport(form) {
-    if (!canCurrentRole('exportExcel')) {
-      excelExportState.message = 'Solo Administrador puede exportar Excel.';
+    if (!canCurrentRole('exportExcelConsulta')) {
+      excelExportState.message = ADMIN_RESTRICTED_MESSAGE;
       excelExportState.messageType = 'error';
       renderRoute();
       return;
@@ -22359,8 +23818,8 @@ Notas importantes:
   }
 
   async function handleExcelExportSubmit(form) {
-    if (!canCurrentRole('exportExcel')) {
-      excelExportState.message = 'Solo Administrador puede exportar Excel.';
+    if (!canCurrentRole('exportExcelCierre')) {
+      excelExportState.message = ADMIN_RESTRICTED_MESSAGE;
       excelExportState.messageType = 'error';
       renderRoute();
       return;
@@ -22419,7 +23878,7 @@ Notas importantes:
 
   function handleCierreMensualSubmit(form) {
     if (!canCurrentRole('closeMonth')) {
-      cierreMensualState.message = 'Solo Administrador puede cerrar meses.';
+      cierreMensualState.message = ADMIN_RESTRICTED_MESSAGE;
       cierreMensualState.messageType = 'error';
       renderRoute();
       return;
@@ -23208,8 +24667,9 @@ ${rowsXml}
 
   async function handleExcelFileSelected(file) {
     if (!file) return;
+    if (!requireRolePermission('importExcel', excelImportState)) return;
     if (!canCurrentRole('importExcel')) {
-      excelImportState.message = 'Solo Administrador puede importar Excel.';
+      excelImportState.message = ADMIN_RESTRICTED_MESSAGE;
       excelImportState.messageType = 'error';
       renderRoute();
       return;
@@ -23766,7 +25226,7 @@ ${rowsXml}
 
   function confirmExcelImport(mode) {
     if (!canCurrentRole('importExcel')) {
-      excelImportState.message = 'Solo Administrador puede confirmar importación Excel.';
+      excelImportState.message = ADMIN_RESTRICTED_MESSAGE;
       excelImportState.messageType = 'error';
       renderRoute();
       return;
@@ -24178,7 +25638,7 @@ ${rowsXml}
 
   function saveCatalogRecord(form) {
     if (!canCurrentRole('editCatalogs')) {
-      catalogState.message = 'Solo Administrador puede editar Catálogos.';
+      catalogState.message = ADMIN_RESTRICTED_MESSAGE;
       catalogState.messageType = 'error';
       renderRoute();
       return;
@@ -24226,7 +25686,7 @@ ${rowsXml}
 
   function editCatalogRecord(recordId) {
     if (!canCurrentRole('editCatalogs')) {
-      catalogState.message = 'Solo Administrador puede editar Catálogos.';
+      catalogState.message = ADMIN_RESTRICTED_MESSAGE;
       catalogState.messageType = 'error';
       renderRoute();
       return;
@@ -24241,7 +25701,7 @@ ${rowsXml}
 
   function toggleCatalogRecord(recordId) {
     if (!canCurrentRole('editCatalogs')) {
-      catalogState.message = 'Solo Administrador puede activar, borrar seguro o restaurar Catálogos.';
+      catalogState.message = ADMIN_RESTRICTED_MESSAGE;
       catalogState.messageType = 'error';
       renderRoute();
       return;
@@ -24906,6 +26366,40 @@ ${rowsXml}
     viewRoot.querySelectorAll('[data-cloud-refresh]').forEach((button) => {
       button.addEventListener('click', () => handleCloudDataRefresh(button));
     });
+
+    viewRoot.querySelectorAll('[data-online-diagnostic-read]').forEach((button) => {
+      button.addEventListener('click', () => handleOnlineDiagnosticRead(button));
+    });
+
+    viewRoot.querySelectorAll('[data-online-diagnostic-write]').forEach((button) => {
+      button.addEventListener('click', () => handleOnlineDiagnosticWrite(button));
+    });
+
+    viewRoot.querySelectorAll('[data-authorized-users-refresh]').forEach((button) => {
+      button.addEventListener('click', () => handleAuthorizedUsersRefresh(button));
+    });
+
+    viewRoot.querySelectorAll('[data-authorized-user-form]').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        handleAuthorizedUserSubmit(form);
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-authorized-user-cancel]').forEach((button) => {
+      button.addEventListener('click', cancelAuthorizedUserEdit);
+    });
+
+    viewRoot.querySelectorAll('[data-authorized-user-edit]').forEach((button) => {
+      button.addEventListener('click', () => startAuthorizedUserEdit(button.dataset.authorizedUserEdit));
+    });
+
+    viewRoot.querySelectorAll('[data-authorized-user-toggle]').forEach((button) => {
+      button.addEventListener('click', () => toggleAuthorizedUserActive(button.dataset.authorizedUserToggle, button.dataset.authorizedUserNextActive));
+    });
+
+    scheduleOnlineDiagnosticAutoRead();
+    scheduleAuthorizedUsersAutoRead();
 
     viewRoot.querySelectorAll('[data-cloud-json-file]').forEach((input) => {
       input.addEventListener('change', (event) => {

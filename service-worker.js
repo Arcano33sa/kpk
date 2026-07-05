@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_12_post12_firebasereal_bloquec_etapa5';
+const CACHE_VERSION = 'v0_18_16_post12_firebaseonline_bloqued_etapa4';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
@@ -10,6 +10,7 @@ const APP_SHELL = [
   './firebase-config.js',
   './FIRESTORE_RULES_KSA_PRACTIKA.rules',
   './GUIA_APLICAR_REGLAS_FIRESTORE.txt',
+  './GUIA_JSON_AUXILIAR_NUBE_KSA_PRACTIKA.txt',
   './vendor/jszip.min.js',
   './manifest.webmanifest',
   './assets/icon-192.svg',

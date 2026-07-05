@@ -1,0 +1,21 @@
+GUÍA — JSON AUXILIAR EN MODO NUBE — KSA PRÁCTIKA
+
+1. Firestore es la fuente principal cuando la app muestra “Nube activa”.
+
+2. El JSON queda como respaldo auxiliar. Sirve como copia de seguridad, no como base principal diaria.
+
+3. Exportar JSON sirve para guardar una copia de seguridad del estado de Firestore. En modo nube activa, la app debe exportar leyendo Firestore, no datos locales viejos del dispositivo.
+
+4. No usar JSON para mover datos diarios entre equipos. Para trabajar en varios dispositivos, usar la misma sesión autorizada, confirmar “Nube activa” y usar “Actualizar datos”.
+
+5. No reimportar JSON si la nube está activa. Reimportar puede crear duplicados, mezclar información o confundir el historial.
+
+6. Si un dispositivo no ve datos, primero revisar:
+   - que la sesión sea correcta;
+   - que la app muestre “Nube activa”;
+   - que Firestore sea la fuente principal;
+   - que se haya presionado “Actualizar datos”.
+
+7. No tocar Firestore manualmente desde Firebase Console salvo instrucciones técnicas claras. Firestore es la base principal, no una mesa de experimentos con café encima.
+
+8. Antes de restaurar o reimportar cualquier JSON, pedir revisión técnica. La recuperación debe ser controlada, documentada y sin borrar Firestore por impulso.

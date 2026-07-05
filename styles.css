@@ -9928,3 +9928,153 @@ body,
 .cloud-import-counts-table {
   min-width: 360px;
 }
+
+/* Bloque D / Etapa 1 — Diagnóstico online seguro */
+.online-diagnostic-panel {
+  margin: 14px 0;
+  display: grid;
+  gap: 12px;
+  background: linear-gradient(180deg, rgba(255, 253, 248, 0.9), rgba(255, 248, 234, 0.72));
+}
+
+.online-diagnostic-grid {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.online-diagnostic-grid .status-item span,
+.online-diagnostic-grid .status-item small {
+  overflow-wrap: anywhere;
+}
+
+.online-diagnostic-actions {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.online-diagnostic-actions small {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.online-diagnostic-messages {
+  display: grid;
+  gap: 8px;
+}
+
+.online-diagnostic-counts-table {
+  min-width: 360px;
+}
+
+.sync-mode-badge.is-warning {
+  background: #fff4d9;
+  border-color: rgba(180, 83, 9, 0.28);
+}
+
+/* Bloque D / Etapa 2 — Configuración → Usuarios autorizados por UID */
+.authorized-users-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid rgba(185, 135, 43, 0.26);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.62);
+  min-width: 0;
+}
+
+.authorized-users-toolbar,
+.authorized-users-form-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.authorized-users-guide {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px dashed rgba(185, 135, 43, 0.34);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+}
+
+.authorized-users-guide strong {
+  font-size: 0.95rem;
+}
+
+.authorized-users-guide ol {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.authorized-users-form {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.86);
+  min-width: 0;
+}
+
+.authorized-users-form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.authorized-uid-field {
+  grid-column: span 2;
+}
+
+.authorized-active-field {
+  align-self: end;
+  min-height: 44px;
+}
+
+.authorized-active-field.is-disabled {
+  opacity: 0.72;
+}
+
+.authorized-users-scroll-shell .operational-table-wrap {
+  max-height: 420px;
+}
+
+.authorized-users-table {
+  min-width: 1060px;
+}
+
+.authorized-users-table td[data-label="UID"] small {
+  max-width: 260px;
+}
+
+.authorized-users-table .is-protected-user td:first-child {
+  border-left: 3px solid rgba(185, 135, 43, 0.72);
+}
+
+.authorized-users-table .record-actions {
+  justify-content: flex-start;
+}
+
+.state-pill.is-muted {
+  background: rgba(100, 116, 139, 0.12);
+  color: #475569;
+  border-color: rgba(100, 116, 139, 0.22);
+}
+
+.compact-title-row {
+  align-items: flex-start;
+}
+
+@media (max-width: 760px) {
+  .authorized-uid-field {
+    grid-column: auto;
+  }
+
+  .authorized-users-toolbar {
+    width: 100%;
+  }
+}
