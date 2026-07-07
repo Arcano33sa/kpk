@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_16_post12_firebaseonline_bloqued_etapa4';
+const CACHE_VERSION = 'v0_18_18_post12_firebaseonline_config_etapa2';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

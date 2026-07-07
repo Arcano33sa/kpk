@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.16-post12-firebaseonline-bloqued-etapa4';
+  const APP_VERSION = '0.18.18-post12-firebaseonline-config-etapa2';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1003,6 +1003,54 @@
   const FIRESTORE_RULES_FILENAME = 'FIRESTORE_RULES_KSA_PRACTIKA.rules';
   const FIRESTORE_GUIDE_FILENAME = 'GUIA_APLICAR_REGLAS_FIRESTORE.txt';
   const JSON_AUXILIAR_NUBE_GUIDE_FILENAME = 'GUIA_JSON_AUXILIAR_NUBE_KSA_PRACTIKA.txt';
+  const FIRESTORE_OPERATION_TIMEOUT_MS = 25000;
+  const FIRESTORE_TIMEOUT_SAVE_USER_MESSAGE = 'Tiempo de espera agotado. Revisa conexión, reglas de Firestore o UID.';
+  const FIRESTORE_TIMEOUT_REFRESH_MESSAGE = 'Tiempo de espera agotado al actualizar datos.';
+
+  function createOperationTimeoutError(message, code = 'app/operation-timeout') {
+    const error = new Error(cleanText(message) || 'Tiempo de espera agotado.');
+    error.name = 'KSAOperationTimeoutError';
+    error.code = code;
+    error.isTimeout = true;
+    return error;
+  }
+
+  function isOperationTimeoutError(error) {
+    const code = cleanText(error?.code || '').toLowerCase();
+    const name = cleanText(error?.name || '').toLowerCase();
+    return Boolean(error?.isTimeout || code.includes('timeout') || code.includes('deadline') || name.includes('timeout'));
+  }
+
+  function withOperationTimeout(operation, options = {}) {
+    const opts = isPlainObject(options) ? options : {};
+    const ms = Number(opts.ms) > 0 ? Number(opts.ms) : FIRESTORE_OPERATION_TIMEOUT_MS;
+    const message = cleanText(opts.message || 'Tiempo de espera agotado.');
+    const code = cleanText(opts.code || 'app/operation-timeout');
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const setTimer = typeof window !== 'undefined' && window.setTimeout ? window.setTimeout.bind(window) : setTimeout;
+      const clearTimer = typeof window !== 'undefined' && window.clearTimeout ? window.clearTimeout.bind(window) : clearTimeout;
+      const timer = setTimer(() => {
+        if (settled) return;
+        settled = true;
+        reject(createOperationTimeoutError(message, code));
+      }, ms);
+      Promise.resolve()
+        .then(() => (typeof operation === 'function' ? operation() : operation))
+        .then((value) => {
+          if (settled) return;
+          settled = true;
+          clearTimer(timer);
+          resolve(value);
+        })
+        .catch((error) => {
+          if (settled) return;
+          settled = true;
+          clearTimer(timer);
+          reject(error);
+        });
+    });
+  }
   const FIRESTORE_WORKSPACE_NAME = 'KSA PRÁCTIKA';
   const FIRESTORE_METADATA_SYSTEM_ID = 'sistema';
   const FIRESTORE_VERIFY_DOC_ID = 'verificacion';
@@ -4556,6 +4604,9 @@ Notas importantes:
 
     function translateFirestorePrepError(error) {
       const code = cleanText(error?.code || error?.name || 'firebase/firestore-error');
+      if (isOperationTimeoutError(error)) {
+        return cleanText(error?.message) || 'Tiempo de espera agotado. Revisa conexión, reglas de Firestore o UID.';
+      }
       if (code === 'permission-denied' || code === 'firestore/permission-denied') {
         return 'Firestore no permite escritura todavía. Revisa que las reglas hayan sido publicadas.';
       }
@@ -5900,6 +5951,7 @@ Notas importantes:
       if (!record.correo) return 'Correo obligatorio.';
       if (!isValidEmailAddress(record.correo)) return 'Correo válido obligatorio.';
       if (!record.uid) return 'UID obligatorio.';
+      if (/[\/]/.test(record.uid)) return 'UID de Firebase Authentication inválido.';
       if (!normalizeAuthorizedRoleLabel(rawRole)) return 'Rol obligatorio.';
       return '';
     }
@@ -5908,7 +5960,10 @@ Notas importantes:
       try {
         const { user, role, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: true });
         const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
-        const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'usuarios');
+        const records = await withOperationTimeout(
+          () => readCollectionDocs(db, fs, 'workspaces', workspaceId, 'usuarios'),
+          { message: 'Tiempo de espera agotado al leer usuarios autorizados.', code: 'app/list-users-timeout' }
+        );
         const normalized = sortAuthorizedUsers(records);
         const checkedAt = nowIso();
         publishKSAFirebaseRuntime({
@@ -5948,7 +6003,10 @@ Notas importantes:
         const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
         const inputRecord = normalizeAuthorizedUserRecord(payload);
         const usersRef = fs.collection(db, 'workspaces', workspaceId, 'usuarios');
-        const usersSnap = await fs.getDocs(usersRef);
+        const usersSnap = await withOperationTimeout(
+          () => fs.getDocs(usersRef),
+          { message: FIRESTORE_TIMEOUT_SAVE_USER_MESSAGE, code: 'app/save-user-timeout' }
+        );
         const currentRecords = [];
         usersSnap.forEach((docSnap) => currentRecords.push(normalizeAuthorizedUserRecord(normalizeFirestoreDoc(docSnap))));
         const existing = currentRecords.find((record) => record.uid === inputRecord.uid) || null;
@@ -6001,8 +6059,15 @@ Notas importantes:
           actualizadoPorCorreo: user.email,
           origen: 'ksa_configuracion_usuarios'
         });
-        await fs.setDoc(fs.doc(db, 'workspaces', workspaceId, 'usuarios', inputRecord.uid), document, { merge: true });
-        const snap = await fs.getDoc(fs.doc(db, 'workspaces', workspaceId, 'usuarios', inputRecord.uid));
+        const userDocRef = fs.doc(db, 'workspaces', workspaceId, 'usuarios', inputRecord.uid);
+        await withOperationTimeout(
+          () => fs.setDoc(userDocRef, document, { merge: true }),
+          { message: FIRESTORE_TIMEOUT_SAVE_USER_MESSAGE, code: 'app/save-user-timeout' }
+        );
+        const snap = await withOperationTimeout(
+          () => fs.getDoc(userDocRef),
+          { message: FIRESTORE_TIMEOUT_SAVE_USER_MESSAGE, code: 'app/save-user-timeout' }
+        );
         const saved = snap.exists() ? normalizeAuthorizedUserRecord(normalizeFirestoreDoc(snap)) : normalizeAuthorizedUserRecord(document);
         publishKSAFirebaseRuntime({
           workspaceId,
@@ -6014,7 +6079,7 @@ Notas importantes:
           ok: true,
           action: 'saveAuthorizedUser',
           code: isEdit ? 'users/updated' : 'users/created',
-          message: isEdit ? 'Usuario autorizado actualizado.' : 'Usuario autorizado agregado.',
+          message: 'Autorización guardada correctamente.',
           record: saved,
           status: getFirebaseStatus()
         };
@@ -6036,7 +6101,10 @@ Notas importantes:
         const { user, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: true });
         const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
         const usersRef = fs.collection(db, 'workspaces', workspaceId, 'usuarios');
-        const usersSnap = await fs.getDocs(usersRef);
+        const usersSnap = await withOperationTimeout(
+          () => fs.getDocs(usersRef),
+          { message: 'Tiempo de espera agotado al actualizar estado de usuario.', code: 'app/update-user-timeout' }
+        );
         const currentRecords = [];
         usersSnap.forEach((docSnap) => currentRecords.push(normalizeAuthorizedUserRecord(normalizeFirestoreDoc(docSnap))));
         const existing = currentRecords.find((record) => record.uid === uid) || null;
@@ -6060,13 +6128,16 @@ Notas importantes:
           }
         }
         const stamp = getFirestoreTimestampValue(fs);
-        await fs.setDoc(fs.doc(db, 'workspaces', workspaceId, 'usuarios', uid), stripUndefinedForFirestore({
-          activo: nextActive,
-          updatedAt: stamp,
-          actualizadoPorUid: user.uid,
-          actualizadoPorCorreo: user.email,
-          origen: existing.origen || 'ksa_configuracion_usuarios'
-        }), { merge: true });
+        await withOperationTimeout(
+          () => fs.setDoc(fs.doc(db, 'workspaces', workspaceId, 'usuarios', uid), stripUndefinedForFirestore({
+            activo: nextActive,
+            updatedAt: stamp,
+            actualizadoPorUid: user.uid,
+            actualizadoPorCorreo: user.email,
+            origen: existing.origen || 'ksa_configuracion_usuarios'
+          }), { merge: true }),
+          { message: 'Tiempo de espera agotado al actualizar estado de usuario.', code: 'app/update-user-timeout' }
+        );
         publishKSAFirebaseRuntime({
           workspaceId,
           workspace: workspaceId,
@@ -6925,11 +6996,21 @@ Notas importantes:
     cloudOperationState.isReading = true;
     cloudOperationState.message = 'Verificando Firestore…';
     try {
-      let result = await KSAFirebaseAdapter.readCloudOperationalSnapshot({ requireActive: true });
+      let result = await withOperationTimeout(
+        () => KSAFirebaseAdapter.readCloudOperationalSnapshot({ requireActive: true }),
+        { message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
+      );
       if (!result.ok && result.code === 'cloud/not-active' && opts.activateIfReady !== false && KSAFirebaseAdapter.activateCloudOperation) {
-        const activated = await KSAFirebaseAdapter.activateCloudOperation({ source: 'auto_bootstrap' });
-        if (activated.ok) result = await KSAFirebaseAdapter.readCloudOperationalSnapshot({ requireActive: true });
-        else result = { ...result, message: activated.message || result.message };
+        const activated = await withOperationTimeout(
+          () => KSAFirebaseAdapter.activateCloudOperation({ source: 'auto_bootstrap' }),
+          { message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
+        );
+        if (activated.ok) {
+          result = await withOperationTimeout(
+            () => KSAFirebaseAdapter.readCloudOperationalSnapshot({ requireActive: true }),
+            { message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
+          );
+        } else result = { ...result, message: activated.message || result.message };
       }
       if (result.ok) {
         applyCloudSnapshotToRuntime(result);
@@ -6952,14 +7033,27 @@ Notas importantes:
 
   async function handleCloudDataRefresh(button = null) {
     if (!requireRolePermission('updateData', configState, { preserveScroll: true })) return null;
+    if (cloudOperationState.isReading) return { ok: false, message: 'Ya hay una actualización de nube en curso.' };
     if (button) button.disabled = true;
-    configState.message = 'Actualizando datos desde Firestore…';
+    configState.message = 'Actualizando datos desde Firestore...';
     configState.messageType = 'success';
     renderRoute({ preserveScroll: true });
-    const result = await activateAndLoadCloudOperation({ activateIfReady: false, render: false });
-    configState.message = result.ok ? 'Datos actualizados desde Firestore.' : (result.message || 'No se pudo actualizar desde Firestore.');
-    configState.messageType = result.ok ? 'success' : 'error';
-    renderRoute({ preserveScroll: true });
+    try {
+      const result = await activateAndLoadCloudOperation({ activateIfReady: false, render: false });
+      const message = cleanText(result?.message || '');
+      configState.message = result?.ok
+        ? 'Datos actualizados correctamente.'
+        : (message === FIRESTORE_TIMEOUT_REFRESH_MESSAGE ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : (message || 'No se pudieron actualizar los datos.'));
+      configState.messageType = result?.ok ? 'success' : 'error';
+      renderRoute({ preserveScroll: true });
+      return result;
+    } catch (error) {
+      cloudOperationState.isReading = false;
+      configState.message = isOperationTimeoutError(error) ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : (cleanText(error?.message) || 'No se pudieron actualizar los datos.');
+      configState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return { ok: false, message: configState.message };
+    }
   }
 
   async function handleCloudOperationActivate(button = null) {
@@ -7614,7 +7708,7 @@ Notas importantes:
       canVerifyFirestore: Boolean(firebaseConfigured && signedUser),
       canInitializeWorkspace: isAdmin,
       canActivateCloud: Boolean(firebaseConfigured && signedUser && isAdmin),
-      canRefreshCloud: Boolean(firebaseConfigured && signedUser && (cloudActive || cloudReady)),
+      canRefreshCloud: Boolean(firebaseConfigured && signedUser && (cloudActive || cloudReady) && !cloudOperationState.isReading),
       isInitialAdminSignedIn,
       isAdmin,
       cloudActive,
@@ -7676,7 +7770,10 @@ Notas importantes:
     }
     renderRoute({ preserveScroll: true });
     try {
-      const result = await KSAFirebaseAdapter.listAuthorizedUsers();
+      const result = await withOperationTimeout(
+        () => KSAFirebaseAdapter.listAuthorizedUsers(),
+        { message: 'Tiempo de espera agotado al leer usuarios autorizados.', code: 'app/list-users-ui-timeout' }
+      );
       applyAuthorizedUsersListResult(result);
       renderRoute({ preserveScroll: true });
       return result;
@@ -7744,6 +7841,7 @@ Notas importantes:
     if (!record.correo) return 'Correo obligatorio.';
     if (!isValidEmailAddress(record.correo)) return 'Correo válido obligatorio.';
     if (!record.uid) return 'UID obligatorio.';
+    if (/[\/]/.test(record.uid)) return 'UID de Firebase Authentication inválido.';
     if (!normalizeAuthorizedRoleLabel(rawRole)) return 'Rol obligatorio.';
     const duplicateUid = !usersAuthState.editingUid && usersAuthState.records.some((item) => normalizeAuthorizedUserRecord(item).uid === record.uid);
     if (duplicateUid) return 'No se puede duplicar UID.';
@@ -7778,24 +7876,30 @@ Notas importantes:
       return { ok: false, message: validation };
     }
     usersAuthState.isSaving = true;
-    usersAuthState.message = 'Guardando autorización en Firestore…';
+    usersAuthState.message = 'Guardando autorización en Firestore...';
     usersAuthState.messageType = 'success';
     renderRoute({ preserveScroll: true });
     try {
-      const result = await KSAFirebaseAdapter.saveAuthorizedUser(payload);
+      const result = await withOperationTimeout(
+        () => KSAFirebaseAdapter.saveAuthorizedUser(payload),
+        { message: FIRESTORE_TIMEOUT_SAVE_USER_MESSAGE, code: 'app/save-user-ui-timeout' }
+      );
       usersAuthState.isSaving = false;
-      usersAuthState.message = result.message || (result.ok ? 'Autorización guardada.' : 'No se pudo guardar autorización.');
+      usersAuthState.message = result.ok ? 'Autorización guardada correctamente.' : (result.message || 'No se pudo guardar la autorización.');
       usersAuthState.messageType = result.ok ? 'success' : 'error';
       if (result.ok) {
         usersAuthState.editingUid = '';
         await handleAuthorizedUsersRefresh(null, { silent: true });
+        usersAuthState.message = 'Autorización guardada correctamente.';
+        usersAuthState.messageType = 'success';
+        renderRoute({ preserveScroll: true });
       } else {
         renderRoute({ preserveScroll: true });
       }
       return result;
     } catch (error) {
       usersAuthState.isSaving = false;
-      usersAuthState.message = cleanText(error?.message || 'No se pudo guardar autorización.');
+      usersAuthState.message = isOperationTimeoutError(error) ? FIRESTORE_TIMEOUT_SAVE_USER_MESSAGE : (cleanText(error?.message) || 'No se pudo guardar la autorización.');
       usersAuthState.messageType = 'error';
       renderRoute({ preserveScroll: true });
       return { ok: false, message: usersAuthState.message };
@@ -7825,7 +7929,10 @@ Notas importantes:
     usersAuthState.messageType = 'success';
     renderRoute({ preserveScroll: true });
     try {
-      const result = await KSAFirebaseAdapter.setAuthorizedUserActive(uid, nextActive);
+      const result = await withOperationTimeout(
+        () => KSAFirebaseAdapter.setAuthorizedUserActive(uid, nextActive),
+        { message: 'Tiempo de espera agotado al actualizar estado de usuario.', code: 'app/update-user-ui-timeout' }
+      );
       usersAuthState.isSaving = false;
       usersAuthState.message = result.message || (result.ok ? 'Estado actualizado.' : 'No se pudo actualizar estado.');
       usersAuthState.messageType = result.ok ? 'success' : 'error';
@@ -8371,6 +8478,12 @@ Notas importantes:
   }
 
   async function handleCloudJsonFileSelected(file) {
+    if (!canCurrentRole('initialJsonToCloud')) {
+      cloudInitialImportState.message = ADMIN_RESTRICTED_MESSAGE;
+      cloudInitialImportState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
     if (!file) return;
     if (!requireRolePermission('initialJsonToCloud', cloudInitialImportState, { preserveScroll: true })) return;
     cloudInitialImportState = {
@@ -21109,11 +21222,12 @@ Notas importantes:
       projectId: firebaseStatus.projectId || cleanText(getRawKSAFirebaseConfig().projectId),
       sourcePrincipal: cloudActive ? 'Firestore' : 'Local controlado',
       datosMigrados: cloudReady ? 'Sí' : 'No',
-      canRefreshCloud: Boolean(authStatus.authMode === 'firebase' && authStatus.user?.email && cloudReady)
+      canRefreshCloud: Boolean(authStatus.authMode === 'firebase' && authStatus.user?.email && cloudReady && !cloudOperationState.isReading)
     };
   }
 
-  function renderDataSyncStatusCard() {
+  function renderDataSyncStatusCard(options = {}) {
+    const opts = isPlainObject(options) ? options : {};
     const info = getDataSyncStatusInfo();
     return `
       <article class="panel-card config-card full-span data-sync-status-card">
@@ -21140,7 +21254,7 @@ Notas importantes:
           <div class="status-item"><strong>Datos migrados</strong><span>${escapeHtml(info.datosMigrados || 'No')}</span></div>
           <div class="status-item"><strong>Última sincronización</strong><span>${escapeHtml(info.lastSyncAt ? formatDateTime(info.lastSyncAt) : '—')}</span></div>
           ${Number.isFinite(info.localRecords) ? `<div class="status-item"><strong>Conteos locales</strong><span>${escapeHtml(String(info.localRecords))}</span><small>Solo informativo</small></div>` : ''}
-          ${info.canRefreshCloud ? '<button type="button" class="secondary-action compact" data-cloud-refresh>Actualizar datos</button>' : ''}
+          ${!opts.hideCloudRefresh && info.canRefreshCloud ? '<button type="button" class="secondary-action compact" data-cloud-refresh>Actualizar datos</button>' : ''}
         </div>
       </article>
     `;
@@ -21584,7 +21698,8 @@ Notas importantes:
     `;
   }
 
-  function renderUsersConfigCard(currentRole) {
+  function renderUsersConfigCard(currentRole, options = {}) {
+    const opts = isPlainObject(options) ? options : {};
     const status = getPreparedUsersStatus();
     const rolesHtml = ROLE_ORDER.map((roleId) => {
       const role = ROLE_DEFINITIONS[roleId];
@@ -21614,7 +21729,7 @@ Notas importantes:
     const cloudActivateHtml = status.canActivateCloud && canChangeDataSource
       ? `<button type="button" class="card-action compact" data-cloud-activate ${status.cloudActive ? 'disabled' : ''}>${status.cloudActive ? 'Nube activa' : 'Activar nube'}</button>`
       : '';
-    const cloudRefreshHtml = status.canRefreshCloud && canRefreshData
+    const cloudRefreshHtml = !opts.hideCloudRefresh && status.canRefreshCloud && canRefreshData
       ? '<button type="button" class="secondary-action compact" data-cloud-refresh>Actualizar datos</button>'
       : '';
     const adminToolsHtml = canUseFirestoreTools ? `
@@ -21702,17 +21817,45 @@ Notas importantes:
   }
 
 
+  function renderConfigAccordionItem({ title, eyebrow = 'Configuración', badgeText = '', badgeClass = '', open = false, body = '' } = {}) {
+    const safeTitle = escapeHtml(title || 'Módulo');
+    const safeEyebrow = escapeHtml(eyebrow || 'Configuración');
+    const badge = badgeText
+      ? `<span class="entity-accordion-count config-accordion-badge ${escapeHtml(badgeClass || '')}">${escapeHtml(badgeText)}</span>`
+      : '';
+    return `
+      <details class="config-accordion-item entity-accordion-item" ${open ? 'open' : ''}>
+        <summary class="config-accordion-toggle entity-accordion-toggle">
+          <span class="config-accordion-chevron entity-accordion-chevron" aria-hidden="true"></span>
+          <span class="entity-accordion-name config-accordion-name">
+            <span class="eyebrow mini">${safeEyebrow}</span>
+            <strong>${safeTitle}</strong>
+          </span>
+          ${badge}
+        </summary>
+        <div class="config-accordion-panel entity-accordion-panel">
+          ${body || ''}
+        </div>
+      </details>
+    `;
+  }
+
   function renderConfiguracion() {
     const config = normalizeConfiguracion(appData.configuracion);
     const currentRole = getCurrentRoleDefinition();
     const counts = getJsonRecordCounts(appData);
     const jsonAuxInfo = getJsonAuxiliaryStatusInfo();
+    const dataSyncInfo = getDataSyncStatusInfo();
+    const usersStatus = getPreparedUsersStatus();
     const jsonImportLockedByCloud = jsonAuxInfo.cloudActive;
     const preview = jsonBackupState.preview;
     const hasPreview = Boolean(preview);
     const canExport = canCurrentRole('exportJson');
     const canImport = canCurrentRole('importJson') && !jsonImportLockedByCloud;
     const canConfig = canCurrentRole('changeConfig');
+    const canRefreshData = canCurrentRole('updateData');
+    const topRefreshEnabled = Boolean(dataSyncInfo.canRefreshCloud && canRefreshData);
+    const lastDataRefreshAt = dataSyncInfo.lastSyncAt || usersStatus.lastSyncAt || '';
     const modeOptions = getOperationalRecordCount() > 0
       ? `
         <label class="form-field">
@@ -21734,12 +21877,131 @@ Notas importantes:
         </div>
       `;
 
+    const generalConfigCard = `
+      <article class="panel-card config-card">
+        <div class="section-title-row">
+          <div>
+            <span class="eyebrow mini">General</span>
+            <h2>Parámetros generales</h2>
+          </div>
+        </div>
+        ${renderRolePermissionNotice('changeConfig', ADMIN_RESTRICTED_MESSAGE)}
+        <form class="config-form" data-config-form novalidate>
+          <div class="form-grid">
+            <label class="form-field">
+              <span>Nombre de la app</span>
+              <input type="text" name="appDisplayName" value="${escapeHtml(config.appDisplayName)}" ${canConfig ? '' : 'disabled'} autocomplete="off" />
+            </label>
+            <label class="form-field">
+              <span>Moneda principal</span>
+              <input type="text" name="monedaPrincipal" value="${escapeHtml(config.monedaPrincipal)}" ${canConfig ? '' : 'disabled'} autocomplete="off" />
+            </label>
+            <label class="form-field">
+              <span>Días para alerta próxima a vencer</span>
+              <input type="number" name="diasAlertaVencimiento" value="${escapeHtml(config.diasAlertaVencimiento)}" min="1" step="1" inputmode="numeric" ${canConfig ? '' : 'disabled'} />
+            </label>
+            <label class="form-field">
+              <span>Archivo Excel de referencia</span>
+              <input type="text" name="excelReferencia" value="${escapeHtml(config.excelReferencia)}" ${canConfig ? '' : 'disabled'} autocomplete="off" />
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="card-action" ${canConfig ? '' : 'disabled'}>Guardar configuración</button>
+          </div>
+        </form>
+      </article>
+    `;
+
+    const jsonExportCard = `
+      <article class="panel-card config-card full-span">
+        <div class="section-title-row">
+          <div>
+            <span class="eyebrow mini">Respaldo JSON</span>
+            <h2>${jsonAuxInfo.cloudActive ? 'Exportar JSON auxiliar' : 'Exportar respaldo'}</h2>
+          </div>
+        </div>
+        ${renderRolePermissionNotice('exportJson', 'Exportar JSON queda reservado para Administrador.')}
+        <p class="notice">${jsonAuxInfo.cloudActive ? 'Fuente principal: Firestore. JSON: respaldo auxiliar. La exportación se arma leyendo Firestore, no datos locales viejos.' : 'JSON es respaldo y traslado manual entre dispositivos. No sincroniza automáticamente: si en dos iPads se trabaja a la vez, el JSON no hace telepatía.'}</p>
+        <div class="import-summary-grid compact-summary">
+          <div class="status-item"><strong>Fuente principal</strong><span>${escapeHtml(jsonAuxInfo.fuentePrincipal)}</span></div>
+          <div class="status-item"><strong>JSON</strong><span>${escapeHtml(jsonAuxInfo.jsonTipo)}</span></div>
+          <div class="status-item"><strong>Exporta desde</strong><span>${escapeHtml(jsonAuxInfo.exportSource)}</span></div>
+          <div class="status-item"><strong>Workspace</strong><span>${escapeHtml(jsonAuxInfo.workspaceId)}</span></div>
+          <div class="status-item"><strong>Project ID</strong><span>${escapeHtml(jsonAuxInfo.projectId || 'ksakpk-ecb6d')}</span></div>
+        </div>
+        <div class="config-actions-row">
+          <button type="button" class="card-action" data-json-export ${canExport ? '' : 'disabled'}>${jsonAuxInfo.cloudActive ? 'Exportar JSON auxiliar' : 'Exportar JSON'}</button>
+          <div class="data-pill"><span>Último respaldo</span><strong>${escapeHtml(formatDateTime(config.lastBackupAt))}</strong></div>
+          <div class="data-pill"><span>Última importación</span><strong>${escapeHtml(formatDateTime(config.lastImportAt))}</strong></div>
+        </div>
+        <div class="import-summary-grid compact-summary">
+          <div class="status-item"><strong>Ventas</strong><span>${counts.ventas}</span></div>
+          <div class="status-item"><strong>Cobros</strong><span>${counts.cobros}</span></div>
+          <div class="status-item"><strong>Compras/prov.</strong><span>${counts.comprasProveedores}</span></div>
+          <div class="status-item"><strong>Pagos</strong><span>${counts.pagosProveedores}</span></div>
+          <div class="status-item"><strong>Gastos</strong><span>${counts.gastos}</span></div>
+          <div class="status-item"><strong>Facturas</strong><span>${counts.facturasModulo || 0}</span></div>
+          <div class="status-item"><strong>Catálogos</strong><span>${counts.catalogos}</span></div>
+        </div>
+      </article>
+    `;
+
+    const jsonImportCard = `
+      <article class="panel-card config-card full-span">
+        <div class="section-title-row">
+          <div>
+            <span class="eyebrow mini">Importación / Validación</span>
+            <h2>Importar JSON validado</h2>
+          </div>
+          ${hasPreview ? '<button type="button" class="secondary-action compact" data-json-import-cancel>Cancelar vista previa</button>' : ''}
+        </div>
+        ${renderRolePermissionNotice('importJson', 'Importar JSON queda reservado para Administrador.')}
+        ${jsonImportLockedByCloud ? '<div class="form-message is-error" role="alert">La nube ya está activa. No reimportes JSON salvo recuperación técnica controlada; primero revisa sesión, Nube activa y Actualizar datos.</div>' : ''}
+        <label class="form-field">
+          <span>Seleccionar respaldo .json</span>
+          <input type="file" accept=".json,application/json" data-json-file ${canImport ? '' : 'disabled'} />
+        </label>
+        ${hasPreview ? renderJsonPreview(preview, modeOptions, canImport) : `
+          <div class="empty-state">
+            <strong>${jsonImportLockedByCloud ? 'Importación bloqueada con nube activa.' : 'Selecciona un JSON para validar.'}</strong>
+            <p>${jsonImportLockedByCloud ? 'Firestore es la fuente principal y el JSON queda como respaldo auxiliar. Reimportar puede crear duplicados o mezclar datos.' : 'Primero se revisa estructura, metadata, versión y conteos; después se permite reemplazar o fusionar. Sin validación no hay importación, porque la cartera no es piñata.'}</p>
+          </div>
+        `}
+      </article>
+    `;
+
+    const systemStatusCard = `
+      <article class="panel-card config-card full-span">
+        <div class="section-title-row">
+          <div>
+            <span class="eyebrow mini">Información del sistema</span>
+            <h2>Estado técnico</h2>
+          </div>
+        </div>
+        <dl class="definition-list system-definition-list">
+          <dt>App esperada</dt><dd>${escapeHtml(APP_NAME)}</dd>
+          <dt>Versión</dt><dd>${escapeHtml(APP_VERSION)}</dd>
+          <dt>SchemaVersion</dt><dd>${escapeHtml(SCHEMA_VERSION)}</dd>
+          <dt>Modo de datos</dt><dd>${escapeHtml(dataSyncInfo.estado)}</dd>
+          <dt>localStorage</dt><dd>${escapeHtml(STORAGE_KEY)}</dd>
+          <dt>Creado</dt><dd>${escapeHtml(formatDateTime(appData.metadata?.createdAt))}</dd>
+          <dt>Actualizado</dt><dd>${escapeHtml(formatDateTime(appData.metadata?.updatedAt))}</dd>
+          <dt>Nota</dt><dd>Firestore opera como fuente principal cuando la app muestra Nube activa; JSON queda como respaldo auxiliar.</dd>
+        </dl>
+      </article>
+    `;
+
+    const firestoreToolsHtml = `
+      ${canCurrentRole('firestoreTools') ? renderFirestoreContractCard() : ''}
+      ${canCurrentRole('firestoreTools') ? renderFirebaseAdapterCard() : ''}
+    `;
+
     return `
       <section class="hero config-hero">
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Configuración</h1>
-          <p class="lead">Centraliza parámetros generales, Usuarios, respaldo JSON validado e información del sistema. Firebase Auth permite login real y Firestore puede operar como fuente principal cuando la nube está activa.</p>
+          <p class="lead">Centraliza parámetros generales, usuarios, respaldo JSON auxiliar, sincronización y estado técnico. Firestore se mantiene como fuente principal cuando la nube está activa.</p>
         </div>
         <aside class="hero-status" aria-label="Estado de configuración">
           <h3>Sistema</h3>
@@ -21753,129 +22015,74 @@ Notas importantes:
       </section>
 
       <section class="config-shell">
+        <article class="panel-card config-top-sync-band" aria-label="Estado superior de nube y actualización de datos">
+          <div class="section-title-row config-top-title-row">
+            <div>
+              <span class="eyebrow mini">Estado rápido</span>
+              <h2>Datos en línea</h2>
+            </div>
+            <button type="button" class="card-action config-top-refresh" data-cloud-refresh ${topRefreshEnabled ? '' : 'disabled'}>Actualizar datos</button>
+          </div>
+          <div class="import-summary-grid compact-summary config-top-status-grid">
+            <div class="status-item"><strong>Estado de nube</strong><span>${escapeHtml(dataSyncInfo.estado)}</span></div>
+            <div class="status-item"><strong>Fuente principal</strong><span>${escapeHtml(jsonAuxInfo.fuentePrincipal || dataSyncInfo.sourcePrincipal || 'Firestore')}</span></div>
+            <div class="status-item"><strong>JSON</strong><span>${escapeHtml(jsonAuxInfo.jsonTipo || 'Respaldo auxiliar')}</span></div>
+            <div class="status-item"><strong>Workspace</strong><span>${escapeHtml(usersStatus.workspace || dataSyncInfo.workspace || 'ksa_practika')}</span></div>
+            <div class="status-item"><strong>Usuario actual</strong><span>${escapeHtml(usersStatus.currentUser || '—')}</span></div>
+            <div class="status-item"><strong>Rol actual</strong><span>${escapeHtml(usersStatus.currentRole || currentRole.label)}</span></div>
+            <div class="status-item"><strong>Última actualización de datos</strong><span>${escapeHtml(lastDataRefreshAt ? formatDateTime(lastDataRefreshAt) : '—')}</span></div>
+          </div>
+          <p class="compact-note">El botón refresca datos desde Firestore cuando la nube está activa. No importa JSON, no duplica registros y no altera consecutivos.</p>
+        </article>
+
         ${configState.message ? `<div class="form-message ${configState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(configState.message)}</div>` : ''}
         ${jsonBackupState.message ? `<div class="form-message ${jsonBackupState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(jsonBackupState.message)}</div>` : ''}
 
-        <div class="config-grid">
-          <article class="panel-card config-card">
-            <div class="section-title-row">
-              <div>
-                <span class="eyebrow mini">General</span>
-                <h2>Parámetros generales</h2>
-              </div>
-            </div>
-            ${renderRolePermissionNotice('changeConfig', ADMIN_RESTRICTED_MESSAGE)}
-            <form class="config-form" data-config-form novalidate>
-              <div class="form-grid">
-                <label class="form-field">
-                  <span>Nombre de la app</span>
-                  <input type="text" name="appDisplayName" value="${escapeHtml(config.appDisplayName)}" ${canConfig ? '' : 'disabled'} autocomplete="off" />
-                </label>
-                <label class="form-field">
-                  <span>Moneda principal</span>
-                  <input type="text" name="monedaPrincipal" value="${escapeHtml(config.monedaPrincipal)}" ${canConfig ? '' : 'disabled'} autocomplete="off" />
-                </label>
-                <label class="form-field">
-                  <span>Días para alerta próxima a vencer</span>
-                  <input type="number" name="diasAlertaVencimiento" value="${escapeHtml(config.diasAlertaVencimiento)}" min="1" step="1" inputmode="numeric" ${canConfig ? '' : 'disabled'} />
-                </label>
-                <label class="form-field">
-                  <span>Archivo Excel de referencia</span>
-                  <input type="text" name="excelReferencia" value="${escapeHtml(config.excelReferencia)}" ${canConfig ? '' : 'disabled'} autocomplete="off" />
-                </label>
-              </div>
-              <div class="form-actions">
-                <button type="submit" class="card-action" ${canConfig ? '' : 'disabled'}>Guardar configuración</button>
-              </div>
-            </form>
-          </article>
+        <div class="config-accordion-list entity-accordion-list">
+          ${renderConfigAccordionItem({
+            title: 'Datos y sincronización',
+            eyebrow: 'Configuración',
+            badgeText: dataSyncInfo.estado,
+            badgeClass: dataSyncInfo.badgeClass,
+            open: true,
+            body: `
+              ${generalConfigCard}
+              ${renderDataSyncStatusCard({ hideCloudRefresh: true })}
+              ${firestoreToolsHtml}
+              ${renderDeviceIdentityCard(config)}
+            `
+          })}
 
-          ${renderUsersConfigCard(currentRole)}
+          ${renderConfigAccordionItem({
+            title: 'Usuarios',
+            eyebrow: 'Acceso',
+            badgeText: usersStatus.currentRole || currentRole.label,
+            badgeClass: usersStatus.cloudActive ? 'is-cloud' : 'is-pending',
+            body: renderUsersConfigCard(currentRole, { hideCloudRefresh: true })
+          })}
 
-          ${renderPwaUpdateCard(config)}
+          ${renderConfigAccordionItem({
+            title: 'Respaldo JSON auxiliar',
+            eyebrow: 'Respaldo',
+            badgeText: jsonAuxInfo.jsonTipo,
+            badgeClass: jsonAuxInfo.cloudActive ? 'is-cloud' : 'is-pending',
+            body: jsonExportCard
+          })}
 
-          ${renderDataSyncStatusCard()}
+          ${renderConfigAccordionItem({
+            title: 'Importación y recuperación',
+            eyebrow: 'Herramientas delicadas',
+            badgeText: jsonImportLockedByCloud ? 'Bloqueado con nube activa' : 'Validado manual',
+            badgeClass: jsonImportLockedByCloud ? 'is-danger' : 'is-pending',
+            body: `${jsonImportCard}${renderJsonImportHistoryList()}`
+          })}
 
-          ${canCurrentRole('firestoreTools') ? renderFirestoreContractCard() : ''}
-
-          ${canCurrentRole('firestoreTools') ? renderFirebaseAdapterCard() : ''}
-
-          ${renderDeviceIdentityCard(config)}
-
-          <article class="panel-card config-card full-span">
-            <div class="section-title-row">
-              <div>
-                <span class="eyebrow mini">Respaldo JSON</span>
-                <h2>${jsonAuxInfo.cloudActive ? 'Exportar JSON auxiliar' : 'Exportar respaldo'}</h2>
-              </div>
-            </div>
-            ${renderRolePermissionNotice('exportJson', 'Exportar JSON queda reservado para Administrador.')}
-            <p class="notice">${jsonAuxInfo.cloudActive ? 'Fuente principal: Firestore. JSON: respaldo auxiliar. La exportación se arma leyendo Firestore, no datos locales viejos.' : 'JSON es respaldo y traslado manual entre dispositivos. No sincroniza automáticamente: si en dos iPads se trabaja a la vez, el JSON no hace telepatía.'}</p>
-            <div class="import-summary-grid compact-summary">
-              <div class="status-item"><strong>Fuente principal</strong><span>${escapeHtml(jsonAuxInfo.fuentePrincipal)}</span></div>
-              <div class="status-item"><strong>JSON</strong><span>${escapeHtml(jsonAuxInfo.jsonTipo)}</span></div>
-              <div class="status-item"><strong>Exporta desde</strong><span>${escapeHtml(jsonAuxInfo.exportSource)}</span></div>
-              <div class="status-item"><strong>Workspace</strong><span>${escapeHtml(jsonAuxInfo.workspaceId)}</span></div>
-              <div class="status-item"><strong>Project ID</strong><span>${escapeHtml(jsonAuxInfo.projectId || 'ksakpk-ecb6d')}</span></div>
-            </div>
-            <div class="config-actions-row">
-              <button type="button" class="card-action" data-json-export ${canExport ? '' : 'disabled'}>${jsonAuxInfo.cloudActive ? 'Exportar JSON auxiliar' : 'Exportar JSON'}</button>
-              <div class="data-pill"><span>Último respaldo</span><strong>${escapeHtml(formatDateTime(config.lastBackupAt))}</strong></div>
-              <div class="data-pill"><span>Última importación</span><strong>${escapeHtml(formatDateTime(config.lastImportAt))}</strong></div>
-            </div>
-            <div class="import-summary-grid compact-summary">
-              <div class="status-item"><strong>Ventas</strong><span>${counts.ventas}</span></div>
-              <div class="status-item"><strong>Cobros</strong><span>${counts.cobros}</span></div>
-              <div class="status-item"><strong>Compras/prov.</strong><span>${counts.comprasProveedores}</span></div>
-              <div class="status-item"><strong>Pagos</strong><span>${counts.pagosProveedores}</span></div>
-              <div class="status-item"><strong>Gastos</strong><span>${counts.gastos}</span></div>
-              <div class="status-item"><strong>Facturas</strong><span>${counts.facturasModulo || 0}</span></div>
-              <div class="status-item"><strong>Catálogos</strong><span>${counts.catalogos}</span></div>
-            </div>
-          </article>
-
-          <article class="panel-card config-card full-span">
-            <div class="section-title-row">
-              <div>
-                <span class="eyebrow mini">Importación / Validación</span>
-                <h2>Importar JSON validado</h2>
-              </div>
-              ${hasPreview ? '<button type="button" class="secondary-action compact" data-json-import-cancel>Cancelar vista previa</button>' : ''}
-            </div>
-            ${renderRolePermissionNotice('importJson', 'Importar JSON queda reservado para Administrador.')}
-            ${jsonImportLockedByCloud ? '<div class="form-message is-error" role="alert">La nube ya está activa. No reimportes JSON salvo recuperación técnica controlada; primero revisa sesión, Nube activa y Actualizar datos.</div>' : ''}
-            <label class="form-field">
-              <span>Seleccionar respaldo .json</span>
-              <input type="file" accept=".json,application/json" data-json-file ${canImport ? '' : 'disabled'} />
-            </label>
-            ${hasPreview ? renderJsonPreview(preview, modeOptions, canImport) : `
-              <div class="empty-state">
-                <strong>${jsonImportLockedByCloud ? 'Importación bloqueada con nube activa.' : 'Selecciona un JSON para validar.'}</strong>
-                <p>${jsonImportLockedByCloud ? 'Firestore es la fuente principal y el JSON queda como respaldo auxiliar. Reimportar puede crear duplicados o mezclar datos.' : 'Primero se revisa estructura, metadata, versión y conteos; después se permite reemplazar o fusionar. Sin validación no hay importación, porque la cartera no es piñata.'}</p>
-              </div>
-            `}
-          </article>
-
-          ${renderJsonImportHistoryList()}
-
-          <article class="panel-card config-card full-span">
-            <div class="section-title-row">
-              <div>
-                <span class="eyebrow mini">Información del sistema</span>
-                <h2>Estado técnico</h2>
-              </div>
-            </div>
-            <dl class="definition-list system-definition-list">
-              <dt>App esperada</dt><dd>${escapeHtml(APP_NAME)}</dd>
-              <dt>Versión</dt><dd>${escapeHtml(APP_VERSION)}</dd>
-              <dt>SchemaVersion</dt><dd>${escapeHtml(SCHEMA_VERSION)}</dd>
-              <dt>Modo de datos</dt><dd>${escapeHtml(getDataSyncStatusInfo().estado)}</dd>
-              <dt>localStorage</dt><dd>${escapeHtml(STORAGE_KEY)}</dd>
-              <dt>Creado</dt><dd>${escapeHtml(formatDateTime(appData.metadata?.createdAt))}</dd>
-              <dt>Actualizado</dt><dd>${escapeHtml(formatDateTime(appData.metadata?.updatedAt))}</dd>
-              <dt>Nota</dt><dd>Firestore opera como fuente principal cuando la app muestra Nube activa; JSON queda como respaldo auxiliar.</dd>
-            </dl>
-          </article>
+          ${renderConfigAccordionItem({
+            title: 'Sistema / PWA',
+            eyebrow: 'Aplicación',
+            badgeText: APP_VERSION,
+            body: `${renderPwaUpdateCard(config)}${systemStatusCard}`
+          })}
         </div>
       </section>
     `;
@@ -22506,6 +22713,12 @@ Notas importantes:
   }
 
   async function handleJsonFileSelected(file) {
+    if (!canCurrentRole('importJson')) {
+      jsonBackupState.message = ADMIN_RESTRICTED_MESSAGE;
+      jsonBackupState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
     if (!file) return;
     if (!canCurrentRole('importJson')) {
       jsonBackupState.message = ADMIN_RESTRICTED_MESSAGE;

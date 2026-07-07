@@ -10078,3 +10078,143 @@ body,
     width: 100%;
   }
 }
+
+/* CONFIGURACIÓN — ETAPA 1/2: módulos desplegables y banda superior visible */
+.config-top-sync-band {
+  position: sticky;
+  top: calc(var(--topbar-height) + var(--safe-top) + 8px);
+  z-index: 40;
+  display: grid;
+  gap: 10px;
+  border-color: rgba(185, 135, 43, 0.38);
+  background: linear-gradient(180deg, rgba(255, 253, 248, 0.98), rgba(255, 248, 234, 0.98));
+  box-shadow: 0 14px 34px rgba(17, 24, 39, 0.10);
+  backdrop-filter: blur(10px);
+}
+
+.config-top-title-row {
+  gap: 10px;
+}
+
+.config-top-refresh {
+  min-height: 38px;
+  white-space: nowrap;
+}
+
+.config-top-status-grid {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.config-top-status-grid .status-item span,
+.config-accordion-panel .status-item span,
+.config-accordion-panel .definition-list dd {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.config-accordion-list {
+  gap: 12px;
+}
+
+.config-accordion-item {
+  min-width: 0;
+}
+
+.config-accordion-item > summary::-webkit-details-marker {
+  display: none;
+}
+
+.config-accordion-toggle {
+  user-select: none;
+}
+
+.config-accordion-chevron::before {
+  content: '▸';
+}
+
+.config-accordion-item[open] .config-accordion-chevron::before {
+  content: '▾';
+}
+
+.config-accordion-item[open] .config-accordion-toggle {
+  border-radius: 18px 18px 0 0;
+  background: linear-gradient(180deg, #fff8ea, #fff2d6);
+}
+
+.config-accordion-name {
+  display: grid;
+  gap: 2px;
+}
+
+.config-accordion-name strong {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.config-accordion-badge.is-cloud {
+  background: #eaf8ef;
+  border-color: rgba(46, 125, 50, 0.26);
+  color: var(--success);
+}
+
+.config-accordion-badge.is-pending {
+  background: #fff4d9;
+  border-color: rgba(185, 135, 43, 0.32);
+  color: var(--accent-dark);
+}
+
+.config-accordion-badge.is-danger {
+  background: #fff1f2;
+  border-color: rgba(159, 18, 57, 0.25);
+  color: var(--danger);
+}
+
+.config-accordion-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.config-accordion-panel > .config-card,
+.config-accordion-panel > .json-import-history-card,
+.config-accordion-panel > .device-identity-card,
+.config-accordion-panel > .pwa-update-card,
+.config-accordion-panel > .data-sync-status-card,
+.config-accordion-panel > .firestore-contract-card,
+.config-accordion-panel > .firebase-adapter-card {
+  margin: 0;
+}
+
+.config-accordion-panel .config-actions-row {
+  margin-bottom: 0;
+}
+
+@media (max-width: 760px) {
+  .config-top-sync-band {
+    position: static;
+  }
+
+  .config-top-title-row {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .config-top-refresh {
+    width: 100%;
+  }
+
+  .config-accordion-toggle {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .config-accordion-name strong {
+    white-space: normal;
+  }
+
+  .config-accordion-badge {
+    grid-column: 2;
+    justify-self: start;
+    max-width: 100%;
+    white-space: normal;
+  }
+}
