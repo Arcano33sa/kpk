@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.28-post12-global-facturas-etapa2b-orden-consecutivo-scroll';
+  const APP_VERSION = '0.18.29-post12-global-facturas-etapa2c-orden-descendente';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -11428,11 +11428,11 @@ Notas importantes:
   }
 
   function compareFacturasGlobalItems(a, b) {
-    const byNo = compareFacturaNaturalNo(a?.record?.no, b?.record?.no);
+    const byNo = compareFacturaNaturalNo(b?.record?.no, a?.record?.no);
     if (byNo !== 0) return byNo;
 
     if (a?.hasReliableDate && b?.hasReliableDate) {
-      const byDate = String(a.reliableDate).localeCompare(String(b.reliableDate));
+      const byDate = String(b.reliableDate).localeCompare(String(a.reliableDate));
       if (byDate !== 0) return byDate;
     } else if (a?.hasReliableDate !== b?.hasReliableDate) {
       return a?.hasReliableDate ? -1 : 1;
