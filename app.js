@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.27-post12-global-facturas-etapa2-filtros-busqueda';
+  const APP_VERSION = '0.18.28-post12-global-facturas-etapa2b-orden-consecutivo-scroll';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -11422,6 +11422,31 @@ Notas importantes:
     return toDateInputValue(source.fecha || source.fechaFactura || source.fechaEmision || source.issued || '');
   }
 
+  function getFacturasGlobalSortLabel(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    return cleanText(getFacturaModuloPartyDisplay(factura) || getFacturaSucursalDisplay(factura) || factura.clienteNombre || factura.proveedorNombre || factura.sucursalNombre || '');
+  }
+
+  function compareFacturasGlobalItems(a, b) {
+    const byNo = compareFacturaNaturalNo(a?.record?.no, b?.record?.no);
+    if (byNo !== 0) return byNo;
+
+    if (a?.hasReliableDate && b?.hasReliableDate) {
+      const byDate = String(a.reliableDate).localeCompare(String(b.reliableDate));
+      if (byDate !== 0) return byDate;
+    } else if (a?.hasReliableDate !== b?.hasReliableDate) {
+      return a?.hasReliableDate ? -1 : 1;
+    }
+
+    const byParty = getFacturasGlobalSortLabel(a?.record).localeCompare(getFacturasGlobalSortLabel(b?.record), 'es-NI', {
+      numeric: true,
+      sensitivity: 'base'
+    });
+    if (byParty !== 0) return byParty;
+
+    return (Number(a?.sourceIndex) || 0) - (Number(b?.sourceIndex) || 0);
+  }
+
   function getFacturasGlobalItems(data = getFacturasData()) {
     const source = normalizeFacturasData(data);
     return (source.facturas || [])
@@ -11434,17 +11459,7 @@ Notas importantes:
           hasReliableDate: Boolean(reliableDate)
         };
       })
-      .sort((a, b) => {
-        if (a.hasReliableDate && b.hasReliableDate) {
-          const byDate = String(b.reliableDate).localeCompare(String(a.reliableDate));
-          if (byDate !== 0) return byDate;
-          const byUpdated = String(b.record.updatedAt || '').localeCompare(String(a.record.updatedAt || ''));
-          if (byUpdated !== 0) return byUpdated;
-          return compareFacturaNaturalNo(a.record.no, b.record.no);
-        }
-        if (a.hasReliableDate !== b.hasReliableDate) return a.hasReliableDate ? -1 : 1;
-        return a.sourceIndex - b.sourceIndex;
-      });
+      .sort(compareFacturasGlobalItems);
   }
 
   function normalizeFacturaGlobalSearchValue(value) {
@@ -11738,6 +11753,7 @@ Notas importantes:
         }
       });
     }
+    scheduleFacturasGlobalModalScrollTop();
   }
 
   function clearFacturasGlobalFilters() {
@@ -11748,14 +11764,53 @@ Notas importantes:
     facturasState.globalPage = 1;
     facturasState.globalOpen = true;
     renderRoute({ preserveScroll: true });
+    scheduleFacturasGlobalModalScrollTop();
+  }
+
+  function scrollFacturasGlobalModalToTop() {
+    if (!viewRoot) return;
+    const selectors = [
+      '.facturas-global-modal-body',
+      '.facturas-global-table-wrap',
+      '.facturas-global-modal [data-operational-table-scroll]'
+    ];
+    const targets = selectors
+      .flatMap((selector) => Array.from(viewRoot.querySelectorAll(selector)))
+      .filter((element, index, list) => element && list.indexOf(element) === index);
+    targets.forEach((element) => {
+      try {
+        element.scrollTo({ top: 0, behavior: 'auto' });
+      } catch (error) {
+        element.scrollTop = 0;
+      }
+    });
+  }
+
+  function scheduleFacturasGlobalModalScrollTop() {
+    const schedule = window.requestAnimationFrame || ((callback) => window.setTimeout(callback, 0));
+    const run = () => scrollFacturasGlobalModalToTop();
+    schedule(() => {
+      run();
+      schedule(run);
+      window.setTimeout(run, 90);
+      window.setTimeout(run, 240);
+    });
   }
 
   function changeFacturasGlobalPage(direction) {
     const payload = getFacturasGlobalPagePayload(getFacturasData());
     const currentPage = Math.min(Math.max(1, Number.parseInt(facturasState.globalPage, 10) || 1), payload.totalPages);
-    facturasState.globalPage = direction === 'prev' ? Math.max(1, currentPage - 1) : Math.min(payload.totalPages, currentPage + 1);
+    const target = cleanText(direction);
+    if (target === 'first') {
+      facturasState.globalPage = 1;
+    } else if (target === 'last') {
+      facturasState.globalPage = payload.totalPages;
+    } else {
+      facturasState.globalPage = target === 'prev' ? Math.max(1, currentPage - 1) : Math.min(payload.totalPages, currentPage + 1);
+    }
     facturasState.globalOpen = true;
     renderRoute({ preserveScroll: true });
+    scheduleFacturasGlobalModalScrollTop();
   }
 
   function clampFacturasPageForCurrentPeriod(data = getFacturasData(), periodInfo = getCurrentFacturasPeriodInfo()) {

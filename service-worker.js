@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_27_post12_global_facturas_etapa2_filtros_busqueda';
+const CACHE_VERSION = 'v0_18_28_post12_global_facturas_etapa2b_orden_consecutivo_scroll';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
