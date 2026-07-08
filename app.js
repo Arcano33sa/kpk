@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.18-post12-firebaseonline-config-etapa2';
+  const APP_VERSION = '0.18.22-post12-facturasmontos-etapa4';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -3040,6 +3040,73 @@ Notas importantes:
       .trim();
   }
 
+  function hasFacturaExplicitValue(value) {
+    return value !== undefined && value !== null && cleanText(value) !== '';
+  }
+
+  function readFacturaMoneyField(raw, keys = []) {
+    const source = isPlainObject(raw) ? raw : {};
+    for (const key of keys) {
+      if (!hasFacturaExplicitValue(source[key])) continue;
+      const value = parseMoney(source[key]);
+      return { hasValue: true, value: Number.isNaN(value) ? Number.NaN : value };
+    }
+    return { hasValue: false, value: 0 };
+  }
+
+  function readFacturaPendingFlag(raw, fallback = false) {
+    const source = isPlainObject(raw) ? raw : {};
+    const candidate = source.pendienteMonto ?? source.montoPendiente ?? source.requiereCompletarMonto ?? source.montoPorCompletar;
+    if (candidate === undefined || candidate === null || cleanText(candidate) === '') return Boolean(fallback);
+    if (typeof candidate === 'boolean') return candidate;
+    const normalized = cleanText(candidate)
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLocaleLowerCase('es-NI');
+    if (['1', 'true', 'si', 'sí', 'yes', 'pendiente'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'completo', 'completado'].includes(normalized)) return false;
+    return Boolean(fallback);
+  }
+
+  function isFacturaVentaInvalid(record) {
+    const factura = isPlainObject(record) ? record : {};
+    const subtotal = parseMoney(factura.subtotal);
+    const descuento = parseMoney(factura.descuento);
+    const total = roundMoney((Number.isNaN(subtotal) ? 0 : subtotal) - (Number.isNaN(descuento) ? 0 : descuento));
+    return Boolean(
+      factura.invalida
+      || Number.isNaN(subtotal)
+      || Number.isNaN(descuento)
+      || subtotal < 0
+      || descuento < 0
+      || descuento > subtotal
+      || total < 0
+    );
+  }
+
+  function isFacturaProveedorInvalid(record) {
+    const factura = isPlainObject(record) ? record : {};
+    const monto = parseMoney(factura.monto);
+    return Boolean(factura.invalida || Number.isNaN(monto) || monto < 0);
+  }
+
+  function getFacturaMoneyInputInfo(value) {
+    const raw = cleanText(value);
+    if (!raw) return { hasValue: false, value: 0, invalid: false };
+    const parsed = parseMoney(raw);
+    return { hasValue: true, value: parsed, invalid: Number.isNaN(parsed) || parsed < 0 };
+  }
+
+  function isMoneyDifferenceBalanced(value) {
+    return Math.abs(roundMoney(value)) <= 0.01;
+  }
+
+  function formatMoneyDifference(value) {
+    const diff = roundMoney(value);
+    const prefix = diff > 0 ? '+' : '';
+    return `${prefix}${formatMoney(diff)}`;
+  }
+
   function isSafeFacturaSpaceToken(token) {
     const value = cleanFacturaVentaNumero(token);
     if (!value) return false;
@@ -3078,9 +3145,35 @@ Notas importantes:
     const directValue = typeof record === 'string' || typeof record === 'number' ? record : '';
     const numero = cleanFacturaVentaNumero(directValue || raw.numero || raw.numeroFactura || raw.factura || raw.documento || raw.referencia || raw.value);
     if (!numero) return null;
+
+    const subtotalField = readFacturaMoneyField(raw, ['subtotal', 'montoSubtotal', 'subTotal', 'base', 'baseFactura', 'baseImponible']);
+    const descuentoField = readFacturaMoneyField(raw, ['descuento', 'descuentoFactura', 'descuentoAplicado', 'rebaja', 'rebajaFactura']);
+    const totalField = readFacturaMoneyField(raw, ['total', 'monto', 'importe', 'valor', 'montoFactura', 'facturaMonto', 'totalFactura']);
+    const descuento = descuentoField.hasValue && !Number.isNaN(descuentoField.value) ? roundMoney(descuentoField.value) : 0;
+    const subtotal = subtotalField.hasValue && !Number.isNaN(subtotalField.value)
+      ? roundMoney(subtotalField.value)
+      : (totalField.hasValue && !Number.isNaN(totalField.value) ? roundMoney(totalField.value + descuento) : 0);
+    const total = roundMoney(subtotal - descuento);
+    const pendienteMonto = readFacturaPendingFlag(raw, !(subtotalField.hasValue || totalField.hasValue));
+    const invalida = Boolean(
+      (subtotalField.hasValue && Number.isNaN(subtotalField.value))
+      || (descuentoField.hasValue && Number.isNaN(descuentoField.value))
+      || subtotal < 0
+      || descuento < 0
+      || descuento > subtotal
+      || total < 0
+    );
+
     return {
       id: cleanText(raw.id) || generateId('factura'),
-      numero
+      numero,
+      subtotal,
+      descuento,
+      total,
+      pendienteMonto,
+      invalida,
+      motivoInvalidez: invalida ? 'Descuento mayor que subtotal' : '',
+      legacyNumeroSolo: Boolean(pendienteMonto && !subtotalField.hasValue && !totalField.hasValue)
     };
   }
 
@@ -3116,18 +3209,86 @@ Notas importantes:
       }), (item) => item.numero);
   }
 
+  function mergeFacturasVentaWithExisting(nextFacturas, existingFacturas) {
+    const existingByNumero = new Map(normalizeFacturasVentaList(existingFacturas)
+      .map((factura) => [normalizeNameForCompare(factura.numero), factura]));
+    return normalizeFacturasVentaList(nextFacturas).map((factura) => {
+      const existing = existingByNumero.get(normalizeNameForCompare(factura.numero));
+      const nextHasAmounts = !factura.pendienteMonto || factura.subtotal > 0 || factura.descuento > 0 || factura.total > 0;
+      if (!existing || nextHasAmounts) return normalizeFacturaVentaRecord(factura);
+      return normalizeFacturaVentaRecord({ ...existing, numero: factura.numero });
+    }).filter(Boolean);
+  }
+
+  function getVentaFacturasMetrics(facturas) {
+    const list = normalizeFacturasVentaList(facturas);
+    return list.reduce((totals, factura) => {
+      totals.cantidad += 1;
+      totals.subtotal = roundMoney(totals.subtotal + factura.subtotal);
+      totals.descuento = roundMoney(totals.descuento + factura.descuento);
+      totals.total = roundMoney(totals.total + factura.total);
+      if (factura.pendienteMonto) totals.pendientesMonto += 1;
+      if (isFacturaVentaInvalid(factura)) totals.invalidas += 1;
+      return totals;
+    }, { cantidad: 0, subtotal: 0, descuento: 0, total: 0, pendientesMonto: 0, invalidas: 0 });
+  }
+
+  function getVentaFacturasSource(input) {
+    if (isPlainObject(input)) return input.facturas || [];
+    return input;
+  }
+
+  function sumaSubtotalesFacturas(input) {
+    return getVentaFacturasMetrics(getVentaFacturasSource(input)).subtotal;
+  }
+
+  function sumaDescuentosFacturas(input) {
+    return getVentaFacturasMetrics(getVentaFacturasSource(input)).descuento;
+  }
+
+  function sumaTotalesFacturas(input) {
+    return getVentaFacturasMetrics(getVentaFacturasSource(input)).total;
+  }
+
+  function diferenciaSubtotalVsOC(input, ocSubtotal = null) {
+    const record = isPlainObject(input) ? input : {};
+    const targetRaw = ocSubtotal ?? record.subtotal ?? record.montoOc ?? 0;
+    const target = parseMoney(targetRaw);
+    return roundMoney(sumaSubtotalesFacturas(input) - (Number.isNaN(target) ? 0 : target));
+  }
+
+  function diferenciaDescuentoVsOC(input, ocDescuento = null) {
+    const record = isPlainObject(input) ? input : {};
+    const targetRaw = ocDescuento ?? record.descuento ?? 0;
+    const target = parseMoney(targetRaw);
+    return roundMoney(sumaDescuentosFacturas(input) - (Number.isNaN(target) ? 0 : target));
+  }
+
+  function diferenciaTotalVsOC(input, ocTotal = null) {
+    const record = isPlainObject(input) ? input : {};
+    const subtotal = parseMoney(record.subtotal ?? record.montoOc ?? 0);
+    const descuento = parseMoney(record.descuento ?? 0);
+    const fallbackTotal = roundMoney((Number.isNaN(subtotal) ? 0 : subtotal) - (Number.isNaN(descuento) ? 0 : descuento));
+    const targetRaw = ocTotal ?? record.ventaNetaOriginal ?? record.total ?? record.ventaNeta ?? fallbackTotal;
+    const target = parseMoney(targetRaw);
+    return roundMoney(sumaTotalesFacturas(input) - (Number.isNaN(target) ? 0 : target));
+  }
+
   function normalizeVentaAjusteRecord(record) {
     const raw = isPlainObject(record) ? record : {};
     const timestamp = nowIso();
     const monto = parseMoney(raw.monto || raw.importe || raw.valor);
     const tipo = VENTA_AJUSTE_TYPES.includes(raw.tipo) ? raw.tipo : (cleanText(raw.tipo) || 'Corrección');
     const activo = typeof raw.activo === 'boolean' ? raw.activo : raw.estado !== 'Anulado';
+    const facturaSnapshot = getAjusteFacturaSnapshot(raw);
     return {
       id: cleanText(raw.id) || generateId('ajusteCliente'),
       fecha: toDateInputValue(raw.fecha || raw.fechaAjuste || '') || todayInputValue(),
       tipo: VENTA_AJUSTE_TYPES.includes(tipo) ? tipo : 'Corrección',
       monto: Number.isNaN(monto) ? 0 : Math.abs(monto),
       observacion: cleanText(raw.observacion || raw.nota || raw.descripcion),
+      facturaAfectadaId: facturaSnapshot.id,
+      facturaAfectadaNumero: facturaSnapshot.numero,
       activo,
       estado: activo ? 'Registrado' : 'Anulado',
       createdAt: raw.createdAt || timestamp,
@@ -3165,6 +3326,108 @@ Notas importantes:
     return list.map((factura) => factura.numero).join(', ');
   }
 
+  function encodeAjusteFacturaOptionValue(facturaRecord) {
+    const factura = isPlainObject(facturaRecord) ? facturaRecord : {};
+    const id = cleanText(factura.id);
+    const numero = cleanFacturaVentaNumero(factura.numero || factura.numeroFactura || factura.factura || factura.referencia || '');
+    if (!id && !numero) return '';
+    return `${encodeURIComponent(id)}|${encodeURIComponent(numero)}`;
+  }
+
+  function decodeAjusteFacturaOptionValue(value) {
+    const raw = cleanText(value);
+    if (!raw) return { id: '', numero: '' };
+    const parts = raw.split('|');
+    const decodePart = (part) => {
+      try {
+        return cleanText(decodeURIComponent(part || ''));
+      } catch (_) {
+        return cleanText(part || '');
+      }
+    };
+    return {
+      id: decodePart(parts[0]),
+      numero: cleanFacturaVentaNumero(decodePart(parts.slice(1).join('|')))
+    };
+  }
+
+  function getAjusteFacturaSnapshot(raw) {
+    const source = isPlainObject(raw) ? raw : {};
+    const facturaObject = isPlainObject(source.facturaAfectada)
+      ? source.facturaAfectada
+      : (isPlainObject(source.factura) ? source.factura : {});
+    const id = cleanText(
+      source.facturaAfectadaId
+      || source.facturaId
+      || source.facturaReferenciaId
+      || source.facturaRelacionadaId
+      || facturaObject.id
+    );
+    const numero = cleanFacturaVentaNumero(
+      source.facturaAfectadaNumero
+      || source.facturaNumero
+      || source.numeroFactura
+      || source.facturaAfectada
+      || source.factura
+      || facturaObject.numero
+      || facturaObject.numeroFactura
+      || facturaObject.referencia
+    );
+    return { id, numero };
+  }
+
+  function hasAjusteFacturaSnapshot(ajusteRecord) {
+    const ajuste = isPlainObject(ajusteRecord) ? ajusteRecord : {};
+    return Boolean(cleanText(ajuste.facturaAfectadaId) || cleanText(ajuste.facturaAfectadaNumero));
+  }
+
+  function findAjusteFacturaInList(facturas, ajusteRecord, normalizer = normalizeFacturasVentaList) {
+    const ajuste = isPlainObject(ajusteRecord) ? ajusteRecord : {};
+    const facturaId = cleanText(ajuste.facturaAfectadaId);
+    const facturaNumero = normalizeNameForCompare(ajuste.facturaAfectadaNumero);
+    if (!facturaId && !facturaNumero) return null;
+    return normalizer(facturas).find((factura) => {
+      const currentId = cleanText(factura.id);
+      const currentNumero = normalizeNameForCompare(factura.numero);
+      return Boolean((facturaId && currentId === facturaId) || (facturaNumero && currentNumero === facturaNumero));
+    }) || null;
+  }
+
+  function renderAjusteFacturaOptions(facturas, selectedValue = '', normalizer = normalizeFacturasVentaList) {
+    const selected = cleanText(selectedValue);
+    const list = normalizer(facturas);
+    const baseSelected = selected ? '' : 'selected';
+    const baseLabel = list.length ? 'General / sin factura asignada' : 'General (sin facturas registradas)';
+    return [
+      `<option value="" ${baseSelected}>${escapeHtml(baseLabel)}</option>`,
+      ...list.map((factura) => {
+        const value = encodeAjusteFacturaOptionValue(factura);
+        const amount = factura.pendienteMonto ? '' : ` · ${formatMoney(factura.total ?? factura.monto ?? 0)}`;
+        return `<option value="${escapeHtml(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(`Factura: ${factura.numero}${amount}`)}</option>`;
+      })
+    ].join('');
+  }
+
+  function syncAjusteFacturaSelectOptions(select, facturas, normalizer = normalizeFacturasVentaList) {
+    if (!select) return;
+    const previous = cleanText(select.value);
+    select.innerHTML = renderAjusteFacturaOptions(facturas, previous, normalizer);
+    if (previous && !Array.from(select.options).some((option) => option.value === previous)) select.value = '';
+  }
+
+  function formatAjusteFacturaLabel(ajusteRecord) {
+    const ajuste = isPlainObject(ajusteRecord) ? ajusteRecord : {};
+    const numero = cleanFacturaVentaNumero(ajuste.facturaAfectadaNumero);
+    if (numero) return `Factura: ${numero}`;
+    if (cleanText(ajuste.facturaAfectadaId)) return 'Factura asignada';
+    return 'General';
+  }
+
+  function getAjusteFacturaActivityPart(ajusteRecord) {
+    const label = formatAjusteFacturaLabel(ajusteRecord);
+    return label === 'General' ? 'General' : label;
+  }
+
   function splitFacturasProveedorText(value) {
     const text = String(value ?? '').trim();
     if (!text) return [];
@@ -3183,9 +3446,18 @@ Notas importantes:
     const directValue = typeof record === 'string' || typeof record === 'number' ? record : '';
     const numero = cleanFacturaVentaNumero(directValue || raw.numero || raw.numeroFactura || raw.factura || raw.documento || raw.referencia || raw.value);
     if (!numero) return null;
+    const montoField = readFacturaMoneyField(raw, ['monto', 'total', 'importe', 'valor', 'montoFactura', 'facturaMonto', 'totalFactura']);
+    const monto = montoField.hasValue && !Number.isNaN(montoField.value) ? roundMoney(montoField.value) : 0;
+    const pendienteMonto = readFacturaPendingFlag(raw, !montoField.hasValue);
+    const invalida = Boolean((montoField.hasValue && Number.isNaN(montoField.value)) || monto < 0);
     return {
       id: cleanText(raw.id) || generateId('facturaProveedor'),
-      numero
+      numero,
+      monto,
+      pendienteMonto,
+      invalida,
+      motivoInvalidez: invalida ? 'Monto inválido' : '',
+      legacyNumeroSolo: Boolean(pendienteMonto && !montoField.hasValue)
     };
   }
 
@@ -3221,6 +3493,17 @@ Notas importantes:
       }), (item) => item.numero);
   }
 
+  function mergeFacturasProveedorWithExisting(nextFacturas, existingFacturas) {
+    const existingByNumero = new Map(normalizeFacturasProveedorList(existingFacturas)
+      .map((factura) => [normalizeNameForCompare(factura.numero), factura]));
+    return normalizeFacturasProveedorList(nextFacturas).map((factura) => {
+      const existing = existingByNumero.get(normalizeNameForCompare(factura.numero));
+      const nextHasAmount = !factura.pendienteMonto || factura.monto > 0;
+      if (!existing || nextHasAmount) return normalizeFacturaProveedorRecord(factura);
+      return normalizeFacturaProveedorRecord({ ...existing, numero: factura.numero });
+    }).filter(Boolean);
+  }
+
   function normalizeCompraProveedorFacturasFromRaw(raw) {
     const source = isPlainObject(raw) ? raw : {};
     return normalizeFacturasProveedorList(source.facturasRelacionadas || source.facturasProveedor || source.facturasCompra || source.facturasRelacionadasProveedor || source.documentosRelacionados || []);
@@ -3243,6 +3526,17 @@ Notas importantes:
     return `Facturas: ${list.length} registradas`;
   }
 
+  function sumaMontosFacturas(input) {
+    const facturas = isPlainObject(input) ? (input.facturasRelacionadas || input.facturasProveedor || input.facturasCompra || []) : input;
+    return normalizeFacturasProveedorList(facturas).reduce((sum, factura) => roundMoney(sum + factura.monto), 0);
+  }
+
+  function diferenciaFacturasVsTotalCompra(input, totalCompra = null) {
+    const record = isPlainObject(input) ? input : {};
+    const targetRaw = totalCompra ?? record.totalCompra ?? record.totalDeuda ?? record.monto ?? record.total ?? 0;
+    const target = parseMoney(targetRaw);
+    return roundMoney(sumaMontosFacturas(input) - (Number.isNaN(target) ? 0 : target));
+  }
 
   function getCompraProveedorFacturaReferenciaValue(facturas, fallback = '') {
     const list = normalizeFacturasProveedorList(facturas);
@@ -3479,12 +3773,15 @@ Notas importantes:
     const monto = parseMoney(raw.monto || raw.importe || raw.valor);
     const tipo = COMPRA_AJUSTE_TYPES.includes(raw.tipo) ? raw.tipo : (cleanText(raw.tipo) || 'Corrección');
     const activo = typeof raw.activo === 'boolean' ? raw.activo : raw.estado !== 'Anulado';
+    const facturaSnapshot = getAjusteFacturaSnapshot(raw);
     return {
       id: cleanText(raw.id) || generateId('ajusteProveedor'),
       fecha: toDateInputValue(raw.fecha || raw.fechaAjuste || '') || todayInputValue(),
       tipo: COMPRA_AJUSTE_TYPES.includes(tipo) ? tipo : 'Corrección',
       monto: Number.isNaN(monto) ? 0 : Math.abs(monto),
       observacion: cleanText(raw.observacion || raw.nota || raw.descripcion),
+      facturaAfectadaId: facturaSnapshot.id,
+      facturaAfectadaNumero: facturaSnapshot.numero,
       activo,
       estado: activo ? 'Registrado' : 'Anulado',
       createdAt: raw.createdAt || timestamp,
@@ -6492,7 +6789,7 @@ Notas importantes:
 
   function getAjusteClienteDuplicateKey(record) {
     const ajuste = normalizeVentaAjusteRecord(record);
-    return [ajuste.fecha, ajuste.tipo, roundMoney(ajuste.monto), normalizeNameForCompare(ajuste.observacion)].join('|');
+    return [ajuste.fecha, ajuste.tipo, roundMoney(ajuste.monto), normalizeNameForCompare(ajuste.facturaAfectadaId), normalizeNameForCompare(ajuste.facturaAfectadaNumero), normalizeNameForCompare(ajuste.observacion)].join('|');
   }
 
   function mergeVentaAjustes(existingRecord, incomingRecord) {
@@ -6517,7 +6814,7 @@ Notas importantes:
 
   function getAjusteProveedorDuplicateKey(record) {
     const ajuste = normalizeCompraProveedorAjusteRecord(record);
-    return [ajuste.fecha, ajuste.tipo, roundMoney(ajuste.monto), normalizeNameForCompare(ajuste.observacion)].join('|');
+    return [ajuste.fecha, ajuste.tipo, roundMoney(ajuste.monto), normalizeNameForCompare(ajuste.facturaAfectadaId), normalizeNameForCompare(ajuste.facturaAfectadaNumero), normalizeNameForCompare(ajuste.observacion)].join('|');
   }
 
   function mergeCompraProveedorAjustes(existingRecord, incomingRecord) {
@@ -10363,14 +10660,31 @@ Notas importantes:
       fecha,
       estado: normalizeFacturaEstado(raw.estado),
       monto: Number.isNaN(amount) ? 0 : Math.max(0, amount),
+      subtotal: Number.isNaN(parseMoney(raw.subtotal ?? raw.montoSubtotal ?? 0)) ? 0 : Math.max(0, parseMoney(raw.subtotal ?? raw.montoSubtotal ?? 0)),
+      descuento: Number.isNaN(parseMoney(raw.descuento ?? raw.descuentoFactura ?? 0)) ? 0 : Math.max(0, parseMoney(raw.descuento ?? raw.descuentoFactura ?? 0)),
+      totalFacturaRelacionada: Number.isNaN(parseMoney(raw.totalFacturaRelacionada ?? raw.totalFactura ?? raw.total ?? raw.monto ?? 0)) ? 0 : Math.max(0, parseMoney(raw.totalFacturaRelacionada ?? raw.totalFactura ?? raw.total ?? raw.monto ?? 0)),
+      pendienteMonto: readFacturaPendingFlag(raw, !(hasFacturaExplicitValue(raw.monto) || hasFacturaExplicitValue(raw.total) || hasFacturaExplicitValue(raw.subtotal) || hasFacturaExplicitValue(raw.totalFacturaRelacionada))),
       observaciones: cleanText(raw.observaciones || raw.observacion || raw.nota || raw.descripcion),
       origen: cleanText(raw.origen || raw.source) || 'manual',
+      documentoTipo: cleanText(raw.documentoTipo || raw.tipoDocumento || raw.parentType || raw.sourceType),
       ventaId: cleanText(raw.ventaId || raw.ocId || raw.documentoId),
       ventaDocumento: cleanText(raw.ventaDocumento || raw.numeroDocumento || raw.oc || raw.ventaRef || raw.documentoVenta),
+      compraProveedorId: cleanText(raw.compraProveedorId || raw.compraId || raw.proveedorCompraId || raw.documentoCompraId),
+      compraDocumento: cleanText(raw.compraDocumento || raw.compraReferencia || raw.facturaReferenciaCompra || raw.documentoCompra || raw.referenciaCompra),
+      proveedorId: cleanText(raw.proveedorId || raw.supplierId || raw.proveedorRef),
+      proveedorNombre: cleanText(raw.proveedorNombre || raw.nombreProveedor || raw.proveedor || raw.supplierName),
       clienteId: cleanText(raw.clienteId || raw.clientId || raw.clienteRef),
       clienteNombre: cleanText(raw.clienteNombre || raw.nombreCliente || raw.cliente || raw.clientName),
       sucursalId: cleanText(raw.sucursalId || raw.branchId || raw.sucursalRef),
       sucursalNombre: cleanText(raw.sucursalNombre || raw.nombreSucursal || raw.sucursal || raw.branchName),
+      ajustesLigados: Array.isArray(raw.ajustesLigados) ? raw.ajustesLigados.map((item) => ({
+        id: cleanText(item?.id),
+        fecha: toDateInputValue(item?.fecha || '') || '',
+        tipo: cleanText(item?.tipo),
+        monto: Number.isNaN(parseMoney(item?.monto)) ? 0 : Math.max(0, parseMoney(item?.monto)),
+        facturaAfectadaId: cleanText(item?.facturaAfectadaId),
+        facturaAfectadaNumero: cleanFacturaVentaNumero(item?.facturaAfectadaNumero || '')
+      })).filter((item) => item.id || item.facturaAfectadaId || item.facturaAfectadaNumero) : [],
       periodo: periodInfo.periodo,
       autoPagada: Boolean(raw.autoPagada),
       autoPagadaAt: Boolean(raw.autoPagada) ? cleanText(raw.autoPagadaAt) : '',
@@ -10525,6 +10839,7 @@ Notas importantes:
       const key = normalizeFacturaModuloNoKey(numero);
       if (!numero || result.has(key)) return;
       result.set(key, {
+        ...factura,
         numero,
         direct: true,
         generatedByGap: false,
@@ -10561,6 +10876,10 @@ Notas importantes:
           if (numero && !result.has(key)) {
             result.set(key, {
               numero,
+              subtotal: 0,
+              descuento: 0,
+              total: 0,
+              pendienteMonto: true,
               direct: false,
               generatedByGap: true,
               sourceIndex: index + 0.5
@@ -10585,85 +10904,263 @@ Notas importantes:
     };
   }
 
+  function normalizeFacturaModuloOrigin(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    if (factura.compraProveedorId || factura.proveedorId || factura.origen === 'proveedores') return 'proveedores';
+    if (factura.ventaId || factura.clienteId || factura.origen === 'ventas' || factura.origen === 'salto de consecutivo') return factura.origen === 'salto de consecutivo' ? 'salto de consecutivo' : 'ventas';
+    return factura.origen || 'manual';
+  }
+
+  function getFacturaModuloParentDocument(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    if (normalizeFacturaModuloOrigin(factura) === 'proveedores') return factura.compraDocumento || factura.ventaDocumento || factura.no || '';
+    return factura.ventaDocumento || factura.compraDocumento || '';
+  }
+
+  function getFacturaModuloPartyDisplay(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    if (normalizeFacturaModuloOrigin(factura) === 'proveedores') {
+      const proveedor = factura.proveedorId ? getCatalogRecordById('proveedores', factura.proveedorId) : null;
+      return cleanText(factura.proveedorNombre || proveedor?.nombre || '');
+    }
+    return getFacturaClienteDisplay(factura);
+  }
+
+  function getFacturaModuloSecondaryDisplay(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    if (normalizeFacturaModuloOrigin(factura) === 'proveedores') return getFacturaModuloParentDocument(factura);
+    return getFacturaSucursalDisplay(factura);
+  }
+
+  function getFacturaModuloAmountLabel(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    if (normalizeFacturaModuloOrigin(factura) === 'proveedores') return formatMoney(factura.monto || factura.totalFacturaRelacionada || 0);
+    return formatMoney(factura.totalFacturaRelacionada || factura.monto || factura.total || 0);
+  }
+
+  function buildFacturaAjustesPayload(ajustesSource, factura) {
+    const target = factura || {};
+    const targetId = cleanText(target.id);
+    const targetNo = cleanFacturaVentaNumero(target.numero || target.no || target.facturaAfectadaNumero || '');
+    const normalizer = target.monto !== undefined && target.subtotal === undefined ? normalizeCompraProveedorAjustesList : normalizeVentaAjustesList;
+    const ajustes = normalizer(ajustesSource).filter((ajuste) => {
+      if (!ajuste.activo) return false;
+      if (!hasAjusteFacturaSnapshot(ajuste)) return false;
+      const ajusteId = cleanText(ajuste.facturaAfectadaId);
+      const ajusteNo = cleanFacturaVentaNumero(ajuste.facturaAfectadaNumero || '');
+      return Boolean((targetId && ajusteId && ajusteId === targetId) || (targetNo && ajusteNo && normalizeFacturaModuloNoKey(ajusteNo) === normalizeFacturaModuloNoKey(targetNo)));
+    });
+    return ajustes.map((ajuste) => ({
+      id: ajuste.id,
+      fecha: ajuste.fecha,
+      tipo: ajuste.tipo,
+      monto: ajuste.monto,
+      facturaAfectadaId: ajuste.facturaAfectadaId,
+      facturaAfectadaNumero: ajuste.facturaAfectadaNumero
+    }));
+  }
+
+  function getFacturaModuloAjustesInfo(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    let ajustes = Array.isArray(factura.ajustesLigados) ? factura.ajustesLigados : [];
+    const origin = normalizeFacturaModuloOrigin(factura);
+    if (origin === 'ventas' && factura.ventaId) {
+      const venta = (Array.isArray(appData.ventas) ? appData.ventas : []).map((item) => normalizeVentaRecord(item)).find((item) => item.id === factura.ventaId);
+      if (venta) {
+        const facturaVenta = normalizeFacturasVentaList(venta.facturas).find((item) => normalizeFacturaModuloNoKey(item.numero) === normalizeFacturaModuloNoKey(factura.no));
+        ajustes = buildFacturaAjustesPayload(venta.ajustes, facturaVenta || { id: '', numero: factura.no, subtotal: factura.subtotal });
+      }
+    } else if (origin === 'proveedores' && factura.compraProveedorId) {
+      const compra = (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : []).map((item) => normalizeCompraProveedorRecord(item)).find((item) => item.id === factura.compraProveedorId);
+      if (compra) {
+        const facturaProveedor = normalizeFacturasProveedorList(compra.facturasRelacionadas).find((item) => normalizeFacturaModuloNoKey(item.numero) === normalizeFacturaModuloNoKey(factura.no));
+        ajustes = buildFacturaAjustesPayload(compra.ajustes, facturaProveedor || { id: '', numero: factura.no, monto: factura.monto });
+      }
+    }
+    const active = (Array.isArray(ajustes) ? ajustes : []).filter((ajuste) => cleanText(ajuste.id) || Number(ajuste.monto) > 0 || cleanText(ajuste.tipo));
+    return {
+      count: active.length,
+      has: active.length > 0,
+      label: active.length ? active.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo || 'Ajuste'} · ${formatMoney(ajuste.monto || 0)}${ajuste.facturaAfectadaNumero ? ` · Fac. ${ajuste.facturaAfectadaNumero}` : ''}`).join(' | ') : 'Sin ajustes ligados'
+    };
+  }
+
+  function findExistingFacturaModuloIndex(records, payload, options = {}) {
+    const source = Array.isArray(records) ? records : [];
+    const target = normalizeFacturaModuloRecord(payload);
+    const targetNoKey = normalizeFacturaModuloNoKey(target.no);
+    const targetOrigin = normalizeFacturaModuloOrigin(target);
+    const parentId = targetOrigin === 'proveedores' ? target.compraProveedorId : target.ventaId;
+    const exactIndex = source.findIndex((record) => {
+      const factura = normalizeFacturaModuloRecord(record);
+      if (normalizeFacturaModuloNoKey(factura.no) !== targetNoKey) return false;
+      if (targetOrigin === 'proveedores') return factura.compraProveedorId && factura.compraProveedorId === parentId;
+      if (targetOrigin === 'ventas' || targetOrigin === 'salto de consecutivo') return factura.ventaId && factura.ventaId === parentId;
+      return false;
+    });
+    if (exactIndex >= 0) return exactIndex;
+    if (options.allowLegacyNoMatch) {
+      return source.findIndex((record) => {
+        const factura = normalizeFacturaModuloRecord(record);
+        if (normalizeFacturaModuloNoKey(factura.no) !== targetNoKey) return false;
+        const facturaOrigin = normalizeFacturaModuloOrigin(factura);
+        if (targetOrigin === 'proveedores') return !factura.compraProveedorId && facturaOrigin !== 'ventas' && facturaOrigin !== 'salto de consecutivo';
+        return !factura.ventaId && facturaOrigin !== 'proveedores';
+      });
+    }
+    return -1;
+  }
+
+  function upsertFacturasModuloRecords(nextRecords, options = {}) {
+    const data = getFacturasData();
+    const source = Array.isArray(data.facturas) ? data.facturas.map((record) => normalizeFacturaModuloRecord(record)) : [];
+    const timestamp = nowIso();
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    (Array.isArray(nextRecords) ? nextRecords : []).map(normalizeFacturaModuloRecord).forEach((payload) => {
+      if (!payload.no) {
+        skipped += 1;
+        return;
+      }
+      const existingIndex = findExistingFacturaModuloIndex(source, payload, { allowLegacyNoMatch: true });
+      if (existingIndex >= 0) {
+        const existing = normalizeFacturaModuloRecord(source[existingIndex]);
+        source[existingIndex] = normalizeFacturaModuloRecord({
+          ...existing,
+          ...payload,
+          id: existing.id || payload.id,
+          estado: existing.origen === 'manual' && payload.origen !== 'manual' ? payload.estado : (existing.estado || payload.estado),
+          createdAt: existing.createdAt || payload.createdAt,
+          updatedAt: timestamp
+        });
+        updated += 1;
+        return;
+      }
+      source.unshift(normalizeFacturaModuloRecord({ ...payload, createdAt: payload.createdAt || timestamp, updatedAt: timestamp }));
+      created += 1;
+    });
+    if (created || updated) saveFacturasData({ ...data, facturas: source });
+    return { created, updated, skipped };
+  }
+
   function syncVentaFacturasToFacturasModulo(ventaRecord) {
     const venta = normalizeVentaRecord(ventaRecord);
     const expanded = expandFacturasVentaConsecutivos(venta.facturas);
     if (!expanded.items.length) {
-      return { created: 0, directCreated: 0, gapCreated: 0, skipped: 0, generatedCount: 0, omittedBySafety: 0 };
+      return { created: 0, updated: 0, directCreated: 0, gapCreated: 0, skipped: 0, generatedCount: 0, omittedBySafety: 0 };
     }
 
-    const data = getFacturasData();
-    const existingKeys = new Set((data.facturas || []).map((record) => normalizeFacturaModuloNoKey(normalizeFacturaModuloRecord(record).no)).filter(Boolean));
     const timestamp = nowIso();
-    const createdRecords = [];
     const cliente = venta.clienteId ? getCatalogRecordById('clientes', venta.clienteId) : null;
     const sucursal = venta.sucursalId ? getCatalogRecordById('sucursales', venta.sucursalId) : null;
-    let skipped = 0;
+    const records = [];
 
     expanded.items.forEach((item) => {
-      const key = normalizeFacturaModuloNoKey(item.numero);
-      if (!item.numero || existingKeys.has(key)) {
-        skipped += 1;
-        return;
-      }
+      if (!item.numero) return;
       const fromGap = Boolean(item.generatedByGap);
-      const record = normalizeFacturaModuloRecord({
-        id: generateId('facturaModulo'),
+      const ajustesLigados = fromGap ? [] : buildFacturaAjustesPayload(venta.ajustes, item);
+      records.push(normalizeFacturaModuloRecord({
+        id: cleanText(item.moduloId) || cleanText(item.id && !String(item.id).startsWith('factura') ? item.id : '') || generateId('facturaModulo'),
         no: item.numero,
         fecha: venta.fechaOc || todayInputValue(),
         estado: fromGap ? 'Otro' : 'Enviada',
-        monto: 0,
+        monto: fromGap ? 0 : Math.max(0, Number(item.total) || 0),
+        subtotal: fromGap ? 0 : Math.max(0, Number(item.subtotal) || 0),
+        descuento: fromGap ? 0 : Math.max(0, Number(item.descuento) || 0),
+        totalFacturaRelacionada: fromGap ? 0 : Math.max(0, Number(item.total) || 0),
+        pendienteMonto: fromGap ? true : Boolean(item.pendienteMonto),
         observaciones: fromGap ? 'Generada automáticamente por salto de consecutivo. Pendiente de clasificar.' : '',
         origen: fromGap ? 'salto de consecutivo' : 'ventas',
+        documentoTipo: fromGap ? 'Salto consecutivo' : 'Venta / OC',
         ventaId: venta.id,
         ventaDocumento: venta.numeroDocumento,
         clienteId: venta.clienteId,
-        clienteNombre: cliente?.nombre || '',
+        clienteNombre: venta.clienteNombre || cliente?.nombre || '',
         sucursalId: venta.sucursalId,
-        sucursalNombre: sucursal?.nombre || '',
+        sucursalNombre: venta.sucursalNombre || sucursal?.nombre || '',
+        ajustesLigados,
         createdAt: timestamp,
         updatedAt: timestamp
-      });
-      createdRecords.push(record);
-      existingKeys.add(key);
+      }));
     });
 
-    if (createdRecords.length) {
-      data.facturas = [...createdRecords, ...(data.facturas || [])];
-      saveFacturasData(data);
-    }
-
+    const result = upsertFacturasModuloRecords(records, { source: 'ventas' });
     return {
-      created: createdRecords.length,
-      directCreated: createdRecords.filter((record) => record.origen === 'ventas').length,
-      gapCreated: createdRecords.filter((record) => record.origen === 'salto de consecutivo').length,
-      skipped,
+      ...result,
+      directCreated: records.filter((record) => record.origen === 'ventas').length && result.created ? Math.min(result.created, records.filter((record) => record.origen === 'ventas').length) : 0,
+      gapCreated: records.filter((record) => record.origen === 'salto de consecutivo').length && result.created ? Math.min(result.created, records.filter((record) => record.origen === 'salto de consecutivo').length) : 0,
       generatedCount: expanded.generatedCount,
       omittedBySafety: expanded.omittedBySafety
     };
   }
 
+  function syncCompraFacturasToFacturasModulo(compraRecord) {
+    const compra = normalizeCompraProveedorRecord(compraRecord);
+    const facturas = normalizeFacturasProveedorList(compra.facturasRelacionadas);
+    if (!facturas.length) return { created: 0, updated: 0, skipped: 0 };
+
+    const timestamp = nowIso();
+    const proveedor = compra.proveedorId ? getCatalogRecordById('proveedores', compra.proveedorId) : null;
+    const records = facturas.map((factura) => normalizeFacturaModuloRecord({
+      id: generateId('facturaModulo'),
+      no: factura.numero,
+      fecha: compra.fechaCompra || todayInputValue(),
+      estado: 'Enviada',
+      monto: Math.max(0, Number(factura.monto) || 0),
+      subtotal: Math.max(0, Number(factura.monto) || 0),
+      descuento: 0,
+      totalFacturaRelacionada: Math.max(0, Number(factura.monto) || 0),
+      pendienteMonto: Boolean(factura.pendienteMonto),
+      observaciones: '',
+      origen: 'proveedores',
+      documentoTipo: 'Proveedor / Compra',
+      compraProveedorId: compra.id,
+      compraDocumento: compra.facturaReferencia || getCompraProveedorReferenciaCompacta(compra),
+      proveedorId: compra.proveedorId,
+      proveedorNombre: compra.proveedorNombre || proveedor?.nombre || '',
+      ajustesLigados: buildFacturaAjustesPayload(compra.ajustes, factura),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+
+    return upsertFacturasModuloRecords(records, { source: 'proveedores' });
+  }
+
   function formatVentaFacturasSyncMessage(result) {
-    if (!result || (!result.created && !result.skipped && !result.omittedBySafety)) return '';
+    if (!result || (!result.created && !result.updated && !result.skipped && !result.omittedBySafety)) return '';
     const parts = [];
     if (result.created) {
       parts.push(`Facturas sincronizadas: ${result.created}`);
       if (result.gapCreated) parts.push(`intermedias: ${result.gapCreated}`);
     }
-    if (result.skipped) parts.push(`sin duplicar existentes: ${result.skipped}`);
+    if (result.updated) parts.push(`actualizadas: ${result.updated}`);
+    if (result.skipped) parts.push(`omitidas: ${result.skipped}`);
     if (result.omittedBySafety) parts.push(`salto demasiado grande omitido por seguridad: ${result.omittedBySafety}`);
+    return parts.length ? `${parts.join(' · ')}.` : '';
+  }
+
+  function formatCompraFacturasSyncMessage(result) {
+    if (!result || (!result.created && !result.updated && !result.skipped)) return '';
+    const parts = [];
+    if (result.created) parts.push(`Facturas de proveedor sincronizadas: ${result.created}`);
+    if (result.updated) parts.push(`actualizadas: ${result.updated}`);
+    if (result.skipped) parts.push(`omitidas: ${result.skipped}`);
     return parts.length ? `${parts.join(' · ')}.` : '';
   }
 
   function getFacturaOrigenLabel(record) {
     const factura = normalizeFacturaModuloRecord(record);
+    if (factura.origen === 'proveedores' || factura.compraProveedorId) {
+      return `Origen: Proveedores / Compras${factura.compraDocumento ? ` · ${factura.compraDocumento}` : ''}`;
+    }
     if (factura.origen === 'ventas') {
       return `Origen: Ventas / OC${factura.ventaDocumento ? ` · ${factura.ventaDocumento}` : ''}`;
     }
     if (factura.origen === 'salto de consecutivo') {
       return `Origen: salto de consecutivo${factura.ventaDocumento ? ` · ${factura.ventaDocumento}` : ''}`;
     }
-    return '';
+    return factura.origen === 'manual' ? 'Origen: Manual' : '';
   }
 
   function setFacturasMessage(message, type = 'success') {
@@ -11094,7 +11591,7 @@ Notas importantes:
         wrapClass: 'facturas-table-wrap',
         ariaLabel: 'Resultados de búsqueda de facturas',
         tableClass: 'operational-table-facturas',
-        headers: '<th>No.</th><th>Período</th><th>Página</th><th>Fecha</th><th>Cliente</th><th>Sucursal</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones>',
+        headers: '<th>No.</th><th>Período</th><th>Página</th><th>Fecha</th><th>Origen</th><th>Documento madre</th><th>Cliente / Proveedor</th><th>Subtotal</th><th>Descuento</th><th>Total / Monto</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
         rows
       })}
     `;
@@ -11105,8 +11602,9 @@ Notas importantes:
     const factura = normalizeFacturaModuloRecord(item.record);
     const periodInfo = getFacturaPeriodInfoFromDate(factura.fecha);
     const origenLabel = getFacturaOrigenLabel(factura);
-    const clienteNombre = getFacturaClienteDisplay(factura);
-    const sucursalNombre = getFacturaSucursalDisplay(factura);
+    const partyLabel = getFacturaModuloPartyDisplay(factura);
+    const documentLabel = getFacturaModuloParentDocument(factura);
+    const ajustesInfo = getFacturaModuloAjustesInfo(factura);
     const closedPeriod = isFacturaPeriodClosed(factura.periodo);
     const readonly = Boolean(closedPeriod || item.scopeClosed);
     const page = Math.max(1, Number.parseInt(item.page, 10) || 1);
@@ -11119,14 +11617,18 @@ Notas importantes:
         </div>`;
     return `
       <tr>
-        <td><span class="compact-primary" title="${escapeHtml(factura.no)}">${escapeHtml(factura.no || '—')}</span>${origenLabel ? `<small class="factura-origin-label" title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel)}</small>` : ''}</td>
+        <td><span class="compact-primary" title="${escapeHtml(factura.no)}">${escapeHtml(factura.no || '—')}</span></td>
         <td><span>${escapeHtml(periodInfo.label)}</span></td>
         <td><span class="badge subtle">Página ${page}</span></td>
         <td><span>${escapeHtml(formatDate(factura.fecha))}</span></td>
-        <td><span title="${escapeHtml(clienteNombre || 'Sin cliente')}">${escapeHtml(clienteNombre || '—')}</span></td>
-        <td><span title="${escapeHtml(sucursalNombre || 'Sin sucursal')}">${escapeHtml(sucursalNombre || '—')}</span></td>
+        <td><small title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel || 'Manual')}</small></td>
+        <td><span title="${escapeHtml(documentLabel || 'Sin documento madre')}">${escapeHtml(documentLabel || '—')}</span></td>
+        <td><span title="${escapeHtml(partyLabel || 'Sin cliente/proveedor')}">${escapeHtml(partyLabel || '—')}</span></td>
+        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.subtotal || 0))}</span></td>
+        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.descuento || 0))}</span></td>
+        <td class="amount-cell"><span>${escapeHtml(getFacturaModuloAmountLabel(factura))}</span></td>
+        <td><small title="${escapeHtml(ajustesInfo.label)}">${ajustesInfo.has ? `Sí (${ajustesInfo.count})` : 'No'}</small></td>
         <td><span class="state-pill ${getEstadoClass(factura.estado)}">${escapeHtml(factura.estado)}</span></td>
-        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.monto || 0))}</span></td>
         <td><small title="${escapeHtml(factura.observaciones)}">${escapeHtml(factura.observaciones || '—')}</small></td>
         <td>${actions}</td>
       </tr>
@@ -11152,7 +11654,7 @@ Notas importantes:
           wrapClass: 'facturas-table-wrap',
           ariaLabel: `Listado de facturas de ${periodInfo.label}`,
           tableClass: 'operational-table-facturas',
-          headers: '<th>No.</th><th>Fecha</th><th>Cliente</th><th>Sucursal</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones>',
+          headers: '<th>No.</th><th>Fecha</th><th>Origen</th><th>Documento madre</th><th>Cliente / Proveedor</th><th>Subtotal</th><th>Descuento</th><th>Total / Monto</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
           rows: records.map((record) => renderFacturaRow(record)).join('')
         }) : `<p class="muted-text compact-note">${escapeHtml(emptyText)}</p>`}
         ${pagination}
@@ -11234,7 +11736,7 @@ Notas importantes:
               wrapClass: 'facturas-table-wrap',
               ariaLabel: `Histórico de facturas de ${group.label}`,
               tableClass: 'operational-table-facturas',
-              headers: '<th>No.</th><th>Fecha</th><th>Cliente</th><th>Sucursal</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones>',
+              headers: '<th>No.</th><th>Fecha</th><th>Origen</th><th>Documento madre</th><th>Cliente / Proveedor</th><th>Subtotal</th><th>Descuento</th><th>Total / Monto</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
               rows: pagedRecords.map((record) => renderFacturaRow(record, { readonly: true })).join('')
             }) : '<p class="muted-text compact-note">No hay facturas en este período histórico.</p>'}
             ${renderFacturasPagination(group.records.length, totalPages, { scope: 'history', periodo: group.periodo })}
@@ -11248,8 +11750,9 @@ Notas importantes:
     const factura = normalizeFacturaModuloRecord(record);
     const periodInfo = getFacturaPeriodInfoFromDate(factura.fecha);
     const origenLabel = getFacturaOrigenLabel(factura);
-    const clienteNombre = getFacturaClienteDisplay(factura);
-    const sucursalNombre = getFacturaSucursalDisplay(factura);
+    const partyLabel = getFacturaModuloPartyDisplay(factura);
+    const documentLabel = getFacturaModuloParentDocument(factura);
+    const ajustesInfo = getFacturaModuloAjustesInfo(factura);
     const closedPeriod = isFacturaPeriodClosed(factura.periodo);
     const readonly = Boolean(options.readonly || closedPeriod);
     const actions = readonly
@@ -11263,10 +11766,14 @@ Notas importantes:
         <td><span class="compact-primary" title="${escapeHtml(factura.no)}">${escapeHtml(factura.no || '—')}</span>${origenLabel ? `<small class="factura-origin-label" title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel)}</small>` : ''}</td>
         ${options.includePeriod ? `<td><span>${escapeHtml(periodInfo.label)}</span></td>` : ''}
         <td><span>${escapeHtml(formatDate(factura.fecha))}</span></td>
-        <td><span title="${escapeHtml(clienteNombre || 'Sin cliente')}">${escapeHtml(clienteNombre || '—')}</span></td>
-        <td><span title="${escapeHtml(sucursalNombre || 'Sin sucursal')}">${escapeHtml(sucursalNombre || '—')}</span></td>
+        <td><small title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel || 'Manual')}</small></td>
+        <td><span title="${escapeHtml(documentLabel || 'Sin documento madre')}">${escapeHtml(documentLabel || '—')}</span></td>
+        <td><span title="${escapeHtml(partyLabel || 'Sin cliente/proveedor')}">${escapeHtml(partyLabel || '—')}</span></td>
+        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.subtotal || 0))}</span></td>
+        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.descuento || 0))}</span></td>
+        <td class="amount-cell"><span>${escapeHtml(getFacturaModuloAmountLabel(factura))}</span></td>
+        <td><small title="${escapeHtml(ajustesInfo.label)}">${ajustesInfo.has ? `Sí (${ajustesInfo.count})` : 'No'}</small></td>
         <td><span class="state-pill ${getEstadoClass(factura.estado)}">${escapeHtml(factura.estado)}</span></td>
-        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.monto || 0))}</span></td>
         <td><small title="${escapeHtml(factura.observaciones)}">${escapeHtml(factura.observaciones || '—')}</small></td>
         <td>${actions}</td>
       </tr>
@@ -16030,6 +16537,13 @@ Notas importantes:
             <span>Monto ajuste C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
             <input type="number" name="monto" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-ajuste-monto />
           </label>
+          <label class="form-field">
+            <span>Factura afectada</span>
+            <select name="facturaAfectada" data-ajuste-venta-factura>
+              ${renderAjusteFacturaOptions(selectedVenta?.facturas || [])}
+            </select>
+            <small>Opcional: si no aplica, queda como ajuste general de la OC.</small>
+          </label>
         </div>
         <div class="formula-card ajuste-preview" aria-live="polite" data-ajuste-venta-preview>
           ${renderVentaAjustePreview(selectedVenta)}
@@ -16161,9 +16675,8 @@ Notas importantes:
 
   function renderFacturasVentaBlock(record) {
     const facturas = normalizeFacturasVentaList(record?.facturas || []);
-    const facturasText = formatFacturasVentaInput(facturas);
     return `
-        <section class="facturas-block" data-facturas-block>
+        <section class="facturas-block facturas-venta-block" data-facturas-block>
           <input type="hidden" name="facturasJson" data-facturas-json value="${escapeHtml(JSON.stringify(facturas))}" />
           <div class="facturas-head">
             <div>
@@ -16172,16 +16685,128 @@ Notas importantes:
             </div>
             <span class="count-pill" data-facturas-count>${facturas.length} factura${facturas.length === 1 ? '' : 's'}</span>
           </div>
-          <p class="muted-text compact-note">Captura varios números de factura para esta misma OC. Al guardar, se crearán en el módulo Facturas con la Fecha OC.</p>
-          <label class="form-field facturas-mass-field">
-            <span>Números de factura</span>
-            <textarea name="facturasTexto" data-facturas-mass rows="3" placeholder="001245, 001246, 001247" autocomplete="off">${escapeHtml(facturasText)}</textarea>
-          </label>
-          <p class="compact-note">Separa varias facturas por coma, punto y coma o salto de línea. Si hay saltos claros, Facturas completará los consecutivos intermedios.</p>
-          <div class="facturas-preview" data-facturas-preview>${facturas.length ? `Facturas detectadas: ${escapeHtml(formatFacturasVentaResumen(facturas))}` : 'Facturas detectadas: ninguna'}</div>
+          <p class="muted-text compact-note">Cada factura desglosa la misma OC. El Total se calcula solo: Subtotal - Descuento. No crea cobros ni ventas adicionales.</p>
+          <div class="facturas-editor-shell" data-facturas-editor-shell>
+            <div class="facturas-grid facturas-venta-grid" role="table" aria-label="Facturas de la OC">
+              <div class="facturas-grid-row facturas-grid-head" role="row">
+                <span role="columnheader">Factura</span>
+                <span role="columnheader">Subtotal</span>
+                <span role="columnheader">Descuento</span>
+                <span role="columnheader">Total</span>
+                <span role="columnheader" class="sr-only">Quitar</span>
+              </div>
+              <div data-facturas-rows>
+                ${renderVentaFacturaEditorRows(facturas)}
+              </div>
+              <div class="facturas-grid-row facturas-add-row" role="row">
+                <button type="button" class="factura-add-button" data-factura-add aria-label="Agregar factura">+</button>
+              </div>
+            </div>
+          </div>
+          ${renderVentaFacturasCuadreSummary(record, facturas)}
           <p class="compact-note facturas-message" data-factura-message aria-live="polite"></p>
         </section>
     `;
+  }
+
+  function renderVentaFacturaEditorRows(facturas) {
+    const rows = normalizeFacturasVentaList(facturas);
+    return rows.map((factura, index) => renderVentaFacturaEditorRow(factura, index)).join('');
+  }
+
+  function renderVentaFacturaEditorRow(factura, index = 0) {
+    const normalized = normalizeFacturaVentaRecord(factura) || { id: generateId('factura'), numero: '', subtotal: 0, descuento: 0, total: 0, pendienteMonto: true };
+    const subtotalValue = normalized.pendienteMonto && !normalized.subtotal ? '' : formatNumberInput(normalized.subtotal);
+    const descuentoValue = normalized.pendienteMonto && !normalized.descuento ? '' : formatNumberInput(normalized.descuento);
+    const totalValue = normalized.pendienteMonto ? '' : formatNumberInput(normalized.total);
+    return `
+      <div class="facturas-grid-row factura-edit-row ${normalized.pendienteMonto ? 'is-pending' : ''} ${isFacturaVentaInvalid(normalized) ? 'is-invalid' : ''}" role="row" data-factura-row data-factura-id="${escapeHtml(normalized.id)}">
+        <label class="factura-cell factura-number-cell">
+          <span>Factura</span>
+          <input type="text" data-factura-numero value="${escapeHtml(normalized.numero || '')}" placeholder="No. factura" autocomplete="off" aria-label="Factura ${index + 1}" />
+        </label>
+        <label class="factura-cell factura-money-cell">
+          <span>Subtotal</span>
+          <input type="number" data-factura-subtotal value="${escapeHtml(subtotalValue)}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" aria-label="Subtotal factura ${index + 1}" />
+        </label>
+        <label class="factura-cell factura-money-cell">
+          <span>Descuento</span>
+          <input type="number" data-factura-descuento value="${escapeHtml(descuentoValue)}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" aria-label="Descuento factura ${index + 1}" />
+        </label>
+        <label class="factura-cell factura-money-cell factura-total-cell">
+          <span>Total</span>
+          <input type="number" data-factura-total value="${escapeHtml(totalValue)}" readonly tabindex="-1" placeholder="0.00" aria-label="Total factura ${index + 1}" />
+        </label>
+        <button type="button" class="danger-action compact factura-remove-button" data-factura-remove aria-label="Quitar factura">×</button>
+      </div>
+    `;
+  }
+
+  function renderVentaFacturasCuadreSummary(record, facturas) {
+    const cuadre = getVentaFacturasCuadreData({ ...(record || {}), facturas });
+    return `
+      <div class="facturas-cuadre-card" data-facturas-cuadre>
+        <div class="facturas-cuadre-title">
+          <strong>Cuadre de facturas</strong>
+          <span data-facturas-cuadre-status>${getVentaFacturasCuadreStatusText(cuadre, facturas)}</span>
+        </div>
+        <div class="facturas-cuadre-grid">
+          ${renderFacturaCuadreLine('Subtotal OC', cuadre.subtotalOc, 'data-facturas-oc-subtotal')}
+          ${renderFacturaCuadreLine('Suma Subtotal Facturas', cuadre.subtotalFacturas, 'data-facturas-sum-subtotal')}
+          ${renderFacturaCuadreLine('Diferencia', cuadre.diferenciaSubtotal, 'data-facturas-diff-subtotal', true)}
+          ${renderFacturaCuadreLine('Descuento OC', cuadre.descuentoOc, 'data-facturas-oc-descuento')}
+          ${renderFacturaCuadreLine('Suma Descuento Facturas', cuadre.descuentoFacturas, 'data-facturas-sum-descuento')}
+          ${renderFacturaCuadreLine('Diferencia', cuadre.diferenciaDescuento, 'data-facturas-diff-descuento', true)}
+          ${renderFacturaCuadreLine('Total OC', cuadre.totalOc, 'data-facturas-oc-total')}
+          ${renderFacturaCuadreLine('Suma Total Facturas', cuadre.totalFacturas, 'data-facturas-sum-total')}
+          ${renderFacturaCuadreLine('Diferencia', cuadre.diferenciaTotal, 'data-facturas-diff-total', true)}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderFacturaCuadreLine(label, value, dataAttr, isDifference = false) {
+    const balancedClass = isDifference ? (isMoneyDifferenceBalanced(value) ? ' is-balanced' : ' is-unbalanced') : '';
+    const display = isDifference ? formatMoneyDifference(value) : formatMoney(value);
+    return `<div class="facturas-cuadre-item${balancedClass}"><span>${escapeHtml(label)}</span><strong ${dataAttr}>${escapeHtml(display)}</strong></div>`;
+  }
+
+  function getVentaFacturasCuadreData(record) {
+    const source = isPlainObject(record) ? record : {};
+    const subtotalOc = parseMoney(source.subtotal ?? source.montoOc ?? 0);
+    const descuentoOc = parseMoney(source.descuento ?? 0);
+    const totalOc = roundMoney((Number.isNaN(subtotalOc) ? 0 : subtotalOc) - (Number.isNaN(descuentoOc) ? 0 : descuentoOc));
+    const metrics = getVentaFacturasMetrics(source.facturas || []);
+    return {
+      subtotalOc: Number.isNaN(subtotalOc) ? 0 : subtotalOc,
+      descuentoOc: Number.isNaN(descuentoOc) ? 0 : descuentoOc,
+      totalOc,
+      subtotalFacturas: metrics.subtotal,
+      descuentoFacturas: metrics.descuento,
+      totalFacturas: metrics.total,
+      diferenciaSubtotal: roundMoney(metrics.subtotal - (Number.isNaN(subtotalOc) ? 0 : subtotalOc)),
+      diferenciaDescuento: roundMoney(metrics.descuento - (Number.isNaN(descuentoOc) ? 0 : descuentoOc)),
+      diferenciaTotal: roundMoney(metrics.total - totalOc),
+      pendientesMonto: metrics.pendientesMonto,
+      invalidas: metrics.invalidas,
+      cantidad: metrics.cantidad
+    };
+  }
+
+  function isVentaFacturasCuadreBalanced(record) {
+    const cuadre = getVentaFacturasCuadreData(record);
+    return isMoneyDifferenceBalanced(cuadre.diferenciaSubtotal)
+      && isMoneyDifferenceBalanced(cuadre.diferenciaDescuento)
+      && isMoneyDifferenceBalanced(cuadre.diferenciaTotal);
+  }
+
+  function getVentaFacturasCuadreStatusText(cuadre, facturas = []) {
+    const list = normalizeFacturasVentaList(facturas);
+    if (!list.length) return 'Sin facturas';
+    if (cuadre.invalidas) return 'Revisar descuentos';
+    if (cuadre.pendientesMonto) return 'Facturas pendientes de completar monto';
+    if (isMoneyDifferenceBalanced(cuadre.diferenciaSubtotal) && isMoneyDifferenceBalanced(cuadre.diferenciaDescuento) && isMoneyDifferenceBalanced(cuadre.diferenciaTotal)) return 'Cuadrado';
+    return 'Descuadrado';
   }
 
   function renderFacturasVentaEditorList(facturas) {
@@ -16218,7 +16843,10 @@ Notas importantes:
     return `
       <div class="facturas-display-list">
         ${list.map((factura) => `
-          <span class="factura-chip"><strong>${escapeHtml(factura.numero)}</strong></span>
+          <span class="factura-chip ${factura.pendienteMonto ? 'is-pending' : ''}">
+            <strong>${escapeHtml(factura.numero)}</strong>
+            <small>${factura.pendienteMonto ? 'monto pendiente' : escapeHtml(formatMoney(factura.total))}</small>
+          </span>
         `).join('')}
       </div>
     `;
@@ -16580,7 +17208,7 @@ Notas importantes:
             <strong>Ajustes:</strong>
             ${ajustes.map((ajuste) => `
               <span class="ajuste-chip ${ajuste.activo ? '' : 'is-inactive'}">
-                ${escapeHtml(formatDate(ajuste.fecha))} — ${escapeHtml(ajuste.tipo)} — ${ajuste.activo ? '-' : ''}${escapeHtml(formatMoney(ajuste.monto))}${ajuste.observacion ? ` — ${escapeHtml(ajuste.observacion)}` : ''}
+                ${escapeHtml(formatDate(ajuste.fecha))} — ${escapeHtml(ajuste.tipo)} — ${ajuste.activo ? '-' : ''}${escapeHtml(formatMoney(ajuste.monto))} — ${escapeHtml(formatAjusteFacturaLabel(ajuste))}${ajuste.observacion ? ` — ${escapeHtml(ajuste.observacion)}` : ''}
                 ${ajuste.activo && canCurrentRole('annulMovements') ? `<button type="button" class="mini-inline-action" data-ajuste-venta-delete="${escapeHtml(record.id)}" data-ajuste-id="${escapeHtml(ajuste.id)}">Eliminar</button>` : ''}
               </span>
             `).join('')}
@@ -16592,7 +17220,7 @@ Notas importantes:
 
   function formatVentaAjustesExport(ajustesSource) {
     const ajustes = normalizeVentaAjustesList(ajustesSource).filter((ajuste) => ajuste.activo);
-    return ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`).join(' | ');
+    return ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)} · ${formatAjusteFacturaLabel(ajuste)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`).join(' | ');
   }
 
   function getVentasOrdenadas(options = {}) {
@@ -16704,7 +17332,7 @@ Notas importantes:
     };
   }
 
-  function validateVentaRecord(record) {
+  function validateVentaRecord(record, existingRecord = null) {
     if (!record.numeroDocumento) return 'El número OC es obligatorio.';
     if (!record.clienteId || !getActiveCatalogRecords('clientes').some((cliente) => cliente.id === record.clienteId)) return 'Selecciona un cliente activo desde Catálogos.';
     if (!record.sucursalId || !getActiveCatalogRecords('sucursales').some((sucursal) => sucursal.id === record.sucursalId)) return 'Selecciona una sucursal activa desde Catálogos.';
@@ -16723,7 +17351,46 @@ Notas importantes:
     if (record.ventaNetaOriginal < 0) return 'El Total no puede ser negativo. Revisa Subtotal y Descuento.';
     if (record.descuento > record.subtotal) return 'Descuento no puede superar el Subtotal.';
     if (record.totalCobrado > record.ventaNetaAjustada) return 'El total ajustado no puede quedar menor que el total ya cobrado.';
+
+    const facturas = normalizeFacturasVentaList(record.facturas);
+    const existingFacturas = normalizeFacturasVentaList(existingRecord?.facturas || []);
+    const legacyPendingUntouched = Boolean(existingRecord)
+      && existingFacturas.length > 0
+      && existingFacturas.every((factura) => factura.pendienteMonto)
+      && facturas.length > 0
+      && facturas.every((factura) => factura.pendienteMonto);
+
+    if (!facturas.length) return 'Ingresa al menos una factura para cuadrar la OC.';
+    if (facturas.some((factura) => !factura.numero)) return 'Cada factura debe tener número.';
+    if (facturas.some((factura) => isFacturaVentaInvalid(factura))) return 'Revisa facturas: subtotal y descuento deben ser positivos, y descuento no puede superar subtotal.';
+    if (facturas.some((factura) => factura.pendienteMonto)) {
+      if (legacyPendingUntouched) return '';
+      return 'Completa Subtotal y Descuento de todas las facturas para validar el cuadre.';
+    }
+    if (!isVentaFacturasCuadreBalanced(record)) return 'Las facturas no cuadran con la OC. Revisa subtotal, descuento y total.';
     return '';
+  }
+
+  function readVentaFacturaRow(row) {
+    const numero = cleanFacturaVentaNumero(row?.querySelector?.('[data-factura-numero]')?.value || '');
+    const subtotalInfo = getFacturaMoneyInputInfo(row?.querySelector?.('[data-factura-subtotal]')?.value || '');
+    const descuentoInfo = getFacturaMoneyInputInfo(row?.querySelector?.('[data-factura-descuento]')?.value || '');
+    if (!numero && !subtotalInfo.hasValue && !descuentoInfo.hasValue) return null;
+    const payload = {
+      id: cleanText(row?.dataset?.facturaId) || generateId('factura'),
+      numero,
+      pendienteMonto: !(subtotalInfo.hasValue || descuentoInfo.hasValue)
+    };
+    if (subtotalInfo.hasValue) payload.subtotal = subtotalInfo.value;
+    if (descuentoInfo.hasValue) payload.descuento = descuentoInfo.value;
+    if (subtotalInfo.invalid || descuentoInfo.invalid) payload.invalida = true;
+    return normalizeFacturaVentaRecord(payload);
+  }
+
+  function readVentaFacturaRowsFromBlock(block) {
+    const rows = Array.from(block?.querySelectorAll?.('[data-factura-row]') || []);
+    if (!rows.length) return [];
+    return normalizeFacturasVentaList(rows.map((row) => readVentaFacturaRow(row)).filter(Boolean));
   }
 
   function syncFacturaRowsToHidden(form) {
@@ -16731,14 +17398,26 @@ Notas importantes:
     if (!block) return [];
     const hidden = block.querySelector('[data-facturas-json]');
     const massInput = block.querySelector('[data-facturas-mass]');
-    const source = massInput ? massInput.value : (hidden?.value || '');
-    const list = normalizeFacturasVentaList(source);
+    const existing = normalizeFacturasVentaList(hidden?.value || []);
+    const rowList = readVentaFacturaRowsFromBlock(block);
+    const hasEditor = Boolean(block.querySelector('[data-facturas-rows]'));
+    const typed = hasEditor ? rowList : (massInput ? normalizeFacturasVentaList(massInput.value) : existing);
+    const list = mergeFacturasVentaWithExisting(typed, existing);
     if (hidden) hidden.value = JSON.stringify(list);
     return list;
   }
 
   function validatePendingFacturaInputs(form) {
-    syncFacturaRowsToHidden(form);
+    const facturas = syncFacturaRowsToHidden(form);
+    const rows = Array.from(form?.querySelectorAll?.('[data-factura-row]') || []);
+    const incomplete = rows.some((row) => {
+      const numero = cleanFacturaVentaNumero(row.querySelector('[data-factura-numero]')?.value || '');
+      const subtotal = getFacturaMoneyInputInfo(row.querySelector('[data-factura-subtotal]')?.value || '');
+      const descuento = getFacturaMoneyInputInfo(row.querySelector('[data-factura-descuento]')?.value || '');
+      return (subtotal.hasValue || descuento.hasValue) && !numero;
+    });
+    if (incomplete) return 'Hay una fila de factura con monto pero sin número.';
+    if (facturas.some((factura) => isFacturaVentaInvalid(factura))) return 'Revisa facturas: descuento no puede superar subtotal y los montos no pueden ser negativos.';
     return '';
   }
 
@@ -16791,18 +17470,32 @@ Notas importantes:
     ventasState.selectedAjusteVentaId = '';
   }
 
-  function buildVentaAjusteFromForm(form) {
+  function buildVentaAjusteFromForm(form, ventaRecord = null) {
     const formData = new FormData(form);
+    const facturaSelection = decodeAjusteFacturaOptionValue(formData.get('facturaAfectada'));
+    const facturaMatch = ventaRecord
+      ? findAjusteFacturaInList(ventaRecord.facturas, { facturaAfectadaId: facturaSelection.id, facturaAfectadaNumero: facturaSelection.numero }, normalizeFacturasVentaList)
+      : null;
     return normalizeVentaAjusteRecord({
       id: generateId('ajusteCliente'),
       fecha: toDateInputValue(formData.get('fecha')),
       tipo: cleanText(formData.get('tipo')),
       monto: parseMoney(formData.get('monto')),
       observacion: cleanText(formData.get('observacion')),
+      facturaAfectadaId: cleanText(facturaMatch?.id || facturaSelection.id),
+      facturaAfectadaNumero: cleanFacturaVentaNumero(facturaMatch?.numero || facturaSelection.numero),
       activo: true,
       createdAt: nowIso(),
       updatedAt: nowIso()
     });
+  }
+
+  function validateAjusteFacturaReferencia(facturas, ajuste, normalizer, parentLabel) {
+    if (!hasAjusteFacturaSnapshot(ajuste)) return '';
+    const list = normalizer(facturas);
+    if (!list.length) return `${parentLabel} no tiene facturas registradas; usa ajuste general al documento madre.`;
+    if (!findAjusteFacturaInList(list, ajuste, normalizer)) return `La factura afectada seleccionada no pertenece a ${parentLabel}.`;
+    return '';
   }
 
   function validateVentaAjusteRecord(venta, ajuste, clienteId) {
@@ -16812,6 +17505,8 @@ Notas importantes:
     if (!VENTA_AJUSTE_TYPES.includes(ajuste.tipo)) return 'Selecciona un tipo de ajuste válido.';
     if (Number.isNaN(parseMoney(ajuste.monto)) || ajuste.monto <= 0) return 'El monto del ajuste debe ser mayor que cero.';
     if (ajuste.monto > venta.saldoPorCobrar) return `El ajuste no puede superar el saldo lógico disponible de ${formatMoney(venta.saldoPorCobrar)}. Si ya se cobró de más, registra la corrección fuera de cobros para no crear banco falso.`;
+    const facturaError = validateAjusteFacturaReferencia(venta.facturas, ajuste, normalizeFacturasVentaList, 'esta OC');
+    if (facturaError) return facturaError;
     return '';
   }
 
@@ -16821,7 +17516,7 @@ Notas importantes:
     const clienteId = cleanText(formData.get('clienteId'));
     const ventas = Array.isArray(appData.ventas) ? appData.ventas : [];
     const venta = ventas.map((record) => normalizeVentaRecord(record)).find((record) => record.id === ventaId);
-    const ajuste = buildVentaAjusteFromForm(form);
+    const ajuste = buildVentaAjusteFromForm(form, venta);
     const validationError = validateVentaAjusteRecord(venta, ajuste, clienteId);
 
     if (validationError) {
@@ -16845,9 +17540,10 @@ Notas importantes:
     });
 
     const savedVenta = appData.ventas.find((record) => record.id === ventaId);
+    if (savedVenta) syncVentaFacturasToFacturasModulo(savedVenta);
     ventasState.selectedAjusteVentaId = ventaId;
     openAccordionGroupForRecord('ventas', savedVenta || venta);
-    ventasState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${venta.numeroDocumento}. Saldo recalculado sin crear cobro.`;
+    ventasState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${venta.numeroDocumento} (${getAjusteFacturaActivityPart(ajuste)}). Saldo recalculado sin crear cobro.`;
     ventasState.messageType = 'success';
     saveData(appData);
     registerActivity({
@@ -16856,7 +17552,7 @@ Notas importantes:
       entityType: 'Ajuste cliente',
       entityRef: venta.numeroDocumento,
       amount: ajuste.monto,
-      detail: buildActivityDetail(['Ajuste cliente registrado', venta.numeroDocumento, ajuste.tipo, formatMoney(ajuste.monto)]),
+      detail: buildActivityDetail(['Ajuste cliente registrado', venta.numeroDocumento, getAjusteFacturaActivityPart(ajuste), ajuste.tipo, formatMoney(ajuste.monto)]),
       source: 'local'
     });
     renderRoute();
@@ -16897,6 +17593,7 @@ Notas importantes:
     });
 
     const savedVenta = appData.ventas.find((record) => record.id === ventaId);
+    if (savedVenta) syncVentaFacturasToFacturasModulo(savedVenta);
     ventasState.selectedAjusteVentaId = ventaId;
     openAccordionGroupForRecord('ventas', savedVenta || venta);
     ventasState.message = `Ajuste eliminado de ${venta.numeroDocumento}. Saldo recalculado.`;
@@ -16908,6 +17605,7 @@ Notas importantes:
   function setupVentaAjusteForm(form) {
     const clientSelect = form.querySelector('[data-ajuste-client]');
     const ventaSelect = form.querySelector('[data-ajuste-venta]');
+    const facturaSelect = form.querySelector('[data-ajuste-venta-factura]');
     const preview = form.querySelector('[data-ajuste-venta-preview]');
     if (!clientSelect || !ventaSelect) return;
 
@@ -16916,6 +17614,7 @@ Notas importantes:
       const ventas = Array.isArray(appData.ventas) ? appData.ventas : [];
       const venta = ventas.map((record) => normalizeVentaRecord(record)).find((record) => record.id === ventaId);
       if (preview && venta) preview.innerHTML = renderVentaAjustePreview(venta);
+      syncAjusteFacturaSelectOptions(facturaSelect, venta?.facturas || [], normalizeFacturasVentaList);
       ventasState.selectedAjusteVentaId = ventaId;
     };
 
@@ -16957,7 +17656,7 @@ Notas importantes:
       return;
     }
     const newRecord = buildVentaFromForm(form, existingRecord);
-    const validationError = validateVentaRecord(newRecord);
+    const validationError = validateVentaRecord(newRecord, existingRecord);
 
     if (validationError) {
       ventasState.quickCapture = existingRecord ? null : buildVentaDraftFromForm(form);
@@ -17075,11 +17774,11 @@ Notas importantes:
     const block = form.querySelector('[data-facturas-block]');
     if (!block) return;
     const hidden = block.querySelector('[data-facturas-json]');
-    const massInput = block.querySelector('[data-facturas-mass]');
+    const rowsNode = block.querySelector('[data-facturas-rows]');
+    const addButton = block.querySelector('[data-factura-add]');
     const countNode = block.querySelector('[data-facturas-count]');
-    const previewNode = block.querySelector('[data-facturas-preview]');
     const messageNode = block.querySelector('[data-factura-message]');
-    if (!massInput) return;
+    if (!rowsNode) return;
 
     const showMessage = (message, isError = false) => {
       if (!messageNode) return;
@@ -17087,27 +17786,104 @@ Notas importantes:
       messageNode.classList.toggle('is-error', Boolean(isError));
     };
 
+    const createRow = (factura = {}) => {
+      const temp = document.createElement('div');
+      temp.innerHTML = renderVentaFacturaEditorRow(factura).trim();
+      const row = temp.firstElementChild;
+      rowsNode.appendChild(row);
+      bindRow(row);
+      return row;
+    };
+
+    const updateRow = (row) => {
+      const subtotalInfo = getFacturaMoneyInputInfo(row.querySelector('[data-factura-subtotal]')?.value || '');
+      const descuentoInfo = getFacturaMoneyInputInfo(row.querySelector('[data-factura-descuento]')?.value || '');
+      const totalInput = row.querySelector('[data-factura-total]');
+      const hasAmounts = subtotalInfo.hasValue || descuentoInfo.hasValue;
+      const subtotal = subtotalInfo.hasValue && !Number.isNaN(subtotalInfo.value) ? subtotalInfo.value : 0;
+      const descuento = descuentoInfo.hasValue && !Number.isNaN(descuentoInfo.value) ? descuentoInfo.value : 0;
+      const total = roundMoney(subtotal - descuento);
+      if (totalInput) totalInput.value = hasAmounts ? formatNumberInput(total) : '';
+      const invalid = subtotalInfo.invalid || descuentoInfo.invalid || (hasAmounts && (descuento > subtotal || total < 0));
+      row.classList.toggle('is-invalid', invalid);
+      row.classList.toggle('is-pending', !hasAmounts);
+    };
+
+    const updateCuadre = (list) => {
+      const formData = new FormData(form);
+      const record = {
+        subtotal: formData.get('subtotal') ?? formData.get('montoOc'),
+        montoOc: formData.get('subtotal') ?? formData.get('montoOc'),
+        descuento: formData.get('descuento'),
+        facturas: list
+      };
+      const cuadre = getVentaFacturasCuadreData(record);
+      const updates = [
+        ['[data-facturas-oc-subtotal]', formatMoney(cuadre.subtotalOc), false, 0],
+        ['[data-facturas-sum-subtotal]', formatMoney(cuadre.subtotalFacturas), false, 0],
+        ['[data-facturas-diff-subtotal]', formatMoneyDifference(cuadre.diferenciaSubtotal), true, cuadre.diferenciaSubtotal],
+        ['[data-facturas-oc-descuento]', formatMoney(cuadre.descuentoOc), false, 0],
+        ['[data-facturas-sum-descuento]', formatMoney(cuadre.descuentoFacturas), false, 0],
+        ['[data-facturas-diff-descuento]', formatMoneyDifference(cuadre.diferenciaDescuento), true, cuadre.diferenciaDescuento],
+        ['[data-facturas-oc-total]', formatMoney(cuadre.totalOc), false, 0],
+        ['[data-facturas-sum-total]', formatMoney(cuadre.totalFacturas), false, 0],
+        ['[data-facturas-diff-total]', formatMoneyDifference(cuadre.diferenciaTotal), true, cuadre.diferenciaTotal]
+      ];
+      updates.forEach(([selector, value, isDiff, diff]) => {
+        const node = block.querySelector(selector);
+        if (!node) return;
+        node.textContent = value;
+        if (isDiff) {
+          node.closest('.facturas-cuadre-item')?.classList.toggle('is-balanced', isMoneyDifferenceBalanced(diff));
+          node.closest('.facturas-cuadre-item')?.classList.toggle('is-unbalanced', !isMoneyDifferenceBalanced(diff));
+        }
+      });
+      const status = block.querySelector('[data-facturas-cuadre-status]');
+      if (status) status.textContent = getVentaFacturasCuadreStatusText(cuadre, list);
+    };
+
     const sync = () => {
-      const list = normalizeFacturasVentaList(massInput.value);
+      Array.from(rowsNode.querySelectorAll('[data-factura-row]')).forEach(updateRow);
+      const list = syncFacturaRowsToHidden(form);
       if (hidden) hidden.value = JSON.stringify(list);
       if (countNode) countNode.textContent = `${list.length} factura${list.length === 1 ? '' : 's'}`;
-      if (previewNode) previewNode.textContent = list.length ? `Facturas detectadas: ${formatFacturasVentaResumen(list)}` : 'Facturas detectadas: ninguna';
+      updateCuadre(list);
       return list;
     };
 
-    const current = normalizeFacturasVentaList(hidden?.value || []);
-    massInput.value = formatFacturasVentaInput(current);
-    sync();
+    function bindRow(row) {
+      row.querySelectorAll('input').forEach((input) => {
+        input.addEventListener('input', () => {
+          sync();
+          showMessage('', false);
+        });
+        input.addEventListener('blur', () => {
+          if (input.matches('[data-factura-subtotal], [data-factura-descuento]')) {
+            const info = getFacturaMoneyInputInfo(input.value);
+            input.value = info.hasValue && !Number.isNaN(info.value) ? formatNumberInput(info.value) : '';
+          }
+          sync();
+        });
+      });
+      row.querySelector('[data-factura-remove]')?.addEventListener('click', () => {
+        row.remove();
+        sync();
+      });
+      updateRow(row);
+    }
 
-    massInput.addEventListener('input', () => {
+    Array.from(rowsNode.querySelectorAll('[data-factura-row]')).forEach(bindRow);
+    addButton?.addEventListener('click', () => {
+      const row = createRow({ id: generateId('factura'), numero: '', pendienteMonto: true });
       sync();
-      showMessage('', false);
+      row.querySelector('[data-factura-numero]')?.focus();
     });
-    massInput.addEventListener('blur', () => {
-      const list = sync();
-      massInput.value = formatFacturasVentaInput(list);
-      sync();
+
+    form.querySelectorAll('[data-venta-calc]').forEach((input) => {
+      input.addEventListener('input', () => sync());
     });
+
+    sync();
   }
 
   function setupVentaLogisticaForm(form) {
@@ -18509,6 +19285,13 @@ Notas importantes:
             <span>Monto ajuste C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
             <input type="number" name="monto" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-ajuste-monto />
           </label>
+          <label class="form-field">
+            <span>Factura afectada</span>
+            <select name="facturaAfectada" data-ajuste-proveedor-factura>
+              ${renderAjusteFacturaOptions(selectedCompra?.facturasRelacionadas || [], '', normalizeFacturasProveedorList)}
+            </select>
+            <small>Opcional: si no aplica, queda como ajuste general de la compra.</small>
+          </label>
         </div>
         <div class="formula-card ajuste-preview" aria-live="polite" data-ajuste-preview>
           ${renderAjustePreview(selectedCompra)}
@@ -18552,15 +19335,17 @@ Notas importantes:
     const fechaVencimiento = isContado
       ? fechaCompra
       : (record?.fechaVencimiento || toDateInputValue(draft.fechaVencimiento) || addDaysToDate(fechaCompra, Number(diasCredito) || 0) || fechaCompra);
-    const previewSource = record || { totalCompra: draft.totalCompra || 0, totalPagado: 0 };
-    const calculations = getCompraProveedorCalculations(previewSource);
-    const facturaReferencia = record?.facturaReferencia || cleanText(draft.facturaReferencia);
-    const totalCompraValue = record ? record.totalCompra : draft.totalCompra;
     const facturasSource = record || draft;
+    const facturasProveedorPreview = normalizeFacturasProveedorList(facturasSource?.facturasRelacionadas || []);
+    const hasFacturaMontoPreview = facturasProveedorPreview.some((factura) => !factura.pendienteMonto);
+    const totalCompraValue = hasFacturaMontoPreview ? sumaMontosFacturas(facturasProveedorPreview) : (record ? record.totalCompra : draft.totalCompra);
+    const previewSource = record || { totalCompra: totalCompraValue || 0, totalPagado: 0 };
+    const calculations = getCompraProveedorCalculations({ ...previewSource, totalCompra: totalCompraValue || previewSource.totalCompra || 0 });
+    const facturaReferencia = record?.facturaReferencia || cleanText(draft.facturaReferencia);
     const observacion = record?.observacion || cleanText(draft.observacion);
 
     return `
-      <form class="compra-form" data-compra-form data-current-pagado="${escapeHtml(record?.totalPagado || 0)}" data-current-ajustes="${escapeHtml(JSON.stringify(record?.ajustes || []))}" novalidate>
+      <form class="compra-form" data-compra-form data-current-pagado="${escapeHtml(record?.totalPagado || 0)}" data-current-ajustes="${escapeHtml(JSON.stringify(record?.ajustes || []))}" data-existing-compra="${record ? '1' : '0'}" data-legacy-total-compra="${escapeHtml(record?.totalCompra || 0)}" novalidate>
         <input type="hidden" name="id" value="${escapeHtml(record?.id || '')}" />
         <div class="form-grid">
           <label class="form-field">
@@ -18585,10 +19370,7 @@ Notas importantes:
           </label>
           <label class="form-field compra-total-field">
             <span>Total compra/deuda C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <div class="input-action-row compra-total-action-row">
-              <input type="number" name="totalCompra" value="${escapeHtml(formatNumberInput(totalCompraValue))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-compra-calc data-compra-total-input />
-              <button type="button" class="secondary-action compact" data-compra-calculator-open>Calcular</button>
-            </div>
+            <input type="number" name="totalCompra" value="${escapeHtml(formatNumberInput(totalCompraValue))}" min="0" step="0.01" inputmode="decimal" placeholder="Calculado desde facturas" required readonly data-compra-calc data-compra-total-input />
           </label>
         </div>
 
@@ -18616,7 +19398,6 @@ Notas importantes:
           <button type="submit" class="card-action" ${missingProviders ? 'disabled' : ''}>${record ? 'Guardar cambios' : 'Guardar compra/deuda'}</button>
           <button type="button" class="secondary-action" data-compra-clear>${record ? 'Cancelar' : 'Limpiar'}</button>
         </div>
-        ${renderCompraTotalCalculatorModal()}
       </form>
     `;
   }
@@ -18625,7 +19406,6 @@ Notas importantes:
     const legacyReferencia = cleanText(record?.facturaReferencia);
     const storedFacturas = normalizeFacturasProveedorList(record?.facturasRelacionadas || []);
     const facturas = storedFacturas.length ? storedFacturas : normalizeFacturasProveedorList(legacyReferencia ? legacyReferencia : []);
-    const facturasText = formatFacturasProveedorInput(facturas);
     return `
         <section class="facturas-block facturas-proveedor-block" data-facturas-proveedor-block>
           <input type="hidden" name="facturasRelacionadasJson" data-facturas-proveedor-json value="${escapeHtml(JSON.stringify(facturas))}" />
@@ -18636,48 +19416,47 @@ Notas importantes:
             </div>
             <span class="count-pill" data-facturas-proveedor-count>${facturas.length} factura${facturas.length === 1 ? '' : 's'}</span>
           </div>
-          <p class="muted-text compact-note">Captura una o varias facturas que respaldan esta misma compra/deuda. Son referencia documental: sin monto individual y sin crear pagos.</p>
-          <label class="form-field facturas-mass-field">
-            <span>Números de factura</span>
-            <textarea name="facturasRelacionadasTexto" data-facturas-proveedor-mass rows="3" placeholder="000145, 000146, 000147" autocomplete="off" inputmode="numeric">${escapeHtml(facturasText)}</textarea>
-          </label>
-          <p class="compact-note">Separa varias facturas por espacio, coma, punto, punto y coma o salto de línea. Se conservan ceros iniciales.</p>
+          <p class="muted-text compact-note">Una compra madre puede tener una o varias facturas. La suma de montos calcula el Total compra; no crea pagos ni saldos por factura.</p>
+          <div class="facturas-editor-shell" data-facturas-proveedor-editor-shell>
+            <div class="facturas-grid facturas-proveedor-grid" role="table" aria-label="Facturas relacionadas de proveedor">
+              <div class="facturas-grid-row facturas-grid-head" role="row">
+                <span role="columnheader">Factura</span>
+                <span role="columnheader">Monto</span>
+                <span role="columnheader" class="sr-only">Quitar</span>
+              </div>
+              <div data-facturas-proveedor-rows>
+                ${renderCompraFacturaEditorRows(facturas)}
+              </div>
+              <div class="facturas-grid-row facturas-add-row" role="row">
+                <button type="button" class="factura-add-button" data-factura-proveedor-add aria-label="Agregar factura relacionada">+</button>
+              </div>
+            </div>
+          </div>
           <div class="facturas-preview" data-facturas-proveedor-preview>${facturas.length ? `Facturas detectadas: ${escapeHtml(formatFacturasProveedorResumen(facturas))}` : 'Facturas detectadas: ninguna'}</div>
           <p class="compact-note facturas-message" data-facturas-proveedor-message aria-live="polite"></p>
         </section>
     `;
   }
 
-  function renderCompraTotalCalculatorModal() {
+  function renderCompraFacturaEditorRows(facturas) {
+    const rows = normalizeFacturasProveedorList(facturas);
+    return rows.map((factura, index) => renderCompraFacturaEditorRow(factura, index)).join('');
+  }
+
+  function renderCompraFacturaEditorRow(factura, index = 0) {
+    const normalized = normalizeFacturaProveedorRecord(factura) || { id: generateId('facturaProveedor'), numero: '', monto: 0, pendienteMonto: true };
+    const montoValue = normalized.pendienteMonto && !normalized.monto ? '' : formatNumberInput(normalized.monto);
     return `
-      <div class="modal-backdrop compra-calculator-backdrop is-hidden" data-compra-calculator-modal role="presentation">
-        <section class="edit-modal compra-calculator-modal" role="dialog" aria-modal="true" aria-labelledby="compra-calculator-title">
-          <header class="edit-modal-header">
-            <div>
-              <span class="eyebrow mini">Auxiliar</span>
-              <h2 id="compra-calculator-title">Calculadora de Total compra</h2>
-              <p>Suma montos de facturas y usa el resultado sin guardar la compra todavía.</p>
-            </div>
-            <button type="button" class="modal-close" data-compra-calculator-close aria-label="Cerrar calculadora">×</button>
-          </header>
-          <div class="edit-modal-body compra-calculator-body">
-            <div class="calculator-lines" data-compra-calculator-rows></div>
-            <div class="record-actions calculator-line-actions">
-              <button type="button" class="secondary-action compact" data-compra-calculator-add>Agregar línea</button>
-              <button type="button" class="secondary-action compact" data-compra-calculator-clear>Limpiar</button>
-            </div>
-            <div class="formula-card compra-calculator-total" aria-live="polite">
-              <strong>Total calculado</strong>
-              ${renderFormulaSummaryGrid([
-                ['Suma', formatMoney(0), 'data-compra-calculator-total']
-              ], 'calculator-summary-grid')}
-            </div>
-            <div class="form-actions">
-              <button type="button" class="card-action" data-compra-calculator-use>Usar total</button>
-              <button type="button" class="secondary-action" data-compra-calculator-cancel>Cancelar</button>
-            </div>
-          </div>
-        </section>
+      <div class="facturas-grid-row factura-edit-row ${normalized.pendienteMonto ? 'is-pending' : ''} ${isFacturaProveedorInvalid(normalized) ? 'is-invalid' : ''}" role="row" data-factura-proveedor-row data-factura-id="${escapeHtml(normalized.id)}">
+        <label class="factura-cell factura-number-cell">
+          <span>Factura</span>
+          <input type="text" data-factura-proveedor-numero value="${escapeHtml(normalized.numero || '')}" placeholder="No. factura" autocomplete="off" aria-label="Factura relacionada ${index + 1}" />
+        </label>
+        <label class="factura-cell factura-money-cell">
+          <span>Monto</span>
+          <input type="number" data-factura-proveedor-monto value="${escapeHtml(montoValue)}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" aria-label="Monto factura relacionada ${index + 1}" />
+        </label>
+        <button type="button" class="danger-action compact factura-remove-button" data-factura-proveedor-remove aria-label="Quitar factura relacionada">×</button>
       </div>
     `;
   }
@@ -18837,7 +19616,7 @@ Notas importantes:
             <strong>Ajustes:</strong>
             ${ajustes.map((ajuste) => `
               <span class="ajuste-chip ${ajuste.activo ? '' : 'is-inactive'}">
-                ${escapeHtml(formatDate(ajuste.fecha))} — ${escapeHtml(ajuste.tipo)} — ${ajuste.activo ? '-' : ''}${escapeHtml(formatMoney(ajuste.monto))}${ajuste.observacion ? ` — ${escapeHtml(ajuste.observacion)}` : ''}
+                ${escapeHtml(formatDate(ajuste.fecha))} — ${escapeHtml(ajuste.tipo)} — ${ajuste.activo ? '-' : ''}${escapeHtml(formatMoney(ajuste.monto))} — ${escapeHtml(formatAjusteFacturaLabel(ajuste))}${ajuste.observacion ? ` — ${escapeHtml(ajuste.observacion)}` : ''}
                 ${ajuste.activo && canCurrentRole('annulMovements') ? `<button type="button" class="mini-inline-action" data-ajuste-delete="${escapeHtml(record.id)}" data-ajuste-id="${escapeHtml(ajuste.id)}">Eliminar</button>` : ''}
               </span>
             `).join('')}
@@ -18849,7 +19628,7 @@ Notas importantes:
 
   function formatCompraAjustesExport(ajustesSource) {
     const ajustes = normalizeCompraProveedorAjustesList(ajustesSource).filter((ajuste) => ajuste.activo);
-    return ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`).join(' | ');
+    return ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)} · ${formatAjusteFacturaLabel(ajuste)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`).join(' | ');
   }
 
   function getComprasProveedoresOrdenadas(options = {}) {
@@ -18883,8 +19662,9 @@ Notas importantes:
   }
 
   function buildCompraProveedorFromForm(form, existingRecord) {
-    const formData = new FormData(form);
     const timestamp = nowIso();
+    const facturasRelacionadas = syncCompraFacturasRelacionadasToHidden(form);
+    const formData = new FormData(form);
     const proveedorId = cleanText(formData.get('proveedorId'));
     const proveedor = getCatalogRecordById('proveedores', proveedorId);
     const fechaCompra = toDateInputValue(formData.get('fechaCompra'));
@@ -18900,9 +19680,10 @@ Notas importantes:
     const metodoPagoContado = metodoPagoContadoId ? findPaymentMethodByValue(metodoPagoContadoId) : null;
     const bancoPagoContadoId = isContado ? cleanText(formData.get('bancoPagoContadoId')) : '';
     const bancoPagoContado = bancoPagoContadoId ? getCatalogRecordById('cuentasBancos', bancoPagoContadoId) : null;
-    const totalCompra = parseMoney(formData.get('totalCompra'));
-    const facturasRelacionadas = syncCompraFacturasRelacionadasToHidden(form);
     const facturaReferencia = getCompraProveedorFacturaReferenciaValue(facturasRelacionadas, formData.get('facturaReferencia') || existingRecord?.facturaReferencia || '');
+    const facturasStats = getCompraFacturasMontoStats(facturasRelacionadas);
+    const preserveLegacyTotal = Boolean(existingRecord) && facturasStats.pendientes > 0 && facturasStats.completas === 0;
+    const totalCompra = preserveLegacyTotal ? parseMoney(existingRecord?.totalCompra || 0) : facturasStats.total;
     const manualPagado = existingRecord?.id ? calculateManualPagadoForCompra(existingRecord.id, appData.pagosProveedores) : 0;
     const expectedPagado = isContado ? (Number.isNaN(totalCompra) ? 0 : totalCompra) : manualPagado;
     const base = {
@@ -18962,13 +19743,25 @@ Notas importantes:
 
   function validateCompraProveedorRecord(record, existingRecord = null) {
     if (!record.proveedorId || !getActiveCatalogRecords('proveedores').some((proveedor) => proveedor.id === record.proveedorId)) return 'Selecciona un proveedor activo desde Catálogos.';
-    if (!normalizeFacturasProveedorList(record.facturasRelacionadas).length) return 'Ingresa al menos una factura relacionada.';
+    const facturas = normalizeFacturasProveedorList(record.facturasRelacionadas);
+    const stats = getCompraFacturasMontoStats(facturas);
+    const legacyPendingUntouched = Boolean(existingRecord)
+      && facturas.length > 0
+      && stats.pendientes > 0
+      && stats.completas === 0
+      && parseMoney(existingRecord.totalCompra) > 0;
+    if (!facturas.length) return 'Ingresa al menos una factura relacionada con monto.';
+    if (facturas.some((factura) => !factura.numero)) return 'Cada factura relacionada debe tener número.';
+    if (facturas.some((factura) => isFacturaProveedorInvalid(factura))) return 'Revisa facturas relacionadas: los montos deben ser números positivos o cero.';
+    if (stats.pendientes > 0 && !legacyPendingUntouched) return 'Completa el monto de todas las facturas relacionadas para calcular Total compra.';
+    if (!legacyPendingUntouched && stats.completas < 1) return 'Ingresa al menos una factura relacionada con monto válido.';
     if (!record.fechaCompra) return 'La fecha de compra es obligatoria.';
     if (!record.fechaVencimiento) return 'La fecha de vencimiento es obligatoria.';
     if (Number.isNaN(parsePositiveInteger(record.diasCredito))) return 'Días de crédito debe ser cero o un número entero positivo.';
     if (record.condicionPagoSnapshot === 'Contado' && Number(record.diasCredito) !== 0) return 'En compras de contado, días de crédito debe ser 0.';
     if (record.condicionPagoSnapshot === 'Contado' && record.fechaVencimiento !== record.fechaCompra) return 'En compras de contado, el vencimiento debe ser igual a la fecha de compra.';
     if (Number.isNaN(parseMoney(record.totalCompra)) || record.totalCompra <= 0) return 'Total compra/deuda debe ser un número mayor que cero.';
+    if (!legacyPendingUntouched && !isMoneyDifferenceBalanced(roundMoney(record.totalCompra - stats.total))) return 'Total compra debe coincidir con la suma de facturas relacionadas.';
     if (Number.isNaN(parseMoney(record.totalPagado)) || record.totalPagado < 0) return 'Pagado no puede ser negativo.';
     if (record.saldoPorPagar < 0) return 'El saldo por pagar no puede ser negativo.';
     const contadoError = validateCompraContadoPayment(record, existingRecord);
@@ -18976,14 +19769,60 @@ Notas importantes:
     return '';
   }
 
-  function syncCompraFacturasRelacionadasToHidden(form) {
+  function getCompraFacturasMontoStats(facturas) {
+    return normalizeFacturasProveedorList(facturas).reduce((totals, factura) => {
+      totals.cantidad += 1;
+      totals.total = roundMoney(totals.total + factura.monto);
+      if (factura.pendienteMonto) totals.pendientes += 1;
+      else totals.completas += 1;
+      if (isFacturaProveedorInvalid(factura)) totals.invalidas += 1;
+      return totals;
+    }, { cantidad: 0, total: 0, pendientes: 0, completas: 0, invalidas: 0 });
+  }
+
+  function readCompraFacturaProveedorRow(row) {
+    const numero = cleanFacturaVentaNumero(row?.querySelector?.('[data-factura-proveedor-numero]')?.value || '');
+    const montoInfo = getFacturaMoneyInputInfo(row?.querySelector?.('[data-factura-proveedor-monto]')?.value || '');
+    if (!numero && !montoInfo.hasValue) return null;
+    const payload = {
+      id: cleanText(row?.dataset?.facturaId) || generateId('facturaProveedor'),
+      numero,
+      pendienteMonto: !montoInfo.hasValue
+    };
+    if (montoInfo.hasValue) payload.monto = montoInfo.value;
+    if (montoInfo.invalid) payload.invalida = true;
+    return normalizeFacturaProveedorRecord(payload);
+  }
+
+  function readCompraFacturasProveedorRowsFromBlock(block) {
+    const rows = Array.from(block?.querySelectorAll?.('[data-factura-proveedor-row]') || []);
+    if (!rows.length) return [];
+    return normalizeFacturasProveedorList(rows.map((row) => readCompraFacturaProveedorRow(row)).filter(Boolean));
+  }
+
+  function updateCompraTotalInputFromFacturas(form, facturas = null) {
+    const list = facturas || syncCompraFacturasRelacionadasToHidden(form, { skipTotalUpdate: true });
+    const stats = getCompraFacturasMontoStats(list);
+    const totalInput = form?.querySelector?.('[data-compra-total-input]');
+    const preserveLegacyTotal = form?.dataset?.existingCompra === '1' && stats.pendientes > 0 && stats.completas === 0;
+    const legacyTotal = parseMoney(form?.dataset?.legacyTotalCompra || 0);
+    const total = preserveLegacyTotal ? legacyTotal : stats.total;
+    if (totalInput) totalInput.value = formatNumberInput(total);
+    return total;
+  }
+
+  function syncCompraFacturasRelacionadasToHidden(form, options = {}) {
     const block = form?.querySelector?.('[data-facturas-proveedor-block]');
     if (!block) return [];
     const hidden = block.querySelector('[data-facturas-proveedor-json]');
     const massInput = block.querySelector('[data-facturas-proveedor-mass]');
-    const source = massInput ? massInput.value : (hidden?.value || '');
-    const list = normalizeFacturasProveedorList(source);
+    const existing = normalizeFacturasProveedorList(hidden?.value || []);
+    const rowList = readCompraFacturasProveedorRowsFromBlock(block);
+    const hasEditor = Boolean(block.querySelector('[data-facturas-proveedor-rows]'));
+    const typed = hasEditor ? rowList : (massInput ? normalizeFacturasProveedorList(massInput.value) : existing);
+    const list = mergeFacturasProveedorWithExisting(typed, existing);
     if (hidden) hidden.value = JSON.stringify(list);
+    if (!options.skipTotalUpdate) updateCompraTotalInputFromFacturas(form, list);
     return list;
   }
 
@@ -18995,13 +19834,14 @@ Notas importantes:
     const fechaCompra = toDateInputValue(formData.get('fechaCompra')) || todayInputValue();
     const diasCredito = isContado ? 0 : parsePositiveInteger(formData.get('diasCredito'));
     const facturasRelacionadas = syncCompraFacturasRelacionadasToHidden(form);
+    const totalCompra = updateCompraTotalInputFromFacturas(form, facturasRelacionadas);
     return {
       proveedorId,
       facturaReferencia: getCompraProveedorFacturaReferenciaValue(facturasRelacionadas, formData.get('facturaReferencia')),
       fechaCompra,
       diasCredito: Number.isNaN(diasCredito) ? 0 : diasCredito,
       fechaVencimiento: isContado ? fechaCompra : (toDateInputValue(formData.get('fechaVencimiento')) || addDaysToDate(fechaCompra, Number.isNaN(diasCredito) ? 0 : diasCredito) || fechaCompra),
-      totalCompra: cleanText(formData.get('totalCompra')),
+      totalCompra: formatNumberInput(totalCompra),
       facturasRelacionadas,
       condicionPagoSnapshot: terms.condicionPago,
       metodoPagoContadoId: isContado ? cleanText(formData.get('metodoPagoContadoId')) : '',
@@ -19048,6 +19888,10 @@ Notas importantes:
     } else if (syncResult.action === 'annulled') {
       proveedoresState.message = `Compra/deuda ${compraRefLabel} actualizada; pago automático anterior quedó anulado.`;
     }
+
+    const facturasSyncResult = syncCompraFacturasToFacturasModulo(newRecord);
+    const facturasSyncMessage = formatCompraFacturasSyncMessage(facturasSyncResult);
+    if (facturasSyncMessage) proveedoresState.message = `${proveedoresState.message} ${facturasSyncMessage}`;
 
     proveedoresState.editingId = null;
     const savedRecord = appData.comprasProveedores.find((record) => record.id === newRecord.id) || newRecord;
@@ -19146,14 +19990,20 @@ Notas importantes:
     renderRoute();
   }
 
-  function buildProveedorAjusteFromForm(form) {
+  function buildProveedorAjusteFromForm(form, compraRecord = null) {
     const formData = new FormData(form);
+    const facturaSelection = decodeAjusteFacturaOptionValue(formData.get('facturaAfectada'));
+    const facturaMatch = compraRecord
+      ? findAjusteFacturaInList(compraRecord.facturasRelacionadas, { facturaAfectadaId: facturaSelection.id, facturaAfectadaNumero: facturaSelection.numero }, normalizeFacturasProveedorList)
+      : null;
     return normalizeCompraProveedorAjusteRecord({
       id: generateId('ajusteProveedor'),
       fecha: toDateInputValue(formData.get('fecha')),
       tipo: cleanText(formData.get('tipo')),
       monto: parseMoney(formData.get('monto')),
       observacion: cleanText(formData.get('observacion')),
+      facturaAfectadaId: cleanText(facturaMatch?.id || facturaSelection.id),
+      facturaAfectadaNumero: cleanFacturaVentaNumero(facturaMatch?.numero || facturaSelection.numero),
       activo: true,
       createdAt: nowIso(),
       updatedAt: nowIso()
@@ -19167,6 +20017,8 @@ Notas importantes:
     if (!COMPRA_AJUSTE_TYPES.includes(ajuste.tipo)) return 'Selecciona un tipo de ajuste válido.';
     if (Number.isNaN(parseMoney(ajuste.monto)) || ajuste.monto <= 0) return 'El monto del ajuste debe ser mayor que cero.';
     if (ajuste.monto > compra.saldoPorPagar) return `El ajuste no puede superar el saldo lógico disponible de ${formatMoney(compra.saldoPorPagar)}. Si ya se pagó de más, registra la corrección fuera de pagos para no crear caja falsa.`;
+    const facturaError = validateAjusteFacturaReferencia(compra.facturasRelacionadas, ajuste, normalizeFacturasProveedorList, 'esta compra');
+    if (facturaError) return facturaError;
     return '';
   }
 
@@ -19176,7 +20028,7 @@ Notas importantes:
     const proveedorId = cleanText(formData.get('proveedorId'));
     const compras = Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [];
     const compra = compras.map((record) => normalizeCompraProveedorRecord(record)).find((record) => record.id === compraProveedorId);
-    const ajuste = buildProveedorAjusteFromForm(form);
+    const ajuste = buildProveedorAjusteFromForm(form, compra);
     const validationError = validateProveedorAjusteRecord(compra, ajuste, proveedorId);
 
     if (validationError) {
@@ -19201,9 +20053,10 @@ Notas importantes:
 
     const savedCompra = appData.comprasProveedores.find((record) => record.id === compraProveedorId);
     const syncResult = savedCompra ? syncAutoPagoCompraContado(savedCompra) : { action: 'none' };
+    if (savedCompra) syncCompraFacturasToFacturasModulo(savedCompra);
     proveedoresState.selectedAjusteCompraId = compraProveedorId;
     openAccordionGroupForRecord('compras', savedCompra || compra);
-    proveedoresState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${compra.facturaReferencia}. Saldo recalculado sin crear pago.`;
+    proveedoresState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${compra.facturaReferencia} (${getAjusteFacturaActivityPart(ajuste)}). Saldo recalculado sin crear pago.`;
     if (syncResult.action === 'updated') proveedoresState.message += ' Pago automático de contado sincronizado defensivamente.';
     proveedoresState.messageType = 'success';
     saveData(appData);
@@ -19213,7 +20066,7 @@ Notas importantes:
       entityType: 'Ajuste proveedor',
       entityRef: compra.facturaReferencia,
       amount: ajuste.monto,
-      detail: buildActivityDetail(['Ajuste proveedor registrado', compra.facturaReferencia, ajuste.tipo, formatMoney(ajuste.monto)]),
+      detail: buildActivityDetail(['Ajuste proveedor registrado', compra.facturaReferencia, getAjusteFacturaActivityPart(ajuste), ajuste.tipo, formatMoney(ajuste.monto)]),
       source: 'local'
     });
     renderRoute();
@@ -19255,6 +20108,7 @@ Notas importantes:
 
     const savedCompra = appData.comprasProveedores.find((record) => record.id === compraProveedorId);
     syncAutoPagoCompraContado(savedCompra || compra);
+    if (savedCompra) syncCompraFacturasToFacturasModulo(savedCompra);
     proveedoresState.selectedAjusteCompraId = compraProveedorId;
     openAccordionGroupForRecord('compras', savedCompra || compra);
     proveedoresState.message = `Ajuste eliminado de ${compra.facturaReferencia}. Saldo recalculado.`;
@@ -19266,6 +20120,7 @@ Notas importantes:
   function setupProveedorAjusteForm(form) {
     const providerSelect = form.querySelector('[data-ajuste-provider]');
     const compraSelect = form.querySelector('[data-ajuste-compra]');
+    const facturaSelect = form.querySelector('[data-ajuste-proveedor-factura]');
     const preview = form.querySelector('[data-ajuste-preview]');
     if (!providerSelect || !compraSelect) return;
 
@@ -19274,6 +20129,7 @@ Notas importantes:
       const compras = Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [];
       const compra = compras.map((record) => normalizeCompraProveedorRecord(record)).find((record) => record.id === compraId);
       if (preview && compra) preview.innerHTML = renderAjustePreview(compra);
+      syncAjusteFacturaSelectOptions(facturaSelect, compra?.facturasRelacionadas || [], normalizeFacturasProveedorList);
       proveedoresState.selectedAjusteCompraId = compraId;
     };
 
@@ -19306,7 +20162,6 @@ Notas importantes:
     updateCompraProveedorPreviewFromForm(form, false);
     setupCompraContadoPaymentBlock(form);
     setupCompraFacturasRelacionadasForm(form);
-    setupCompraTotalCalculator(form);
 
     form.querySelectorAll('[data-compra-calc]').forEach((input) => {
       input.addEventListener('input', () => updateCompraProveedorPreviewFromForm(form, false));
@@ -19324,12 +20179,12 @@ Notas importantes:
   function setupCompraFacturasRelacionadasForm(form) {
     const block = form.querySelector('[data-facturas-proveedor-block]');
     if (!block) return;
-    const hidden = block.querySelector('[data-facturas-proveedor-json]');
-    const massInput = block.querySelector('[data-facturas-proveedor-mass]');
+    const rowsNode = block.querySelector('[data-facturas-proveedor-rows]');
+    const addButton = block.querySelector('[data-factura-proveedor-add]');
     const countNode = block.querySelector('[data-facturas-proveedor-count]');
     const previewNode = block.querySelector('[data-facturas-proveedor-preview]');
     const messageNode = block.querySelector('[data-facturas-proveedor-message]');
-    if (!massInput) return;
+    if (!rowsNode) return;
 
     const showMessage = (message, isError = false) => {
       if (!messageNode) return;
@@ -19337,129 +20192,63 @@ Notas importantes:
       messageNode.classList.toggle('is-error', Boolean(isError));
     };
 
+    const createRow = (factura = {}) => {
+      const temp = document.createElement('div');
+      temp.innerHTML = renderCompraFacturaEditorRow(factura).trim();
+      const row = temp.firstElementChild;
+      rowsNode.appendChild(row);
+      bindRow(row);
+      return row;
+    };
+
+    const updateRow = (row) => {
+      const montoInfo = getFacturaMoneyInputInfo(row.querySelector('[data-factura-proveedor-monto]')?.value || '');
+      row.classList.toggle('is-invalid', montoInfo.invalid);
+      row.classList.toggle('is-pending', !montoInfo.hasValue);
+    };
+
     const sync = () => {
-      const list = normalizeFacturasProveedorList(massInput.value);
-      if (hidden) hidden.value = JSON.stringify(list);
+      Array.from(rowsNode.querySelectorAll('[data-factura-proveedor-row]')).forEach(updateRow);
+      const list = syncCompraFacturasRelacionadasToHidden(form);
+      const stats = getCompraFacturasMontoStats(list);
       if (countNode) countNode.textContent = `${list.length} factura${list.length === 1 ? '' : 's'}`;
-      if (previewNode) previewNode.textContent = list.length ? `Facturas detectadas: ${formatFacturasProveedorResumen(list)}` : 'Facturas detectadas: ninguna';
+      if (previewNode) {
+        const totalText = stats.completas || stats.pendientes ? ` · Total facturas: ${formatMoney(updateCompraTotalInputFromFacturas(form, list))}` : '';
+        previewNode.textContent = list.length ? `Facturas detectadas: ${formatFacturasProveedorResumen(list)}${totalText}` : 'Facturas detectadas: ninguna';
+      }
+      updateCompraProveedorPreviewFromForm(form, false);
       return list;
     };
 
-    const current = normalizeFacturasProveedorList(hidden?.value || []);
-    massInput.value = formatFacturasProveedorInput(current);
-    sync();
-
-    massInput.addEventListener('input', () => {
-      sync();
-      showMessage('', false);
-    });
-    massInput.addEventListener('blur', () => {
-      const list = sync();
-      massInput.value = formatFacturasProveedorInput(list);
-      sync();
-    });
-  }
-
-  function setupCompraTotalCalculator(form) {
-    const openButton = form.querySelector('[data-compra-calculator-open]');
-    const modal = form.querySelector('[data-compra-calculator-modal]');
-    const rowsNode = form.querySelector('[data-compra-calculator-rows]');
-    const totalNode = form.querySelector('[data-compra-calculator-total]');
-    const totalInput = form.querySelector('[data-compra-total-input]');
-    if (!openButton || !modal || !rowsNode || !totalInput) return;
-
-    const getValues = () => Array.from(rowsNode.querySelectorAll('[data-compra-calculator-input]')).map((input) => input.value);
-
-    const calculateTotal = () => getValues().reduce((sum, value) => {
-      const amount = parseMoney(value);
-      return roundMoney(sum + (Number.isNaN(amount) ? 0 : amount));
-    }, 0);
-
-    const updateTotal = () => {
-      const total = calculateTotal();
-      if (totalNode) totalNode.textContent = formatMoney(total);
-      return total;
-    };
-
-    const renumberRows = () => {
-      rowsNode.querySelectorAll('[data-compra-calculator-row]').forEach((row, index) => {
-        const label = row.querySelector('[data-compra-calculator-label]');
-        if (label) label.textContent = `Monto ${index + 1}`;
-        const removeButton = row.querySelector('[data-compra-calculator-remove]');
-        if (removeButton) removeButton.disabled = rowsNode.querySelectorAll('[data-compra-calculator-row]').length <= 1;
+    function bindRow(row) {
+      row.querySelectorAll('input').forEach((input) => {
+        input.addEventListener('input', () => {
+          sync();
+          showMessage('', false);
+        });
+        input.addEventListener('blur', () => {
+          if (input.matches('[data-factura-proveedor-monto]')) {
+            const info = getFacturaMoneyInputInfo(input.value);
+            input.value = info.hasValue && !Number.isNaN(info.value) ? formatNumberInput(info.value) : '';
+          }
+          sync();
+        });
       });
-    };
-
-    const addRow = (value = '') => {
-      const row = document.createElement('div');
-      row.className = 'calculator-line-row';
-      row.setAttribute('data-compra-calculator-row', '1');
-      row.innerHTML = `
-        <label class="form-field calculator-line-field">
-          <span data-compra-calculator-label>Monto</span>
-          <input type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" data-compra-calculator-input />
-        </label>
-        <button type="button" class="danger-action compact" data-compra-calculator-remove>Quitar</button>
-      `;
-      const input = row.querySelector('[data-compra-calculator-input]');
-      input.value = cleanText(value);
-      input.addEventListener('input', updateTotal);
-      row.querySelector('[data-compra-calculator-remove]')?.addEventListener('click', () => {
-        if (rowsNode.querySelectorAll('[data-compra-calculator-row]').length <= 1) {
-          input.value = '';
-          updateTotal();
-          return;
-        }
+      row.querySelector('[data-factura-proveedor-remove]')?.addEventListener('click', () => {
         row.remove();
-        renumberRows();
-        updateTotal();
+        sync();
       });
-      rowsNode.appendChild(row);
-      renumberRows();
-      updateTotal();
-      return input;
-    };
+      updateRow(row);
+    }
 
-    const resetRows = (values = ['', '']) => {
-      rowsNode.innerHTML = '';
-      const safeValues = Array.isArray(values) && values.length ? values : [''];
-      safeValues.forEach((value) => addRow(value));
-      renumberRows();
-      updateTotal();
-    };
-
-    const closeModal = () => {
-      modal.classList.add('is-hidden');
-    };
-
-    openButton.addEventListener('click', () => {
-      const currentRows = getValues().filter((value) => cleanText(value));
-      resetRows(currentRows.length ? currentRows : ['', '']);
-      modal.classList.remove('is-hidden');
-      rowsNode.querySelector('[data-compra-calculator-input]')?.focus();
+    Array.from(rowsNode.querySelectorAll('[data-factura-proveedor-row]')).forEach(bindRow);
+    addButton?.addEventListener('click', () => {
+      const row = createRow({ id: generateId('facturaProveedor'), numero: '', pendienteMonto: true });
+      sync();
+      row.querySelector('[data-factura-proveedor-numero]')?.focus();
     });
 
-    form.querySelector('[data-compra-calculator-add]')?.addEventListener('click', () => {
-      const input = addRow('');
-      input.focus();
-    });
-
-    form.querySelector('[data-compra-calculator-clear]')?.addEventListener('click', () => resetRows(['', '']));
-    form.querySelector('[data-compra-calculator-cancel]')?.addEventListener('click', closeModal);
-    form.querySelector('[data-compra-calculator-close]')?.addEventListener('click', closeModal);
-    modal.addEventListener('click', (event) => {
-      if (event.target === modal) closeModal();
-    });
-
-    form.querySelector('[data-compra-calculator-use]')?.addEventListener('click', () => {
-      const total = updateTotal();
-      totalInput.value = formatNumberInput(total);
-      totalInput.dispatchEvent(new Event('input', { bubbles: true }));
-      updateCompraProveedorPreviewFromForm(form, false);
-      closeModal();
-    });
-
-    resetRows(['', '']);
+    sync();
   }
 
   function applyCompraPaymentTermsSuggestion(form) {
@@ -24443,6 +25232,82 @@ Notas importantes:
     return { name: 'Resumen', rows, cols: [34, 18, 18, 16, 18, 14, 18, 18] };
   }
 
+  function formatVentaAjustesForFactura(venta, factura) {
+    const target = normalizeFacturaVentaRecord(factura) || factura || {};
+    const ajustes = normalizeVentaAjustesList(venta?.ajustes || []).filter((ajuste) => {
+      if (!ajuste.activo || !hasAjusteFacturaSnapshot(ajuste)) return false;
+      const ajusteId = cleanText(ajuste.facturaAfectadaId);
+      const ajusteNo = normalizeFacturaModuloNoKey(ajuste.facturaAfectadaNumero);
+      const targetId = cleanText(target.id);
+      const targetNo = normalizeFacturaModuloNoKey(target.numero || target.no || '');
+      return Boolean((targetId && ajusteId && targetId === ajusteId) || (targetNo && ajusteNo && targetNo === ajusteNo));
+    });
+    return ajustes.length ? ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)}`).join(' | ') : '';
+  }
+
+  function formatCompraAjustesForFactura(compra, factura) {
+    const target = normalizeFacturaProveedorRecord(factura) || factura || {};
+    const ajustes = normalizeCompraProveedorAjustesList(compra?.ajustes || []).filter((ajuste) => {
+      if (!ajuste.activo || !hasAjusteFacturaSnapshot(ajuste)) return false;
+      const ajusteId = cleanText(ajuste.facturaAfectadaId);
+      const ajusteNo = normalizeFacturaModuloNoKey(ajuste.facturaAfectadaNumero);
+      const targetId = cleanText(target.id);
+      const targetNo = normalizeFacturaModuloNoKey(target.numero || target.no || '');
+      return Boolean((targetId && ajusteId && targetId === ajusteId) || (targetNo && ajusteNo && targetNo === ajusteNo));
+    });
+    return ajustes.length ? ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)}`).join(' | ') : '';
+  }
+
+  function pushVentasFacturasDetalleRows(rows, ventasExport) {
+    rows.push([], [xlsxSubtitle('Detalle de facturas de Ventas / OC')]);
+    rows.push(xlsxHeaderRow(['OC', 'Cliente', 'Factura', 'Subtotal factura', 'Descuento factura', 'Total factura', 'Ajuste ligado', 'Factura afectada en ajustes']));
+    const ventas = Array.isArray(ventasExport) ? ventasExport : [];
+    let added = 0;
+    ventas.forEach((venta) => {
+      const facturas = normalizeFacturasVentaList(venta.facturas);
+      const cliente = getCatalogRecordById('clientes', venta.clienteId);
+      facturas.forEach((factura) => {
+        const ajustes = formatVentaAjustesForFactura(venta, factura);
+        rows.push([
+          xlsxText(venta.numeroDocumento),
+          xlsxText(venta.clienteNombre || cliente?.nombre || ''),
+          xlsxText(factura.numero),
+          xlsxMoney(factura.subtotal || 0),
+          xlsxMoney(factura.descuento || 0),
+          xlsxMoney(factura.total || 0),
+          xlsxText(ajustes || 'No'),
+          xlsxText(ajustes ? factura.numero : '')
+        ]);
+        added += 1;
+      });
+    });
+    if (!added) rows.push([xlsxText('Sin facturas con monto registradas en ventas para este período.')]);
+  }
+
+  function pushProveedoresFacturasDetalleRows(rows, comprasExport) {
+    rows.push([], [xlsxSubtitle('Detalle de facturas de Proveedores / Compras')]);
+    rows.push(xlsxHeaderRow(['Proveedor', 'Compra / referencia', 'Factura', 'Monto factura', 'Ajuste ligado', 'Factura afectada en ajustes']));
+    const compras = Array.isArray(comprasExport) ? comprasExport : [];
+    let added = 0;
+    compras.forEach((compra) => {
+      const facturas = normalizeFacturasProveedorList(compra.facturasRelacionadas);
+      const proveedor = getCatalogRecordById('proveedores', compra.proveedorId);
+      facturas.forEach((factura) => {
+        const ajustes = formatCompraAjustesForFactura(compra, factura);
+        rows.push([
+          xlsxText(compra.proveedorNombre || proveedor?.nombre || ''),
+          xlsxText(compra.facturaReferencia || getCompraProveedorReferenciaCompacta(compra)),
+          xlsxText(factura.numero),
+          xlsxMoney(factura.monto || 0),
+          xlsxText(ajustes || 'No'),
+          xlsxText(ajustes ? factura.numero : '')
+        ]);
+        added += 1;
+      });
+    });
+    if (!added) rows.push([xlsxText('Sin facturas con monto registradas en proveedores para este período.')]);
+  }
+
   function buildVentasSheet(summary) {
     const rows = [
       [xlsxTitle('Ventas / OC')],
@@ -24481,6 +25346,7 @@ Notas importantes:
         xlsxText(venta.observacion)
       ]);
     });
+    pushVentasFacturasDetalleRows(rows, ventasExport);
     return { name: 'Ventas', rows, cols: [14, 16, 24, 24, 18, 30, 14, 20, 16, 16, 16, 18, 14, 14, 14, 14, 16, 16, 16, 12, 14, 38, 32] };
   }
 
@@ -24544,6 +25410,7 @@ Notas importantes:
         xlsxText(compra.observacion)
       ]);
     });
+    pushProveedoresFacturasDetalleRows(rows, comprasExport);
     return { name: 'Proveedores', rows, cols: [16, 28, 22, 16, 18, 14, 18, 16, 16, 12, 14, 38, 34] };
   }
 
