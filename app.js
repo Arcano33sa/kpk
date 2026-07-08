@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.25-post12-uifullwidth-etapa2-config-accordion-fix';
+  const APP_VERSION = '0.18.27-post12-global-facturas-etapa2-filtros-busqueda';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1305,6 +1305,12 @@ Notas importantes:
     editingId: null,
     search: '',
     page: 1,
+    globalOpen: false,
+    globalPage: 1,
+    globalSearch: '',
+    globalCliente: '',
+    globalSucursal: '',
+    globalEstado: '',
     historyOpenPeriod: '',
     historyPages: {},
     captureDraft: {
@@ -9533,6 +9539,12 @@ Notas importantes:
       resetFacturasTransientState();
       facturasState.page = 1;
       facturasState.search = '';
+      facturasState.globalOpen = false;
+      facturasState.globalPage = 1;
+      facturasState.globalSearch = '';
+      facturasState.globalCliente = '';
+      facturasState.globalSucursal = '';
+      facturasState.globalEstado = '';
     }
     if (route === 'facturas' && previousRoute && previousRoute !== 'facturas') {
       resetFacturasPagedView();
@@ -11405,6 +11417,347 @@ Notas importantes:
       .filter((item) => normalizeKeyForCompare(item.record.no).includes(query));
   }
 
+  function getFacturaReliableDateValue(raw) {
+    const source = isPlainObject(raw) ? raw : {};
+    return toDateInputValue(source.fecha || source.fechaFactura || source.fechaEmision || source.issued || '');
+  }
+
+  function getFacturasGlobalItems(data = getFacturasData()) {
+    const source = normalizeFacturasData(data);
+    return (source.facturas || [])
+      .map((raw, index) => {
+        const reliableDate = getFacturaReliableDateValue(raw);
+        return {
+          record: normalizeFacturaModuloRecord(raw),
+          sourceIndex: index,
+          reliableDate,
+          hasReliableDate: Boolean(reliableDate)
+        };
+      })
+      .sort((a, b) => {
+        if (a.hasReliableDate && b.hasReliableDate) {
+          const byDate = String(b.reliableDate).localeCompare(String(a.reliableDate));
+          if (byDate !== 0) return byDate;
+          const byUpdated = String(b.record.updatedAt || '').localeCompare(String(a.record.updatedAt || ''));
+          if (byUpdated !== 0) return byUpdated;
+          return compareFacturaNaturalNo(a.record.no, b.record.no);
+        }
+        if (a.hasReliableDate !== b.hasReliableDate) return a.hasReliableDate ? -1 : 1;
+        return a.sourceIndex - b.sourceIndex;
+      });
+  }
+
+  function normalizeFacturaGlobalSearchValue(value) {
+    return normalizeKeyForCompare(value);
+  }
+
+  function normalizeFacturaGlobalLooseSearchValue(value) {
+    return normalizeFacturaGlobalSearchValue(value).replace(/[^a-z0-9]/gi, '');
+  }
+
+  function normalizeFacturaGlobalNumericSearchValue(value) {
+    return cleanText(value).replace(/\D+/g, '').replace(/^0+(?=\d)/, '');
+  }
+
+  function getFacturaGlobalPartyFilterPayload(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    const origin = normalizeFacturaModuloOrigin(factura);
+    if (origin === 'proveedores') {
+      const proveedor = factura.proveedorId ? getCatalogRecordById('proveedores', factura.proveedorId) : null;
+      const label = cleanText(factura.proveedorNombre || proveedor?.nombre || '');
+      const key = cleanText(factura.proveedorId) || (label ? normalizeKeyForCompare(label) : '');
+      return key && label ? { value: `proveedor:${key}`, label } : { value: '', label: '' };
+    }
+    const cliente = factura.clienteId ? getCatalogRecordById('clientes', factura.clienteId) : null;
+    const label = cleanText(factura.clienteNombre || cliente?.nombre || '');
+    const key = cleanText(factura.clienteId) || (label ? normalizeKeyForCompare(label) : '');
+    return key && label ? { value: `cliente:${key}`, label } : { value: '', label: '' };
+  }
+
+  function getFacturaGlobalSucursalFilterPayload(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    const label = getFacturaSucursalDisplay(factura);
+    const key = cleanText(factura.sucursalId) || (label ? normalizeKeyForCompare(label) : '');
+    return key && label ? { value: `sucursal:${key}`, label } : { value: '', label: '' };
+  }
+
+  function getFacturasGlobalFilters() {
+    return {
+      search: cleanText(facturasState.globalSearch),
+      searchKey: normalizeFacturaGlobalSearchValue(facturasState.globalSearch),
+      searchLooseKey: normalizeFacturaGlobalLooseSearchValue(facturasState.globalSearch),
+      searchNumericKey: normalizeFacturaGlobalNumericSearchValue(facturasState.globalSearch),
+      cliente: cleanText(facturasState.globalCliente),
+      sucursal: cleanText(facturasState.globalSucursal),
+      estado: cleanText(facturasState.globalEstado)
+    };
+  }
+
+  function facturaGlobalItemMatchesFilters(item, filters = getFacturasGlobalFilters()) {
+    const factura = normalizeFacturaModuloRecord(item?.record || item);
+    if (filters.searchKey) {
+      const noKey = normalizeFacturaGlobalSearchValue(factura.no);
+      const noLooseKey = normalizeFacturaGlobalLooseSearchValue(factura.no);
+      const noNumericKey = normalizeFacturaGlobalNumericSearchValue(factura.no);
+      const matchesSearch = noKey.includes(filters.searchKey)
+        || (filters.searchLooseKey && noLooseKey.includes(filters.searchLooseKey))
+        || (filters.searchNumericKey && noNumericKey.includes(filters.searchNumericKey));
+      if (!matchesSearch) return false;
+    }
+    if (filters.cliente && getFacturaGlobalPartyFilterPayload(factura).value !== filters.cliente) return false;
+    if (filters.sucursal && getFacturaGlobalSucursalFilterPayload(factura).value !== filters.sucursal) return false;
+    if (filters.estado && normalizeFacturaEstado(factura.estado) !== filters.estado) return false;
+    return true;
+  }
+
+  function getFacturasGlobalFilterOptions(items = getFacturasGlobalItems()) {
+    const partyMap = new Map();
+    const sucursalMap = new Map();
+    const estadoSet = new Set();
+    (Array.isArray(items) ? items : []).forEach((item) => {
+      const factura = normalizeFacturaModuloRecord(item?.record || item);
+      const party = getFacturaGlobalPartyFilterPayload(factura);
+      if (party.value && party.label && !partyMap.has(party.value)) partyMap.set(party.value, party.label);
+      const sucursal = getFacturaGlobalSucursalFilterPayload(factura);
+      if (sucursal.value && sucursal.label && !sucursalMap.has(sucursal.value)) sucursalMap.set(sucursal.value, sucursal.label);
+      const estado = normalizeFacturaEstado(factura.estado);
+      if (estado) estadoSet.add(estado);
+    });
+    const toOptions = (map) => Array.from(map.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => compareCatalogDisplayText(a.label, b.label));
+    const estados = [
+      ...FACTURA_ESTADO_OPTIONS.filter((estado) => estadoSet.has(estado)),
+      ...Array.from(estadoSet).filter((estado) => !FACTURA_ESTADO_OPTIONS.includes(estado)).sort(compareCatalogDisplayText)
+    ].map((estado) => ({ value: estado, label: estado }));
+    return {
+      clientes: toOptions(partyMap),
+      sucursales: toOptions(sucursalMap),
+      estados
+    };
+  }
+
+  function getFacturasGlobalFilteredItems(items = getFacturasGlobalItems(), filters = getFacturasGlobalFilters()) {
+    return (Array.isArray(items) ? items : []).filter((item) => facturaGlobalItemMatchesFilters(item, filters));
+  }
+
+  function getFacturasGlobalPagePayload(data = getFacturasData()) {
+    const items = getFacturasGlobalItems(data);
+    const filters = getFacturasGlobalFilters();
+    const filteredItems = getFacturasGlobalFilteredItems(items, filters);
+    const totalPages = Math.max(1, Math.ceil(filteredItems.length / FACTURAS_PAGE_SIZE));
+    facturasState.globalPage = Math.min(Math.max(1, Number.parseInt(facturasState.globalPage, 10) || 1), totalPages);
+    const start = (facturasState.globalPage - 1) * FACTURAS_PAGE_SIZE;
+    return {
+      items,
+      filteredItems,
+      filters,
+      filterOptions: getFacturasGlobalFilterOptions(items),
+      totalPages,
+      totalRecords: filteredItems.length,
+      totalAllRecords: items.length,
+      page: facturasState.globalPage,
+      pagedItems: filteredItems.slice(start, start + FACTURAS_PAGE_SIZE)
+    };
+  }
+
+  function renderFacturasGlobalModal(data = getFacturasData()) {
+    const payload = getFacturasGlobalPagePayload(data);
+    const body = renderFacturasGlobalModalBody(payload);
+    const modalId = getFacturasGlobalModalId();
+    return `
+      <div class="modal-backdrop facturas-global-backdrop" data-modal-backdrop="${escapeHtml(modalId)}" role="presentation">
+        <section class="edit-modal facturas-global-modal" role="dialog" aria-modal="true" aria-labelledby="${escapeHtml(modalId)}-title">
+          <header class="edit-modal-header facturas-global-modal-header">
+            <div>
+              <span class="eyebrow mini">Consulta general</span>
+              <h2 id="${escapeHtml(modalId)}-title">Global de Facturas</h2>
+              <p>Todas las facturas registradas, sin importar período. La paginación de esta ventana es independiente.</p>
+            </div>
+            <button type="button" class="modal-close" data-modal-close="${escapeHtml(modalId)}" aria-label="Cerrar Global de Facturas">×</button>
+          </header>
+          <div class="edit-modal-body facturas-global-modal-body">
+            ${body}
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  function renderFacturasGlobalFilterOptions(options = [], selectedValue = '', emptyLabel = 'Todos') {
+    const selected = cleanText(selectedValue);
+    const safeOptions = Array.isArray(options) ? options : [];
+    return [
+      `<option value="">${escapeHtml(emptyLabel)}</option>`,
+      ...safeOptions.map((option) => {
+        const value = cleanText(option?.value);
+        const label = cleanText(option?.label) || value;
+        return `<option value="${escapeHtml(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+      })
+    ].join('');
+  }
+
+  function renderFacturasGlobalFilters(info) {
+    const filters = isPlainObject(info?.filters) ? info.filters : getFacturasGlobalFilters();
+    const options = isPlainObject(info?.filterOptions) ? info.filterOptions : getFacturasGlobalFilterOptions();
+    return `
+      <form class="facturas-global-filters" data-factura-global-filters aria-label="Filtros Global de Facturas">
+        <label class="form-field facturas-global-search-field">
+          <span>Buscar factura</span>
+          <input type="search" name="globalSearch" value="${escapeHtml(filters.search || '')}" placeholder="Número de factura" autocomplete="off" inputmode="search" data-factura-global-search />
+        </label>
+        <label class="form-field">
+          <span>Cliente / Proveedor</span>
+          <select name="globalCliente" data-factura-global-filter="cliente">
+            ${renderFacturasGlobalFilterOptions(options.clientes, filters.cliente, 'Todos')}
+          </select>
+        </label>
+        <label class="form-field">
+          <span>Sucursal</span>
+          <select name="globalSucursal" data-factura-global-filter="sucursal">
+            ${renderFacturasGlobalFilterOptions(options.sucursales, filters.sucursal, 'Todas')}
+          </select>
+        </label>
+        <label class="form-field">
+          <span>Estado</span>
+          <select name="globalEstado" data-factura-global-filter="estado">
+            ${renderFacturasGlobalFilterOptions(options.estados, filters.estado, 'Todos')}
+          </select>
+        </label>
+        <button type="button" class="secondary-action compact-action facturas-global-clear" data-factura-global-clear>Limpiar</button>
+      </form>
+    `;
+  }
+
+  function renderFacturasGlobalModalBody(payload) {
+    const info = isPlainObject(payload) ? payload : getFacturasGlobalPagePayload();
+    const totalRecords = Number.parseInt(info.totalRecords, 10) || 0;
+    const totalAllRecords = Number.parseInt(info.totalAllRecords, 10) || totalRecords;
+    const page = Math.max(1, Number.parseInt(info.page, 10) || 1);
+    const totalPages = Math.max(1, Number.parseInt(info.totalPages, 10) || 1);
+    const pagedItems = Array.isArray(info.pagedItems) ? info.pagedItems : [];
+    const hasFilters = Boolean(cleanText(info.filters?.search) || cleanText(info.filters?.cliente) || cleanText(info.filters?.sucursal) || cleanText(info.filters?.estado));
+    const emptyMessage = totalAllRecords ? 'No hay facturas que coincidan con los filtros.' : 'No hay facturas registradas.';
+    return `
+      <div class="facturas-global-toolbar" aria-label="Resumen Global de Facturas">
+        <div class="status-grid compact facturas-global-status-grid">
+          <div class="status-item"><strong>Resultado</strong><span>${totalRecords}</span><small>${hasFilters ? `de ${totalAllRecords}` : 'Global'}</small></div>
+          <div class="status-item"><strong>Página global</strong><span>${page}/${totalPages}</span></div>
+          <div class="status-item"><strong>Por página</strong><span>${FACTURAS_PAGE_SIZE}</span></div>
+        </div>
+        ${renderFacturasGlobalFilters(info)}
+      </div>
+      ${totalRecords ? renderOperationalTableShell({
+        shellClass: 'facturas-global-table',
+        wrapClass: 'facturas-table-wrap facturas-global-table-wrap',
+        ariaLabel: 'Global de Facturas',
+        tableClass: 'operational-table-facturas facturas-global-operational-table',
+        headers: '<th>No.</th><th>Fecha</th><th>Período</th><th>Cliente / Proveedor</th><th>Sucursal</th><th>Estado</th><th>Monto / total</th><th>Origen</th>',
+        rows: pagedItems.map((item) => renderFacturaGlobalRow(item)).join('')
+      }) : `<p class="muted-text compact-note facturas-global-empty">${escapeHtml(emptyMessage)}</p>`}
+      ${renderFacturasGlobalPagination(totalRecords, page, totalPages)}
+    `;
+  }
+
+  function renderFacturaGlobalRow(item) {
+    const payload = isPlainObject(item) && item.record ? item : { record: item, hasReliableDate: true };
+    const factura = normalizeFacturaModuloRecord(payload.record);
+    const periodInfo = payload.hasReliableDate ? getFacturaPeriodInfoFromDate(factura.fecha) : null;
+    const partyLabel = getFacturaModuloPartyDisplay(factura) || '—';
+    const sucursalLabel = getFacturaSucursalDisplay(factura) || '—';
+    const origenLabel = getFacturaOrigenLabel(factura) || 'Manual';
+    const dateLabel = payload.hasReliableDate ? formatDate(factura.fecha) : '—';
+    const periodLabel = periodInfo?.label || '—';
+    const amountLabel = getFacturaModuloAmountLabel(factura) || formatMoney(factura.monto || 0);
+    return `
+      <tr>
+        <td><span class="compact-primary critical-value-doc" title="${escapeHtml(factura.no || '—')}">${escapeHtml(factura.no || '—')}</span></td>
+        <td><span class="critical-value-date" title="${escapeHtml(dateLabel)}">${escapeHtml(dateLabel)}</span></td>
+        <td><span title="${escapeHtml(periodLabel)}">${escapeHtml(periodLabel)}</span></td>
+        <td><span title="${escapeHtml(partyLabel)}">${escapeHtml(partyLabel)}</span></td>
+        <td><span title="${escapeHtml(sucursalLabel)}">${escapeHtml(sucursalLabel)}</span></td>
+        <td><span class="state-pill ${getEstadoClass(factura.estado)} critical-value-state" title="${escapeHtml(factura.estado || '—')}">${escapeHtml(factura.estado || '—')}</span></td>
+        <td class="amount-cell"><span class="critical-value-money" title="${escapeHtml(amountLabel)}">${escapeHtml(amountLabel)}</span></td>
+        <td><small title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel)}</small></td>
+      </tr>
+    `;
+  }
+
+  function renderFacturasGlobalPagination(totalRecords, page, totalPages) {
+    const count = Number.parseInt(totalRecords, 10) || 0;
+    const current = Math.max(1, Number.parseInt(page, 10) || 1);
+    const pages = Math.max(1, Number.parseInt(totalPages, 10) || 1);
+    if (count <= FACTURAS_PAGE_SIZE) {
+      return `<div class="pagination-row facturas-pagination facturas-global-pagination"><span>Página 1 de 1</span></div>`;
+    }
+    return `
+      <div class="pagination-row facturas-pagination facturas-global-pagination" aria-label="Paginación Global de Facturas">
+        <button type="button" class="secondary-action compact-action" data-factura-global-page="prev" ${current <= 1 ? 'disabled' : ''} title="Página global anterior">Anterior</button>
+        <span>Página ${current} de ${pages}</span>
+        <button type="button" class="secondary-action compact-action" data-factura-global-page="next" ${current >= pages ? 'disabled' : ''} title="Página global siguiente">Siguiente</button>
+      </div>
+    `;
+  }
+
+  function openFacturasGlobalModal() {
+    facturasState.globalOpen = true;
+    facturasState.globalPage = 1;
+    facturasState.message = null;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function closeFacturasGlobalModal() {
+    facturasState.globalOpen = false;
+    facturasState.globalPage = 1;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function updateFacturasGlobalFilters(form, options = {}) {
+    const formData = new FormData(form);
+    const focusName = cleanText(options.focusName);
+    const cursor = Number.parseInt(options.cursor, 10);
+    facturasState.globalSearch = cleanText(formData.get('globalSearch'));
+    facturasState.globalCliente = cleanText(formData.get('globalCliente'));
+    facturasState.globalSucursal = cleanText(formData.get('globalSucursal'));
+    facturasState.globalEstado = cleanText(formData.get('globalEstado'));
+    facturasState.globalPage = 1;
+    facturasState.globalOpen = true;
+    facturasState.message = null;
+    renderRoute({ preserveScroll: true });
+    if (focusName) {
+      requestAnimationFrame(() => {
+        const field = viewRoot.querySelector(`[name="${focusName}"]`);
+        if (!field) return;
+        try {
+          field.focus({ preventScroll: true });
+        } catch (error) {
+          field.focus();
+        }
+        if (Number.isFinite(cursor) && typeof field.setSelectionRange === 'function') {
+          field.setSelectionRange(cursor, cursor);
+        }
+      });
+    }
+  }
+
+  function clearFacturasGlobalFilters() {
+    facturasState.globalSearch = '';
+    facturasState.globalCliente = '';
+    facturasState.globalSucursal = '';
+    facturasState.globalEstado = '';
+    facturasState.globalPage = 1;
+    facturasState.globalOpen = true;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function changeFacturasGlobalPage(direction) {
+    const payload = getFacturasGlobalPagePayload(getFacturasData());
+    const currentPage = Math.min(Math.max(1, Number.parseInt(facturasState.globalPage, 10) || 1), payload.totalPages);
+    facturasState.globalPage = direction === 'prev' ? Math.max(1, currentPage - 1) : Math.min(payload.totalPages, currentPage + 1);
+    facturasState.globalOpen = true;
+    renderRoute({ preserveScroll: true });
+  }
+
   function clampFacturasPageForCurrentPeriod(data = getFacturasData(), periodInfo = getCurrentFacturasPeriodInfo()) {
     const base = getFacturasSearchBase(data, periodInfo);
     const totalPages = Math.max(1, Math.ceil(base.records.length / FACTURAS_PAGE_SIZE));
@@ -11416,6 +11769,12 @@ Notas importantes:
     facturasState.page = 1;
     facturasState.search = '';
     facturasState.editingId = null;
+    facturasState.globalOpen = false;
+    facturasState.globalPage = 1;
+    facturasState.globalSearch = '';
+    facturasState.globalCliente = '';
+    facturasState.globalSucursal = '';
+    facturasState.globalEstado = '';
   }
 
   function renderFacturas() {
@@ -11462,6 +11821,7 @@ Notas importantes:
         ${renderFacturasPeriodoList(periodInfo, pagedRecords, periodRecords.length, totalPages, { closed: currentPeriodClosed })}
         ${renderFacturasHistorico(historyGroups)}
         ${safeEditingRecord ? renderEditModal(getFacturasModalId(), 'Editar factura', 'Actualiza la factura sin salir del listado ni saltar al formulario principal.', renderFacturaForm(safeEditingRecord, 'edit')) : ''}
+        ${facturasState.globalOpen ? renderFacturasGlobalModal(data) : ''}
       </section>
     `;
   }
@@ -11560,7 +11920,10 @@ Notas importantes:
             <span class="eyebrow mini">Buscar</span>
             <h2>Búsqueda por No. de factura</h2>
           </div>
-          <span class="badge">${escapeHtml(scopeLabel)}</span>
+          <div class="record-actions compact-row-actions facturas-search-title-actions">
+            <span class="badge">${escapeHtml(scopeLabel)}</span>
+            <button type="button" class="secondary-action compact-action facturas-global-open" data-factura-global-open title="Abrir Global de Facturas">GLOBAL</button>
+          </div>
         </div>
         <form class="compact-search-row" data-factura-search-form>
           <label class="form-field compact-search-field">
@@ -16379,6 +16742,7 @@ Notas importantes:
   function getGastoModalId() { return 'gasto'; }
   function getCasaModalId() { return 'casa'; }
   function getFacturasModalId() { return 'factura'; }
+  function getFacturasGlobalModalId() { return 'facturas-global'; }
 
 
   function renderVentas() {
@@ -26911,6 +27275,7 @@ ${rowsXml}
     else if (id === getGastoModalId()) clearGastoForm();
     else if (id === getCasaModalId()) clearCasaForm();
     else if (id === getFacturasModalId()) clearFacturaForm();
+    else if (id === getFacturasGlobalModalId()) closeFacturasGlobalModal();
     else if (id === getNotasModalId()) {
       notasState.detailType = '';
       notasState.detailId = '';
@@ -26992,6 +27357,32 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-factura-search-clear]').forEach((button) => {
       button.addEventListener('click', clearFacturasSearch);
+    });
+
+    viewRoot.querySelectorAll('[data-factura-global-open]').forEach((button) => {
+      button.addEventListener('click', openFacturasGlobalModal);
+    });
+
+    viewRoot.querySelectorAll('[data-factura-global-page]').forEach((button) => {
+      button.addEventListener('click', () => changeFacturasGlobalPage(button.dataset.facturaGlobalPage));
+    });
+
+    viewRoot.querySelectorAll('[data-factura-global-filters]').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const field = form.querySelector('[data-factura-global-search]');
+        updateFacturasGlobalFilters(form, { focusName: field?.name || '', cursor: field?.selectionStart });
+      });
+      form.querySelectorAll('[data-factura-global-search]').forEach((field) => {
+        field.addEventListener('input', () => updateFacturasGlobalFilters(form, { focusName: field.name, cursor: field.selectionStart }));
+      });
+      form.querySelectorAll('[data-factura-global-filter]').forEach((field) => {
+        field.addEventListener('change', () => updateFacturasGlobalFilters(form));
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-factura-global-clear]').forEach((button) => {
+      button.addEventListener('click', clearFacturasGlobalFilters);
     });
 
     viewRoot.querySelectorAll('[data-factura-page]').forEach((button) => {
