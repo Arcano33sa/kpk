@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.22-post12-facturasmontos-etapa4';
+  const APP_VERSION = '0.18.23-post12-uifullwidth-etapa1';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -16426,43 +16426,39 @@ Notas importantes:
           <article class="metric-card"><span>Anuladas</span><strong>${totals.anuladas}</strong></article>
         </section>
 
-        <div class="ventas-layout">
-          <div class="ventas-left-column">
-            <article class="panel-card venta-form-card">
-              <div class="section-title-row">
-                <div>
-                  <span class="eyebrow mini">Nueva OC</span>
-                  <h2>Crear venta / OC</h2>
-                </div>
+        <div class="ventas-layout operational-fullwidth-stack">
+          <article class="panel-card venta-form-card">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Nueva OC</span>
+                <h2>Crear Venta / OC</h2>
               </div>
-              <p class="muted-text">La venta se calcula como Subtotal - Descuento = Total. Los ajustes posteriores siguen ligados a la OC y no son cobros.</p>
-              ${renderVentaForm(null, clientesActivos, sucursalesActivas, missingCatalogs, ventasState.quickCapture)}
-            </article>
-          </div>
+            </div>
+            <p class="muted-text">La venta se calcula como Subtotal - Descuento = Total. Los ajustes posteriores siguen ligados a la OC y no son cobros.</p>
+            ${renderVentaForm(null, clientesActivos, sucursalesActivas, missingCatalogs, ventasState.quickCapture)}
+          </article>
 
-          <div class="ventas-right-column">
-            <article class="panel-card venta-list-card">
-              <div class="section-title-row">
-                <div>
-                  <span class="eyebrow mini">Listado</span>
-                  <h2>OC registradas</h2>
-                </div>
-                <div class="count-pill">${ventas.length} registros</div>
+          <article class="panel-card venta-ajuste-card">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Ajustes / notas</span>
+                <h2>Ajuste</h2>
               </div>
-              ${renderVentasList(ventas)}
-            </article>
+            </div>
+            <p class="muted-text">Reduce el saldo de una OC existente por quebrado, faltante, devolución o nota, sin crear cobro, caja ni banco. Aquí se descuenta mercadería; no aparece dinero fantasma.</p>
+            ${renderVentaAjusteForm(ventasAjustables)}
+          </article>
 
-            <article class="panel-card venta-ajuste-card">
-              <div class="section-title-row">
-                <div>
-                  <span class="eyebrow mini">Ajustes / notas</span>
-                  <h2>Registrar ajuste</h2>
-                </div>
+          <article class="panel-card venta-list-card">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Listado</span>
+                <h2>OC registradas</h2>
               </div>
-              <p class="muted-text">Reduce el saldo de una OC existente por quebrado, faltante, devolución o nota, sin crear cobro, caja ni banco. Aquí se descuenta mercadería; no aparece dinero fantasma.</p>
-              ${renderVentaAjusteForm(ventasAjustables)}
-            </article>
-          </div>
+              <div class="count-pill">${ventas.length} registros</div>
+            </div>
+            ${renderVentasList(ventas)}
+          </article>
         </div>
         ${editingRecord ? renderEditModal(getVentaModalId(), 'Editar venta / OC', 'La edición se guarda sobre la OC actual, mantiene ajustes/notas y recalcula saldo real.', renderVentaForm(editingRecord, clientesActivos, sucursalesActivas, missingCatalogs)) : ''}
       </section>
@@ -19180,36 +19176,34 @@ Notas importantes:
           <article class="metric-card"><span>Anuladas</span><strong>${totals.anuladas}</strong></article>
         </section>
 
-        <div class="compras-layout">
-          <div class="compras-form-stack">
-            <article class="panel-card compra-form-card">
-              <div class="section-title-row">
-                <div>
-                  <span class="eyebrow mini">Nueva deuda</span>
-                  <h2>Crear compra / deuda</h2>
-                </div>
+        <div class="compras-layout operational-fullwidth-stack">
+          <article class="panel-card compra-form-card">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Nueva deuda</span>
+                <h2>Crear compra</h2>
               </div>
-              <p class="muted-text">Los pagos a proveedor se registran en su propio módulo; aquí queda la deuda/factura base con su saldo actualizado.</p>
-              ${renderCompraProveedorForm(null, proveedoresActivos, missingProviders, proveedoresState.quickCapture)}
-            </article>
+            </div>
+            <p class="muted-text">Los pagos a proveedor se registran en su propio módulo; aquí queda la deuda/factura base con su saldo actualizado.</p>
+            ${renderCompraProveedorForm(null, proveedoresActivos, missingProviders, proveedoresState.quickCapture)}
+          </article>
 
-            <article class="panel-card compra-ajuste-card">
-              <div class="section-title-row">
-                <div>
-                  <span class="eyebrow mini">Ajustes / notas</span>
-                  <h2>Registrar ajuste</h2>
-                </div>
+          <article class="panel-card compra-ajuste-card">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Ajustes / notas</span>
+                <h2>Ajuste</h2>
               </div>
-              <p class="muted-text">Reduce el saldo de una factura existente sin crear pago, caja ni banco. Aquí se descuenta el faltante; el dinero no se teletransporta.</p>
-              ${renderProveedorAjusteForm(comprasAjustables)}
-            </article>
-          </div>
+            </div>
+            <p class="muted-text">Reduce el saldo de una factura existente sin crear pago, caja ni banco. Aquí se descuenta el faltante; el dinero no se teletransporta.</p>
+            ${renderProveedorAjusteForm(comprasAjustables)}
+          </article>
 
           <article class="panel-card compra-list-card">
             <div class="section-title-row">
               <div>
                 <span class="eyebrow mini">Listado</span>
-                <h2>Compras / deudas registradas</h2>
+                <h2>Compras registradas</h2>
               </div>
               <div class="count-pill">${compras.length} registros</div>
             </div>

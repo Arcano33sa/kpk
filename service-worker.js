@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_22_post12_facturasmontos_etapa4';
+const CACHE_VERSION = 'v0_18_24_post12_uifullwidth_etapa2_limpieza_elegante';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
