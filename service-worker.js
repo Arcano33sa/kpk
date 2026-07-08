@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_29_post12_global_facturas_etapa2c_orden_descendente';
+const CACHE_VERSION = 'v0_18_30_post12_config_etapa3_bloques_cerrados';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

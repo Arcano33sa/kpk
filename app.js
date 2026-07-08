@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.29-post12-global-facturas-etapa2c-orden-descendente';
+  const APP_VERSION = '0.18.30-post12-config-etapa3-bloques-cerrados';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1423,7 +1423,7 @@ Notas importantes:
   let configState = {
     message: null,
     messageType: 'success',
-    openAccordions: [CONFIG_ACCORDION_DEFAULT_KEY]
+    openAccordions: []
   };
 
   let pwaState = {
@@ -9528,6 +9528,10 @@ Notas importantes:
       ? (configSnapshot || shieldedSnapshot || sameRouteSnapshot || (options?.preserveScroll === true ? buildRouteScrollSnapshot(route, 'explicit-preserve') : null))
       : null;
     const preserveScroll = Boolean(restoreSnapshot) || (!explicitReset && isConfigScreen && wasConfigScreen && options?.preserveScroll !== false);
+
+    if (isConfigScreen && !wasConfigScreen) {
+      resetConfigAccordionVisualState();
+    }
 
     if (previousRoute === 'proveedores' && route !== 'proveedores') {
       resetProveedoresTransientState();
@@ -23033,7 +23037,7 @@ Notas importantes:
 
   function getConfigOpenAccordionSet() {
     if (!Array.isArray(configState.openAccordions)) {
-      configState.openAccordions = [CONFIG_ACCORDION_DEFAULT_KEY];
+      configState.openAccordions = [];
     }
     const keys = configState.openAccordions
       .map((key) => normalizeConfigAccordionKey(key))
@@ -23049,10 +23053,14 @@ Notas importantes:
     const cleanKey = normalizeConfigAccordionKey(key);
     if (!cleanKey) return Boolean(fallbackOpen);
     const openSet = getConfigOpenAccordionSet();
-    if (openSet.size || Array.isArray(configState.openAccordions)) {
+    if (Array.isArray(configState.openAccordions)) {
       return openSet.has(cleanKey);
     }
     return Boolean(fallbackOpen);
+  }
+
+  function resetConfigAccordionVisualState() {
+    configState.openAccordions = [];
   }
 
   function syncConfigAccordionState(details) {
@@ -23297,7 +23305,7 @@ Notas importantes:
             eyebrow: 'Configuración',
             badgeText: dataSyncInfo.estado,
             badgeClass: dataSyncInfo.badgeClass,
-            open: true,
+            open: false,
             body: `
               ${generalConfigCard}
               ${renderDataSyncStatusCard({ hideCloudRefresh: true })}
