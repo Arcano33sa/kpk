@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.23-post12-uifullwidth-etapa1';
+  const APP_VERSION = '0.18.25-post12-uifullwidth-etapa2-config-accordion-fix';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1412,9 +1412,12 @@ Notas importantes:
     messageType: 'success'
   };
 
+  const CONFIG_ACCORDION_DEFAULT_KEY = 'datos-sincronizacion';
+
   let configState = {
     message: null,
-    messageType: 'success'
+    messageType: 'success',
+    openAccordions: [CONFIG_ACCORDION_DEFAULT_KEY]
   };
 
   let pwaState = {
@@ -22600,14 +22603,61 @@ Notas importantes:
   }
 
 
-  function renderConfigAccordionItem({ title, eyebrow = 'Configuración', badgeText = '', badgeClass = '', open = false, body = '' } = {}) {
+  function normalizeConfigAccordionKey(key) {
+    return cleanText(key)
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  function getConfigOpenAccordionSet() {
+    if (!Array.isArray(configState.openAccordions)) {
+      configState.openAccordions = [CONFIG_ACCORDION_DEFAULT_KEY];
+    }
+    const keys = configState.openAccordions
+      .map((key) => normalizeConfigAccordionKey(key))
+      .filter(Boolean);
+    const uniqueKeys = Array.from(new Set(keys));
+    if (uniqueKeys.length !== configState.openAccordions.length) {
+      configState.openAccordions = uniqueKeys;
+    }
+    return new Set(uniqueKeys);
+  }
+
+  function isConfigAccordionOpen(key, fallbackOpen = false) {
+    const cleanKey = normalizeConfigAccordionKey(key);
+    if (!cleanKey) return Boolean(fallbackOpen);
+    const openSet = getConfigOpenAccordionSet();
+    if (openSet.size || Array.isArray(configState.openAccordions)) {
+      return openSet.has(cleanKey);
+    }
+    return Boolean(fallbackOpen);
+  }
+
+  function syncConfigAccordionState(details) {
+    const cleanKey = normalizeConfigAccordionKey(details?.dataset?.configAccordion);
+    if (!cleanKey) return;
+    const openSet = getConfigOpenAccordionSet();
+    if (details.open) {
+      openSet.add(cleanKey);
+    } else {
+      openSet.delete(cleanKey);
+    }
+    configState.openAccordions = Array.from(openSet);
+  }
+
+  function renderConfigAccordionItem({ key = '', title, eyebrow = 'Configuración', badgeText = '', badgeClass = '', open = false, body = '' } = {}) {
     const safeTitle = escapeHtml(title || 'Módulo');
     const safeEyebrow = escapeHtml(eyebrow || 'Configuración');
+    const cleanKey = normalizeConfigAccordionKey(key || title || 'modulo');
+    const shouldOpen = isConfigAccordionOpen(cleanKey, open);
     const badge = badgeText
       ? `<span class="entity-accordion-count config-accordion-badge ${escapeHtml(badgeClass || '')}">${escapeHtml(badgeText)}</span>`
       : '';
     return `
-      <details class="config-accordion-item entity-accordion-item" ${open ? 'open' : ''}>
+      <details class="config-accordion-item entity-accordion-item" data-config-accordion="${escapeHtml(cleanKey)}" ${shouldOpen ? 'open' : ''}>
         <summary class="config-accordion-toggle entity-accordion-toggle">
           <span class="config-accordion-chevron entity-accordion-chevron" aria-hidden="true"></span>
           <span class="entity-accordion-name config-accordion-name">
@@ -22823,6 +22873,7 @@ Notas importantes:
 
         <div class="config-accordion-list entity-accordion-list">
           ${renderConfigAccordionItem({
+            key: CONFIG_ACCORDION_DEFAULT_KEY,
             title: 'Datos y sincronización',
             eyebrow: 'Configuración',
             badgeText: dataSyncInfo.estado,
@@ -22837,6 +22888,7 @@ Notas importantes:
           })}
 
           ${renderConfigAccordionItem({
+            key: 'usuarios',
             title: 'Usuarios',
             eyebrow: 'Acceso',
             badgeText: usersStatus.currentRole || currentRole.label,
@@ -22845,6 +22897,7 @@ Notas importantes:
           })}
 
           ${renderConfigAccordionItem({
+            key: 'respaldo-json-auxiliar',
             title: 'Respaldo JSON auxiliar',
             eyebrow: 'Respaldo',
             badgeText: jsonAuxInfo.jsonTipo,
@@ -22853,6 +22906,7 @@ Notas importantes:
           })}
 
           ${renderConfigAccordionItem({
+            key: 'importacion-recuperacion',
             title: 'Importación y recuperación',
             eyebrow: 'Herramientas delicadas',
             badgeText: jsonImportLockedByCloud ? 'Bloqueado con nube activa' : 'Validado manual',
@@ -22861,6 +22915,7 @@ Notas importantes:
           })}
 
           ${renderConfigAccordionItem({
+            key: 'sistema-pwa',
             title: 'Sistema / PWA',
             eyebrow: 'Aplicación',
             badgeText: APP_VERSION,
@@ -27490,12 +27545,24 @@ ${rowsXml}
       button.addEventListener('click', () => resetCloudInitialImportState('Vista de importación inicial limpiada.'));
     });
 
+    viewRoot.querySelectorAll('[data-config-accordion]').forEach((details) => {
+      details.addEventListener('toggle', () => syncConfigAccordionState(details));
+    });
+
     viewRoot.querySelectorAll('[data-pwa-check-update]').forEach((button) => {
-      button.addEventListener('click', checkForPwaUpdate);
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        checkForPwaUpdate();
+      });
     });
 
     viewRoot.querySelectorAll('[data-pwa-apply-update]').forEach((button) => {
-      button.addEventListener('click', applyPwaUpdate);
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        applyPwaUpdate();
+      });
     });
 
     viewRoot.querySelectorAll('[data-json-export]').forEach((button) => {

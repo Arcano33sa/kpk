@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_24_post12_uifullwidth_etapa2_limpieza_elegante';
+const CACHE_VERSION = 'v0_18_25_post12_uifullwidth_etapa2_config_accordion_fix';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
