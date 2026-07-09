@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.35-post12-casa-credito-ajuste-pendientes-virtual';
+  const APP_VERSION = '0.18.36-post12-casa-credito-fix-pendientes-listado';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -22330,6 +22330,7 @@ Notas importantes:
     const cuentasActivas = getActiveBankRecords();
     const casaGastos = getCasaGastosFiltrados();
     const casaPendientes = getCasaCreditoPendientes();
+    const casaGastosListado = getCasaGastosParaListadoPrincipal();
     const allCasaGastos = getCasaGastosOrdenados({ filtered: false });
     const totals = getCasaTotals(casaGastos);
     const utilidadKpkSummary = buildCasaUtilidadKpkSummary();
@@ -22435,14 +22436,14 @@ Notas importantes:
               </div>
               <div class="casa-list-actions">
                 <button type="button" class="secondary-action compact casa-pendientes-open" data-casa-pendientes-open title="Ver gastos Casa pendientes al crédito">Pendientes${casaPendientes.length ? ` · ${casaPendientes.length}` : ''}</button>
-                <div class="count-pill">${casaGastos.length} registros</div>
+                <div class="count-pill">${casaGastosListado.length} registros</div>
               </div>
             </div>
             <label class="form-field search-field">
               <span>Buscar por categoría, descripción, método, banco u observación</span>
               <input type="search" placeholder="Ej. supermercado, colegio o efectivo" data-casa-search autocomplete="off" />
             </label>
-            ${renderCasaList(casaGastos)}
+            ${renderCasaList(casaGastosListado)}
           </article>
         </div>
         ${editingRecord ? renderEditModal(getCasaModalId(), 'Editar gasto Casa', 'Corrige este registro sin tocar Gastos productivos ni el Resumen operativo.', renderCasaForm(editingRecord, getSelectableCatalogRecords('categoriasCasa', editingRecord.categoriaCasaId), metodosActivos, cuentasActivas, missingCatalogs)) : ''}
@@ -22592,12 +22593,16 @@ Notas importantes:
       });
   }
 
+  function getCasaPendientesVirtualGroupKey() {
+    return makeAccordionGroupKey('casa-virtual', 'pendientes', 'Pendientes');
+  }
+
   function buildCasaPendientesVirtualGroup(records = null) {
     const pendientes = (Array.isArray(records) ? records.map((record) => normalizeCasaGastoRecord(record)) : getCasaCreditoPendientes({ applyFilters: true }))
       .filter((record) => isCasaCreditoPendiente(record));
     const total = pendientes.reduce((sum, gasto) => roundMoney(sum + normalizeCasaGastoRecord(gasto).monto), 0);
     return {
-      key: makeAccordionGroupKey('casa-virtual', 'pendientes', 'Pendientes'),
+      key: getCasaPendientesVirtualGroupKey(),
       label: 'Pendientes',
       records: pendientes,
       total,
@@ -22768,12 +22773,29 @@ Notas importantes:
   }
 
   function buildCasaAccordionGroups(gastos) {
-    const normalGroups = buildAccordionGroups(gastos, getCasaAccordionInfo).map((group) => ({
-      ...group,
-      total: group.records.reduce((sum, gasto) => roundMoney(sum + normalizeCasaGastoRecord(gasto).monto), 0)
-    }));
-    const pendientesGroup = buildCasaPendientesVirtualGroup();
-    const groups = pendientesGroup.records.length ? [pendientesGroup, ...normalGroups] : normalGroups;
+    const pendingKey = getCasaPendientesVirtualGroupKey();
+    const groups = buildAccordionGroups(gastos, getCasaAccordionInfo)
+      .map((group) => {
+        const isVirtualPending = group.key === pendingKey;
+        const records = isVirtualPending
+          ? group.records.map((record) => normalizeCasaGastoRecord(record)).filter((record) => isCasaCreditoPendiente(record))
+          : group.records.map((record) => normalizeCasaGastoRecord(record)).filter((record) => !isCasaCreditoPendiente(record));
+        return {
+          ...group,
+          label: isVirtualPending ? 'Pendientes' : group.label,
+          records,
+          total: records.reduce((sum, gasto) => roundMoney(sum + normalizeCasaGastoRecord(gasto).monto), 0),
+          isCasaPendientesVirtual: isVirtualPending,
+          searchText: normalizeNameForCompare(`${group.searchText || ''} ${records.map((record) => {
+            const categoria = getCatalogRecordById('categoriasCasa', record.categoriaCasaId);
+            const metodo = getCatalogRecordById('metodosPago', record.metodoPagoId);
+            const cuenta = getCatalogRecordById('cuentasBancos', record.cuentaBancoId);
+            return [categoria?.nombre || record.categoriaCasaNombre, record.descripcion, metodo?.nombre || record.metodoPagoNombre, record.estadoCreditoCasa, cuenta?.nombre || record.cuentaBancoNombre, record.observacion, formatMoney(record.monto)].join(' ');
+          }).join(' ')}`)
+        };
+      })
+      .filter((group) => group.records.length > 0);
+
     return groups.sort((a, b) => {
       if (a.isCasaPendientesVirtual && !b.isCasaPendientesVirtual) return -1;
       if (!a.isCasaPendientesVirtual && b.isCasaPendientesVirtual) return 1;
@@ -22800,7 +22822,7 @@ Notas importantes:
     if (isCasaCreditoPendiente(record)) {
       const realCategoryLabel = cleanText(categoria?.nombre || record.categoriaCasaNombre) || 'Sin categoría';
       return {
-        key: makeAccordionGroupKey('casa-virtual', 'pendientes', 'Pendientes'),
+        key: getCasaPendientesVirtualGroupKey(),
         label: 'Pendientes',
         searchText: `Pendientes ${realCategoryLabel} ${record.descripcion} ${metodo?.nombre || record.metodoPagoNombre || ''} ${record.estadoCreditoCasa || ''} ${cuenta?.nombre || record.cuentaBancoNombre || ''} ${record.observacion} ${formatMoney(record.monto)}`
       };
@@ -22884,6 +22906,15 @@ Notas importantes:
   function getCasaGastosFiltrados() {
     return getCasaGastosOrdenados().filter((record) => {
       if (!isCasaGastoVisibleEnCategoria(record)) return false;
+      if (casaState.month && record.fecha.slice(5, 7) !== casaState.month) return false;
+      if (casaState.year && record.fecha.slice(0, 4) !== casaState.year) return false;
+      if (casaState.categoriaCasaId && record.categoriaCasaId !== casaState.categoriaCasaId) return false;
+      return true;
+    });
+  }
+
+  function getCasaGastosParaListadoPrincipal() {
+    return getCasaGastosOrdenados().filter((record) => {
       if (casaState.month && record.fecha.slice(5, 7) !== casaState.month) return false;
       if (casaState.year && record.fecha.slice(0, 4) !== casaState.year) return false;
       if (casaState.categoriaCasaId && record.categoriaCasaId !== casaState.categoriaCasaId) return false;
