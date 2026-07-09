@@ -2267,7 +2267,7 @@ textarea:disabled {
 }
 
 .edit-modal-header .eyebrow {
-  color: var(--gold);
+  color: var(--accent);
 }
 
 .modal-close {
@@ -6624,76 +6624,16 @@ body,
   }
 }
 
-/* Post12 Proveedores — Calculadora auxiliar + facturas relacionadas */
-.input-action-row.compra-total-action-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: center;
-}
-
-.compra-total-action-row .secondary-action.compact {
-  align-self: stretch;
-  padding-inline: 12px;
-  white-space: nowrap;
-}
-
+/* Post12 Proveedores — Total compra derivado de facturas */
 .facturas-proveedor-block {
   margin-top: 4px;
 }
 
-.compra-calculator-modal {
-  width: min(620px, 100%);
-}
-
-.compra-calculator-body {
-  display: grid;
-  gap: 14px;
-}
-
-.calculator-lines {
-  display: grid;
-  gap: 10px;
-}
-
-.calculator-line-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: end;
-}
-
-.calculator-line-row .form-field {
-  margin: 0;
-}
-
-.calculator-line-actions {
-  justify-content: flex-start;
-}
-
-.compra-calculator-total {
-  margin: 0;
-}
-
-@media (max-width: 560px) {
-  .input-action-row.compra-total-action-row,
-  .calculator-line-row {
-    grid-template-columns: 1fr;
-  }
-
-  .compra-total-action-row .secondary-action.compact,
-  .calculator-line-row .danger-action.compact {
-    width: 100%;
-  }
-}
-
-
-/* Post12 ajuste — Total compra visible junto a Calcular */
 .proveedores-shell .compra-total-field {
   min-width: 0;
 }
 
-.proveedores-shell .compra-total-action-row input[data-compra-total-input] {
+.proveedores-shell .compra-total-field input[data-compra-total-input] {
   width: 100%;
   min-width: 0;
 }
@@ -6701,10 +6641,6 @@ body,
 @media (min-width: 621px) {
   .proveedores-shell .compra-total-field {
     grid-column: span 2;
-  }
-
-  .proveedores-shell .input-action-row.compra-total-action-row {
-    grid-template-columns: minmax(11rem, 1fr) max-content;
   }
 }
 
@@ -8890,9 +8826,6 @@ body,
   max-width: 100%;
 }
 
-.compra-calculator-modal {
-  width: min(920px, calc(100vw - clamp(18px, 4vw, 56px)));
-}
 
 @media (max-width: 720px) {
   .modal-backdrop {
@@ -10101,18 +10034,14 @@ body,
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  min-width: 0;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
-.config-top-refresh,
-.config-top-save {
+.config-top-save,
+.config-top-refresh {
   min-height: 38px;
   white-space: nowrap;
-}
-
-.config-top-save {
-  padding-inline: 14px;
 }
 
 .config-top-status-grid {
@@ -10218,10 +10147,10 @@ body,
     justify-content: stretch;
   }
 
-  .config-top-refresh,
-  .config-top-save {
-    flex: 1 1 140px;
-    width: 100%;
+  .config-top-save,
+  .config-top-refresh {
+    flex: 1 1 150px;
+    min-width: 0;
   }
 
   .config-accordion-toggle {
@@ -10237,5 +10166,1116 @@ body,
     justify-self: start;
     max-width: 100%;
     white-space: normal;
+  }
+}
+
+/* Post12 Facturas con montos — Etapa 2: UI editable Ventas/Proveedores */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.facturas-editor-shell {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  overscroll-behavior-x: contain;
+  padding-bottom: 2px;
+}
+
+.facturas-grid {
+  display: grid;
+  gap: 7px;
+  min-width: min(100%, 680px);
+}
+
+.facturas-venta-grid .facturas-grid-row {
+  display: grid;
+  grid-template-columns: minmax(8.5rem, 1.35fr) minmax(7.5rem, 0.95fr) minmax(7.5rem, 0.95fr) minmax(7.5rem, 0.95fr) 38px;
+  gap: 7px;
+  align-items: end;
+}
+
+.facturas-proveedor-grid {
+  min-width: min(100%, 430px);
+}
+
+.facturas-proveedor-grid .facturas-grid-row {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1.45fr) minmax(8rem, 1fr) 38px;
+  gap: 7px;
+  align-items: end;
+}
+
+.facturas-grid-head {
+  align-items: center !important;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.factura-edit-row {
+  padding: 8px;
+  border: 1px solid rgba(185, 135, 43, 0.24);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.factura-edit-row.is-pending {
+  border-style: dashed;
+  background: rgba(255, 248, 234, 0.72);
+}
+
+.factura-edit-row.is-invalid {
+  border-color: rgba(196, 57, 57, 0.62);
+  box-shadow: 0 0 0 2px rgba(196, 57, 57, 0.08);
+}
+
+.factura-cell {
+  min-width: 0;
+  margin: 0;
+}
+
+.factura-cell > span {
+  display: none;
+}
+
+.factura-cell input {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  padding: 7px 9px;
+  white-space: nowrap;
+}
+
+.factura-total-cell input,
+.proveedores-shell .compra-total-field input[readonly] {
+  background: rgba(248, 241, 226, 0.78);
+  color: var(--accent-dark);
+  font-weight: 900;
+  cursor: default;
+}
+
+.factura-remove-button {
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 12px;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.facturas-add-row {
+  display: flex !important;
+  justify-content: flex-start;
+  padding: 2px 0 0;
+}
+
+.factura-add-button {
+  width: 42px;
+  height: 38px;
+  border: 1px solid rgba(185, 135, 43, 0.45);
+  border-radius: 13px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-dark));
+  color: #1f1609;
+  font-size: 1.35rem;
+  font-weight: 950;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(137, 92, 25, 0.16);
+}
+
+.factura-add-button:hover,
+.factura-add-button:focus-visible {
+  transform: translateY(-1px);
+  outline: 2px solid rgba(185, 135, 43, 0.28);
+  outline-offset: 2px;
+}
+
+.facturas-cuadre-card {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid rgba(185, 135, 43, 0.28);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.facturas-cuadre-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--accent-dark);
+}
+
+.facturas-cuadre-title span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(185, 135, 43, 0.13);
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.facturas-cuadre-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.facturas-cuadre-item {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(49, 36, 18, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 250, 240, 0.72);
+}
+
+.facturas-cuadre-item span,
+.facturas-cuadre-item strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.facturas-cuadre-item span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.facturas-cuadre-item strong {
+  margin-top: 2px;
+  color: var(--ink);
+  font-size: 0.86rem;
+}
+
+.facturas-cuadre-item.is-balanced strong {
+  color: var(--success);
+}
+
+.facturas-cuadre-item.is-unbalanced strong {
+  color: var(--danger);
+}
+
+.factura-chip small {
+  color: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  opacity: 0.8;
+}
+
+.factura-chip.is-pending {
+  border-style: dashed;
+}
+
+@media (max-width: 760px) {
+  .facturas-venta-grid .facturas-grid-row {
+    grid-template-columns: minmax(8.5rem, 1.2fr) minmax(7rem, 0.9fr) minmax(7rem, 0.9fr) minmax(7rem, 0.9fr) 38px;
+    min-width: 620px;
+  }
+
+  .facturas-proveedor-grid .facturas-grid-row {
+    min-width: 390px;
+  }
+
+  .facturas-cuadre-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .facturas-cuadre-title {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+/* UI Responsive Full-Width — Etapa 1/2: bloques verticales por módulo operativo */
+:root {
+  --uifw-operational-gap: clamp(14px, 1.4vw, 22px);
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) {
+  width: 100%;
+  max-width: 100%;
+}
+
+.ventas-layout,
+.cobros-layout,
+.compras-layout,
+.pagos-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: var(--uifw-operational-gap) !important;
+  align-items: stretch;
+  width: 100%;
+  max-width: 100%;
+}
+
+.ventas-left-column,
+.ventas-right-column,
+.compras-form-stack {
+  display: contents;
+}
+
+.venta-form-card,
+.venta-ajuste-card,
+.venta-list-card,
+.cobro-form-card,
+.cobro-list-card,
+.compra-form-card,
+.compra-ajuste-card,
+.compra-list-card,
+.pago-form-card,
+.pago-list-card {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.venta-form-card { order: 1; }
+.venta-ajuste-card { order: 2; }
+.venta-list-card { order: 3; }
+.cobro-form-card { order: 1; }
+.cobro-list-card { order: 2; }
+.compra-form-card { order: 1; }
+.compra-ajuste-card { order: 2; }
+.compra-list-card { order: 3; }
+.pago-form-card { order: 1; }
+.pago-list-card { order: 2; }
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  gap: clamp(10px, 1vw, 14px);
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .form-grid .full-span,
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(.cobro-oc-search-panel,
+    .facturas-grid-panel,
+    .formula-card,
+    .selected-summary,
+    .contado-payment-grid) {
+  grid-column: 1 / -1;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(.operational-scroll-shell,
+    .operational-table-wrap,
+    .compact-table-wrap) {
+  max-width: 100%;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(.metric-card strong,
+    .amount-cell,
+    td[data-label="Fecha"],
+    td[data-label="Vence"],
+    td[data-label="OC"],
+    td[data-label="Facturas"],
+    td[data-label="Compra / facturas"]) {
+  white-space: nowrap;
+}
+
+@media (min-width: 1180px) {
+  .app-shell {
+    width: min(var(--desktop-shell-final-max, 1880px), calc(100% - clamp(20px, 2vw, 48px)));
+  }
+
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell) .form-grid {
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  }
+
+  .venta-form .form-grid,
+  .compra-form .form-grid {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+}
+
+@media (min-width: 1500px) {
+  .app-shell {
+    width: min(var(--desktop-shell-final-max, 1880px), calc(100% - clamp(18px, 1.6vw, 40px)));
+  }
+
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell) .form-grid {
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .ventas-layout,
+  .cobros-layout,
+  .compras-layout,
+  .pagos-layout {
+    gap: 12px !important;
+  }
+
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell) .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* UI Responsive Full-Width — Etapa 2/2: limpieza elegante, bordes suaves y compactación visual fina */
+:root {
+  --uifw-elegant-line: rgba(213, 207, 194, 0.62);
+  --uifw-elegant-line-soft: rgba(213, 207, 194, 0.42);
+  --uifw-elegant-fill: rgba(255, 255, 255, 0.82);
+  --uifw-elegant-fill-soft: rgba(255, 253, 248, 0.72);
+  --uifw-elegant-shadow: 0 10px 24px rgba(17, 24, 39, 0.045);
+  --uifw-elegant-shadow-soft: 0 5px 14px rgba(17, 24, 39, 0.035);
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) {
+  gap: clamp(12px, 1.1vw, 18px);
+}
+
+:where(.ventas-layout,
+  .cobros-layout,
+  .compras-layout,
+  .pagos-layout,
+  .operational-fullwidth-stack) {
+  gap: clamp(12px, 1.15vw, 18px) !important;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(.venta-form-card,
+    .venta-ajuste-card,
+    .venta-list-card,
+    .cobro-form-card,
+    .cobro-list-card,
+    .compra-form-card,
+    .compra-ajuste-card,
+    .compra-list-card,
+    .pago-form-card,
+    .pago-list-card) {
+  padding: clamp(12px, 1.05vw, 18px);
+  border-color: var(--uifw-elegant-line);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), var(--uifw-elegant-fill-soft));
+  box-shadow: var(--uifw-elegant-shadow);
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(.venta-form-card,
+    .venta-ajuste-card,
+    .venta-list-card,
+    .cobro-form-card,
+    .cobro-list-card,
+    .compra-form-card,
+    .compra-ajuste-card,
+    .compra-list-card,
+    .pago-form-card,
+    .pago-list-card) .section-title-row {
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 9px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--uifw-elegant-line-soft);
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(.section-title-row h2) {
+  font-size: clamp(1.08rem, 1.28vw, 1.36rem);
+  line-height: 1.06;
+  letter-spacing: -0.015em;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(.eyebrow.mini) {
+  padding: 3px 7px;
+  border-color: rgba(185, 135, 43, 0.18);
+  background: rgba(245, 234, 213, 0.56);
+  font-size: 0.61rem;
+  line-height: 1.05;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(.muted-text) {
+  margin: -2px 0 10px;
+  color: #5d6878;
+  font-size: 0.88rem;
+  line-height: 1.34;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(.metric-card,
+    .catalog-warning,
+    .formula-card,
+    .selected-summary,
+    .contado-payment-block,
+    .facturas-fieldset,
+    .facturas-cuadre-card,
+    .logistica-block,
+    .compact-summary,
+    .filter-chip,
+    .form-message,
+    .notice) {
+  border-color: var(--uifw-elegant-line-soft);
+  box-shadow: var(--uifw-elegant-shadow-soft);
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(.metric-card) {
+  min-height: 74px;
+  padding: 9px 10px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(.metric-card span) {
+  font-size: 0.7rem;
+  line-height: 1.12;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(.metric-card strong) {
+  margin-top: 2px;
+  font-size: clamp(0.96rem, 1.12vw, 1.14rem);
+  line-height: 1.12;
+  white-space: nowrap;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 188px), 1fr));
+  gap: 9px 10px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(.venta-form,
+    .cobro-form,
+    .compra-form,
+    .pago-form,
+    .ajuste-form) {
+  gap: 10px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .form-field {
+  gap: 4px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .form-field span {
+  color: #526174;
+  font-size: 0.76rem;
+  line-height: 1.12;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .form-field input,
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .form-field select,
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .form-field textarea {
+  min-height: 39px;
+  border-color: var(--uifw-elegant-line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .form-field textarea,
+:where(.ventas-shell,
+  .proveedores-shell) .facturas-mass-field textarea {
+  min-height: 66px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .form-actions {
+  gap: 8px;
+  margin-top: 2px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(.card-action,
+    .secondary-action,
+    .danger-action) {
+  min-height: 40px;
+  padding: 8px 13px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(.card-action.compact,
+    .secondary-action.compact,
+    .danger-action.compact,
+    .operational-table .compact) {
+  min-height: 31px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  line-height: 1.1;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(.formula-card,
+    .selected-summary,
+    .contado-payment-block,
+    .facturas-fieldset,
+    .facturas-cuadre-card) {
+  padding: 10px;
+  border-radius: 14px;
+  background: rgba(255, 253, 248, 0.72);
+}
+
+:where(.ventas-shell,
+  .proveedores-shell) :where(.factura-edit-row) {
+  padding: 7px;
+  border-color: rgba(185, 135, 43, 0.18);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: 0 2px 8px rgba(17, 24, 39, 0.025);
+}
+
+:where(.ventas-shell,
+  .proveedores-shell) :where(.facturas-grid,
+    .facturas-venta-grid .facturas-grid-row,
+    .facturas-proveedor-grid .facturas-grid-row) {
+  gap: 6px;
+}
+
+:where(.ventas-shell,
+  .proveedores-shell) :where(.factura-cell input) {
+  height: 36px;
+  border-color: var(--uifw-elegant-line);
+  border-radius: 11px;
+}
+
+:where(.ventas-shell,
+  .proveedores-shell) :where(.factura-remove-button,
+    .factura-add-button) {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  box-shadow: 0 5px 12px rgba(137, 92, 25, 0.12);
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .search-field {
+  margin-bottom: 9px;
+  padding: 8px 9px;
+  border: 1px solid var(--uifw-elegant-line-soft);
+  border-radius: 14px;
+  background: rgba(255, 253, 248, 0.66);
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .operational-scroll-shell {
+  gap: 0;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .operational-top-scroll {
+  top: calc(var(--topbar-height) + var(--safe-top) + 6px);
+  height: 18px;
+  min-height: 18px;
+  border-color: var(--uifw-elegant-line-soft);
+  border-radius: 15px 15px 0 0;
+  background: linear-gradient(180deg, rgba(255, 253, 248, 0.92), rgba(255, 248, 234, 0.72));
+  box-shadow: none;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .operational-scroll-thumb {
+  top: -1px;
+  height: 8px;
+  border-color: rgba(185, 135, 43, 0.24);
+  box-shadow: 0 1px 5px rgba(122, 22, 29, 0.12);
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .operational-table-wrap {
+  border-color: var(--uifw-elegant-line-soft);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 6px 16px rgba(17, 24, 39, 0.035);
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .operational-scroll-shell .operational-table-wrap {
+  border-radius: 0 0 15px 15px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .operational-table {
+  font-size: 0.83rem;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .operational-table th {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--uifw-elegant-line-soft);
+  background: linear-gradient(180deg, rgba(255, 250, 240, 0.92), rgba(255, 246, 226, 0.84));
+  font-size: 0.68rem;
+  letter-spacing: 0.025em;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .operational-table td {
+  padding: 6px 8px;
+  border-bottom-color: var(--uifw-elegant-line-soft);
+  line-height: 1.18;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .compact-record-row:nth-child(even) {
+  background: rgba(255, 253, 248, 0.68);
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .compact-record-row:hover {
+  background: rgba(255, 248, 234, 0.58);
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(.amount-cell,
+    .amount-cell > span,
+    .amount-cell .compact-primary,
+    td[data-label="Fecha"] > span,
+    td[data-label="Vence"] > span,
+    td[data-label="Compra"] > span,
+    td[data-label="OC"] > span,
+    td[data-label="Facturas"] > span,
+    td[data-label="Compra / facturas"] > span,
+    td[data-label="Estado"] > span,
+    .state-pill) {
+  white-space: nowrap;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) :where(td[data-label="OC"] small,
+    td[data-label="Facturas"] small,
+    td[data-label="Compra / facturas"] small) {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .actions-cell {
+  width: 1%;
+  min-width: 170px;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .compact-row-actions {
+  gap: 5px;
+  justify-content: flex-end;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .entity-accordion-toggle {
+  min-height: 38px;
+  padding: 7px 10px;
+  border-color: var(--uifw-elegant-line-soft);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: none;
+}
+
+:where(.ventas-shell,
+  .cobros-shell,
+  .proveedores-shell,
+  .pagos-shell) .entity-accordion-panel {
+  padding: 8px;
+  border-color: var(--uifw-elegant-line-soft);
+  background: rgba(255, 253, 248, 0.46);
+}
+
+:where(.proveedores-shell) :where(.entity-accordion-pending,
+  .entity-accordion-total),
+:where(.ventas-shell,
+  .cobros-shell,
+  .pagos-shell) :where(.count-pill,
+    .state-pill,
+    .badge) {
+  border-color: rgba(185, 135, 43, 0.2);
+  box-shadow: none;
+}
+
+:where(.ventas-shell,
+  .proveedores-shell) .ajustes-inline-history {
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 12px;
+  border-color: var(--uifw-elegant-line-soft);
+  background: rgba(255, 253, 248, 0.62);
+}
+
+:where(.ventas-shell,
+  .proveedores-shell) .ajuste-chip {
+  border-color: rgba(185, 135, 43, 0.18);
+  background: rgba(255, 248, 234, 0.62);
+  white-space: nowrap;
+}
+
+@media (min-width: 1180px) {
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell) .form-grid {
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  }
+
+  :where(.ventas-shell,
+    .proveedores-shell) .facturas-venta-grid .facturas-grid-row {
+    grid-template-columns: minmax(11rem, 1.3fr) minmax(8.5rem, 0.9fr) minmax(8.5rem, 0.9fr) minmax(8.5rem, 0.9fr) 36px;
+  }
+
+  :where(.proveedores-shell) .facturas-proveedor-grid .facturas-grid-row {
+    grid-template-columns: minmax(13rem, 1.5fr) minmax(9rem, 1fr) 36px;
+  }
+}
+
+@media (max-width: 760px) {
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell) :where(.venta-form-card,
+      .venta-ajuste-card,
+      .venta-list-card,
+      .cobro-form-card,
+      .cobro-list-card,
+      .compra-form-card,
+      .compra-ajuste-card,
+      .compra-list-card,
+      .pago-form-card,
+      .pago-list-card) {
+    padding: 11px;
+    border-radius: 17px;
+  }
+
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell) :where(.venta-form-card,
+      .venta-ajuste-card,
+      .venta-list-card,
+      .cobro-form-card,
+      .cobro-list-card,
+      .compra-form-card,
+      .compra-ajuste-card,
+      .compra-list-card,
+      .pago-form-card,
+      .pago-list-card) .section-title-row {
+    align-items: stretch;
+  }
+
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell) .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell) .form-field input,
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell) .form-field select,
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell) .form-field textarea {
+    min-height: 42px;
+  }
+
+  :where(.ventas-shell,
+    .cobros-shell,
+    .proveedores-shell,
+    .pagos-shell) .compact-row-actions {
+    justify-content: flex-start;
+  }
+}
+
+/* Global de Facturas — Etapa 2/2 */
+.facturas-search-title-actions {
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.facturas-global-open {
+  min-width: 92px;
+  min-height: 36px;
+  letter-spacing: 0.04em;
+  font-weight: 900;
+  border-radius: 999px;
+}
+
+.facturas-global-modal {
+  width: min(1180px, calc(100vw - clamp(18px, 4vw, 56px)));
+  max-height: min(92vh, 920px);
+  border-radius: 24px;
+}
+
+.facturas-global-modal-header {
+  gap: 14px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.facturas-global-modal-header p {
+  max-width: 760px;
+  margin-top: 4px;
+}
+
+.facturas-global-modal-body {
+  display: grid;
+  gap: 14px;
+  padding-top: 12px;
+}
+
+.facturas-global-toolbar {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.facturas-global-status-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.facturas-global-status-grid .status-item {
+  min-height: 58px;
+  padding: 9px 11px;
+}
+
+.facturas-global-filters {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.45fr) repeat(3, minmax(130px, 1fr)) auto;
+  align-items: end;
+  gap: 9px;
+}
+
+.facturas-global-filters .form-field {
+  gap: 5px;
+  margin: 0;
+  min-width: 0;
+}
+
+.facturas-global-filters .form-field span {
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.facturas-global-filters :where(input, select) {
+  min-height: 38px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-size: 0.86rem;
+}
+
+.facturas-global-clear {
+  min-height: 38px;
+  align-self: end;
+  white-space: nowrap;
+}
+
+.facturas-global-table-wrap {
+  max-height: min(56vh, 600px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-radius: 16px;
+}
+
+.facturas-global-operational-table {
+  min-width: 920px;
+}
+
+.facturas-global-operational-table :where(th, td) {
+  white-space: nowrap;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.facturas-global-operational-table th {
+  font-size: 0.72rem;
+}
+
+.facturas-global-empty {
+  margin: 0;
+  padding: 16px 14px;
+  border: 1px dashed rgba(148, 163, 184, 0.28);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.028);
+}
+
+.facturas-global-pagination {
+  margin-top: 0;
+  gap: 8px;
+  justify-content: center;
+}
+
+.facturas-global-pagination .compact-action {
+  min-height: 34px;
+  padding-inline: 12px;
+  border-radius: 999px;
+}
+
+@media (max-width: 980px) {
+  .facturas-global-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .facturas-global-clear {
+    justify-self: start;
+  }
+}
+
+@media (max-width: 720px) {
+  .facturas-search-title-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .facturas-global-modal {
+    width: min(100%, calc(100vw - 16px));
+    border-radius: 18px;
+  }
+
+  .facturas-global-modal-body {
+    gap: 10px;
+  }
+
+  .facturas-global-status-grid,
+  .facturas-global-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .facturas-global-toolbar {
+    padding: 10px;
+    border-radius: 16px;
+  }
+
+  .facturas-global-open {
+    min-width: 86px;
+  }
+
+  .facturas-global-operational-table {
+    min-width: 850px;
   }
 }

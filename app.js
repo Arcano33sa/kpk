@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.20-post12-firebaseonline-guardar-sesion-etapa2';
+  const APP_VERSION = '0.18.32-post12-guardar-sesion-etapa2-subida-parcial';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1305,6 +1305,12 @@ Notas importantes:
     editingId: null,
     search: '',
     page: 1,
+    globalOpen: false,
+    globalPage: 1,
+    globalSearch: '',
+    globalCliente: '',
+    globalSucursal: '',
+    globalEstado: '',
     historyOpenPeriod: '',
     historyPages: {},
     captureDraft: {
@@ -1412,9 +1418,12 @@ Notas importantes:
     messageType: 'success'
   };
 
+  const CONFIG_ACCORDION_DEFAULT_KEY = 'datos-sincronizacion';
+
   let configState = {
     message: null,
-    messageType: 'success'
+    messageType: 'success',
+    openAccordions: []
   };
 
   let pwaState = {
@@ -2671,6 +2680,217 @@ Notas importantes:
     return String(value ?? '').replace(/\s+/g, ' ').trim();
   }
 
+  const SESSION_CHANGE_OPERATION_PRIORITY = {
+    crear: 1,
+    editar: 2,
+    anular: 3,
+    eliminar: 4
+  };
+
+  const SESSION_SAVE_MESSAGES = Object.freeze({
+    saving: 'Guardando datos...',
+    success: 'Guardado correcto.',
+    noChanges: 'No hay cambios nuevos de esta sesión para guardar.',
+    failure: 'No se pudo guardar en la nube. Los cambios de sesión se conservaron para intentar nuevamente.',
+    firestoreUnavailable: 'No se pudo guardar en la nube. Firestore no está disponible.'
+  });
+
+  let sessionChangeQueue = [];
+  let sessionChangeSequence = 0;
+
+  function syncSessionChangeQueueGlobal() {
+    if (typeof window !== 'undefined') {
+      window.KSA_SESSION_CHANGE_QUEUE = sessionChangeQueue;
+    }
+  }
+
+  function normalizeSessionChangeOperation(value) {
+    const raw = cleanText(value).toLowerCase();
+    if (raw === 'crear' || raw === 'editar' || raw === 'anular' || raw === 'eliminar') return raw;
+    return 'editar';
+  }
+
+  function getSessionChangeRecordKey(moduleName, recordId, fallback = '') {
+    const moduleKey = cleanText(moduleName).toLowerCase();
+    const recordKey = cleanText(recordId || fallback);
+    return `${moduleKey}::${recordKey}`;
+  }
+
+  function getSessionChangePendingCount() {
+    return sessionChangeQueue.filter((item) => item && item.estado === 'pendiente').length;
+  }
+
+  function getPendingSessionChanges() {
+    return sessionChangeQueue.filter((item) => item && item.estado === 'pendiente').map((item) => ({ ...item }));
+  }
+
+  function clearConfirmedSessionChanges(changes = []) {
+    const confirmedIds = new Set((Array.isArray(changes) ? changes : []).map((item) => cleanText(item?.id)).filter(Boolean));
+    if (!confirmedIds.size) return 0;
+    const before = sessionChangeQueue.length;
+    sessionChangeQueue = sessionChangeQueue.filter((item) => !(item && item.estado === 'pendiente' && confirmedIds.has(cleanText(item.id))));
+    syncSessionChangeQueueGlobal();
+    updateSessionChangeQueueDom();
+    return before - sessionChangeQueue.length;
+  }
+
+  function isCloudDeletedRecord(record) {
+    if (!isPlainObject(record)) return false;
+    return record._deleted === true
+      || record._cloudDeleted === true
+      || record.eliminadoEnNube === true
+      || record.eliminadoCloud === true
+      || record.deletedInCloud === true;
+  }
+
+  function updateSessionChangeQueueDom() {
+    const count = getSessionChangePendingCount();
+    if (typeof document === 'undefined') return;
+    document.querySelectorAll('[data-session-change-count]').forEach((node) => {
+      node.textContent = String(count);
+    });
+  }
+
+  function registerSessionChange(payload = {}) {
+    if (!isPlainObject(payload)) return null;
+    const moduleName = cleanText(payload.module || payload.modulo || payload.moduleName);
+    const recordId = cleanText(payload.recordId || payload.idRegistro || payload.id || payload.documentId);
+    if (!moduleName || !recordId) return null;
+
+    const operation = normalizeSessionChangeOperation(payload.operation || payload.operacion || payload.tipoOperacion);
+    const key = getSessionChangeRecordKey(moduleName, recordId);
+    const timestamp = nowIso();
+    const existing = sessionChangeQueue.find((item) => item && item.estado === 'pendiente' && item.key === key);
+    const base = {
+      module: moduleName,
+      modulo: moduleName,
+      operation,
+      operacion: operation,
+      recordId,
+      idRegistro: recordId,
+      fechaHoraLocal: timestamp,
+      origen: 'session',
+      estado: 'pendiente',
+      key
+    };
+
+    if (payload.relatedId) base.relatedId = cleanText(payload.relatedId);
+    if (payload.sourceModule) base.sourceModule = cleanText(payload.sourceModule);
+
+    if (existing) {
+      const currentPriority = SESSION_CHANGE_OPERATION_PRIORITY[existing.operation] || 0;
+      const nextPriority = SESSION_CHANGE_OPERATION_PRIORITY[operation] || 0;
+      const finalOperation = (existing.operation === 'crear' && operation === 'editar')
+        ? 'crear'
+        : (nextPriority >= currentPriority ? operation : existing.operation);
+      existing.operation = finalOperation;
+      existing.operacion = finalOperation;
+      existing.fechaHoraLocal = timestamp;
+      existing.updatedAt = timestamp;
+      if (base.relatedId) existing.relatedId = base.relatedId;
+      if (base.sourceModule) existing.sourceModule = base.sourceModule;
+      syncSessionChangeQueueGlobal();
+      updateSessionChangeQueueDom();
+      return existing;
+    }
+
+    sessionChangeSequence += 1;
+    const change = {
+      id: generateId('sessionChange'),
+      idInterno: `session-${String(sessionChangeSequence).padStart(4, '0')}`,
+      ...base,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    sessionChangeQueue.push(change);
+    syncSessionChangeQueueGlobal();
+    updateSessionChangeQueueDom();
+    return change;
+  }
+
+  function registerSessionChangesFromIds(moduleName, operation, ids, extras = {}) {
+    const idList = Array.isArray(ids) ? ids : [ids];
+    idList.map(cleanText).filter(Boolean).forEach((id) => {
+      registerSessionChange({ module: moduleName, operation, recordId: id, ...extras });
+    });
+  }
+
+  function registerFacturasSyncSessionChanges(result, operation = 'editar', sourceModule = '') {
+    if (!result || (!result.created && !result.updated && !result.reverted && !Array.isArray(result.affectedIds))) return;
+    const ids = Array.isArray(result.affectedIds) ? result.affectedIds : [];
+    if (ids.length) {
+      registerSessionChangesFromIds('Facturas', operation, ids, { sourceModule });
+    }
+  }
+
+  function registerAutoGastoSessionChange(result) {
+    if (!result || !result.gasto || !result.gasto.id) return;
+    const action = cleanText(result.action);
+    if (action === 'created') registerSessionChange({ module: 'Gastos', operation: 'crear', recordId: result.gasto.id, sourceModule: 'Ventas / OC' });
+    else if (action === 'updated' || action === 'reactivated') registerSessionChange({ module: 'Gastos', operation: 'editar', recordId: result.gasto.id, sourceModule: 'Ventas / OC' });
+    else if (action === 'annulled') registerSessionChange({ module: 'Gastos', operation: 'anular', recordId: result.gasto.id, sourceModule: 'Ventas / OC' });
+  }
+
+  async function handleSessionSavePreview(button = null) {
+    if (button) button.disabled = true;
+    const pending = getPendingSessionChanges();
+    if (!pending.length) {
+      configState.message = SESSION_SAVE_MESSAGES.noChanges;
+      configState.messageType = 'info';
+      cloudOperationState.message = SESSION_SAVE_MESSAGES.noChanges;
+      renderRoute({ preserveScroll: true });
+      return { ok: true, count: 0, message: SESSION_SAVE_MESSAGES.noChanges };
+    }
+
+    if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.saveSessionChangesToCloud) {
+      configState.message = SESSION_SAVE_MESSAGES.firestoreUnavailable;
+      configState.messageType = 'error';
+      cloudOperationState.lastError = SESSION_SAVE_MESSAGES.firestoreUnavailable;
+      cloudOperationState.message = SESSION_SAVE_MESSAGES.firestoreUnavailable;
+      renderRoute({ preserveScroll: true });
+      return { ok: false, count: pending.length, message: SESSION_SAVE_MESSAGES.firestoreUnavailable };
+    }
+
+    configState.message = SESSION_SAVE_MESSAGES.saving;
+    configState.messageType = 'success';
+    cloudOperationState.message = SESSION_SAVE_MESSAGES.saving;
+    renderRoute({ preserveScroll: true });
+
+    try {
+      const result = await KSAFirebaseAdapter.saveSessionChangesToCloud(pending);
+      if (result?.ok) {
+        clearConfirmedSessionChanges(result.confirmedChanges || pending);
+        configState.message = SESSION_SAVE_MESSAGES.success;
+        configState.messageType = 'success';
+        cloudOperationState.active = true;
+        cloudOperationState.lastSyncAt = result.lastSyncAt || nowIso();
+        cloudOperationState.lastCloudWriteAt = cloudOperationState.lastSyncAt;
+        cloudOperationState.lastError = '';
+        cloudOperationState.message = SESSION_SAVE_MESSAGES.success;
+      } else {
+        const unavailable = result?.code === 'firebase/unavailable' || result?.code === 'cloud/firestore-unavailable';
+        const message = unavailable ? SESSION_SAVE_MESSAGES.firestoreUnavailable : SESSION_SAVE_MESSAGES.failure;
+        configState.message = message;
+        configState.messageType = 'error';
+        cloudOperationState.lastError = message;
+        cloudOperationState.message = message;
+      }
+      renderRoute({ preserveScroll: true });
+      return result;
+    } catch (error) {
+      const message = SESSION_SAVE_MESSAGES.failure;
+      configState.message = message;
+      configState.messageType = 'error';
+      cloudOperationState.lastError = message;
+      cloudOperationState.message = message;
+      renderRoute({ preserveScroll: true });
+      return { ok: false, count: pending.length, message, error };
+    }
+  }
+
+
+  syncSessionChangeQueueGlobal();
+
   function sanitizeFileNameSegment(value, fallback = 'Equipo sin nombre') {
     const sanitized = cleanText(value)
       .replace(/[\/\\:*?"<>|]+/g, ' ')
@@ -3040,6 +3260,73 @@ Notas importantes:
       .trim();
   }
 
+  function hasFacturaExplicitValue(value) {
+    return value !== undefined && value !== null && cleanText(value) !== '';
+  }
+
+  function readFacturaMoneyField(raw, keys = []) {
+    const source = isPlainObject(raw) ? raw : {};
+    for (const key of keys) {
+      if (!hasFacturaExplicitValue(source[key])) continue;
+      const value = parseMoney(source[key]);
+      return { hasValue: true, value: Number.isNaN(value) ? Number.NaN : value };
+    }
+    return { hasValue: false, value: 0 };
+  }
+
+  function readFacturaPendingFlag(raw, fallback = false) {
+    const source = isPlainObject(raw) ? raw : {};
+    const candidate = source.pendienteMonto ?? source.montoPendiente ?? source.requiereCompletarMonto ?? source.montoPorCompletar;
+    if (candidate === undefined || candidate === null || cleanText(candidate) === '') return Boolean(fallback);
+    if (typeof candidate === 'boolean') return candidate;
+    const normalized = cleanText(candidate)
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLocaleLowerCase('es-NI');
+    if (['1', 'true', 'si', 'sí', 'yes', 'pendiente'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'completo', 'completado'].includes(normalized)) return false;
+    return Boolean(fallback);
+  }
+
+  function isFacturaVentaInvalid(record) {
+    const factura = isPlainObject(record) ? record : {};
+    const subtotal = parseMoney(factura.subtotal);
+    const descuento = parseMoney(factura.descuento);
+    const total = roundMoney((Number.isNaN(subtotal) ? 0 : subtotal) - (Number.isNaN(descuento) ? 0 : descuento));
+    return Boolean(
+      factura.invalida
+      || Number.isNaN(subtotal)
+      || Number.isNaN(descuento)
+      || subtotal < 0
+      || descuento < 0
+      || descuento > subtotal
+      || total < 0
+    );
+  }
+
+  function isFacturaProveedorInvalid(record) {
+    const factura = isPlainObject(record) ? record : {};
+    const monto = parseMoney(factura.monto);
+    return Boolean(factura.invalida || Number.isNaN(monto) || monto < 0);
+  }
+
+  function getFacturaMoneyInputInfo(value) {
+    const raw = cleanText(value);
+    if (!raw) return { hasValue: false, value: 0, invalid: false };
+    const parsed = parseMoney(raw);
+    return { hasValue: true, value: parsed, invalid: Number.isNaN(parsed) || parsed < 0 };
+  }
+
+  function isMoneyDifferenceBalanced(value) {
+    return Math.abs(roundMoney(value)) <= 0.01;
+  }
+
+  function formatMoneyDifference(value) {
+    const diff = roundMoney(value);
+    const prefix = diff > 0 ? '+' : '';
+    return `${prefix}${formatMoney(diff)}`;
+  }
+
   function isSafeFacturaSpaceToken(token) {
     const value = cleanFacturaVentaNumero(token);
     if (!value) return false;
@@ -3078,9 +3365,35 @@ Notas importantes:
     const directValue = typeof record === 'string' || typeof record === 'number' ? record : '';
     const numero = cleanFacturaVentaNumero(directValue || raw.numero || raw.numeroFactura || raw.factura || raw.documento || raw.referencia || raw.value);
     if (!numero) return null;
+
+    const subtotalField = readFacturaMoneyField(raw, ['subtotal', 'montoSubtotal', 'subTotal', 'base', 'baseFactura', 'baseImponible']);
+    const descuentoField = readFacturaMoneyField(raw, ['descuento', 'descuentoFactura', 'descuentoAplicado', 'rebaja', 'rebajaFactura']);
+    const totalField = readFacturaMoneyField(raw, ['total', 'monto', 'importe', 'valor', 'montoFactura', 'facturaMonto', 'totalFactura']);
+    const descuento = descuentoField.hasValue && !Number.isNaN(descuentoField.value) ? roundMoney(descuentoField.value) : 0;
+    const subtotal = subtotalField.hasValue && !Number.isNaN(subtotalField.value)
+      ? roundMoney(subtotalField.value)
+      : (totalField.hasValue && !Number.isNaN(totalField.value) ? roundMoney(totalField.value + descuento) : 0);
+    const total = roundMoney(subtotal - descuento);
+    const pendienteMonto = readFacturaPendingFlag(raw, !(subtotalField.hasValue || totalField.hasValue));
+    const invalida = Boolean(
+      (subtotalField.hasValue && Number.isNaN(subtotalField.value))
+      || (descuentoField.hasValue && Number.isNaN(descuentoField.value))
+      || subtotal < 0
+      || descuento < 0
+      || descuento > subtotal
+      || total < 0
+    );
+
     return {
       id: cleanText(raw.id) || generateId('factura'),
-      numero
+      numero,
+      subtotal,
+      descuento,
+      total,
+      pendienteMonto,
+      invalida,
+      motivoInvalidez: invalida ? 'Descuento mayor que subtotal' : '',
+      legacyNumeroSolo: Boolean(pendienteMonto && !subtotalField.hasValue && !totalField.hasValue)
     };
   }
 
@@ -3116,18 +3429,86 @@ Notas importantes:
       }), (item) => item.numero);
   }
 
+  function mergeFacturasVentaWithExisting(nextFacturas, existingFacturas) {
+    const existingByNumero = new Map(normalizeFacturasVentaList(existingFacturas)
+      .map((factura) => [normalizeNameForCompare(factura.numero), factura]));
+    return normalizeFacturasVentaList(nextFacturas).map((factura) => {
+      const existing = existingByNumero.get(normalizeNameForCompare(factura.numero));
+      const nextHasAmounts = !factura.pendienteMonto || factura.subtotal > 0 || factura.descuento > 0 || factura.total > 0;
+      if (!existing || nextHasAmounts) return normalizeFacturaVentaRecord(factura);
+      return normalizeFacturaVentaRecord({ ...existing, numero: factura.numero });
+    }).filter(Boolean);
+  }
+
+  function getVentaFacturasMetrics(facturas) {
+    const list = normalizeFacturasVentaList(facturas);
+    return list.reduce((totals, factura) => {
+      totals.cantidad += 1;
+      totals.subtotal = roundMoney(totals.subtotal + factura.subtotal);
+      totals.descuento = roundMoney(totals.descuento + factura.descuento);
+      totals.total = roundMoney(totals.total + factura.total);
+      if (factura.pendienteMonto) totals.pendientesMonto += 1;
+      if (isFacturaVentaInvalid(factura)) totals.invalidas += 1;
+      return totals;
+    }, { cantidad: 0, subtotal: 0, descuento: 0, total: 0, pendientesMonto: 0, invalidas: 0 });
+  }
+
+  function getVentaFacturasSource(input) {
+    if (isPlainObject(input)) return input.facturas || [];
+    return input;
+  }
+
+  function sumaSubtotalesFacturas(input) {
+    return getVentaFacturasMetrics(getVentaFacturasSource(input)).subtotal;
+  }
+
+  function sumaDescuentosFacturas(input) {
+    return getVentaFacturasMetrics(getVentaFacturasSource(input)).descuento;
+  }
+
+  function sumaTotalesFacturas(input) {
+    return getVentaFacturasMetrics(getVentaFacturasSource(input)).total;
+  }
+
+  function diferenciaSubtotalVsOC(input, ocSubtotal = null) {
+    const record = isPlainObject(input) ? input : {};
+    const targetRaw = ocSubtotal ?? record.subtotal ?? record.montoOc ?? 0;
+    const target = parseMoney(targetRaw);
+    return roundMoney(sumaSubtotalesFacturas(input) - (Number.isNaN(target) ? 0 : target));
+  }
+
+  function diferenciaDescuentoVsOC(input, ocDescuento = null) {
+    const record = isPlainObject(input) ? input : {};
+    const targetRaw = ocDescuento ?? record.descuento ?? 0;
+    const target = parseMoney(targetRaw);
+    return roundMoney(sumaDescuentosFacturas(input) - (Number.isNaN(target) ? 0 : target));
+  }
+
+  function diferenciaTotalVsOC(input, ocTotal = null) {
+    const record = isPlainObject(input) ? input : {};
+    const subtotal = parseMoney(record.subtotal ?? record.montoOc ?? 0);
+    const descuento = parseMoney(record.descuento ?? 0);
+    const fallbackTotal = roundMoney((Number.isNaN(subtotal) ? 0 : subtotal) - (Number.isNaN(descuento) ? 0 : descuento));
+    const targetRaw = ocTotal ?? record.ventaNetaOriginal ?? record.total ?? record.ventaNeta ?? fallbackTotal;
+    const target = parseMoney(targetRaw);
+    return roundMoney(sumaTotalesFacturas(input) - (Number.isNaN(target) ? 0 : target));
+  }
+
   function normalizeVentaAjusteRecord(record) {
     const raw = isPlainObject(record) ? record : {};
     const timestamp = nowIso();
     const monto = parseMoney(raw.monto || raw.importe || raw.valor);
     const tipo = VENTA_AJUSTE_TYPES.includes(raw.tipo) ? raw.tipo : (cleanText(raw.tipo) || 'Corrección');
     const activo = typeof raw.activo === 'boolean' ? raw.activo : raw.estado !== 'Anulado';
+    const facturaSnapshot = getAjusteFacturaSnapshot(raw);
     return {
       id: cleanText(raw.id) || generateId('ajusteCliente'),
       fecha: toDateInputValue(raw.fecha || raw.fechaAjuste || '') || todayInputValue(),
       tipo: VENTA_AJUSTE_TYPES.includes(tipo) ? tipo : 'Corrección',
       monto: Number.isNaN(monto) ? 0 : Math.abs(monto),
       observacion: cleanText(raw.observacion || raw.nota || raw.descripcion),
+      facturaAfectadaId: facturaSnapshot.id,
+      facturaAfectadaNumero: facturaSnapshot.numero,
       activo,
       estado: activo ? 'Registrado' : 'Anulado',
       createdAt: raw.createdAt || timestamp,
@@ -3165,6 +3546,108 @@ Notas importantes:
     return list.map((factura) => factura.numero).join(', ');
   }
 
+  function encodeAjusteFacturaOptionValue(facturaRecord) {
+    const factura = isPlainObject(facturaRecord) ? facturaRecord : {};
+    const id = cleanText(factura.id);
+    const numero = cleanFacturaVentaNumero(factura.numero || factura.numeroFactura || factura.factura || factura.referencia || '');
+    if (!id && !numero) return '';
+    return `${encodeURIComponent(id)}|${encodeURIComponent(numero)}`;
+  }
+
+  function decodeAjusteFacturaOptionValue(value) {
+    const raw = cleanText(value);
+    if (!raw) return { id: '', numero: '' };
+    const parts = raw.split('|');
+    const decodePart = (part) => {
+      try {
+        return cleanText(decodeURIComponent(part || ''));
+      } catch (_) {
+        return cleanText(part || '');
+      }
+    };
+    return {
+      id: decodePart(parts[0]),
+      numero: cleanFacturaVentaNumero(decodePart(parts.slice(1).join('|')))
+    };
+  }
+
+  function getAjusteFacturaSnapshot(raw) {
+    const source = isPlainObject(raw) ? raw : {};
+    const facturaObject = isPlainObject(source.facturaAfectada)
+      ? source.facturaAfectada
+      : (isPlainObject(source.factura) ? source.factura : {});
+    const id = cleanText(
+      source.facturaAfectadaId
+      || source.facturaId
+      || source.facturaReferenciaId
+      || source.facturaRelacionadaId
+      || facturaObject.id
+    );
+    const numero = cleanFacturaVentaNumero(
+      source.facturaAfectadaNumero
+      || source.facturaNumero
+      || source.numeroFactura
+      || source.facturaAfectada
+      || source.factura
+      || facturaObject.numero
+      || facturaObject.numeroFactura
+      || facturaObject.referencia
+    );
+    return { id, numero };
+  }
+
+  function hasAjusteFacturaSnapshot(ajusteRecord) {
+    const ajuste = isPlainObject(ajusteRecord) ? ajusteRecord : {};
+    return Boolean(cleanText(ajuste.facturaAfectadaId) || cleanText(ajuste.facturaAfectadaNumero));
+  }
+
+  function findAjusteFacturaInList(facturas, ajusteRecord, normalizer = normalizeFacturasVentaList) {
+    const ajuste = isPlainObject(ajusteRecord) ? ajusteRecord : {};
+    const facturaId = cleanText(ajuste.facturaAfectadaId);
+    const facturaNumero = normalizeNameForCompare(ajuste.facturaAfectadaNumero);
+    if (!facturaId && !facturaNumero) return null;
+    return normalizer(facturas).find((factura) => {
+      const currentId = cleanText(factura.id);
+      const currentNumero = normalizeNameForCompare(factura.numero);
+      return Boolean((facturaId && currentId === facturaId) || (facturaNumero && currentNumero === facturaNumero));
+    }) || null;
+  }
+
+  function renderAjusteFacturaOptions(facturas, selectedValue = '', normalizer = normalizeFacturasVentaList) {
+    const selected = cleanText(selectedValue);
+    const list = normalizer(facturas);
+    const baseSelected = selected ? '' : 'selected';
+    const baseLabel = list.length ? 'General / sin factura asignada' : 'General (sin facturas registradas)';
+    return [
+      `<option value="" ${baseSelected}>${escapeHtml(baseLabel)}</option>`,
+      ...list.map((factura) => {
+        const value = encodeAjusteFacturaOptionValue(factura);
+        const amount = factura.pendienteMonto ? '' : ` · ${formatMoney(factura.total ?? factura.monto ?? 0)}`;
+        return `<option value="${escapeHtml(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(`Factura: ${factura.numero}${amount}`)}</option>`;
+      })
+    ].join('');
+  }
+
+  function syncAjusteFacturaSelectOptions(select, facturas, normalizer = normalizeFacturasVentaList) {
+    if (!select) return;
+    const previous = cleanText(select.value);
+    select.innerHTML = renderAjusteFacturaOptions(facturas, previous, normalizer);
+    if (previous && !Array.from(select.options).some((option) => option.value === previous)) select.value = '';
+  }
+
+  function formatAjusteFacturaLabel(ajusteRecord) {
+    const ajuste = isPlainObject(ajusteRecord) ? ajusteRecord : {};
+    const numero = cleanFacturaVentaNumero(ajuste.facturaAfectadaNumero);
+    if (numero) return `Factura: ${numero}`;
+    if (cleanText(ajuste.facturaAfectadaId)) return 'Factura asignada';
+    return 'General';
+  }
+
+  function getAjusteFacturaActivityPart(ajusteRecord) {
+    const label = formatAjusteFacturaLabel(ajusteRecord);
+    return label === 'General' ? 'General' : label;
+  }
+
   function splitFacturasProveedorText(value) {
     const text = String(value ?? '').trim();
     if (!text) return [];
@@ -3183,9 +3666,18 @@ Notas importantes:
     const directValue = typeof record === 'string' || typeof record === 'number' ? record : '';
     const numero = cleanFacturaVentaNumero(directValue || raw.numero || raw.numeroFactura || raw.factura || raw.documento || raw.referencia || raw.value);
     if (!numero) return null;
+    const montoField = readFacturaMoneyField(raw, ['monto', 'total', 'importe', 'valor', 'montoFactura', 'facturaMonto', 'totalFactura']);
+    const monto = montoField.hasValue && !Number.isNaN(montoField.value) ? roundMoney(montoField.value) : 0;
+    const pendienteMonto = readFacturaPendingFlag(raw, !montoField.hasValue);
+    const invalida = Boolean((montoField.hasValue && Number.isNaN(montoField.value)) || monto < 0);
     return {
       id: cleanText(raw.id) || generateId('facturaProveedor'),
-      numero
+      numero,
+      monto,
+      pendienteMonto,
+      invalida,
+      motivoInvalidez: invalida ? 'Monto inválido' : '',
+      legacyNumeroSolo: Boolean(pendienteMonto && !montoField.hasValue)
     };
   }
 
@@ -3221,6 +3713,17 @@ Notas importantes:
       }), (item) => item.numero);
   }
 
+  function mergeFacturasProveedorWithExisting(nextFacturas, existingFacturas) {
+    const existingByNumero = new Map(normalizeFacturasProveedorList(existingFacturas)
+      .map((factura) => [normalizeNameForCompare(factura.numero), factura]));
+    return normalizeFacturasProveedorList(nextFacturas).map((factura) => {
+      const existing = existingByNumero.get(normalizeNameForCompare(factura.numero));
+      const nextHasAmount = !factura.pendienteMonto || factura.monto > 0;
+      if (!existing || nextHasAmount) return normalizeFacturaProveedorRecord(factura);
+      return normalizeFacturaProveedorRecord({ ...existing, numero: factura.numero });
+    }).filter(Boolean);
+  }
+
   function normalizeCompraProveedorFacturasFromRaw(raw) {
     const source = isPlainObject(raw) ? raw : {};
     return normalizeFacturasProveedorList(source.facturasRelacionadas || source.facturasProveedor || source.facturasCompra || source.facturasRelacionadasProveedor || source.documentosRelacionados || []);
@@ -3243,6 +3746,17 @@ Notas importantes:
     return `Facturas: ${list.length} registradas`;
   }
 
+  function sumaMontosFacturas(input) {
+    const facturas = isPlainObject(input) ? (input.facturasRelacionadas || input.facturasProveedor || input.facturasCompra || []) : input;
+    return normalizeFacturasProveedorList(facturas).reduce((sum, factura) => roundMoney(sum + factura.monto), 0);
+  }
+
+  function diferenciaFacturasVsTotalCompra(input, totalCompra = null) {
+    const record = isPlainObject(input) ? input : {};
+    const targetRaw = totalCompra ?? record.totalCompra ?? record.totalDeuda ?? record.monto ?? record.total ?? 0;
+    const target = parseMoney(targetRaw);
+    return roundMoney(sumaMontosFacturas(input) - (Number.isNaN(target) ? 0 : target));
+  }
 
   function getCompraProveedorFacturaReferenciaValue(facturas, fallback = '') {
     const list = normalizeFacturasProveedorList(facturas);
@@ -3479,12 +3993,15 @@ Notas importantes:
     const monto = parseMoney(raw.monto || raw.importe || raw.valor);
     const tipo = COMPRA_AJUSTE_TYPES.includes(raw.tipo) ? raw.tipo : (cleanText(raw.tipo) || 'Corrección');
     const activo = typeof raw.activo === 'boolean' ? raw.activo : raw.estado !== 'Anulado';
+    const facturaSnapshot = getAjusteFacturaSnapshot(raw);
     return {
       id: cleanText(raw.id) || generateId('ajusteProveedor'),
       fecha: toDateInputValue(raw.fecha || raw.fechaAjuste || '') || todayInputValue(),
       tipo: COMPRA_AJUSTE_TYPES.includes(tipo) ? tipo : 'Corrección',
       monto: Number.isNaN(monto) ? 0 : Math.abs(monto),
       observacion: cleanText(raw.observacion || raw.nota || raw.descripcion),
+      facturaAfectadaId: facturaSnapshot.id,
+      facturaAfectadaNumero: facturaSnapshot.numero,
       activo,
       estado: activo ? 'Registrado' : 'Anulado',
       createdAt: raw.createdAt || timestamp,
@@ -4861,7 +5378,7 @@ Notas importantes:
         CATALOGS.forEach((catalog) => { snapshot[catalog.id] = []; });
         for (const catalog of CATALOGS) {
           const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'catalogos', catalog.id, 'items');
-          snapshot[catalog.id] = records.map((record) => normalizeCatalogRecord(record, catalog));
+          snapshot[catalog.id] = records.filter((record) => !isCloudDeletedRecord(record)).map((record) => normalizeCatalogRecord(record, catalog));
         }
 
         const listReaders = [
@@ -4876,7 +5393,7 @@ Notas importantes:
         ];
         for (const [key, normalizer] of listReaders) {
           const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, key);
-          snapshot[key] = records.map((record) => normalizer(record));
+          snapshot[key] = records.filter((record) => !isCloudDeletedRecord(record)).map((record) => normalizer(record));
         }
 
         const configSnap = await fs.getDoc(fs.doc(db, 'workspaces', workspaceId, 'configuracion', 'sistema'));
@@ -4929,8 +5446,8 @@ Notas importantes:
           code: 'cloud/read-ok',
           message: 'Datos leídos desde Firestore.',
           snapshot: normalized,
-          notasModulo: rebuildNotasDataFromCloud(notasRecords),
-          facturasModulo: normalizeFacturasData({ facturas: facturasRecords }),
+          notasModulo: rebuildNotasDataFromCloud(notasRecords.filter((record) => !isCloudDeletedRecord(record))),
+          facturasModulo: normalizeFacturasData({ facturas: facturasRecords.filter((record) => !isCloudDeletedRecord(record)) }),
           bitacora: bitacoraRecords.map((entry) => normalizeActivityEntry(entry)),
           consecutivos,
           metadata: snapshot.metadata,
@@ -5172,236 +5689,245 @@ Notas importantes:
       }
     }
 
-    function isCloudPartialSaveAvailable() {
-      const runtime = getKSAFirebaseRuntime();
-      return Boolean(state.cloudActive || runtime?.cloudActive || runtime?.cloudWritesEnabled || runtime?.fuentePrincipal === 'firestore');
+    function normalizeSessionChangeModuleKey(value) {
+      return normalizeKeyForCompare(cleanText(value)).replace(/[^a-z0-9]+/g, '');
     }
 
-    function getPartialSaveLocalDataSnapshot() {
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (raw) return normalizeData(JSON.parse(raw));
-      } catch (error) {
-        console.warn('KSA PRÁCTIKA: no se pudo leer el estado local para guardado parcial.', error);
-      }
-      return normalizeData(appData || createInitialData());
-    }
-
-    function findPartialSaveRecordById(list, recordId) {
-      const id = cleanText(recordId);
-      if (!id) return null;
-      return (Array.isArray(list) ? list : []).find((record) => cleanText(record?.id || record?.uid || record?.codigo || '') === id) || null;
-    }
-
-    function getPartialSaveOperation(change) {
-      return normalizeKeyForCompare(change?.tipoOperacion || change?.operacion || change?.operation || 'editar');
-    }
-
-    function shouldPartialSaveDelete(change, record) {
-      const operation = getPartialSaveOperation(change);
-      if (operation.includes('eliminar') || operation.includes('delete') || operation === 'borrar') return true;
-      return !record;
-    }
-
-    function buildPartialSaveNotasRecord(change, notasData) {
-      const moduleKey = cleanText(change?.moduloKey || '').toLowerCase();
-      const recordId = cleanText(change?.registroId || change?.recordId || '');
-      const normalized = normalizeNotasData(notasData || {});
-      let bucketKey = 'notas';
-      let normalizer = normalizeNotaGeneralRecord;
-      let docPrefix = 'nota';
-      if (moduleKey.includes('pendiente')) {
-        bucketKey = 'pendientes';
-        normalizer = normalizePendienteRecord;
-        docPrefix = 'pendiente';
-      } else if (moduleKey.includes('recordatorio')) {
-        bucketKey = 'recordatorios';
-        normalizer = normalizeRecordatorioRecord;
-        docPrefix = 'recordatorio';
-      }
-      const record = findPartialSaveRecordById(normalized[bucketKey], recordId);
-      const docId = sanitizeFirestoreDocId(`${docPrefix}_${recordId}`, `${docPrefix}_doc`);
-      if (!record && shouldPartialSaveDelete(change, record)) {
-        return { collectionKey: 'notasModulo', docId, deletePhysical: true };
-      }
-      if (!record) return null;
-      const normalizedRecord = normalizer(record);
+    function buildSessionDeleteTombstone(recordId, change, stamp, user) {
+      const deletedAtLocal = nowIso();
       return {
-        collectionKey: 'notasModulo',
-        docId,
-        data: {
-          ...normalizedRecord,
-          tipoRegistro: docPrefix,
-          updatedAt: normalizedRecord.updatedAt || nowIso(),
-          _cloudSync: { source: 'guardar_datos_sesion', syncedAt: nowIso() }
+        id: cleanText(recordId),
+        activo: false,
+        _deleted: true,
+        _cloudDeleted: true,
+        eliminadoEnNube: true,
+        operacionSesion: normalizeSessionChangeOperation(change?.operation || change?.operacion),
+        deletedAt: stamp,
+        deletedAtLocal,
+        updatedAt: stamp,
+        updatedAtLocal: deletedAtLocal,
+        updatedBy: user?.email || '',
+        _cloudSync: {
+          source: 'session_partial_delete',
+          operation: 'eliminar',
+          syncedAt: deletedAtLocal,
+          syncedBy: user?.email || ''
         }
       };
     }
 
-    function buildPartialSaveCatalogRecord(change, data) {
-      const moduleKey = cleanText(change?.moduloKey || '');
-      const catalogId = cleanText(moduleKey.split('.')[1] || '');
-      const catalog = CATALOGS.find((item) => item.id === catalogId);
-      const recordId = cleanText(change?.registroId || change?.recordId || '');
-      if (!catalog || !recordId) return null;
-      const record = findPartialSaveRecordById(data?.[catalog.id], recordId);
-      const docId = sanitizeFirestoreDocId(recordId, `${catalog.id}_doc`);
-      if (!record && shouldPartialSaveDelete(change, record)) {
-        return { pathSegments: ['workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'catalogos', catalog.id, 'items', docId], deletePhysical: true };
-      }
-      if (!record) return null;
-      const normalizedRecord = normalizeCatalogRecord(record, catalog);
-      return {
-        pathSegments: ['workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'catalogos', catalog.id, 'items', getCloudDocumentId(normalizedRecord, catalog.id)],
-        data: {
-          ...normalizedRecord,
-          catalogoId: catalog.id,
-          updatedAt: normalizedRecord.updatedAt || nowIso(),
-          _cloudSync: { source: 'guardar_datos_sesion', syncedAt: nowIso() }
+    function buildSessionWritePayload(record, normalizer, change, stamp, user) {
+      const normalized = typeof normalizer === 'function' ? normalizer(record) : { ...(isPlainObject(record) ? record : {}) };
+      const syncedAt = nowIso();
+      return stripUndefinedForFirestore({
+        ...normalized,
+        updatedAt: normalized.updatedAt || syncedAt,
+        _deleted: false,
+        _cloudDeleted: false,
+        eliminadoEnNube: false,
+        _cloudSync: {
+          source: 'session_partial_save',
+          operation: normalizeSessionChangeOperation(change?.operation || change?.operacion),
+          syncedAt,
+          syncedBy: user?.email || ''
         }
-      };
+      });
     }
 
-    function buildPartialSaveRecord(change, data, notasData, facturasData) {
-      const moduleKey = cleanText(change?.moduloKey || change?.modulo || '');
-      const recordId = cleanText(change?.registroId || change?.recordId || change?.idRegistro || '');
+    function getNotasCloudDocIdFromRecord(record, fallbackId = '') {
+      const safeRecord = isPlainObject(record) ? record : {};
+      const prefix = cleanText(safeRecord._docPrefix || safeRecord.tipoRegistro || safeRecord.tipo || inferNotasCloudPrefixFromId(safeRecord.id || fallbackId) || 'nota');
+      const id = cleanText(safeRecord.id || fallbackId);
+      return sanitizeFirestoreDocId(`${prefix}_${id || simpleHashText(JSON.stringify(safeRecord)).slice(0, 12)}`, 'nota');
+    }
+
+    function inferNotasCloudPrefixFromId(recordId = '') {
+      const id = cleanText(recordId).toLowerCase();
+      if (id.startsWith('pendiente_')) return 'pendiente';
+      if (id.startsWith('recordatorio_')) return 'recordatorio';
+      return 'nota';
+    }
+
+    function findSessionRecordForChange(change) {
+      const moduleKey = normalizeSessionChangeModuleKey(change?.module || change?.modulo);
+      const recordId = cleanText(change?.recordId || change?.idRegistro || change?.id);
+      const sourceModule = cleanText(change?.sourceModule || change?.moduloOrigen || change?.catalogoId);
       if (!moduleKey || !recordId) return null;
 
-      if (moduleKey.startsWith('catalogos.')) return buildPartialSaveCatalogRecord(change, data);
-      if (moduleKey.startsWith('notasModulo.')) return buildPartialSaveNotasRecord(change, notasData);
+      const data = appData || createInitialData();
+      const moduleMap = {
+        ventasoc: { collection: 'ventas', list: data.ventas, normalizer: normalizeVentaRecord, fallback: 'venta' },
+        ventas: { collection: 'ventas', list: data.ventas, normalizer: normalizeVentaRecord, fallback: 'venta' },
+        oc: { collection: 'ventas', list: data.ventas, normalizer: normalizeVentaRecord, fallback: 'venta' },
+        cobros: { collection: 'cobros', list: data.cobros, normalizer: normalizeCobroRecord, fallback: 'cobro' },
+        proveedorescompras: { collection: 'comprasProveedores', list: data.comprasProveedores, normalizer: normalizeCompraProveedorRecord, fallback: 'compraProveedor' },
+        comprasproveedores: { collection: 'comprasProveedores', list: data.comprasProveedores, normalizer: normalizeCompraProveedorRecord, fallback: 'compraProveedor' },
+        compras: { collection: 'comprasProveedores', list: data.comprasProveedores, normalizer: normalizeCompraProveedorRecord, fallback: 'compraProveedor' },
+        pagosaproveedores: { collection: 'pagosProveedores', list: data.pagosProveedores, normalizer: normalizePagoProveedorRecord, fallback: 'pagoProveedor' },
+        pagosproveedores: { collection: 'pagosProveedores', list: data.pagosProveedores, normalizer: normalizePagoProveedorRecord, fallback: 'pagoProveedor' },
+        pagos: { collection: 'pagosProveedores', list: data.pagosProveedores, normalizer: normalizePagoProveedorRecord, fallback: 'pagoProveedor' },
+        gastos: { collection: 'gastos', list: data.gastos, normalizer: normalizeGastoRecord, fallback: 'gasto' },
+        casa: { collection: 'casaGastos', list: data.casaGastos, normalizer: normalizeCasaGastoRecord, fallback: 'casaGasto' },
+        casagastos: { collection: 'casaGastos', list: data.casaGastos, normalizer: normalizeCasaGastoRecord, fallback: 'casaGasto' }
+      };
 
-      if (moduleKey === 'facturasModulo') {
-        const facturas = normalizeFacturasData(facturasData || {});
-        const record = findPartialSaveRecordById(facturas.facturas, recordId);
-        const docId = getCloudDocumentId(record || { id: recordId }, 'factura');
-        if (!record && shouldPartialSaveDelete(change, record)) {
-          return { collectionKey: 'facturasModulo', docId, deletePhysical: true };
-        }
-        if (!record) return null;
-        const normalizedRecord = normalizeFacturaModuloRecord(record);
+      if (moduleKey === 'catalogos') {
+        const catalogId = sourceModule && CATALOGS.some((catalog) => catalog.id === sourceModule)
+          ? sourceModule
+          : (CATALOGS.find((catalog) => (Array.isArray(data[catalog.id]) ? data[catalog.id] : []).some((record) => cleanText(record.id) === recordId))?.id || '');
+        if (!catalogId) return null;
+        const catalog = CATALOGS.find((item) => item.id === catalogId);
+        const list = Array.isArray(data[catalogId]) ? data[catalogId] : [];
         return {
-          collectionKey: 'facturasModulo',
-          docId,
-          data: {
-            ...normalizedRecord,
-            updatedAt: normalizedRecord.updatedAt || nowIso(),
-            _cloudSync: { source: 'guardar_datos_sesion', syncedAt: nowIso() }
-          }
+          kind: 'catalog',
+          collection: 'catalogos',
+          catalogId,
+          list,
+          normalizer: (record) => normalizeCatalogRecord(record, catalog),
+          record: list.find((record) => cleanText(record.id) === recordId) || null,
+          fallback: catalogId
         };
       }
 
-      const simpleWriters = {
-        ventas: { key: 'ventas', normalizer: normalizeVentaRecord, fallback: 'venta' },
-        cobros: { key: 'cobros', normalizer: normalizeCobroRecord, fallback: 'cobro' },
-        comprasProveedores: { key: 'comprasProveedores', normalizer: normalizeCompraProveedorRecord, fallback: 'compraProveedor' },
-        pagosProveedores: { key: 'pagosProveedores', normalizer: normalizePagoProveedorRecord, fallback: 'pagoProveedor' },
-        gastos: { key: 'gastos', normalizer: normalizeGastoRecord, fallback: 'gasto' },
-        casaGastos: { key: 'casaGastos', normalizer: normalizeCasaGastoRecord, fallback: 'casaGasto' }
-      };
-      const writer = simpleWriters[moduleKey];
-      if (!writer) return null;
-      const record = findPartialSaveRecordById(data?.[writer.key], recordId);
-      const docId = getCloudDocumentId(record || { id: recordId }, writer.fallback);
-      if (!record && shouldPartialSaveDelete(change, record)) {
-        return { collectionKey: writer.key, docId, deletePhysical: true };
+      if (moduleKey === 'facturas') {
+        const facturasData = cloneFacturasModuleData();
+        const list = Array.isArray(facturasData.facturas) ? facturasData.facturas : [];
+        return {
+          kind: 'simple',
+          collection: 'facturasModulo',
+          list,
+          normalizer: normalizeFacturaModuloRecord,
+          record: list.find((record) => cleanText(record.id) === recordId) || null,
+          fallback: 'factura'
+        };
       }
-      if (!record) return null;
-      const normalizedRecord = writer.normalizer(record);
+
+      if (moduleKey === 'notaspendientes' || moduleKey === 'notas' || moduleKey === 'pendientes') {
+        const list = buildCloudNotasRecords(cloneNotasModuleData());
+        return {
+          kind: 'notas',
+          collection: 'notasModulo',
+          list,
+          normalizer: (record) => {
+            const normalized = { ...(isPlainObject(record) ? record : {}) };
+            delete normalized._docPrefix;
+            return normalized;
+          },
+          record: list.find((record) => cleanText(record.id) === recordId) || null,
+          fallback: 'nota'
+        };
+      }
+
+      const mapped = moduleMap[moduleKey];
+      if (!mapped) return null;
       return {
-        collectionKey: writer.key,
-        docId,
-        data: {
-          ...normalizedRecord,
-          updatedAt: normalizedRecord.updatedAt || nowIso(),
-          _cloudSync: { source: 'guardar_datos_sesion', syncedAt: nowIso() }
-        }
+        kind: 'simple',
+        ...mapped,
+        record: (Array.isArray(mapped.list) ? mapped.list : []).find((record) => cleanText(record.id) === recordId) || null
       };
     }
 
-    async function saveSessionChangesToCloud(changesInput = [], options = {}) {
-      const changes = (Array.isArray(changesInput) ? changesInput : [])
-        .filter((change) => isPlainObject(change) && cleanText(change.registroId || change.recordId || change.idRegistro));
-      if (!changes.length) {
-        return { ok: true, action: 'saveSessionChangesToCloud', code: 'session/no-changes', message: 'No hay cambios nuevos de esta sesión para guardar.', confirmedQueueKeys: [] };
+    function buildSessionChangeWrite(change, db, fs, stamp, user) {
+      const recordId = cleanText(change?.recordId || change?.idRegistro || change?.id);
+      const operation = normalizeSessionChangeOperation(change?.operation || change?.operacion);
+      const target = findSessionRecordForChange(change);
+      if (!recordId || !target) return null;
+
+      const isDelete = operation === 'eliminar';
+      let ref = null;
+      let payload = null;
+      if (target.kind === 'catalog') {
+        const docId = sanitizeFirestoreDocId(recordId, `${target.catalogId}_item`);
+        ref = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'catalogos', target.catalogId, 'items', docId);
+        payload = target.record
+          ? buildSessionWritePayload(target.record, target.normalizer, change, stamp, user)
+          : (isDelete ? buildSessionDeleteTombstone(recordId, change, stamp, user) : null);
+        if (payload) payload.catalogoId = target.catalogId;
+      } else if (target.kind === 'notas') {
+        const docId = target.record ? getNotasCloudDocIdFromRecord(target.record, recordId) : getNotasCloudDocIdFromRecord({ id: recordId, _docPrefix: inferNotasCloudPrefixFromId(recordId) }, recordId);
+        ref = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, target.collection, docId);
+        payload = target.record
+          ? buildSessionWritePayload(target.record, target.normalizer, change, stamp, user)
+          : (isDelete ? buildSessionDeleteTombstone(recordId, change, stamp, user) : null);
+        if (payload && target.record) {
+          payload.tipoRegistro = cleanText(target.record.tipoRegistro || target.record._docPrefix || inferNotasCloudPrefixFromId(recordId));
+          delete payload._docPrefix;
+        }
+      } else {
+        const docId = target.record ? getCloudDocumentId(target.record, target.fallback) : sanitizeFirestoreDocId(recordId, target.fallback || 'doc');
+        ref = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, target.collection, docId);
+        payload = target.record
+          ? buildSessionWritePayload(target.record, target.normalizer, change, stamp, user)
+          : (isDelete ? buildSessionDeleteTombstone(recordId, change, stamp, user) : null);
       }
-      if (!isCloudPartialSaveAvailable()) {
-        const message = 'No se pudo guardar en la nube. Firestore no está disponible.';
-        state.lastSyncError = message;
-        publishKSAFirebaseRuntime({ lastSyncError: message, message });
-        return { ok: false, action: 'saveSessionChangesToCloud', code: 'cloud/not-available', message, confirmedQueueKeys: [] };
+
+      if (!ref || !payload) return null;
+      return {
+        ref,
+        payload: stripUndefinedForFirestore(payload),
+        change,
+        key: `${target.kind || 'simple'}:${target.collection}:${target.catalogId || ''}:${recordId}`
+      };
+    }
+
+    async function saveSessionChangesToCloud(changesInput = null) {
+      const pendingChanges = (Array.isArray(changesInput) ? changesInput : getPendingSessionChanges()).filter((item) => item && item.estado === 'pendiente');
+      if (!pendingChanges.length) {
+        return { ok: true, action: 'saveSessionChangesToCloud', code: 'cloud/no-session-changes', message: SESSION_SAVE_MESSAGES.noChanges, count: 0, confirmedChanges: [] };
       }
       try {
         const { user, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: false });
-        const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
+        const metadataRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
+        const metadataSnap = await fs.getDoc(metadataRef);
+        const metadata = metadataSnap.exists() ? normalizeFirestoreDoc(metadataSnap) : {};
+        const runtime = getKSAFirebaseRuntime();
+        const ready = isCloudReadyMetadata(metadata) || runtime?.cloudDataReady === true || runtime?.cloudReady === true;
+        const active = state.cloudActive || runtime?.cloudActive === true || metadata.cloudActive === true || cleanText(metadata.fuentePrincipal).toLowerCase() === 'firestore';
+        if (!ready || !active) {
+          state.lastSyncError = SESSION_SAVE_MESSAGES.firestoreUnavailable;
+          publishKSAFirebaseRuntime({ lastSyncError: state.lastSyncError, message: state.lastSyncError });
+          return { ok: false, action: 'saveSessionChangesToCloud', code: 'cloud/firestore-unavailable', message: SESSION_SAVE_MESSAGES.firestoreUnavailable, count: pendingChanges.length };
+        }
         const stamp = getFirestoreTimestampValue(fs);
-        const localData = getPartialSaveLocalDataSnapshot();
-        const notasData = cloneNotasModuleData();
-        const facturasData = cloneFacturasModuleData();
-        const operations = [];
-        const skipped = [];
+        const writesByKey = new Map();
+        const unresolved = [];
 
-        changes.forEach((change) => {
-          const operation = buildPartialSaveRecord(change, localData, notasData, facturasData);
-          if (!operation) {
-            skipped.push(change);
-            return;
-          }
-          operations.push({ change, operation });
+        pendingChanges.forEach((change) => {
+          const write = buildSessionChangeWrite(change, db, fs, stamp, user);
+          if (write) writesByKey.set(write.key, write);
+          else unresolved.push(change);
         });
 
-        if (!operations.length) {
-          const message = 'No se pudo guardar en la nube. Los cambios de sesión se conservaron para intentar nuevamente.';
-          state.lastSyncError = message;
-          publishKSAFirebaseRuntime({ lastSyncError: message, message });
-          return { ok: false, action: 'saveSessionChangesToCloud', code: 'session/no-writeable-changes', message, confirmedQueueKeys: [], skippedCount: skipped.length };
+        if (unresolved.length) {
+          state.lastSyncError = SESSION_SAVE_MESSAGES.failure;
+          publishKSAFirebaseRuntime({ lastSyncError: state.lastSyncError, message: state.lastSyncError });
+          return { ok: false, action: 'saveSessionChangesToCloud', code: 'cloud/session-change-unresolved', message: SESSION_SAVE_MESSAGES.failure, count: pendingChanges.length, unresolvedCount: unresolved.length };
+        }
+
+        const writes = Array.from(writesByKey.values());
+        if (!writes.length) {
+          return { ok: true, action: 'saveSessionChangesToCloud', code: 'cloud/no-session-documents', message: SESSION_SAVE_MESSAGES.noChanges, count: 0, confirmedChanges: [] };
         }
 
         let batch = fs.writeBatch(db);
-        let count = 0;
-        let totalQueued = 0;
-        const queueKeys = [];
-        const commit = async () => {
-          if (!count) return;
+        let batchCount = 0;
+        let totalWritten = 0;
+        const commitBatch = async () => {
+          if (!batchCount) return;
           await batch.commit();
+          totalWritten += batchCount;
           batch = fs.writeBatch(db);
-          count = 0;
-        };
-        const queueWrite = async (operation, change) => {
-          const segments = Array.isArray(operation.pathSegments) && operation.pathSegments.length
-            ? operation.pathSegments
-            : ['workspaces', workspaceId, operation.collectionKey, operation.docId];
-          const ref = fs.doc(db, ...segments);
-          if (operation.deletePhysical) {
-            if (typeof batch.delete === 'function') batch.delete(ref);
-            else if (typeof fs.deleteDoc === 'function') await fs.deleteDoc(ref);
-          } else {
-            batch.set(ref, stripUndefinedForFirestore(operation.data), { merge: true });
-          }
-          count += 1;
-          totalQueued += 1;
-          const queueKey = cleanText(change?.queueKey || `${change?.moduloKey || change?.modulo}::${change?.registroId || change?.recordId}`);
-          if (queueKey) queueKeys.push(queueKey);
-          if (count >= FIRESTORE_IMPORT_BATCH_LIMIT) await commit();
+          batchCount = 0;
         };
 
-        for (const item of operations) {
-          await queueWrite(item.operation, item.change);
+        for (const write of writes) {
+          batch.set(write.ref, write.payload, { merge: true });
+          batchCount += 1;
+          if (batchCount >= FIRESTORE_IMPORT_BATCH_LIMIT - 2) await commitBatch();
         }
+        await commitBatch();
 
-        batch.set(fs.doc(db, 'workspaces', workspaceId), stripUndefinedForFirestore({
-          id: workspaceId,
-          nombre: FIRESTORE_WORKSPACE_NAME,
-          proyectoFirebase: FIREBASE_PROJECT_NAME,
-          projectId: cleanText(getRawKSAFirebaseConfig().projectId),
-          estado: 'activo',
-          fuentePrincipal: 'firestore',
-          updatedAt: stamp,
-          appVersion: APP_VERSION
-        }), { merge: true });
-        count += 1;
-        totalQueued += 1;
-
-        batch.set(fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID), stripUndefinedForFirestore({
+        await fs.setDoc(fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'metadata', FIRESTORE_METADATA_SYSTEM_ID), stripUndefinedForFirestore({
           id: FIRESTORE_METADATA_SYSTEM_ID,
           appName: APP_NAME,
           appVersion: APP_VERSION,
@@ -5416,55 +5942,51 @@ Notas importantes:
           fuentePrincipal: 'firestore',
           lastSyncAt: stamp,
           lastSyncAtLocal: nowIso(),
-          lastPartialSaveAt: stamp,
-          lastPartialSaveAtLocal: nowIso(),
-          lastPartialSaveBy: user.email,
-          lastPartialSaveCount: operations.length,
+          lastSessionPartialWriteAt: stamp,
+          lastSessionPartialWriteAtLocal: nowIso(),
+          lastSyncBy: user.email,
           updatedAt: stamp
         }), { merge: true });
-        count += 1;
-        totalQueued += 1;
 
-        await commit();
         state.cloudActive = true;
         state.lastCloudWriteAt = nowIso();
         state.lastSyncAt = state.lastCloudWriteAt;
         state.lastSyncError = '';
         publishKSAFirebaseRuntime({
           cloudActive: true,
-          cloudReadsEnabled: true,
           cloudWritesEnabled: true,
+          cloudReadsEnabled: true,
           cloudDataReady: true,
           cloudReady: true,
           fuentePrincipal: 'firestore',
           dataMode: 'Nube activa',
-          workspaceId,
-          workspace: workspaceId,
+          workspaceId: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
+          workspace: FIRESTORE_WORKSPACE_ID_PLACEHOLDER,
           workspaceInitialized: true,
           lastSyncAt: state.lastSyncAt,
           lastCloudWriteAt: state.lastCloudWriteAt,
-          lastSessionPartialSaveAt: state.lastCloudWriteAt,
-          message: 'Guardado correcto.'
+          lastSyncError: '',
+          message: SESSION_SAVE_MESSAGES.success
         });
+
         return {
           ok: true,
           action: 'saveSessionChangesToCloud',
-          code: 'cloud/session-partial-write-ok',
-          message: 'Guardado correcto.',
-          count: operations.length,
-          writeCount: totalQueued,
-          skippedCount: skipped.length,
-          confirmedQueueKeys: queueKeys,
+          code: 'cloud/session-write-ok',
+          message: SESSION_SAVE_MESSAGES.success,
+          count: totalWritten,
+          confirmedChanges: pendingChanges,
           lastSyncAt: state.lastSyncAt
         };
       } catch (error) {
-        const message = 'No se pudo guardar en la nube. Los cambios de sesión se conservaron para intentar nuevamente.';
-        state.lastSyncError = message;
-        publishKSAFirebaseRuntime({ lastSyncError: message, message });
-        return { ok: false, action: 'saveSessionChangesToCloud', code: cleanText(error?.code || 'firebase/firestore-error'), message, error, confirmedQueueKeys: [] };
+        const code = cleanText(error?.code || 'firebase/firestore-error');
+        const unavailableCodes = new Set(['firebase/init-error', 'unavailable', 'auth/network-request-failed', 'auth/no-current-user', 'unauthenticated']);
+        const message = unavailableCodes.has(code) ? SESSION_SAVE_MESSAGES.firestoreUnavailable : SESSION_SAVE_MESSAGES.failure;
+        state.lastSyncError = unavailableCodes.has(code) ? SESSION_SAVE_MESSAGES.firestoreUnavailable : (translateFirestorePrepError(error) || SESSION_SAVE_MESSAGES.failure);
+        publishKSAFirebaseRuntime({ lastSyncError: state.lastSyncError, message });
+        return { ok: false, action: 'saveSessionChangesToCloud', code, message, count: pendingChanges.length, error };
       }
     }
-
 
     async function writeCloudDocument(collectionKey, documentId, dataInput = {}, options = {}) {
       const key = cleanText(collectionKey);
@@ -6787,7 +7309,7 @@ Notas importantes:
 
   function getAjusteClienteDuplicateKey(record) {
     const ajuste = normalizeVentaAjusteRecord(record);
-    return [ajuste.fecha, ajuste.tipo, roundMoney(ajuste.monto), normalizeNameForCompare(ajuste.observacion)].join('|');
+    return [ajuste.fecha, ajuste.tipo, roundMoney(ajuste.monto), normalizeNameForCompare(ajuste.facturaAfectadaId), normalizeNameForCompare(ajuste.facturaAfectadaNumero), normalizeNameForCompare(ajuste.observacion)].join('|');
   }
 
   function mergeVentaAjustes(existingRecord, incomingRecord) {
@@ -6812,7 +7334,7 @@ Notas importantes:
 
   function getAjusteProveedorDuplicateKey(record) {
     const ajuste = normalizeCompraProveedorAjusteRecord(record);
-    return [ajuste.fecha, ajuste.tipo, roundMoney(ajuste.monto), normalizeNameForCompare(ajuste.observacion)].join('|');
+    return [ajuste.fecha, ajuste.tipo, roundMoney(ajuste.monto), normalizeNameForCompare(ajuste.facturaAfectadaId), normalizeNameForCompare(ajuste.facturaAfectadaNumero), normalizeNameForCompare(ajuste.observacion)].join('|');
   }
 
   function mergeCompraProveedorAjustes(existingRecord, incomingRecord) {
@@ -7154,324 +7676,6 @@ Notas importantes:
     return '';
   }
 
-  let sessionChangeTrackingReady = false;
-  const SESSION_CHANGE_QUEUE_GLOBAL = 'KSA_SESSION_CHANGE_QUEUE';
-  const SESSION_CHANGE_STATE_PENDING = 'pendiente';
-  const SESSION_TRACKED_DATASETS = [
-    { key: 'ventas', moduleKey: 'ventas', moduleLabel: 'Ventas / OC' },
-    { key: 'cobros', moduleKey: 'cobros', moduleLabel: 'Cobros' },
-    { key: 'comprasProveedores', moduleKey: 'comprasProveedores', moduleLabel: 'Proveedores / Compras' },
-    { key: 'pagosProveedores', moduleKey: 'pagosProveedores', moduleLabel: 'Pagos a proveedores' },
-    { key: 'gastos', moduleKey: 'gastos', moduleLabel: 'Gastos' },
-    { key: 'casaGastos', moduleKey: 'casaGastos', moduleLabel: 'Casa' }
-  ];
-
-  function getSessionTrackedDatasets() {
-    const catalogDatasets = Array.isArray(CATALOGS)
-      ? CATALOGS.map((catalog) => ({
-          key: catalog.id,
-          moduleKey: `catalogos.${catalog.id}`,
-          moduleLabel: 'Catálogos'
-        }))
-      : [];
-    return [...SESSION_TRACKED_DATASETS, ...catalogDatasets];
-  }
-
-  function createSessionChangeQueue() {
-    return {
-      version: 1,
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
-      changes: [],
-      byKey: {}
-    };
-  }
-
-  function ensureSessionChangeQueue() {
-    if (typeof window === 'undefined') return createSessionChangeQueue();
-    const current = window[SESSION_CHANGE_QUEUE_GLOBAL];
-    if (isPlainObject(current) && Array.isArray(current.changes)) {
-      if (!isPlainObject(current.byKey)) {
-        current.byKey = {};
-        current.changes.forEach((change, index) => {
-          const queueKey = cleanText(change.queueKey || `${change.moduloKey || change.modulo || 'modulo'}::${change.registroId || change.recordId || index}`);
-          if (queueKey) current.byKey[queueKey] = index;
-        });
-      }
-      return current;
-    }
-    if (Array.isArray(current)) {
-      const migrated = createSessionChangeQueue();
-      current.forEach((change) => {
-        if (!isPlainObject(change)) return;
-        const recordId = cleanText(change.registroId || change.recordId || change.idRegistro || '');
-        const moduleKey = cleanText(change.moduloKey || change.modulo || 'modulo');
-        if (!recordId) return;
-        const queueKey = `${moduleKey}::${recordId}`;
-        const next = { ...change, queueKey, registroId: recordId, moduloKey: moduleKey, estado: cleanText(change.estado) || SESSION_CHANGE_STATE_PENDING };
-        migrated.byKey[queueKey] = migrated.changes.length;
-        migrated.changes.push(next);
-      });
-      window[SESSION_CHANGE_QUEUE_GLOBAL] = migrated;
-      return migrated;
-    }
-    const queue = createSessionChangeQueue();
-    window[SESSION_CHANGE_QUEUE_GLOBAL] = queue;
-    return queue;
-  }
-
-  function getSessionChangePendingCount() {
-    const queue = ensureSessionChangeQueue();
-    return queue.changes.filter((change) => cleanText(change.estado || SESSION_CHANGE_STATE_PENDING) === SESSION_CHANGE_STATE_PENDING).length;
-  }
-
-  function updateSessionChangeCounterElements() {
-    if (typeof document === 'undefined') return;
-    const count = getSessionChangePendingCount();
-    document.querySelectorAll('[data-session-change-count]').forEach((element) => {
-      element.textContent = String(count);
-    });
-  }
-
-  function mergeSessionChangeOperation(previousOperation, nextOperation) {
-    const previous = cleanText(previousOperation);
-    const next = cleanText(nextOperation) || 'editar';
-    if (previous === 'crear' && next === 'editar') return 'crear';
-    if (next === 'eliminar') return 'eliminar';
-    if (next === 'anular') return 'anular';
-    if (previous === 'crear' && next === 'anular') return 'crear';
-    return next;
-  }
-
-  function registerSessionChange(moduleKey, moduleLabel, operation, recordId) {
-    if (!sessionChangeTrackingReady || typeof window === 'undefined') return null;
-    const cleanRecordId = cleanText(recordId);
-    const cleanModuleKey = cleanText(moduleKey || moduleLabel || 'modulo');
-    if (!cleanRecordId || !cleanModuleKey) return null;
-    const queue = ensureSessionChangeQueue();
-    const queueKey = `${cleanModuleKey}::${cleanRecordId}`;
-    const existingIndex = Number.isInteger(queue.byKey?.[queueKey]) ? queue.byKey[queueKey] : -1;
-    const existing = existingIndex >= 0 ? queue.changes[existingIndex] : null;
-    const timestamp = nowIso();
-    const nextOperation = mergeSessionChangeOperation(existing?.tipoOperacion || existing?.operacion, operation);
-    const payload = {
-      id: existing?.id || generateId('sessionChange'),
-      queueKey,
-      modulo: cleanText(moduleLabel || cleanModuleKey),
-      moduloKey: cleanModuleKey,
-      tipoOperacion: nextOperation,
-      registroId: cleanRecordId,
-      fechaHoraLocal: timestamp,
-      origen: 'session',
-      estado: SESSION_CHANGE_STATE_PENDING
-    };
-    if (existing) {
-      queue.changes[existingIndex] = { ...existing, ...payload };
-    } else {
-      queue.byKey[queueKey] = queue.changes.length;
-      queue.changes.push(payload);
-    }
-    queue.updatedAt = timestamp;
-    window[SESSION_CHANGE_QUEUE_GLOBAL] = queue;
-    updateSessionChangeCounterElements();
-    return payload;
-  }
-
-  function shouldTrackSessionChanges() {
-    if (!sessionChangeTrackingReady) return false;
-    if (typeof window === 'undefined') return false;
-    if (cloudOperationState?.isHydrating) return false;
-    return true;
-  }
-
-  function parseSessionTrackingJson(raw, fallback = {}) {
-    try {
-      if (!raw) return fallback;
-      const parsed = JSON.parse(raw);
-      return isPlainObject(parsed) ? parsed : fallback;
-    } catch (_) {
-      return fallback;
-    }
-  }
-
-  function cloneComparableSessionValue(value) {
-    if (Array.isArray(value)) return value.map(cloneComparableSessionValue);
-    if (!isPlainObject(value)) return value;
-    return Object.keys(value).sort().reduce((acc, key) => {
-      if (['updatedAt', 'fechaHoraLocal', 'lastSyncAt', 'lastRefreshAt'].includes(key)) return acc;
-      acc[key] = cloneComparableSessionValue(value[key]);
-      return acc;
-    }, {});
-  }
-
-  function stableSessionStringify(value) {
-    try {
-      return JSON.stringify(cloneComparableSessionValue(value));
-    } catch (_) {
-      return String(value);
-    }
-  }
-
-  function inferSessionOperation(previousRecord, nextRecord) {
-    const prevActive = previousRecord?.activo !== false && previousRecord?.anulado !== true;
-    const nextActive = nextRecord?.activo !== false && nextRecord?.anulado !== true;
-    const nextEstado = normalizeKeyForCompare(nextRecord?.estado || nextRecord?.estatus || '');
-    if (prevActive && (!nextActive || nextEstado.includes('anulad'))) return 'anular';
-    return 'editar';
-  }
-
-  function diffSessionRecordList(previousList, nextList, dataset) {
-    const prevRecords = Array.isArray(previousList) ? previousList : [];
-    const nextRecords = Array.isArray(nextList) ? nextList : [];
-    if (!prevRecords.length && !nextRecords.length) return;
-    const prevMap = new Map();
-    const nextMap = new Map();
-    prevRecords.forEach((record) => {
-      const id = cleanText(record?.id || record?.uid || record?.codigo || '');
-      if (id) prevMap.set(id, record);
-    });
-    nextRecords.forEach((record) => {
-      const id = cleanText(record?.id || record?.uid || record?.codigo || '');
-      if (id) nextMap.set(id, record);
-    });
-
-    nextMap.forEach((record, id) => {
-      if (!prevMap.has(id)) {
-        registerSessionChange(dataset.moduleKey, dataset.moduleLabel, 'crear', id);
-        return;
-      }
-      const previous = prevMap.get(id);
-      if (stableSessionStringify(previous) !== stableSessionStringify(record)) {
-        registerSessionChange(dataset.moduleKey, dataset.moduleLabel, inferSessionOperation(previous, record), id);
-      }
-    });
-
-    prevMap.forEach((_record, id) => {
-      if (!nextMap.has(id)) registerSessionChange(dataset.moduleKey, dataset.moduleLabel, 'eliminar', id);
-    });
-  }
-
-  function trackSessionChangesFromMainStorage(nextData) {
-    if (!shouldTrackSessionChanges()) return;
-    const previous = parseSessionTrackingJson(window.localStorage.getItem(STORAGE_KEY), {});
-    if (!isPlainObject(previous) || !Object.keys(previous).length) return;
-    getSessionTrackedDatasets().forEach((dataset) => {
-      diffSessionRecordList(previous[dataset.key], nextData?.[dataset.key], dataset);
-    });
-  }
-
-  function trackSessionChangesFromAuxStorage(storageKey, nextData, datasets) {
-    if (!shouldTrackSessionChanges()) return;
-    const previous = parseSessionTrackingJson(window.localStorage.getItem(storageKey), {});
-    if (!isPlainObject(previous) || !Object.keys(previous).length) return;
-    datasets.forEach((dataset) => {
-      diffSessionRecordList(previous[dataset.key], nextData?.[dataset.key], dataset);
-    });
-  }
-
-  function getPendingSessionChanges() {
-    const queue = ensureSessionChangeQueue();
-    return queue.changes.filter((change) => cleanText(change.estado || SESSION_CHANGE_STATE_PENDING) === SESSION_CHANGE_STATE_PENDING);
-  }
-
-  function rebuildSessionChangeQueueIndex(queue) {
-    queue.byKey = {};
-    queue.changes.forEach((change, index) => {
-      const queueKey = cleanText(change.queueKey || `${change.moduloKey || change.modulo || 'modulo'}::${change.registroId || change.recordId || index}`);
-      if (queueKey) queue.byKey[queueKey] = index;
-    });
-    queue.updatedAt = nowIso();
-    return queue;
-  }
-
-  function clearConfirmedSessionChanges(confirmedQueueKeys = []) {
-    const confirmed = new Set((Array.isArray(confirmedQueueKeys) ? confirmedQueueKeys : []).map(cleanText).filter(Boolean));
-    if (!confirmed.size) return 0;
-    const queue = ensureSessionChangeQueue();
-    const before = queue.changes.length;
-    queue.changes = queue.changes.filter((change) => !confirmed.has(cleanText(change.queueKey || `${change.moduloKey || change.modulo}::${change.registroId || change.recordId}`)));
-    rebuildSessionChangeQueueIndex(queue);
-    if (typeof window !== 'undefined') window[SESSION_CHANGE_QUEUE_GLOBAL] = queue;
-    updateSessionChangeCounterElements();
-    return before - queue.changes.length;
-  }
-
-  function cancelPendingCloudSnapshotTimer() {
-    if (cloudOperationState?.timer && typeof window !== 'undefined') {
-      window.clearTimeout(cloudOperationState.timer);
-      cloudOperationState.timer = null;
-    }
-  }
-
-  function applySessionSaveDiagnostic(result = {}) {
-    const ok = result?.ok === true;
-    onlineDiagnosticState.isWriting = false;
-    onlineDiagnosticState.lastWriteStatus = ok ? 'Escritura correcta' : 'Error de conexión';
-    onlineDiagnosticState.writeMessage = cleanText(result?.message || (ok ? 'Guardado correcto.' : 'No se pudo guardar en la nube.'));
-    onlineDiagnosticState.lastWriteAt = ok ? cleanText(result.lastSyncAt || nowIso()) : onlineDiagnosticState.lastWriteAt;
-    onlineDiagnosticState.lastUpdatedAt = nowIso();
-    cloudOperationState.lastSyncAt = ok ? cleanText(result.lastSyncAt || cloudOperationState.lastSyncAt || nowIso()) : cloudOperationState.lastSyncAt;
-    cloudOperationState.lastError = ok ? '' : onlineDiagnosticState.writeMessage;
-    cloudOperationState.message = onlineDiagnosticState.writeMessage;
-  }
-
-  async function handleSessionCloudSave(button = null) {
-    if (!requireRolePermission('updateData', configState, { preserveScroll: true })) return null;
-    if (cloudOperationState.isWriting || onlineDiagnosticState.isWriting) return null;
-    const changes = getPendingSessionChanges();
-    if (!changes.length) {
-      configState.message = 'No hay cambios nuevos de esta sesión para guardar.';
-      configState.messageType = 'success';
-      applySessionSaveDiagnostic({ ok: true, message: configState.message, lastSyncAt: cloudOperationState.lastSyncAt });
-      updateSessionChangeCounterElements();
-      renderRoute({ preserveScroll: true });
-      return { ok: true, message: configState.message };
-    }
-    if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.saveSessionChangesToCloud) {
-      const message = 'No se pudo guardar en la nube. Firestore no está disponible.';
-      configState.message = message;
-      configState.messageType = 'error';
-      applySessionSaveDiagnostic({ ok: false, message });
-      renderRoute({ preserveScroll: true });
-      return { ok: false, message };
-    }
-    if (button) button.disabled = true;
-    cancelPendingCloudSnapshotTimer();
-    cloudOperationState.isWriting = true;
-    onlineDiagnosticState.isWriting = true;
-    configState.message = 'Guardando datos...';
-    configState.messageType = 'success';
-    onlineDiagnosticState.lastWriteStatus = 'Escribiendo…';
-    onlineDiagnosticState.writeMessage = 'Guardando datos...';
-    renderRoute({ preserveScroll: true });
-    try {
-      const result = await KSAFirebaseAdapter.saveSessionChangesToCloud(changes, { source: 'boton_guardar_datos' });
-      cloudOperationState.isWriting = false;
-      onlineDiagnosticState.isWriting = false;
-      if (result?.ok) {
-        clearConfirmedSessionChanges(result.confirmedQueueKeys || changes.map((change) => cleanText(change.queueKey || `${change.moduloKey || change.modulo}::${change.registroId || change.recordId}`)));
-        configState.message = result.message || 'Guardado correcto.';
-        configState.messageType = 'success';
-      } else {
-        configState.message = result?.message || 'No se pudo guardar en la nube. Los cambios de sesión se conservaron para intentar nuevamente.';
-        configState.messageType = 'error';
-      }
-      applySessionSaveDiagnostic(result || { ok: false, message: configState.message });
-      updateSessionChangeCounterElements();
-      renderRoute({ preserveScroll: true });
-      return result;
-    } catch (error) {
-      const message = 'No se pudo guardar en la nube. Los cambios de sesión se conservaron para intentar nuevamente.';
-      cloudOperationState.isWriting = false;
-      onlineDiagnosticState.isWriting = false;
-      configState.message = message;
-      configState.messageType = 'error';
-      applySessionSaveDiagnostic({ ok: false, message, error });
-      renderRoute({ preserveScroll: true });
-      return { ok: false, message, error };
-    }
-  }
-
   function loadData() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -7503,13 +7707,14 @@ Notas importantes:
         createdAt: data.metadata?.createdAt || nowIso(),
         updatedAt: nowIso()
       };
-      trackSessionChangesFromMainStorage(data);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
       scheduleCloudSnapshotSync('saveData');
     } catch (error) {
       console.error('KSA PRÁCTIKA: no se pudo guardar en localStorage.', error);
     }
   }
+
+  const CLOUD_PARTIAL_SESSION_SAVE_MODE = true;
 
   let cloudOperationState = {
     runtimeReady: false,
@@ -7519,6 +7724,7 @@ Notas importantes:
     isReading: false,
     timer: null,
     lastSyncAt: '',
+    lastCloudWriteAt: '',
     lastRefreshAt: '',
     lastError: '',
     message: '',
@@ -7539,6 +7745,12 @@ Notas importantes:
   }
 
   function scheduleCloudSnapshotSync(reason = '') {
+    if (CLOUD_PARTIAL_SESSION_SAVE_MODE) {
+      // La operación diaria usa “Guardar datos” con subida parcial por cola de sesión.
+      // Se evita el snapshot completo automático para no recorrer toda la base ni congelar la página.
+      cloudOperationState.message = cleanText(reason) ? 'Cambios locales pendientes de Guardar datos.' : cloudOperationState.message;
+      return;
+    }
     if (!cloudOperationState.runtimeReady || cloudOperationState.isHydrating || !cloudOperationState.active) return;
     if (typeof window === 'undefined') return;
     if (cloudOperationState.timer) window.clearTimeout(cloudOperationState.timer);
@@ -7950,8 +8162,6 @@ Notas importantes:
   }
 
   let appData = loadData();
-  ensureSessionChangeQueue();
-  sessionChangeTrackingReady = true;
   reconcileWorkPeriodSelectionAfterDataChange();
   syncCasaFiltersWithActiveWorkPeriod({ force: true });
   let appDeviceIdentity = loadDeviceIdentity();
@@ -9839,6 +10049,10 @@ Notas importantes:
       : null;
     const preserveScroll = Boolean(restoreSnapshot) || (!explicitReset && isConfigScreen && wasConfigScreen && options?.preserveScroll !== false);
 
+    if (isConfigScreen && !wasConfigScreen) {
+      resetConfigAccordionVisualState();
+    }
+
     if (previousRoute === 'proveedores' && route !== 'proveedores') {
       resetProveedoresTransientState();
     }
@@ -9849,6 +10063,12 @@ Notas importantes:
       resetFacturasTransientState();
       facturasState.page = 1;
       facturasState.search = '';
+      facturasState.globalOpen = false;
+      facturasState.globalPage = 1;
+      facturasState.globalSearch = '';
+      facturasState.globalCliente = '';
+      facturasState.globalSucursal = '';
+      facturasState.globalEstado = '';
     }
     if (route === 'facturas' && previousRoute && previousRoute !== 'facturas') {
       resetFacturasPagedView();
@@ -10777,11 +10997,6 @@ Notas importantes:
         ...(isPlainObject(normalized.metadata) ? normalized.metadata : {}),
         updatedAt: nowIso()
       };
-      trackSessionChangesFromAuxStorage(NOTES_STORAGE_KEY, normalized, [
-        { key: 'notas', moduleKey: 'notasModulo.notas', moduleLabel: 'Notas / pendientes' },
-        { key: 'pendientes', moduleKey: 'notasModulo.pendientes', moduleLabel: 'Notas / pendientes' },
-        { key: 'recordatorios', moduleKey: 'notasModulo.recordatorios', moduleLabel: 'Notas / pendientes' }
-      ]);
       window.localStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify(normalized));
       scheduleCloudSnapshotSync('saveNotasData');
       return normalized;
@@ -10984,14 +11199,31 @@ Notas importantes:
       fecha,
       estado: normalizeFacturaEstado(raw.estado),
       monto: Number.isNaN(amount) ? 0 : Math.max(0, amount),
+      subtotal: Number.isNaN(parseMoney(raw.subtotal ?? raw.montoSubtotal ?? 0)) ? 0 : Math.max(0, parseMoney(raw.subtotal ?? raw.montoSubtotal ?? 0)),
+      descuento: Number.isNaN(parseMoney(raw.descuento ?? raw.descuentoFactura ?? 0)) ? 0 : Math.max(0, parseMoney(raw.descuento ?? raw.descuentoFactura ?? 0)),
+      totalFacturaRelacionada: Number.isNaN(parseMoney(raw.totalFacturaRelacionada ?? raw.totalFactura ?? raw.total ?? raw.monto ?? 0)) ? 0 : Math.max(0, parseMoney(raw.totalFacturaRelacionada ?? raw.totalFactura ?? raw.total ?? raw.monto ?? 0)),
+      pendienteMonto: readFacturaPendingFlag(raw, !(hasFacturaExplicitValue(raw.monto) || hasFacturaExplicitValue(raw.total) || hasFacturaExplicitValue(raw.subtotal) || hasFacturaExplicitValue(raw.totalFacturaRelacionada))),
       observaciones: cleanText(raw.observaciones || raw.observacion || raw.nota || raw.descripcion),
       origen: cleanText(raw.origen || raw.source) || 'manual',
+      documentoTipo: cleanText(raw.documentoTipo || raw.tipoDocumento || raw.parentType || raw.sourceType),
       ventaId: cleanText(raw.ventaId || raw.ocId || raw.documentoId),
       ventaDocumento: cleanText(raw.ventaDocumento || raw.numeroDocumento || raw.oc || raw.ventaRef || raw.documentoVenta),
+      compraProveedorId: cleanText(raw.compraProveedorId || raw.compraId || raw.proveedorCompraId || raw.documentoCompraId),
+      compraDocumento: cleanText(raw.compraDocumento || raw.compraReferencia || raw.facturaReferenciaCompra || raw.documentoCompra || raw.referenciaCompra),
+      proveedorId: cleanText(raw.proveedorId || raw.supplierId || raw.proveedorRef),
+      proveedorNombre: cleanText(raw.proveedorNombre || raw.nombreProveedor || raw.proveedor || raw.supplierName),
       clienteId: cleanText(raw.clienteId || raw.clientId || raw.clienteRef),
       clienteNombre: cleanText(raw.clienteNombre || raw.nombreCliente || raw.cliente || raw.clientName),
       sucursalId: cleanText(raw.sucursalId || raw.branchId || raw.sucursalRef),
       sucursalNombre: cleanText(raw.sucursalNombre || raw.nombreSucursal || raw.sucursal || raw.branchName),
+      ajustesLigados: Array.isArray(raw.ajustesLigados) ? raw.ajustesLigados.map((item) => ({
+        id: cleanText(item?.id),
+        fecha: toDateInputValue(item?.fecha || '') || '',
+        tipo: cleanText(item?.tipo),
+        monto: Number.isNaN(parseMoney(item?.monto)) ? 0 : Math.max(0, parseMoney(item?.monto)),
+        facturaAfectadaId: cleanText(item?.facturaAfectadaId),
+        facturaAfectadaNumero: cleanFacturaVentaNumero(item?.facturaAfectadaNumero || '')
+      })).filter((item) => item.id || item.facturaAfectadaId || item.facturaAfectadaNumero) : [],
       periodo: periodInfo.periodo,
       autoPagada: Boolean(raw.autoPagada),
       autoPagadaAt: Boolean(raw.autoPagada) ? cleanText(raw.autoPagadaAt) : '',
@@ -11046,9 +11278,6 @@ Notas importantes:
       const normalized = normalizeFacturasData(data);
       normalized.facturas = sortFacturasModulo(normalized.facturas);
       normalized.metadata.updatedAt = nowIso();
-      trackSessionChangesFromAuxStorage(FACTURAS_STORAGE_KEY, normalized, [
-        { key: 'facturas', moduleKey: 'facturasModulo', moduleLabel: 'Facturas' }
-      ]);
       localStorage.setItem(FACTURAS_STORAGE_KEY, JSON.stringify(normalized));
       scheduleCloudSnapshotSync('saveFacturasData');
       return normalized;
@@ -11149,6 +11378,7 @@ Notas importantes:
       const key = normalizeFacturaModuloNoKey(numero);
       if (!numero || result.has(key)) return;
       result.set(key, {
+        ...factura,
         numero,
         direct: true,
         generatedByGap: false,
@@ -11185,6 +11415,10 @@ Notas importantes:
           if (numero && !result.has(key)) {
             result.set(key, {
               numero,
+              subtotal: 0,
+              descuento: 0,
+              total: 0,
+              pendienteMonto: true,
               direct: false,
               generatedByGap: true,
               sourceIndex: index + 0.5
@@ -11209,85 +11443,267 @@ Notas importantes:
     };
   }
 
+  function normalizeFacturaModuloOrigin(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    if (factura.compraProveedorId || factura.proveedorId || factura.origen === 'proveedores') return 'proveedores';
+    if (factura.ventaId || factura.clienteId || factura.origen === 'ventas' || factura.origen === 'salto de consecutivo') return factura.origen === 'salto de consecutivo' ? 'salto de consecutivo' : 'ventas';
+    return factura.origen || 'manual';
+  }
+
+  function getFacturaModuloParentDocument(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    if (normalizeFacturaModuloOrigin(factura) === 'proveedores') return factura.compraDocumento || factura.ventaDocumento || factura.no || '';
+    return factura.ventaDocumento || factura.compraDocumento || '';
+  }
+
+  function getFacturaModuloPartyDisplay(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    if (normalizeFacturaModuloOrigin(factura) === 'proveedores') {
+      const proveedor = factura.proveedorId ? getCatalogRecordById('proveedores', factura.proveedorId) : null;
+      return cleanText(factura.proveedorNombre || proveedor?.nombre || '');
+    }
+    return getFacturaClienteDisplay(factura);
+  }
+
+  function getFacturaModuloSecondaryDisplay(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    if (normalizeFacturaModuloOrigin(factura) === 'proveedores') return getFacturaModuloParentDocument(factura);
+    return getFacturaSucursalDisplay(factura);
+  }
+
+  function getFacturaModuloAmountLabel(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    if (normalizeFacturaModuloOrigin(factura) === 'proveedores') return formatMoney(factura.monto || factura.totalFacturaRelacionada || 0);
+    return formatMoney(factura.totalFacturaRelacionada || factura.monto || factura.total || 0);
+  }
+
+  function buildFacturaAjustesPayload(ajustesSource, factura) {
+    const target = factura || {};
+    const targetId = cleanText(target.id);
+    const targetNo = cleanFacturaVentaNumero(target.numero || target.no || target.facturaAfectadaNumero || '');
+    const normalizer = target.monto !== undefined && target.subtotal === undefined ? normalizeCompraProveedorAjustesList : normalizeVentaAjustesList;
+    const ajustes = normalizer(ajustesSource).filter((ajuste) => {
+      if (!ajuste.activo) return false;
+      if (!hasAjusteFacturaSnapshot(ajuste)) return false;
+      const ajusteId = cleanText(ajuste.facturaAfectadaId);
+      const ajusteNo = cleanFacturaVentaNumero(ajuste.facturaAfectadaNumero || '');
+      return Boolean((targetId && ajusteId && ajusteId === targetId) || (targetNo && ajusteNo && normalizeFacturaModuloNoKey(ajusteNo) === normalizeFacturaModuloNoKey(targetNo)));
+    });
+    return ajustes.map((ajuste) => ({
+      id: ajuste.id,
+      fecha: ajuste.fecha,
+      tipo: ajuste.tipo,
+      monto: ajuste.monto,
+      facturaAfectadaId: ajuste.facturaAfectadaId,
+      facturaAfectadaNumero: ajuste.facturaAfectadaNumero
+    }));
+  }
+
+  function getFacturaModuloAjustesInfo(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    let ajustes = Array.isArray(factura.ajustesLigados) ? factura.ajustesLigados : [];
+    const origin = normalizeFacturaModuloOrigin(factura);
+    if (origin === 'ventas' && factura.ventaId) {
+      const venta = (Array.isArray(appData.ventas) ? appData.ventas : []).map((item) => normalizeVentaRecord(item)).find((item) => item.id === factura.ventaId);
+      if (venta) {
+        const facturaVenta = normalizeFacturasVentaList(venta.facturas).find((item) => normalizeFacturaModuloNoKey(item.numero) === normalizeFacturaModuloNoKey(factura.no));
+        ajustes = buildFacturaAjustesPayload(venta.ajustes, facturaVenta || { id: '', numero: factura.no, subtotal: factura.subtotal });
+      }
+    } else if (origin === 'proveedores' && factura.compraProveedorId) {
+      const compra = (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : []).map((item) => normalizeCompraProveedorRecord(item)).find((item) => item.id === factura.compraProveedorId);
+      if (compra) {
+        const facturaProveedor = normalizeFacturasProveedorList(compra.facturasRelacionadas).find((item) => normalizeFacturaModuloNoKey(item.numero) === normalizeFacturaModuloNoKey(factura.no));
+        ajustes = buildFacturaAjustesPayload(compra.ajustes, facturaProveedor || { id: '', numero: factura.no, monto: factura.monto });
+      }
+    }
+    const active = (Array.isArray(ajustes) ? ajustes : []).filter((ajuste) => cleanText(ajuste.id) || Number(ajuste.monto) > 0 || cleanText(ajuste.tipo));
+    return {
+      count: active.length,
+      has: active.length > 0,
+      label: active.length ? active.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo || 'Ajuste'} · ${formatMoney(ajuste.monto || 0)}${ajuste.facturaAfectadaNumero ? ` · Fac. ${ajuste.facturaAfectadaNumero}` : ''}`).join(' | ') : 'Sin ajustes ligados'
+    };
+  }
+
+  function findExistingFacturaModuloIndex(records, payload, options = {}) {
+    const source = Array.isArray(records) ? records : [];
+    const target = normalizeFacturaModuloRecord(payload);
+    const targetNoKey = normalizeFacturaModuloNoKey(target.no);
+    const targetOrigin = normalizeFacturaModuloOrigin(target);
+    const parentId = targetOrigin === 'proveedores' ? target.compraProveedorId : target.ventaId;
+    const exactIndex = source.findIndex((record) => {
+      const factura = normalizeFacturaModuloRecord(record);
+      if (normalizeFacturaModuloNoKey(factura.no) !== targetNoKey) return false;
+      if (targetOrigin === 'proveedores') return factura.compraProveedorId && factura.compraProveedorId === parentId;
+      if (targetOrigin === 'ventas' || targetOrigin === 'salto de consecutivo') return factura.ventaId && factura.ventaId === parentId;
+      return false;
+    });
+    if (exactIndex >= 0) return exactIndex;
+    if (options.allowLegacyNoMatch) {
+      return source.findIndex((record) => {
+        const factura = normalizeFacturaModuloRecord(record);
+        if (normalizeFacturaModuloNoKey(factura.no) !== targetNoKey) return false;
+        const facturaOrigin = normalizeFacturaModuloOrigin(factura);
+        if (targetOrigin === 'proveedores') return !factura.compraProveedorId && facturaOrigin !== 'ventas' && facturaOrigin !== 'salto de consecutivo';
+        return !factura.ventaId && facturaOrigin !== 'proveedores';
+      });
+    }
+    return -1;
+  }
+
+  function upsertFacturasModuloRecords(nextRecords, options = {}) {
+    const data = getFacturasData();
+    const source = Array.isArray(data.facturas) ? data.facturas.map((record) => normalizeFacturaModuloRecord(record)) : [];
+    const timestamp = nowIso();
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    const affectedIds = [];
+    (Array.isArray(nextRecords) ? nextRecords : []).map(normalizeFacturaModuloRecord).forEach((payload) => {
+      if (!payload.no) {
+        skipped += 1;
+        return;
+      }
+      const existingIndex = findExistingFacturaModuloIndex(source, payload, { allowLegacyNoMatch: true });
+      if (existingIndex >= 0) {
+        const existing = normalizeFacturaModuloRecord(source[existingIndex]);
+        source[existingIndex] = normalizeFacturaModuloRecord({
+          ...existing,
+          ...payload,
+          id: existing.id || payload.id,
+          estado: existing.origen === 'manual' && payload.origen !== 'manual' ? payload.estado : (existing.estado || payload.estado),
+          createdAt: existing.createdAt || payload.createdAt,
+          updatedAt: timestamp
+        });
+        if (source[existingIndex].id) affectedIds.push(source[existingIndex].id);
+        updated += 1;
+        return;
+      }
+      const createdRecord = normalizeFacturaModuloRecord({ ...payload, createdAt: payload.createdAt || timestamp, updatedAt: timestamp });
+      source.unshift(createdRecord);
+      if (createdRecord.id) affectedIds.push(createdRecord.id);
+      created += 1;
+    });
+    if (created || updated) saveFacturasData({ ...data, facturas: source });
+    return { created, updated, skipped, affectedIds };
+  }
+
   function syncVentaFacturasToFacturasModulo(ventaRecord) {
     const venta = normalizeVentaRecord(ventaRecord);
     const expanded = expandFacturasVentaConsecutivos(venta.facturas);
     if (!expanded.items.length) {
-      return { created: 0, directCreated: 0, gapCreated: 0, skipped: 0, generatedCount: 0, omittedBySafety: 0 };
+      return { created: 0, updated: 0, directCreated: 0, gapCreated: 0, skipped: 0, generatedCount: 0, omittedBySafety: 0 };
     }
 
-    const data = getFacturasData();
-    const existingKeys = new Set((data.facturas || []).map((record) => normalizeFacturaModuloNoKey(normalizeFacturaModuloRecord(record).no)).filter(Boolean));
     const timestamp = nowIso();
-    const createdRecords = [];
     const cliente = venta.clienteId ? getCatalogRecordById('clientes', venta.clienteId) : null;
     const sucursal = venta.sucursalId ? getCatalogRecordById('sucursales', venta.sucursalId) : null;
-    let skipped = 0;
+    const records = [];
 
     expanded.items.forEach((item) => {
-      const key = normalizeFacturaModuloNoKey(item.numero);
-      if (!item.numero || existingKeys.has(key)) {
-        skipped += 1;
-        return;
-      }
+      if (!item.numero) return;
       const fromGap = Boolean(item.generatedByGap);
-      const record = normalizeFacturaModuloRecord({
-        id: generateId('facturaModulo'),
+      const ajustesLigados = fromGap ? [] : buildFacturaAjustesPayload(venta.ajustes, item);
+      records.push(normalizeFacturaModuloRecord({
+        id: cleanText(item.moduloId) || cleanText(item.id && !String(item.id).startsWith('factura') ? item.id : '') || generateId('facturaModulo'),
         no: item.numero,
         fecha: venta.fechaOc || todayInputValue(),
         estado: fromGap ? 'Otro' : 'Enviada',
-        monto: 0,
+        monto: fromGap ? 0 : Math.max(0, Number(item.total) || 0),
+        subtotal: fromGap ? 0 : Math.max(0, Number(item.subtotal) || 0),
+        descuento: fromGap ? 0 : Math.max(0, Number(item.descuento) || 0),
+        totalFacturaRelacionada: fromGap ? 0 : Math.max(0, Number(item.total) || 0),
+        pendienteMonto: fromGap ? true : Boolean(item.pendienteMonto),
         observaciones: fromGap ? 'Generada automáticamente por salto de consecutivo. Pendiente de clasificar.' : '',
         origen: fromGap ? 'salto de consecutivo' : 'ventas',
+        documentoTipo: fromGap ? 'Salto consecutivo' : 'Venta / OC',
         ventaId: venta.id,
         ventaDocumento: venta.numeroDocumento,
         clienteId: venta.clienteId,
-        clienteNombre: cliente?.nombre || '',
+        clienteNombre: venta.clienteNombre || cliente?.nombre || '',
         sucursalId: venta.sucursalId,
-        sucursalNombre: sucursal?.nombre || '',
+        sucursalNombre: venta.sucursalNombre || sucursal?.nombre || '',
+        ajustesLigados,
         createdAt: timestamp,
         updatedAt: timestamp
-      });
-      createdRecords.push(record);
-      existingKeys.add(key);
+      }));
     });
 
-    if (createdRecords.length) {
-      data.facturas = [...createdRecords, ...(data.facturas || [])];
-      saveFacturasData(data);
-    }
-
+    const result = upsertFacturasModuloRecords(records, { source: 'ventas' });
     return {
-      created: createdRecords.length,
-      directCreated: createdRecords.filter((record) => record.origen === 'ventas').length,
-      gapCreated: createdRecords.filter((record) => record.origen === 'salto de consecutivo').length,
-      skipped,
+      ...result,
+      directCreated: records.filter((record) => record.origen === 'ventas').length && result.created ? Math.min(result.created, records.filter((record) => record.origen === 'ventas').length) : 0,
+      gapCreated: records.filter((record) => record.origen === 'salto de consecutivo').length && result.created ? Math.min(result.created, records.filter((record) => record.origen === 'salto de consecutivo').length) : 0,
       generatedCount: expanded.generatedCount,
       omittedBySafety: expanded.omittedBySafety
     };
   }
 
+  function syncCompraFacturasToFacturasModulo(compraRecord) {
+    const compra = normalizeCompraProveedorRecord(compraRecord);
+    const facturas = normalizeFacturasProveedorList(compra.facturasRelacionadas);
+    if (!facturas.length) return { created: 0, updated: 0, skipped: 0 };
+
+    const timestamp = nowIso();
+    const proveedor = compra.proveedorId ? getCatalogRecordById('proveedores', compra.proveedorId) : null;
+    const records = facturas.map((factura) => normalizeFacturaModuloRecord({
+      id: generateId('facturaModulo'),
+      no: factura.numero,
+      fecha: compra.fechaCompra || todayInputValue(),
+      estado: 'Enviada',
+      monto: Math.max(0, Number(factura.monto) || 0),
+      subtotal: Math.max(0, Number(factura.monto) || 0),
+      descuento: 0,
+      totalFacturaRelacionada: Math.max(0, Number(factura.monto) || 0),
+      pendienteMonto: Boolean(factura.pendienteMonto),
+      observaciones: '',
+      origen: 'proveedores',
+      documentoTipo: 'Proveedor / Compra',
+      compraProveedorId: compra.id,
+      compraDocumento: compra.facturaReferencia || getCompraProveedorReferenciaCompacta(compra),
+      proveedorId: compra.proveedorId,
+      proveedorNombre: compra.proveedorNombre || proveedor?.nombre || '',
+      ajustesLigados: buildFacturaAjustesPayload(compra.ajustes, factura),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+
+    return upsertFacturasModuloRecords(records, { source: 'proveedores' });
+  }
+
   function formatVentaFacturasSyncMessage(result) {
-    if (!result || (!result.created && !result.skipped && !result.omittedBySafety)) return '';
+    if (!result || (!result.created && !result.updated && !result.skipped && !result.omittedBySafety)) return '';
     const parts = [];
     if (result.created) {
       parts.push(`Facturas sincronizadas: ${result.created}`);
       if (result.gapCreated) parts.push(`intermedias: ${result.gapCreated}`);
     }
-    if (result.skipped) parts.push(`sin duplicar existentes: ${result.skipped}`);
+    if (result.updated) parts.push(`actualizadas: ${result.updated}`);
+    if (result.skipped) parts.push(`omitidas: ${result.skipped}`);
     if (result.omittedBySafety) parts.push(`salto demasiado grande omitido por seguridad: ${result.omittedBySafety}`);
+    return parts.length ? `${parts.join(' · ')}.` : '';
+  }
+
+  function formatCompraFacturasSyncMessage(result) {
+    if (!result || (!result.created && !result.updated && !result.skipped)) return '';
+    const parts = [];
+    if (result.created) parts.push(`Facturas de proveedor sincronizadas: ${result.created}`);
+    if (result.updated) parts.push(`actualizadas: ${result.updated}`);
+    if (result.skipped) parts.push(`omitidas: ${result.skipped}`);
     return parts.length ? `${parts.join(' · ')}.` : '';
   }
 
   function getFacturaOrigenLabel(record) {
     const factura = normalizeFacturaModuloRecord(record);
+    if (factura.origen === 'proveedores' || factura.compraProveedorId) {
+      return `Origen: Proveedores / Compras${factura.compraDocumento ? ` · ${factura.compraDocumento}` : ''}`;
+    }
     if (factura.origen === 'ventas') {
       return `Origen: Ventas / OC${factura.ventaDocumento ? ` · ${factura.ventaDocumento}` : ''}`;
     }
     if (factura.origen === 'salto de consecutivo') {
       return `Origen: salto de consecutivo${factura.ventaDocumento ? ` · ${factura.ventaDocumento}` : ''}`;
     }
-    return '';
+    return factura.origen === 'manual' ? 'Origen: Manual' : '';
   }
 
   function setFacturasMessage(message, type = 'success') {
@@ -11529,6 +11945,402 @@ Notas importantes:
       .filter((item) => normalizeKeyForCompare(item.record.no).includes(query));
   }
 
+  function getFacturaReliableDateValue(raw) {
+    const source = isPlainObject(raw) ? raw : {};
+    return toDateInputValue(source.fecha || source.fechaFactura || source.fechaEmision || source.issued || '');
+  }
+
+  function getFacturasGlobalSortLabel(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    return cleanText(getFacturaModuloPartyDisplay(factura) || getFacturaSucursalDisplay(factura) || factura.clienteNombre || factura.proveedorNombre || factura.sucursalNombre || '');
+  }
+
+  function compareFacturasGlobalItems(a, b) {
+    const byNo = compareFacturaNaturalNo(b?.record?.no, a?.record?.no);
+    if (byNo !== 0) return byNo;
+
+    if (a?.hasReliableDate && b?.hasReliableDate) {
+      const byDate = String(b.reliableDate).localeCompare(String(a.reliableDate));
+      if (byDate !== 0) return byDate;
+    } else if (a?.hasReliableDate !== b?.hasReliableDate) {
+      return a?.hasReliableDate ? -1 : 1;
+    }
+
+    const byParty = getFacturasGlobalSortLabel(a?.record).localeCompare(getFacturasGlobalSortLabel(b?.record), 'es-NI', {
+      numeric: true,
+      sensitivity: 'base'
+    });
+    if (byParty !== 0) return byParty;
+
+    return (Number(a?.sourceIndex) || 0) - (Number(b?.sourceIndex) || 0);
+  }
+
+  function getFacturasGlobalItems(data = getFacturasData()) {
+    const source = normalizeFacturasData(data);
+    return (source.facturas || [])
+      .map((raw, index) => {
+        const reliableDate = getFacturaReliableDateValue(raw);
+        return {
+          record: normalizeFacturaModuloRecord(raw),
+          sourceIndex: index,
+          reliableDate,
+          hasReliableDate: Boolean(reliableDate)
+        };
+      })
+      .sort(compareFacturasGlobalItems);
+  }
+
+  function normalizeFacturaGlobalSearchValue(value) {
+    return normalizeKeyForCompare(value);
+  }
+
+  function normalizeFacturaGlobalLooseSearchValue(value) {
+    return normalizeFacturaGlobalSearchValue(value).replace(/[^a-z0-9]/gi, '');
+  }
+
+  function normalizeFacturaGlobalNumericSearchValue(value) {
+    return cleanText(value).replace(/\D+/g, '').replace(/^0+(?=\d)/, '');
+  }
+
+  function getFacturaGlobalPartyFilterPayload(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    const origin = normalizeFacturaModuloOrigin(factura);
+    if (origin === 'proveedores') {
+      const proveedor = factura.proveedorId ? getCatalogRecordById('proveedores', factura.proveedorId) : null;
+      const label = cleanText(factura.proveedorNombre || proveedor?.nombre || '');
+      const key = cleanText(factura.proveedorId) || (label ? normalizeKeyForCompare(label) : '');
+      return key && label ? { value: `proveedor:${key}`, label } : { value: '', label: '' };
+    }
+    const cliente = factura.clienteId ? getCatalogRecordById('clientes', factura.clienteId) : null;
+    const label = cleanText(factura.clienteNombre || cliente?.nombre || '');
+    const key = cleanText(factura.clienteId) || (label ? normalizeKeyForCompare(label) : '');
+    return key && label ? { value: `cliente:${key}`, label } : { value: '', label: '' };
+  }
+
+  function getFacturaGlobalSucursalFilterPayload(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    const label = getFacturaSucursalDisplay(factura);
+    const key = cleanText(factura.sucursalId) || (label ? normalizeKeyForCompare(label) : '');
+    return key && label ? { value: `sucursal:${key}`, label } : { value: '', label: '' };
+  }
+
+  function getFacturasGlobalFilters() {
+    return {
+      search: cleanText(facturasState.globalSearch),
+      searchKey: normalizeFacturaGlobalSearchValue(facturasState.globalSearch),
+      searchLooseKey: normalizeFacturaGlobalLooseSearchValue(facturasState.globalSearch),
+      searchNumericKey: normalizeFacturaGlobalNumericSearchValue(facturasState.globalSearch),
+      cliente: cleanText(facturasState.globalCliente),
+      sucursal: cleanText(facturasState.globalSucursal),
+      estado: cleanText(facturasState.globalEstado)
+    };
+  }
+
+  function facturaGlobalItemMatchesFilters(item, filters = getFacturasGlobalFilters()) {
+    const factura = normalizeFacturaModuloRecord(item?.record || item);
+    if (filters.searchKey) {
+      const noKey = normalizeFacturaGlobalSearchValue(factura.no);
+      const noLooseKey = normalizeFacturaGlobalLooseSearchValue(factura.no);
+      const noNumericKey = normalizeFacturaGlobalNumericSearchValue(factura.no);
+      const matchesSearch = noKey.includes(filters.searchKey)
+        || (filters.searchLooseKey && noLooseKey.includes(filters.searchLooseKey))
+        || (filters.searchNumericKey && noNumericKey.includes(filters.searchNumericKey));
+      if (!matchesSearch) return false;
+    }
+    if (filters.cliente && getFacturaGlobalPartyFilterPayload(factura).value !== filters.cliente) return false;
+    if (filters.sucursal && getFacturaGlobalSucursalFilterPayload(factura).value !== filters.sucursal) return false;
+    if (filters.estado && normalizeFacturaEstado(factura.estado) !== filters.estado) return false;
+    return true;
+  }
+
+  function getFacturasGlobalFilterOptions(items = getFacturasGlobalItems()) {
+    const partyMap = new Map();
+    const sucursalMap = new Map();
+    const estadoSet = new Set();
+    (Array.isArray(items) ? items : []).forEach((item) => {
+      const factura = normalizeFacturaModuloRecord(item?.record || item);
+      const party = getFacturaGlobalPartyFilterPayload(factura);
+      if (party.value && party.label && !partyMap.has(party.value)) partyMap.set(party.value, party.label);
+      const sucursal = getFacturaGlobalSucursalFilterPayload(factura);
+      if (sucursal.value && sucursal.label && !sucursalMap.has(sucursal.value)) sucursalMap.set(sucursal.value, sucursal.label);
+      const estado = normalizeFacturaEstado(factura.estado);
+      if (estado) estadoSet.add(estado);
+    });
+    const toOptions = (map) => Array.from(map.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => compareCatalogDisplayText(a.label, b.label));
+    const estados = [
+      ...FACTURA_ESTADO_OPTIONS.filter((estado) => estadoSet.has(estado)),
+      ...Array.from(estadoSet).filter((estado) => !FACTURA_ESTADO_OPTIONS.includes(estado)).sort(compareCatalogDisplayText)
+    ].map((estado) => ({ value: estado, label: estado }));
+    return {
+      clientes: toOptions(partyMap),
+      sucursales: toOptions(sucursalMap),
+      estados
+    };
+  }
+
+  function getFacturasGlobalFilteredItems(items = getFacturasGlobalItems(), filters = getFacturasGlobalFilters()) {
+    return (Array.isArray(items) ? items : []).filter((item) => facturaGlobalItemMatchesFilters(item, filters));
+  }
+
+  function getFacturasGlobalPagePayload(data = getFacturasData()) {
+    const items = getFacturasGlobalItems(data);
+    const filters = getFacturasGlobalFilters();
+    const filteredItems = getFacturasGlobalFilteredItems(items, filters);
+    const totalPages = Math.max(1, Math.ceil(filteredItems.length / FACTURAS_PAGE_SIZE));
+    facturasState.globalPage = Math.min(Math.max(1, Number.parseInt(facturasState.globalPage, 10) || 1), totalPages);
+    const start = (facturasState.globalPage - 1) * FACTURAS_PAGE_SIZE;
+    return {
+      items,
+      filteredItems,
+      filters,
+      filterOptions: getFacturasGlobalFilterOptions(items),
+      totalPages,
+      totalRecords: filteredItems.length,
+      totalAllRecords: items.length,
+      page: facturasState.globalPage,
+      pagedItems: filteredItems.slice(start, start + FACTURAS_PAGE_SIZE)
+    };
+  }
+
+  function renderFacturasGlobalModal(data = getFacturasData()) {
+    const payload = getFacturasGlobalPagePayload(data);
+    const body = renderFacturasGlobalModalBody(payload);
+    const modalId = getFacturasGlobalModalId();
+    return `
+      <div class="modal-backdrop facturas-global-backdrop" data-modal-backdrop="${escapeHtml(modalId)}" role="presentation">
+        <section class="edit-modal facturas-global-modal" role="dialog" aria-modal="true" aria-labelledby="${escapeHtml(modalId)}-title">
+          <header class="edit-modal-header facturas-global-modal-header">
+            <div>
+              <span class="eyebrow mini">Consulta general</span>
+              <h2 id="${escapeHtml(modalId)}-title">Global de Facturas</h2>
+              <p>Todas las facturas registradas, sin importar período. La paginación de esta ventana es independiente.</p>
+            </div>
+            <button type="button" class="modal-close" data-modal-close="${escapeHtml(modalId)}" aria-label="Cerrar Global de Facturas">×</button>
+          </header>
+          <div class="edit-modal-body facturas-global-modal-body">
+            ${body}
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  function renderFacturasGlobalFilterOptions(options = [], selectedValue = '', emptyLabel = 'Todos') {
+    const selected = cleanText(selectedValue);
+    const safeOptions = Array.isArray(options) ? options : [];
+    return [
+      `<option value="">${escapeHtml(emptyLabel)}</option>`,
+      ...safeOptions.map((option) => {
+        const value = cleanText(option?.value);
+        const label = cleanText(option?.label) || value;
+        return `<option value="${escapeHtml(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+      })
+    ].join('');
+  }
+
+  function renderFacturasGlobalFilters(info) {
+    const filters = isPlainObject(info?.filters) ? info.filters : getFacturasGlobalFilters();
+    const options = isPlainObject(info?.filterOptions) ? info.filterOptions : getFacturasGlobalFilterOptions();
+    return `
+      <form class="facturas-global-filters" data-factura-global-filters aria-label="Filtros Global de Facturas">
+        <label class="form-field facturas-global-search-field">
+          <span>Buscar factura</span>
+          <input type="search" name="globalSearch" value="${escapeHtml(filters.search || '')}" placeholder="Número de factura" autocomplete="off" inputmode="search" data-factura-global-search />
+        </label>
+        <label class="form-field">
+          <span>Cliente / Proveedor</span>
+          <select name="globalCliente" data-factura-global-filter="cliente">
+            ${renderFacturasGlobalFilterOptions(options.clientes, filters.cliente, 'Todos')}
+          </select>
+        </label>
+        <label class="form-field">
+          <span>Sucursal</span>
+          <select name="globalSucursal" data-factura-global-filter="sucursal">
+            ${renderFacturasGlobalFilterOptions(options.sucursales, filters.sucursal, 'Todas')}
+          </select>
+        </label>
+        <label class="form-field">
+          <span>Estado</span>
+          <select name="globalEstado" data-factura-global-filter="estado">
+            ${renderFacturasGlobalFilterOptions(options.estados, filters.estado, 'Todos')}
+          </select>
+        </label>
+        <button type="button" class="secondary-action compact-action facturas-global-clear" data-factura-global-clear>Limpiar</button>
+      </form>
+    `;
+  }
+
+  function renderFacturasGlobalModalBody(payload) {
+    const info = isPlainObject(payload) ? payload : getFacturasGlobalPagePayload();
+    const totalRecords = Number.parseInt(info.totalRecords, 10) || 0;
+    const totalAllRecords = Number.parseInt(info.totalAllRecords, 10) || totalRecords;
+    const page = Math.max(1, Number.parseInt(info.page, 10) || 1);
+    const totalPages = Math.max(1, Number.parseInt(info.totalPages, 10) || 1);
+    const pagedItems = Array.isArray(info.pagedItems) ? info.pagedItems : [];
+    const hasFilters = Boolean(cleanText(info.filters?.search) || cleanText(info.filters?.cliente) || cleanText(info.filters?.sucursal) || cleanText(info.filters?.estado));
+    const emptyMessage = totalAllRecords ? 'No hay facturas que coincidan con los filtros.' : 'No hay facturas registradas.';
+    return `
+      <div class="facturas-global-toolbar" aria-label="Resumen Global de Facturas">
+        <div class="status-grid compact facturas-global-status-grid">
+          <div class="status-item"><strong>Resultado</strong><span>${totalRecords}</span><small>${hasFilters ? `de ${totalAllRecords}` : 'Global'}</small></div>
+          <div class="status-item"><strong>Página global</strong><span>${page}/${totalPages}</span></div>
+          <div class="status-item"><strong>Por página</strong><span>${FACTURAS_PAGE_SIZE}</span></div>
+        </div>
+        ${renderFacturasGlobalFilters(info)}
+      </div>
+      ${totalRecords ? renderOperationalTableShell({
+        shellClass: 'facturas-global-table',
+        wrapClass: 'facturas-table-wrap facturas-global-table-wrap',
+        ariaLabel: 'Global de Facturas',
+        tableClass: 'operational-table-facturas facturas-global-operational-table',
+        headers: '<th>No.</th><th>Fecha</th><th>Período</th><th>Cliente / Proveedor</th><th>Sucursal</th><th>Estado</th><th>Monto / total</th><th>Origen</th>',
+        rows: pagedItems.map((item) => renderFacturaGlobalRow(item)).join('')
+      }) : `<p class="muted-text compact-note facturas-global-empty">${escapeHtml(emptyMessage)}</p>`}
+      ${renderFacturasGlobalPagination(totalRecords, page, totalPages)}
+    `;
+  }
+
+  function renderFacturaGlobalRow(item) {
+    const payload = isPlainObject(item) && item.record ? item : { record: item, hasReliableDate: true };
+    const factura = normalizeFacturaModuloRecord(payload.record);
+    const periodInfo = payload.hasReliableDate ? getFacturaPeriodInfoFromDate(factura.fecha) : null;
+    const partyLabel = getFacturaModuloPartyDisplay(factura) || '—';
+    const sucursalLabel = getFacturaSucursalDisplay(factura) || '—';
+    const origenLabel = getFacturaOrigenLabel(factura) || 'Manual';
+    const dateLabel = payload.hasReliableDate ? formatDate(factura.fecha) : '—';
+    const periodLabel = periodInfo?.label || '—';
+    const amountLabel = getFacturaModuloAmountLabel(factura) || formatMoney(factura.monto || 0);
+    return `
+      <tr>
+        <td><span class="compact-primary critical-value-doc" title="${escapeHtml(factura.no || '—')}">${escapeHtml(factura.no || '—')}</span></td>
+        <td><span class="critical-value-date" title="${escapeHtml(dateLabel)}">${escapeHtml(dateLabel)}</span></td>
+        <td><span title="${escapeHtml(periodLabel)}">${escapeHtml(periodLabel)}</span></td>
+        <td><span title="${escapeHtml(partyLabel)}">${escapeHtml(partyLabel)}</span></td>
+        <td><span title="${escapeHtml(sucursalLabel)}">${escapeHtml(sucursalLabel)}</span></td>
+        <td><span class="state-pill ${getEstadoClass(factura.estado)} critical-value-state" title="${escapeHtml(factura.estado || '—')}">${escapeHtml(factura.estado || '—')}</span></td>
+        <td class="amount-cell"><span class="critical-value-money" title="${escapeHtml(amountLabel)}">${escapeHtml(amountLabel)}</span></td>
+        <td><small title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel)}</small></td>
+      </tr>
+    `;
+  }
+
+  function renderFacturasGlobalPagination(totalRecords, page, totalPages) {
+    const count = Number.parseInt(totalRecords, 10) || 0;
+    const current = Math.max(1, Number.parseInt(page, 10) || 1);
+    const pages = Math.max(1, Number.parseInt(totalPages, 10) || 1);
+    if (count <= FACTURAS_PAGE_SIZE) {
+      return `<div class="pagination-row facturas-pagination facturas-global-pagination"><span>Página 1 de 1</span></div>`;
+    }
+    return `
+      <div class="pagination-row facturas-pagination facturas-global-pagination" aria-label="Paginación Global de Facturas">
+        <button type="button" class="secondary-action compact-action" data-factura-global-page="prev" ${current <= 1 ? 'disabled' : ''} title="Página global anterior">Anterior</button>
+        <span>Página ${current} de ${pages}</span>
+        <button type="button" class="secondary-action compact-action" data-factura-global-page="next" ${current >= pages ? 'disabled' : ''} title="Página global siguiente">Siguiente</button>
+      </div>
+    `;
+  }
+
+  function openFacturasGlobalModal() {
+    facturasState.globalOpen = true;
+    facturasState.globalPage = 1;
+    facturasState.message = null;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function closeFacturasGlobalModal() {
+    facturasState.globalOpen = false;
+    facturasState.globalPage = 1;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function updateFacturasGlobalFilters(form, options = {}) {
+    const formData = new FormData(form);
+    const focusName = cleanText(options.focusName);
+    const cursor = Number.parseInt(options.cursor, 10);
+    facturasState.globalSearch = cleanText(formData.get('globalSearch'));
+    facturasState.globalCliente = cleanText(formData.get('globalCliente'));
+    facturasState.globalSucursal = cleanText(formData.get('globalSucursal'));
+    facturasState.globalEstado = cleanText(formData.get('globalEstado'));
+    facturasState.globalPage = 1;
+    facturasState.globalOpen = true;
+    facturasState.message = null;
+    renderRoute({ preserveScroll: true });
+    if (focusName) {
+      requestAnimationFrame(() => {
+        const field = viewRoot.querySelector(`[name="${focusName}"]`);
+        if (!field) return;
+        try {
+          field.focus({ preventScroll: true });
+        } catch (error) {
+          field.focus();
+        }
+        if (Number.isFinite(cursor) && typeof field.setSelectionRange === 'function') {
+          field.setSelectionRange(cursor, cursor);
+        }
+      });
+    }
+    scheduleFacturasGlobalModalScrollTop();
+  }
+
+  function clearFacturasGlobalFilters() {
+    facturasState.globalSearch = '';
+    facturasState.globalCliente = '';
+    facturasState.globalSucursal = '';
+    facturasState.globalEstado = '';
+    facturasState.globalPage = 1;
+    facturasState.globalOpen = true;
+    renderRoute({ preserveScroll: true });
+    scheduleFacturasGlobalModalScrollTop();
+  }
+
+  function scrollFacturasGlobalModalToTop() {
+    if (!viewRoot) return;
+    const selectors = [
+      '.facturas-global-modal-body',
+      '.facturas-global-table-wrap',
+      '.facturas-global-modal [data-operational-table-scroll]'
+    ];
+    const targets = selectors
+      .flatMap((selector) => Array.from(viewRoot.querySelectorAll(selector)))
+      .filter((element, index, list) => element && list.indexOf(element) === index);
+    targets.forEach((element) => {
+      try {
+        element.scrollTo({ top: 0, behavior: 'auto' });
+      } catch (error) {
+        element.scrollTop = 0;
+      }
+    });
+  }
+
+  function scheduleFacturasGlobalModalScrollTop() {
+    const schedule = window.requestAnimationFrame || ((callback) => window.setTimeout(callback, 0));
+    const run = () => scrollFacturasGlobalModalToTop();
+    schedule(() => {
+      run();
+      schedule(run);
+      window.setTimeout(run, 90);
+      window.setTimeout(run, 240);
+    });
+  }
+
+  function changeFacturasGlobalPage(direction) {
+    const payload = getFacturasGlobalPagePayload(getFacturasData());
+    const currentPage = Math.min(Math.max(1, Number.parseInt(facturasState.globalPage, 10) || 1), payload.totalPages);
+    const target = cleanText(direction);
+    if (target === 'first') {
+      facturasState.globalPage = 1;
+    } else if (target === 'last') {
+      facturasState.globalPage = payload.totalPages;
+    } else {
+      facturasState.globalPage = target === 'prev' ? Math.max(1, currentPage - 1) : Math.min(payload.totalPages, currentPage + 1);
+    }
+    facturasState.globalOpen = true;
+    renderRoute({ preserveScroll: true });
+    scheduleFacturasGlobalModalScrollTop();
+  }
+
   function clampFacturasPageForCurrentPeriod(data = getFacturasData(), periodInfo = getCurrentFacturasPeriodInfo()) {
     const base = getFacturasSearchBase(data, periodInfo);
     const totalPages = Math.max(1, Math.ceil(base.records.length / FACTURAS_PAGE_SIZE));
@@ -11540,6 +12352,12 @@ Notas importantes:
     facturasState.page = 1;
     facturasState.search = '';
     facturasState.editingId = null;
+    facturasState.globalOpen = false;
+    facturasState.globalPage = 1;
+    facturasState.globalSearch = '';
+    facturasState.globalCliente = '';
+    facturasState.globalSucursal = '';
+    facturasState.globalEstado = '';
   }
 
   function renderFacturas() {
@@ -11586,6 +12404,7 @@ Notas importantes:
         ${renderFacturasPeriodoList(periodInfo, pagedRecords, periodRecords.length, totalPages, { closed: currentPeriodClosed })}
         ${renderFacturasHistorico(historyGroups)}
         ${safeEditingRecord ? renderEditModal(getFacturasModalId(), 'Editar factura', 'Actualiza la factura sin salir del listado ni saltar al formulario principal.', renderFacturaForm(safeEditingRecord, 'edit')) : ''}
+        ${facturasState.globalOpen ? renderFacturasGlobalModal(data) : ''}
       </section>
     `;
   }
@@ -11684,7 +12503,10 @@ Notas importantes:
             <span class="eyebrow mini">Buscar</span>
             <h2>Búsqueda por No. de factura</h2>
           </div>
-          <span class="badge">${escapeHtml(scopeLabel)}</span>
+          <div class="record-actions compact-row-actions facturas-search-title-actions">
+            <span class="badge">${escapeHtml(scopeLabel)}</span>
+            <button type="button" class="secondary-action compact-action facturas-global-open" data-factura-global-open title="Abrir Global de Facturas">GLOBAL</button>
+          </div>
         </div>
         <form class="compact-search-row" data-factura-search-form>
           <label class="form-field compact-search-field">
@@ -11718,7 +12540,7 @@ Notas importantes:
         wrapClass: 'facturas-table-wrap',
         ariaLabel: 'Resultados de búsqueda de facturas',
         tableClass: 'operational-table-facturas',
-        headers: '<th>No.</th><th>Período</th><th>Página</th><th>Fecha</th><th>Cliente</th><th>Sucursal</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones>',
+        headers: '<th>No.</th><th>Período</th><th>Página</th><th>Fecha</th><th>Origen</th><th>Documento madre</th><th>Cliente / Proveedor</th><th>Subtotal</th><th>Descuento</th><th>Total / Monto</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
         rows
       })}
     `;
@@ -11729,8 +12551,9 @@ Notas importantes:
     const factura = normalizeFacturaModuloRecord(item.record);
     const periodInfo = getFacturaPeriodInfoFromDate(factura.fecha);
     const origenLabel = getFacturaOrigenLabel(factura);
-    const clienteNombre = getFacturaClienteDisplay(factura);
-    const sucursalNombre = getFacturaSucursalDisplay(factura);
+    const partyLabel = getFacturaModuloPartyDisplay(factura);
+    const documentLabel = getFacturaModuloParentDocument(factura);
+    const ajustesInfo = getFacturaModuloAjustesInfo(factura);
     const closedPeriod = isFacturaPeriodClosed(factura.periodo);
     const readonly = Boolean(closedPeriod || item.scopeClosed);
     const page = Math.max(1, Number.parseInt(item.page, 10) || 1);
@@ -11743,14 +12566,18 @@ Notas importantes:
         </div>`;
     return `
       <tr>
-        <td><span class="compact-primary" title="${escapeHtml(factura.no)}">${escapeHtml(factura.no || '—')}</span>${origenLabel ? `<small class="factura-origin-label" title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel)}</small>` : ''}</td>
+        <td><span class="compact-primary" title="${escapeHtml(factura.no)}">${escapeHtml(factura.no || '—')}</span></td>
         <td><span>${escapeHtml(periodInfo.label)}</span></td>
         <td><span class="badge subtle">Página ${page}</span></td>
         <td><span>${escapeHtml(formatDate(factura.fecha))}</span></td>
-        <td><span title="${escapeHtml(clienteNombre || 'Sin cliente')}">${escapeHtml(clienteNombre || '—')}</span></td>
-        <td><span title="${escapeHtml(sucursalNombre || 'Sin sucursal')}">${escapeHtml(sucursalNombre || '—')}</span></td>
+        <td><small title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel || 'Manual')}</small></td>
+        <td><span title="${escapeHtml(documentLabel || 'Sin documento madre')}">${escapeHtml(documentLabel || '—')}</span></td>
+        <td><span title="${escapeHtml(partyLabel || 'Sin cliente/proveedor')}">${escapeHtml(partyLabel || '—')}</span></td>
+        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.subtotal || 0))}</span></td>
+        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.descuento || 0))}</span></td>
+        <td class="amount-cell"><span>${escapeHtml(getFacturaModuloAmountLabel(factura))}</span></td>
+        <td><small title="${escapeHtml(ajustesInfo.label)}">${ajustesInfo.has ? `Sí (${ajustesInfo.count})` : 'No'}</small></td>
         <td><span class="state-pill ${getEstadoClass(factura.estado)}">${escapeHtml(factura.estado)}</span></td>
-        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.monto || 0))}</span></td>
         <td><small title="${escapeHtml(factura.observaciones)}">${escapeHtml(factura.observaciones || '—')}</small></td>
         <td>${actions}</td>
       </tr>
@@ -11776,7 +12603,7 @@ Notas importantes:
           wrapClass: 'facturas-table-wrap',
           ariaLabel: `Listado de facturas de ${periodInfo.label}`,
           tableClass: 'operational-table-facturas',
-          headers: '<th>No.</th><th>Fecha</th><th>Cliente</th><th>Sucursal</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones>',
+          headers: '<th>No.</th><th>Fecha</th><th>Origen</th><th>Documento madre</th><th>Cliente / Proveedor</th><th>Subtotal</th><th>Descuento</th><th>Total / Monto</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
           rows: records.map((record) => renderFacturaRow(record)).join('')
         }) : `<p class="muted-text compact-note">${escapeHtml(emptyText)}</p>`}
         ${pagination}
@@ -11858,7 +12685,7 @@ Notas importantes:
               wrapClass: 'facturas-table-wrap',
               ariaLabel: `Histórico de facturas de ${group.label}`,
               tableClass: 'operational-table-facturas',
-              headers: '<th>No.</th><th>Fecha</th><th>Cliente</th><th>Sucursal</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones>',
+              headers: '<th>No.</th><th>Fecha</th><th>Origen</th><th>Documento madre</th><th>Cliente / Proveedor</th><th>Subtotal</th><th>Descuento</th><th>Total / Monto</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
               rows: pagedRecords.map((record) => renderFacturaRow(record, { readonly: true })).join('')
             }) : '<p class="muted-text compact-note">No hay facturas en este período histórico.</p>'}
             ${renderFacturasPagination(group.records.length, totalPages, { scope: 'history', periodo: group.periodo })}
@@ -11872,8 +12699,9 @@ Notas importantes:
     const factura = normalizeFacturaModuloRecord(record);
     const periodInfo = getFacturaPeriodInfoFromDate(factura.fecha);
     const origenLabel = getFacturaOrigenLabel(factura);
-    const clienteNombre = getFacturaClienteDisplay(factura);
-    const sucursalNombre = getFacturaSucursalDisplay(factura);
+    const partyLabel = getFacturaModuloPartyDisplay(factura);
+    const documentLabel = getFacturaModuloParentDocument(factura);
+    const ajustesInfo = getFacturaModuloAjustesInfo(factura);
     const closedPeriod = isFacturaPeriodClosed(factura.periodo);
     const readonly = Boolean(options.readonly || closedPeriod);
     const actions = readonly
@@ -11887,10 +12715,14 @@ Notas importantes:
         <td><span class="compact-primary" title="${escapeHtml(factura.no)}">${escapeHtml(factura.no || '—')}</span>${origenLabel ? `<small class="factura-origin-label" title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel)}</small>` : ''}</td>
         ${options.includePeriod ? `<td><span>${escapeHtml(periodInfo.label)}</span></td>` : ''}
         <td><span>${escapeHtml(formatDate(factura.fecha))}</span></td>
-        <td><span title="${escapeHtml(clienteNombre || 'Sin cliente')}">${escapeHtml(clienteNombre || '—')}</span></td>
-        <td><span title="${escapeHtml(sucursalNombre || 'Sin sucursal')}">${escapeHtml(sucursalNombre || '—')}</span></td>
+        <td><small title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel || 'Manual')}</small></td>
+        <td><span title="${escapeHtml(documentLabel || 'Sin documento madre')}">${escapeHtml(documentLabel || '—')}</span></td>
+        <td><span title="${escapeHtml(partyLabel || 'Sin cliente/proveedor')}">${escapeHtml(partyLabel || '—')}</span></td>
+        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.subtotal || 0))}</span></td>
+        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.descuento || 0))}</span></td>
+        <td class="amount-cell"><span>${escapeHtml(getFacturaModuloAmountLabel(factura))}</span></td>
+        <td><small title="${escapeHtml(ajustesInfo.label)}">${ajustesInfo.has ? `Sí (${ajustesInfo.count})` : 'No'}</small></td>
         <td><span class="state-pill ${getEstadoClass(factura.estado)}">${escapeHtml(factura.estado)}</span></td>
-        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.monto || 0))}</span></td>
         <td><small title="${escapeHtml(factura.observaciones)}">${escapeHtml(factura.observaciones || '—')}</small></td>
         <td>${actions}</td>
       </tr>
@@ -11998,6 +12830,7 @@ Notas importantes:
       data.facturas.unshift(nextRecord);
     }
     saveFacturasData(data);
+    registerSessionChange({ module: 'Facturas', operation: existing ? 'editar' : 'crear', recordId: nextRecord.id });
     facturasState.editingId = null;
     if (!existing) {
       facturasState.captureDraft = normalizeFacturasCaptureDraft({
@@ -12039,6 +12872,7 @@ Notas importantes:
     const data = getFacturasData();
     data.facturas = data.facturas.filter((item) => cleanText(item.id) !== record.id);
     saveFacturasData(data);
+    registerSessionChange({ module: 'Facturas', operation: 'eliminar', recordId: record.id });
     if (facturasState.editingId === record.id) facturasState.editingId = null;
     const periodRecords = getFacturasForPeriod(getCurrentFacturasPeriodInfo().periodo, data);
     const totalPages = Math.max(1, Math.ceil(periodRecords.length / FACTURAS_PAGE_SIZE));
@@ -12123,6 +12957,7 @@ Notas importantes:
     const data = getFacturasData();
     let updated = 0;
     let reverted = 0;
+    const affectedIds = [];
     const timestamp = nowIso();
     const cobroId = cleanText(options.cobroId);
 
@@ -12133,6 +12968,7 @@ Notas importantes:
       if (!isPaid) {
         if (factura.autoPagada && factura.estado === 'Pagada') {
           reverted += 1;
+          if (factura.id) affectedIds.push(factura.id);
           return normalizeFacturaModuloRecord({
             ...factura,
             estado: factura.estadoPrevioAutoPagada && factura.estadoPrevioAutoPagada !== 'Pagada' ? factura.estadoPrevioAutoPagada : 'Enviada',
@@ -12152,6 +12988,7 @@ Notas importantes:
       const isSaltoClasificado = origen.includes('salto') && factura.estado !== 'Otro' && factura.estado !== 'Anulada';
       if (!isVentaDirecta && !isSaltoClasificado) return factura;
       updated += 1;
+      if (factura.id) affectedIds.push(factura.id);
       return normalizeFacturaModuloRecord({
         ...factura,
         estado: 'Pagada',
@@ -12165,7 +13002,7 @@ Notas importantes:
     });
 
     if (updated || reverted) saveFacturasData(data);
-    return { updated, reverted, paid: isPaid };
+    return { updated, reverted, paid: isPaid, affectedIds };
   }
 
 
@@ -12931,6 +13768,7 @@ Notas importantes:
     });
     data.notas = existing ? data.notas.map((item) => item.id === existing.id ? record : item) : [record, ...data.notas];
     saveNotasData(data);
+    registerSessionChange({ module: 'Notas / pendientes', operation: existing ? 'editar' : 'crear', recordId: record.id });
     clearNotasForms();
     setNotasMessage(completed ? 'Nota general guardada en Histórico.' : 'Nota general guardada.');
     renderRoute();
@@ -12969,6 +13807,7 @@ Notas importantes:
     });
     data.pendientes = existing ? data.pendientes.map((item) => item.id === existing.id ? record : item) : [record, ...data.pendientes];
     saveNotasData(data);
+    registerSessionChange({ module: 'Notas / pendientes', operation: existing ? 'editar' : 'crear', recordId: record.id });
     clearNotasForms();
     setNotasMessage('Pendiente de registrar guardado sin afectar Gastos ni Resumen. Así sí: apunte es apunte.');
     renderRoute();
@@ -13011,6 +13850,7 @@ Notas importantes:
     });
     data.recordatorios = existing ? data.recordatorios.map((item) => item.id === existing.id ? record : item) : [record, ...data.recordatorios];
     saveNotasData(data);
+    registerSessionChange({ module: 'Notas / pendientes', operation: existing ? 'editar' : 'crear', recordId: record.id });
     clearNotasForms();
     setNotasMessage(completed ? 'Recordatorio guardado en Histórico.' : 'Recordatorio guardado.');
     renderRoute();
@@ -13053,6 +13893,7 @@ Notas importantes:
       data.pendientes = data.pendientes.map((record) => record.id === id ? normalizePendienteRecord({ ...record, estado: 'Cumplido', completed: true, completedAt: record.completedAt || timestamp, updatedAt: timestamp }) : record);
     }
     saveNotasData(data);
+    registerSessionChange({ module: 'Notas / pendientes', operation: 'editar', recordId: id });
     clearNotasForms();
     setNotasMessage('Registro marcado como cumplido y enviado al Histórico.');
     renderRoute();
@@ -13063,6 +13904,7 @@ Notas importantes:
     const timestamp = nowIso();
     data.recordatorios = data.recordatorios.map((record) => record.id === id ? normalizeRecordatorioRecord({ ...record, estado: 'Cumplido', completed: true, completedAt: record.completedAt || timestamp, updatedAt: timestamp }) : record);
     saveNotasData(data);
+    registerSessionChange({ module: 'Notas / pendientes', operation: 'editar', recordId: id });
     clearNotasForms();
     setNotasMessage('Recordatorio marcado como cumplido y enviado al Histórico.');
     renderRoute();
@@ -13075,6 +13917,7 @@ Notas importantes:
     if (type === 'nota') data.notas = data.notas.filter((record) => record.id !== id);
     if (type === 'pendiente') data.pendientes = data.pendientes.filter((record) => record.id !== id);
     saveNotasData(data);
+    registerSessionChange({ module: 'Notas / pendientes', operation: 'eliminar', recordId: id });
     clearNotasForms();
     setNotasMessage('Registro borrado definitivamente del módulo Notas.');
     renderRoute();
@@ -13085,6 +13928,7 @@ Notas importantes:
     const data = getNotasData();
     data.recordatorios = data.recordatorios.filter((record) => record.id !== id);
     saveNotasData(data);
+    registerSessionChange({ module: 'Notas / pendientes', operation: 'eliminar', recordId: id });
     clearNotasForms();
     setNotasMessage('Recordatorio borrado definitivamente.');
     renderRoute();
@@ -16493,6 +17337,7 @@ Notas importantes:
   function getGastoModalId() { return 'gasto'; }
   function getCasaModalId() { return 'casa'; }
   function getFacturasModalId() { return 'factura'; }
+  function getFacturasGlobalModalId() { return 'facturas-global'; }
 
 
   function renderVentas() {
@@ -16543,43 +17388,39 @@ Notas importantes:
           <article class="metric-card"><span>Anuladas</span><strong>${totals.anuladas}</strong></article>
         </section>
 
-        <div class="ventas-layout">
-          <div class="ventas-left-column">
-            <article class="panel-card venta-form-card">
-              <div class="section-title-row">
-                <div>
-                  <span class="eyebrow mini">Nueva OC</span>
-                  <h2>Crear venta / OC</h2>
-                </div>
+        <div class="ventas-layout operational-fullwidth-stack">
+          <article class="panel-card venta-form-card">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Nueva OC</span>
+                <h2>Crear Venta / OC</h2>
               </div>
-              <p class="muted-text">La venta se calcula como Subtotal - Descuento = Total. Los ajustes posteriores siguen ligados a la OC y no son cobros.</p>
-              ${renderVentaForm(null, clientesActivos, sucursalesActivas, missingCatalogs, ventasState.quickCapture)}
-            </article>
-          </div>
+            </div>
+            <p class="muted-text">La venta se calcula como Subtotal - Descuento = Total. Los ajustes posteriores siguen ligados a la OC y no son cobros.</p>
+            ${renderVentaForm(null, clientesActivos, sucursalesActivas, missingCatalogs, ventasState.quickCapture)}
+          </article>
 
-          <div class="ventas-right-column">
-            <article class="panel-card venta-list-card">
-              <div class="section-title-row">
-                <div>
-                  <span class="eyebrow mini">Listado</span>
-                  <h2>OC registradas</h2>
-                </div>
-                <div class="count-pill">${ventas.length} registros</div>
+          <article class="panel-card venta-ajuste-card">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Ajustes / notas</span>
+                <h2>Ajuste</h2>
               </div>
-              ${renderVentasList(ventas)}
-            </article>
+            </div>
+            <p class="muted-text">Reduce el saldo de una OC existente por quebrado, faltante, devolución o nota, sin crear cobro, caja ni banco. Aquí se descuenta mercadería; no aparece dinero fantasma.</p>
+            ${renderVentaAjusteForm(ventasAjustables)}
+          </article>
 
-            <article class="panel-card venta-ajuste-card">
-              <div class="section-title-row">
-                <div>
-                  <span class="eyebrow mini">Ajustes / notas</span>
-                  <h2>Registrar ajuste</h2>
-                </div>
+          <article class="panel-card venta-list-card">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Listado</span>
+                <h2>OC registradas</h2>
               </div>
-              <p class="muted-text">Reduce el saldo de una OC existente por quebrado, faltante, devolución o nota, sin crear cobro, caja ni banco. Aquí se descuenta mercadería; no aparece dinero fantasma.</p>
-              ${renderVentaAjusteForm(ventasAjustables)}
-            </article>
-          </div>
+              <div class="count-pill">${ventas.length} registros</div>
+            </div>
+            ${renderVentasList(ventas)}
+          </article>
         </div>
         ${editingRecord ? renderEditModal(getVentaModalId(), 'Editar venta / OC', 'La edición se guarda sobre la OC actual, mantiene ajustes/notas y recalcula saldo real.', renderVentaForm(editingRecord, clientesActivos, sucursalesActivas, missingCatalogs)) : ''}
       </section>
@@ -16653,6 +17494,13 @@ Notas importantes:
           <label class="form-field">
             <span>Monto ajuste C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
             <input type="number" name="monto" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-ajuste-monto />
+          </label>
+          <label class="form-field">
+            <span>Factura afectada</span>
+            <select name="facturaAfectada" data-ajuste-venta-factura>
+              ${renderAjusteFacturaOptions(selectedVenta?.facturas || [])}
+            </select>
+            <small>Opcional: si no aplica, queda como ajuste general de la OC.</small>
           </label>
         </div>
         <div class="formula-card ajuste-preview" aria-live="polite" data-ajuste-venta-preview>
@@ -16785,9 +17633,8 @@ Notas importantes:
 
   function renderFacturasVentaBlock(record) {
     const facturas = normalizeFacturasVentaList(record?.facturas || []);
-    const facturasText = formatFacturasVentaInput(facturas);
     return `
-        <section class="facturas-block" data-facturas-block>
+        <section class="facturas-block facturas-venta-block" data-facturas-block>
           <input type="hidden" name="facturasJson" data-facturas-json value="${escapeHtml(JSON.stringify(facturas))}" />
           <div class="facturas-head">
             <div>
@@ -16796,16 +17643,128 @@ Notas importantes:
             </div>
             <span class="count-pill" data-facturas-count>${facturas.length} factura${facturas.length === 1 ? '' : 's'}</span>
           </div>
-          <p class="muted-text compact-note">Captura varios números de factura para esta misma OC. Al guardar, se crearán en el módulo Facturas con la Fecha OC.</p>
-          <label class="form-field facturas-mass-field">
-            <span>Números de factura</span>
-            <textarea name="facturasTexto" data-facturas-mass rows="3" placeholder="001245, 001246, 001247" autocomplete="off">${escapeHtml(facturasText)}</textarea>
-          </label>
-          <p class="compact-note">Separa varias facturas por coma, punto y coma o salto de línea. Si hay saltos claros, Facturas completará los consecutivos intermedios.</p>
-          <div class="facturas-preview" data-facturas-preview>${facturas.length ? `Facturas detectadas: ${escapeHtml(formatFacturasVentaResumen(facturas))}` : 'Facturas detectadas: ninguna'}</div>
+          <p class="muted-text compact-note">Cada factura desglosa la misma OC. El Total se calcula solo: Subtotal - Descuento. No crea cobros ni ventas adicionales.</p>
+          <div class="facturas-editor-shell" data-facturas-editor-shell>
+            <div class="facturas-grid facturas-venta-grid" role="table" aria-label="Facturas de la OC">
+              <div class="facturas-grid-row facturas-grid-head" role="row">
+                <span role="columnheader">Factura</span>
+                <span role="columnheader">Subtotal</span>
+                <span role="columnheader">Descuento</span>
+                <span role="columnheader">Total</span>
+                <span role="columnheader" class="sr-only">Quitar</span>
+              </div>
+              <div data-facturas-rows>
+                ${renderVentaFacturaEditorRows(facturas)}
+              </div>
+              <div class="facturas-grid-row facturas-add-row" role="row">
+                <button type="button" class="factura-add-button" data-factura-add aria-label="Agregar factura">+</button>
+              </div>
+            </div>
+          </div>
+          ${renderVentaFacturasCuadreSummary(record, facturas)}
           <p class="compact-note facturas-message" data-factura-message aria-live="polite"></p>
         </section>
     `;
+  }
+
+  function renderVentaFacturaEditorRows(facturas) {
+    const rows = normalizeFacturasVentaList(facturas);
+    return rows.map((factura, index) => renderVentaFacturaEditorRow(factura, index)).join('');
+  }
+
+  function renderVentaFacturaEditorRow(factura, index = 0) {
+    const normalized = normalizeFacturaVentaRecord(factura) || { id: generateId('factura'), numero: '', subtotal: 0, descuento: 0, total: 0, pendienteMonto: true };
+    const subtotalValue = normalized.pendienteMonto && !normalized.subtotal ? '' : formatNumberInput(normalized.subtotal);
+    const descuentoValue = normalized.pendienteMonto && !normalized.descuento ? '' : formatNumberInput(normalized.descuento);
+    const totalValue = normalized.pendienteMonto ? '' : formatNumberInput(normalized.total);
+    return `
+      <div class="facturas-grid-row factura-edit-row ${normalized.pendienteMonto ? 'is-pending' : ''} ${isFacturaVentaInvalid(normalized) ? 'is-invalid' : ''}" role="row" data-factura-row data-factura-id="${escapeHtml(normalized.id)}">
+        <label class="factura-cell factura-number-cell">
+          <span>Factura</span>
+          <input type="text" data-factura-numero value="${escapeHtml(normalized.numero || '')}" placeholder="No. factura" autocomplete="off" aria-label="Factura ${index + 1}" />
+        </label>
+        <label class="factura-cell factura-money-cell">
+          <span>Subtotal</span>
+          <input type="number" data-factura-subtotal value="${escapeHtml(subtotalValue)}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" aria-label="Subtotal factura ${index + 1}" />
+        </label>
+        <label class="factura-cell factura-money-cell">
+          <span>Descuento</span>
+          <input type="number" data-factura-descuento value="${escapeHtml(descuentoValue)}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" aria-label="Descuento factura ${index + 1}" />
+        </label>
+        <label class="factura-cell factura-money-cell factura-total-cell">
+          <span>Total</span>
+          <input type="number" data-factura-total value="${escapeHtml(totalValue)}" readonly tabindex="-1" placeholder="0.00" aria-label="Total factura ${index + 1}" />
+        </label>
+        <button type="button" class="danger-action compact factura-remove-button" data-factura-remove aria-label="Quitar factura">×</button>
+      </div>
+    `;
+  }
+
+  function renderVentaFacturasCuadreSummary(record, facturas) {
+    const cuadre = getVentaFacturasCuadreData({ ...(record || {}), facturas });
+    return `
+      <div class="facturas-cuadre-card" data-facturas-cuadre>
+        <div class="facturas-cuadre-title">
+          <strong>Cuadre de facturas</strong>
+          <span data-facturas-cuadre-status>${getVentaFacturasCuadreStatusText(cuadre, facturas)}</span>
+        </div>
+        <div class="facturas-cuadre-grid">
+          ${renderFacturaCuadreLine('Subtotal OC', cuadre.subtotalOc, 'data-facturas-oc-subtotal')}
+          ${renderFacturaCuadreLine('Suma Subtotal Facturas', cuadre.subtotalFacturas, 'data-facturas-sum-subtotal')}
+          ${renderFacturaCuadreLine('Diferencia', cuadre.diferenciaSubtotal, 'data-facturas-diff-subtotal', true)}
+          ${renderFacturaCuadreLine('Descuento OC', cuadre.descuentoOc, 'data-facturas-oc-descuento')}
+          ${renderFacturaCuadreLine('Suma Descuento Facturas', cuadre.descuentoFacturas, 'data-facturas-sum-descuento')}
+          ${renderFacturaCuadreLine('Diferencia', cuadre.diferenciaDescuento, 'data-facturas-diff-descuento', true)}
+          ${renderFacturaCuadreLine('Total OC', cuadre.totalOc, 'data-facturas-oc-total')}
+          ${renderFacturaCuadreLine('Suma Total Facturas', cuadre.totalFacturas, 'data-facturas-sum-total')}
+          ${renderFacturaCuadreLine('Diferencia', cuadre.diferenciaTotal, 'data-facturas-diff-total', true)}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderFacturaCuadreLine(label, value, dataAttr, isDifference = false) {
+    const balancedClass = isDifference ? (isMoneyDifferenceBalanced(value) ? ' is-balanced' : ' is-unbalanced') : '';
+    const display = isDifference ? formatMoneyDifference(value) : formatMoney(value);
+    return `<div class="facturas-cuadre-item${balancedClass}"><span>${escapeHtml(label)}</span><strong ${dataAttr}>${escapeHtml(display)}</strong></div>`;
+  }
+
+  function getVentaFacturasCuadreData(record) {
+    const source = isPlainObject(record) ? record : {};
+    const subtotalOc = parseMoney(source.subtotal ?? source.montoOc ?? 0);
+    const descuentoOc = parseMoney(source.descuento ?? 0);
+    const totalOc = roundMoney((Number.isNaN(subtotalOc) ? 0 : subtotalOc) - (Number.isNaN(descuentoOc) ? 0 : descuentoOc));
+    const metrics = getVentaFacturasMetrics(source.facturas || []);
+    return {
+      subtotalOc: Number.isNaN(subtotalOc) ? 0 : subtotalOc,
+      descuentoOc: Number.isNaN(descuentoOc) ? 0 : descuentoOc,
+      totalOc,
+      subtotalFacturas: metrics.subtotal,
+      descuentoFacturas: metrics.descuento,
+      totalFacturas: metrics.total,
+      diferenciaSubtotal: roundMoney(metrics.subtotal - (Number.isNaN(subtotalOc) ? 0 : subtotalOc)),
+      diferenciaDescuento: roundMoney(metrics.descuento - (Number.isNaN(descuentoOc) ? 0 : descuentoOc)),
+      diferenciaTotal: roundMoney(metrics.total - totalOc),
+      pendientesMonto: metrics.pendientesMonto,
+      invalidas: metrics.invalidas,
+      cantidad: metrics.cantidad
+    };
+  }
+
+  function isVentaFacturasCuadreBalanced(record) {
+    const cuadre = getVentaFacturasCuadreData(record);
+    return isMoneyDifferenceBalanced(cuadre.diferenciaSubtotal)
+      && isMoneyDifferenceBalanced(cuadre.diferenciaDescuento)
+      && isMoneyDifferenceBalanced(cuadre.diferenciaTotal);
+  }
+
+  function getVentaFacturasCuadreStatusText(cuadre, facturas = []) {
+    const list = normalizeFacturasVentaList(facturas);
+    if (!list.length) return 'Sin facturas';
+    if (cuadre.invalidas) return 'Revisar descuentos';
+    if (cuadre.pendientesMonto) return 'Facturas pendientes de completar monto';
+    if (isMoneyDifferenceBalanced(cuadre.diferenciaSubtotal) && isMoneyDifferenceBalanced(cuadre.diferenciaDescuento) && isMoneyDifferenceBalanced(cuadre.diferenciaTotal)) return 'Cuadrado';
+    return 'Descuadrado';
   }
 
   function renderFacturasVentaEditorList(facturas) {
@@ -16842,7 +17801,10 @@ Notas importantes:
     return `
       <div class="facturas-display-list">
         ${list.map((factura) => `
-          <span class="factura-chip"><strong>${escapeHtml(factura.numero)}</strong></span>
+          <span class="factura-chip ${factura.pendienteMonto ? 'is-pending' : ''}">
+            <strong>${escapeHtml(factura.numero)}</strong>
+            <small>${factura.pendienteMonto ? 'monto pendiente' : escapeHtml(formatMoney(factura.total))}</small>
+          </span>
         `).join('')}
       </div>
     `;
@@ -17204,7 +18166,7 @@ Notas importantes:
             <strong>Ajustes:</strong>
             ${ajustes.map((ajuste) => `
               <span class="ajuste-chip ${ajuste.activo ? '' : 'is-inactive'}">
-                ${escapeHtml(formatDate(ajuste.fecha))} — ${escapeHtml(ajuste.tipo)} — ${ajuste.activo ? '-' : ''}${escapeHtml(formatMoney(ajuste.monto))}${ajuste.observacion ? ` — ${escapeHtml(ajuste.observacion)}` : ''}
+                ${escapeHtml(formatDate(ajuste.fecha))} — ${escapeHtml(ajuste.tipo)} — ${ajuste.activo ? '-' : ''}${escapeHtml(formatMoney(ajuste.monto))} — ${escapeHtml(formatAjusteFacturaLabel(ajuste))}${ajuste.observacion ? ` — ${escapeHtml(ajuste.observacion)}` : ''}
                 ${ajuste.activo && canCurrentRole('annulMovements') ? `<button type="button" class="mini-inline-action" data-ajuste-venta-delete="${escapeHtml(record.id)}" data-ajuste-id="${escapeHtml(ajuste.id)}">Eliminar</button>` : ''}
               </span>
             `).join('')}
@@ -17216,7 +18178,7 @@ Notas importantes:
 
   function formatVentaAjustesExport(ajustesSource) {
     const ajustes = normalizeVentaAjustesList(ajustesSource).filter((ajuste) => ajuste.activo);
-    return ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`).join(' | ');
+    return ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)} · ${formatAjusteFacturaLabel(ajuste)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`).join(' | ');
   }
 
   function getVentasOrdenadas(options = {}) {
@@ -17328,7 +18290,7 @@ Notas importantes:
     };
   }
 
-  function validateVentaRecord(record) {
+  function validateVentaRecord(record, existingRecord = null) {
     if (!record.numeroDocumento) return 'El número OC es obligatorio.';
     if (!record.clienteId || !getActiveCatalogRecords('clientes').some((cliente) => cliente.id === record.clienteId)) return 'Selecciona un cliente activo desde Catálogos.';
     if (!record.sucursalId || !getActiveCatalogRecords('sucursales').some((sucursal) => sucursal.id === record.sucursalId)) return 'Selecciona una sucursal activa desde Catálogos.';
@@ -17347,7 +18309,46 @@ Notas importantes:
     if (record.ventaNetaOriginal < 0) return 'El Total no puede ser negativo. Revisa Subtotal y Descuento.';
     if (record.descuento > record.subtotal) return 'Descuento no puede superar el Subtotal.';
     if (record.totalCobrado > record.ventaNetaAjustada) return 'El total ajustado no puede quedar menor que el total ya cobrado.';
+
+    const facturas = normalizeFacturasVentaList(record.facturas);
+    const existingFacturas = normalizeFacturasVentaList(existingRecord?.facturas || []);
+    const legacyPendingUntouched = Boolean(existingRecord)
+      && existingFacturas.length > 0
+      && existingFacturas.every((factura) => factura.pendienteMonto)
+      && facturas.length > 0
+      && facturas.every((factura) => factura.pendienteMonto);
+
+    if (!facturas.length) return 'Ingresa al menos una factura para cuadrar la OC.';
+    if (facturas.some((factura) => !factura.numero)) return 'Cada factura debe tener número.';
+    if (facturas.some((factura) => isFacturaVentaInvalid(factura))) return 'Revisa facturas: subtotal y descuento deben ser positivos, y descuento no puede superar subtotal.';
+    if (facturas.some((factura) => factura.pendienteMonto)) {
+      if (legacyPendingUntouched) return '';
+      return 'Completa Subtotal y Descuento de todas las facturas para validar el cuadre.';
+    }
+    if (!isVentaFacturasCuadreBalanced(record)) return 'Las facturas no cuadran con la OC. Revisa subtotal, descuento y total.';
     return '';
+  }
+
+  function readVentaFacturaRow(row) {
+    const numero = cleanFacturaVentaNumero(row?.querySelector?.('[data-factura-numero]')?.value || '');
+    const subtotalInfo = getFacturaMoneyInputInfo(row?.querySelector?.('[data-factura-subtotal]')?.value || '');
+    const descuentoInfo = getFacturaMoneyInputInfo(row?.querySelector?.('[data-factura-descuento]')?.value || '');
+    if (!numero && !subtotalInfo.hasValue && !descuentoInfo.hasValue) return null;
+    const payload = {
+      id: cleanText(row?.dataset?.facturaId) || generateId('factura'),
+      numero,
+      pendienteMonto: !(subtotalInfo.hasValue || descuentoInfo.hasValue)
+    };
+    if (subtotalInfo.hasValue) payload.subtotal = subtotalInfo.value;
+    if (descuentoInfo.hasValue) payload.descuento = descuentoInfo.value;
+    if (subtotalInfo.invalid || descuentoInfo.invalid) payload.invalida = true;
+    return normalizeFacturaVentaRecord(payload);
+  }
+
+  function readVentaFacturaRowsFromBlock(block) {
+    const rows = Array.from(block?.querySelectorAll?.('[data-factura-row]') || []);
+    if (!rows.length) return [];
+    return normalizeFacturasVentaList(rows.map((row) => readVentaFacturaRow(row)).filter(Boolean));
   }
 
   function syncFacturaRowsToHidden(form) {
@@ -17355,14 +18356,26 @@ Notas importantes:
     if (!block) return [];
     const hidden = block.querySelector('[data-facturas-json]');
     const massInput = block.querySelector('[data-facturas-mass]');
-    const source = massInput ? massInput.value : (hidden?.value || '');
-    const list = normalizeFacturasVentaList(source);
+    const existing = normalizeFacturasVentaList(hidden?.value || []);
+    const rowList = readVentaFacturaRowsFromBlock(block);
+    const hasEditor = Boolean(block.querySelector('[data-facturas-rows]'));
+    const typed = hasEditor ? rowList : (massInput ? normalizeFacturasVentaList(massInput.value) : existing);
+    const list = mergeFacturasVentaWithExisting(typed, existing);
     if (hidden) hidden.value = JSON.stringify(list);
     return list;
   }
 
   function validatePendingFacturaInputs(form) {
-    syncFacturaRowsToHidden(form);
+    const facturas = syncFacturaRowsToHidden(form);
+    const rows = Array.from(form?.querySelectorAll?.('[data-factura-row]') || []);
+    const incomplete = rows.some((row) => {
+      const numero = cleanFacturaVentaNumero(row.querySelector('[data-factura-numero]')?.value || '');
+      const subtotal = getFacturaMoneyInputInfo(row.querySelector('[data-factura-subtotal]')?.value || '');
+      const descuento = getFacturaMoneyInputInfo(row.querySelector('[data-factura-descuento]')?.value || '');
+      return (subtotal.hasValue || descuento.hasValue) && !numero;
+    });
+    if (incomplete) return 'Hay una fila de factura con monto pero sin número.';
+    if (facturas.some((factura) => isFacturaVentaInvalid(factura))) return 'Revisa facturas: descuento no puede superar subtotal y los montos no pueden ser negativos.';
     return '';
   }
 
@@ -17415,18 +18428,32 @@ Notas importantes:
     ventasState.selectedAjusteVentaId = '';
   }
 
-  function buildVentaAjusteFromForm(form) {
+  function buildVentaAjusteFromForm(form, ventaRecord = null) {
     const formData = new FormData(form);
+    const facturaSelection = decodeAjusteFacturaOptionValue(formData.get('facturaAfectada'));
+    const facturaMatch = ventaRecord
+      ? findAjusteFacturaInList(ventaRecord.facturas, { facturaAfectadaId: facturaSelection.id, facturaAfectadaNumero: facturaSelection.numero }, normalizeFacturasVentaList)
+      : null;
     return normalizeVentaAjusteRecord({
       id: generateId('ajusteCliente'),
       fecha: toDateInputValue(formData.get('fecha')),
       tipo: cleanText(formData.get('tipo')),
       monto: parseMoney(formData.get('monto')),
       observacion: cleanText(formData.get('observacion')),
+      facturaAfectadaId: cleanText(facturaMatch?.id || facturaSelection.id),
+      facturaAfectadaNumero: cleanFacturaVentaNumero(facturaMatch?.numero || facturaSelection.numero),
       activo: true,
       createdAt: nowIso(),
       updatedAt: nowIso()
     });
+  }
+
+  function validateAjusteFacturaReferencia(facturas, ajuste, normalizer, parentLabel) {
+    if (!hasAjusteFacturaSnapshot(ajuste)) return '';
+    const list = normalizer(facturas);
+    if (!list.length) return `${parentLabel} no tiene facturas registradas; usa ajuste general al documento madre.`;
+    if (!findAjusteFacturaInList(list, ajuste, normalizer)) return `La factura afectada seleccionada no pertenece a ${parentLabel}.`;
+    return '';
   }
 
   function validateVentaAjusteRecord(venta, ajuste, clienteId) {
@@ -17436,6 +18463,8 @@ Notas importantes:
     if (!VENTA_AJUSTE_TYPES.includes(ajuste.tipo)) return 'Selecciona un tipo de ajuste válido.';
     if (Number.isNaN(parseMoney(ajuste.monto)) || ajuste.monto <= 0) return 'El monto del ajuste debe ser mayor que cero.';
     if (ajuste.monto > venta.saldoPorCobrar) return `El ajuste no puede superar el saldo lógico disponible de ${formatMoney(venta.saldoPorCobrar)}. Si ya se cobró de más, registra la corrección fuera de cobros para no crear banco falso.`;
+    const facturaError = validateAjusteFacturaReferencia(venta.facturas, ajuste, normalizeFacturasVentaList, 'esta OC');
+    if (facturaError) return facturaError;
     return '';
   }
 
@@ -17445,7 +18474,7 @@ Notas importantes:
     const clienteId = cleanText(formData.get('clienteId'));
     const ventas = Array.isArray(appData.ventas) ? appData.ventas : [];
     const venta = ventas.map((record) => normalizeVentaRecord(record)).find((record) => record.id === ventaId);
-    const ajuste = buildVentaAjusteFromForm(form);
+    const ajuste = buildVentaAjusteFromForm(form, venta);
     const validationError = validateVentaAjusteRecord(venta, ajuste, clienteId);
 
     if (validationError) {
@@ -17469,18 +18498,23 @@ Notas importantes:
     });
 
     const savedVenta = appData.ventas.find((record) => record.id === ventaId);
+    if (savedVenta) {
+      const facturasSyncResult = syncVentaFacturasToFacturasModulo(savedVenta);
+      registerFacturasSyncSessionChanges(facturasSyncResult, 'editar', 'Ventas / OC');
+    }
     ventasState.selectedAjusteVentaId = ventaId;
     openAccordionGroupForRecord('ventas', savedVenta || venta);
-    ventasState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${venta.numeroDocumento}. Saldo recalculado sin crear cobro.`;
+    ventasState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${venta.numeroDocumento} (${getAjusteFacturaActivityPart(ajuste)}). Saldo recalculado sin crear cobro.`;
     ventasState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Ventas / OC', operation: 'editar', recordId: ventaId, relatedId: ajuste.id });
     registerActivity({
       module: 'Ventas / OC',
       action: 'Ajuste registrado',
       entityType: 'Ajuste cliente',
       entityRef: venta.numeroDocumento,
       amount: ajuste.monto,
-      detail: buildActivityDetail(['Ajuste cliente registrado', venta.numeroDocumento, ajuste.tipo, formatMoney(ajuste.monto)]),
+      detail: buildActivityDetail(['Ajuste cliente registrado', venta.numeroDocumento, getAjusteFacturaActivityPart(ajuste), ajuste.tipo, formatMoney(ajuste.monto)]),
       source: 'local'
     });
     renderRoute();
@@ -17521,17 +18555,23 @@ Notas importantes:
     });
 
     const savedVenta = appData.ventas.find((record) => record.id === ventaId);
+    if (savedVenta) {
+      const facturasSyncResult = syncVentaFacturasToFacturasModulo(savedVenta);
+      registerFacturasSyncSessionChanges(facturasSyncResult, 'editar', 'Ventas / OC');
+    }
     ventasState.selectedAjusteVentaId = ventaId;
     openAccordionGroupForRecord('ventas', savedVenta || venta);
     ventasState.message = `Ajuste eliminado de ${venta.numeroDocumento}. Saldo recalculado.`;
     ventasState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Ventas / OC', operation: 'editar', recordId: ventaId, relatedId: ajusteId });
     renderRoute();
   }
 
   function setupVentaAjusteForm(form) {
     const clientSelect = form.querySelector('[data-ajuste-client]');
     const ventaSelect = form.querySelector('[data-ajuste-venta]');
+    const facturaSelect = form.querySelector('[data-ajuste-venta-factura]');
     const preview = form.querySelector('[data-ajuste-venta-preview]');
     if (!clientSelect || !ventaSelect) return;
 
@@ -17540,6 +18580,7 @@ Notas importantes:
       const ventas = Array.isArray(appData.ventas) ? appData.ventas : [];
       const venta = ventas.map((record) => normalizeVentaRecord(record)).find((record) => record.id === ventaId);
       if (preview && venta) preview.innerHTML = renderVentaAjustePreview(venta);
+      syncAjusteFacturaSelectOptions(facturaSelect, venta?.facturas || [], normalizeFacturasVentaList);
       ventasState.selectedAjusteVentaId = ventaId;
     };
 
@@ -17581,7 +18622,7 @@ Notas importantes:
       return;
     }
     const newRecord = buildVentaFromForm(form, existingRecord);
-    const validationError = validateVentaRecord(newRecord);
+    const validationError = validateVentaRecord(newRecord, existingRecord);
 
     if (validationError) {
       ventasState.quickCapture = existingRecord ? null : buildVentaDraftFromForm(form);
@@ -17604,10 +18645,12 @@ Notas importantes:
     }
 
     const autoGastoResult = syncAutoGastoLogisticaVenta(newRecord);
+    registerAutoGastoSessionChange(autoGastoResult);
     const autoGastoMessage = getAutoGastoLogisticaVentaResultMessage(autoGastoResult);
     if (autoGastoMessage) ventasState.message = `${ventasState.message} ${autoGastoMessage}`;
 
     const facturasSyncResult = syncVentaFacturasToFacturasModulo(newRecord);
+    registerFacturasSyncSessionChanges(facturasSyncResult, existingRecord ? 'editar' : 'crear', 'Ventas / OC');
     const facturasSyncMessage = formatVentaFacturasSyncMessage(facturasSyncResult);
     if (facturasSyncMessage) ventasState.message = `${ventasState.message} ${facturasSyncMessage}`;
 
@@ -17616,6 +18659,7 @@ Notas importantes:
     openAccordionGroupForRecord('ventas', savedRecord);
     ventasState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Ventas / OC', operation: existingRecord ? 'editar' : 'crear', recordId: newRecord.id });
     registerActivity({
       module: 'Ventas / OC',
       action: existingRecord ? 'Editado' : 'Creado',
@@ -17658,6 +18702,7 @@ Notas importantes:
 
     const toggledRecord = appData.ventas.find((item) => item.id === recordId);
     const autoGastoResult = toggledRecord ? syncAutoGastoLogisticaVenta(toggledRecord) : null;
+    registerAutoGastoSessionChange(autoGastoResult);
     const autoGastoMessage = getAutoGastoLogisticaVentaResultMessage(autoGastoResult);
 
     ventasState.editingId = null;
@@ -17665,6 +18710,7 @@ Notas importantes:
     ventasState.message = `OC ${record.numeroDocumento || ''} quedó ${shouldActivate ? 'reactivada' : 'anulada'}.${autoGastoMessage ? ` ${autoGastoMessage}` : ''}`;
     ventasState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Ventas / OC', operation: shouldActivate ? 'editar' : 'anular', recordId });
     renderRoute();
   }
 
@@ -17699,11 +18745,11 @@ Notas importantes:
     const block = form.querySelector('[data-facturas-block]');
     if (!block) return;
     const hidden = block.querySelector('[data-facturas-json]');
-    const massInput = block.querySelector('[data-facturas-mass]');
+    const rowsNode = block.querySelector('[data-facturas-rows]');
+    const addButton = block.querySelector('[data-factura-add]');
     const countNode = block.querySelector('[data-facturas-count]');
-    const previewNode = block.querySelector('[data-facturas-preview]');
     const messageNode = block.querySelector('[data-factura-message]');
-    if (!massInput) return;
+    if (!rowsNode) return;
 
     const showMessage = (message, isError = false) => {
       if (!messageNode) return;
@@ -17711,27 +18757,104 @@ Notas importantes:
       messageNode.classList.toggle('is-error', Boolean(isError));
     };
 
+    const createRow = (factura = {}) => {
+      const temp = document.createElement('div');
+      temp.innerHTML = renderVentaFacturaEditorRow(factura).trim();
+      const row = temp.firstElementChild;
+      rowsNode.appendChild(row);
+      bindRow(row);
+      return row;
+    };
+
+    const updateRow = (row) => {
+      const subtotalInfo = getFacturaMoneyInputInfo(row.querySelector('[data-factura-subtotal]')?.value || '');
+      const descuentoInfo = getFacturaMoneyInputInfo(row.querySelector('[data-factura-descuento]')?.value || '');
+      const totalInput = row.querySelector('[data-factura-total]');
+      const hasAmounts = subtotalInfo.hasValue || descuentoInfo.hasValue;
+      const subtotal = subtotalInfo.hasValue && !Number.isNaN(subtotalInfo.value) ? subtotalInfo.value : 0;
+      const descuento = descuentoInfo.hasValue && !Number.isNaN(descuentoInfo.value) ? descuentoInfo.value : 0;
+      const total = roundMoney(subtotal - descuento);
+      if (totalInput) totalInput.value = hasAmounts ? formatNumberInput(total) : '';
+      const invalid = subtotalInfo.invalid || descuentoInfo.invalid || (hasAmounts && (descuento > subtotal || total < 0));
+      row.classList.toggle('is-invalid', invalid);
+      row.classList.toggle('is-pending', !hasAmounts);
+    };
+
+    const updateCuadre = (list) => {
+      const formData = new FormData(form);
+      const record = {
+        subtotal: formData.get('subtotal') ?? formData.get('montoOc'),
+        montoOc: formData.get('subtotal') ?? formData.get('montoOc'),
+        descuento: formData.get('descuento'),
+        facturas: list
+      };
+      const cuadre = getVentaFacturasCuadreData(record);
+      const updates = [
+        ['[data-facturas-oc-subtotal]', formatMoney(cuadre.subtotalOc), false, 0],
+        ['[data-facturas-sum-subtotal]', formatMoney(cuadre.subtotalFacturas), false, 0],
+        ['[data-facturas-diff-subtotal]', formatMoneyDifference(cuadre.diferenciaSubtotal), true, cuadre.diferenciaSubtotal],
+        ['[data-facturas-oc-descuento]', formatMoney(cuadre.descuentoOc), false, 0],
+        ['[data-facturas-sum-descuento]', formatMoney(cuadre.descuentoFacturas), false, 0],
+        ['[data-facturas-diff-descuento]', formatMoneyDifference(cuadre.diferenciaDescuento), true, cuadre.diferenciaDescuento],
+        ['[data-facturas-oc-total]', formatMoney(cuadre.totalOc), false, 0],
+        ['[data-facturas-sum-total]', formatMoney(cuadre.totalFacturas), false, 0],
+        ['[data-facturas-diff-total]', formatMoneyDifference(cuadre.diferenciaTotal), true, cuadre.diferenciaTotal]
+      ];
+      updates.forEach(([selector, value, isDiff, diff]) => {
+        const node = block.querySelector(selector);
+        if (!node) return;
+        node.textContent = value;
+        if (isDiff) {
+          node.closest('.facturas-cuadre-item')?.classList.toggle('is-balanced', isMoneyDifferenceBalanced(diff));
+          node.closest('.facturas-cuadre-item')?.classList.toggle('is-unbalanced', !isMoneyDifferenceBalanced(diff));
+        }
+      });
+      const status = block.querySelector('[data-facturas-cuadre-status]');
+      if (status) status.textContent = getVentaFacturasCuadreStatusText(cuadre, list);
+    };
+
     const sync = () => {
-      const list = normalizeFacturasVentaList(massInput.value);
+      Array.from(rowsNode.querySelectorAll('[data-factura-row]')).forEach(updateRow);
+      const list = syncFacturaRowsToHidden(form);
       if (hidden) hidden.value = JSON.stringify(list);
       if (countNode) countNode.textContent = `${list.length} factura${list.length === 1 ? '' : 's'}`;
-      if (previewNode) previewNode.textContent = list.length ? `Facturas detectadas: ${formatFacturasVentaResumen(list)}` : 'Facturas detectadas: ninguna';
+      updateCuadre(list);
       return list;
     };
 
-    const current = normalizeFacturasVentaList(hidden?.value || []);
-    massInput.value = formatFacturasVentaInput(current);
-    sync();
+    function bindRow(row) {
+      row.querySelectorAll('input').forEach((input) => {
+        input.addEventListener('input', () => {
+          sync();
+          showMessage('', false);
+        });
+        input.addEventListener('blur', () => {
+          if (input.matches('[data-factura-subtotal], [data-factura-descuento]')) {
+            const info = getFacturaMoneyInputInfo(input.value);
+            input.value = info.hasValue && !Number.isNaN(info.value) ? formatNumberInput(info.value) : '';
+          }
+          sync();
+        });
+      });
+      row.querySelector('[data-factura-remove]')?.addEventListener('click', () => {
+        row.remove();
+        sync();
+      });
+      updateRow(row);
+    }
 
-    massInput.addEventListener('input', () => {
+    Array.from(rowsNode.querySelectorAll('[data-factura-row]')).forEach(bindRow);
+    addButton?.addEventListener('click', () => {
+      const row = createRow({ id: generateId('factura'), numero: '', pendienteMonto: true });
       sync();
-      showMessage('', false);
+      row.querySelector('[data-factura-numero]')?.focus();
     });
-    massInput.addEventListener('blur', () => {
-      const list = sync();
-      massInput.value = formatFacturasVentaInput(list);
-      sync();
+
+    form.querySelectorAll('[data-venta-calc]').forEach((input) => {
+      input.addEventListener('input', () => sync());
     });
+
+    sync();
   }
 
   function setupVentaLogisticaForm(form) {
@@ -18761,14 +19884,17 @@ Notas importantes:
       appData.cobros = records.map((record) => record.id === existingId ? newRecord : record);
       recalculateVentaById(existingRecord.ventaId);
       recalculateVentaById(newRecord.ventaId);
-      const facturaSyncPrev = existingRecord.ventaId !== newRecord.ventaId ? updateFacturasPagoDocumentalForVenta(existingRecord.ventaId, { cobroId: newRecord.id }) : { updated: 0, reverted: 0 };
+      const facturaSyncPrev = existingRecord.ventaId !== newRecord.ventaId ? updateFacturasPagoDocumentalForVenta(existingRecord.ventaId, { cobroId: newRecord.id }) : { updated: 0, reverted: 0, affectedIds: [] };
+      registerFacturasSyncSessionChanges(facturaSyncPrev, 'editar', 'Cobros');
       const facturaSync = updateFacturasPagoDocumentalForVenta(newRecord.ventaId, { cobroId: newRecord.id });
+      registerFacturasSyncSessionChanges(facturaSync, 'editar', 'Cobros');
       const facturaSyncText = facturaSync.updated ? ` Facturas marcadas Pagada: ${facturaSync.updated}.` : (facturaSync.reverted || facturaSyncPrev.reverted ? ' Facturas auto-pagadas revisadas por cambio de saldo.' : '');
       cobrosState.message = `Cobro actualizado en OC ${newRecord.numeroDocumento}: ${amountSummary}.${facturaSyncText}`;
     } else {
       appData.cobros = [newRecord, ...records];
       recalculateVentaById(newRecord.ventaId);
       const facturaSync = updateFacturasPagoDocumentalForVenta(newRecord.ventaId, { cobroId: newRecord.id });
+      registerFacturasSyncSessionChanges(facturaSync, 'editar', 'Cobros');
       const facturaSyncText = facturaSync.updated ? ` Facturas marcadas Pagada: ${facturaSync.updated}.` : '';
       cobrosState.message = `Cobro aplicado a OC ${newRecord.numeroDocumento}: ${amountSummary}.${facturaSyncText}`;
     }
@@ -18780,6 +19906,11 @@ Notas importantes:
     cobrosState.editingId = null;
     cobrosState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Cobros', operation: existingRecord ? 'editar' : 'crear', recordId: newRecord.id });
+    registerSessionChange({ module: 'Ventas / OC', operation: 'editar', recordId: newRecord.ventaId, sourceModule: 'Cobros' });
+    if (existingRecord && existingRecord.ventaId !== newRecord.ventaId) {
+      registerSessionChange({ module: 'Ventas / OC', operation: 'editar', recordId: existingRecord.ventaId, sourceModule: 'Cobros' });
+    }
     registerActivity({
       module: 'Cobros',
       action: existingRecord ? 'Editado' : 'Creado',
@@ -18839,11 +19970,14 @@ Notas importantes:
       : record);
     recalculateVentaById(cobro.ventaId);
     const facturaSync = updateFacturasPagoDocumentalForVenta(cobro.ventaId, { cobroId: cobro.id });
+    registerFacturasSyncSessionChanges(facturaSync, 'editar', 'Cobros');
     cobrosState.selectedVentaId = cobro.ventaId;
     cobrosState.focusVentaId = cobro.ventaId;
     cobrosState.message = `Cobro de ${formatMoney(cobro.montoCobrado)} anulado y OC recalculada.${facturaSync.reverted ? ` Facturas auto-pagadas revertidas: ${facturaSync.reverted}.` : ''}`;
     cobrosState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Cobros', operation: 'anular', recordId: cobroId });
+    registerSessionChange({ module: 'Ventas / OC', operation: 'editar', recordId: cobro.ventaId, sourceModule: 'Cobros' });
     renderRoute();
   }
 
@@ -19028,36 +20162,34 @@ Notas importantes:
           <article class="metric-card"><span>Anuladas</span><strong>${totals.anuladas}</strong></article>
         </section>
 
-        <div class="compras-layout">
-          <div class="compras-form-stack">
-            <article class="panel-card compra-form-card">
-              <div class="section-title-row">
-                <div>
-                  <span class="eyebrow mini">Nueva deuda</span>
-                  <h2>Crear compra / deuda</h2>
-                </div>
+        <div class="compras-layout operational-fullwidth-stack">
+          <article class="panel-card compra-form-card">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Nueva deuda</span>
+                <h2>Crear compra</h2>
               </div>
-              <p class="muted-text">Los pagos a proveedor se registran en su propio módulo; aquí queda la deuda/factura base con su saldo actualizado.</p>
-              ${renderCompraProveedorForm(null, proveedoresActivos, missingProviders, proveedoresState.quickCapture)}
-            </article>
+            </div>
+            <p class="muted-text">Los pagos a proveedor se registran en su propio módulo; aquí queda la deuda/factura base con su saldo actualizado.</p>
+            ${renderCompraProveedorForm(null, proveedoresActivos, missingProviders, proveedoresState.quickCapture)}
+          </article>
 
-            <article class="panel-card compra-ajuste-card">
-              <div class="section-title-row">
-                <div>
-                  <span class="eyebrow mini">Ajustes / notas</span>
-                  <h2>Registrar ajuste</h2>
-                </div>
+          <article class="panel-card compra-ajuste-card">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow mini">Ajustes / notas</span>
+                <h2>Ajuste</h2>
               </div>
-              <p class="muted-text">Reduce el saldo de una factura existente sin crear pago, caja ni banco. Aquí se descuenta el faltante; el dinero no se teletransporta.</p>
-              ${renderProveedorAjusteForm(comprasAjustables)}
-            </article>
-          </div>
+            </div>
+            <p class="muted-text">Reduce el saldo de una factura existente sin crear pago, caja ni banco. Aquí se descuenta el faltante; el dinero no se teletransporta.</p>
+            ${renderProveedorAjusteForm(comprasAjustables)}
+          </article>
 
           <article class="panel-card compra-list-card">
             <div class="section-title-row">
               <div>
                 <span class="eyebrow mini">Listado</span>
-                <h2>Compras / deudas registradas</h2>
+                <h2>Compras registradas</h2>
               </div>
               <div class="count-pill">${compras.length} registros</div>
             </div>
@@ -19133,6 +20265,13 @@ Notas importantes:
             <span>Monto ajuste C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
             <input type="number" name="monto" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-ajuste-monto />
           </label>
+          <label class="form-field">
+            <span>Factura afectada</span>
+            <select name="facturaAfectada" data-ajuste-proveedor-factura>
+              ${renderAjusteFacturaOptions(selectedCompra?.facturasRelacionadas || [], '', normalizeFacturasProveedorList)}
+            </select>
+            <small>Opcional: si no aplica, queda como ajuste general de la compra.</small>
+          </label>
         </div>
         <div class="formula-card ajuste-preview" aria-live="polite" data-ajuste-preview>
           ${renderAjustePreview(selectedCompra)}
@@ -19176,15 +20315,17 @@ Notas importantes:
     const fechaVencimiento = isContado
       ? fechaCompra
       : (record?.fechaVencimiento || toDateInputValue(draft.fechaVencimiento) || addDaysToDate(fechaCompra, Number(diasCredito) || 0) || fechaCompra);
-    const previewSource = record || { totalCompra: draft.totalCompra || 0, totalPagado: 0 };
-    const calculations = getCompraProveedorCalculations(previewSource);
-    const facturaReferencia = record?.facturaReferencia || cleanText(draft.facturaReferencia);
-    const totalCompraValue = record ? record.totalCompra : draft.totalCompra;
     const facturasSource = record || draft;
+    const facturasProveedorPreview = normalizeFacturasProveedorList(facturasSource?.facturasRelacionadas || []);
+    const hasFacturaMontoPreview = facturasProveedorPreview.some((factura) => !factura.pendienteMonto);
+    const totalCompraValue = hasFacturaMontoPreview ? sumaMontosFacturas(facturasProveedorPreview) : (record ? record.totalCompra : draft.totalCompra);
+    const previewSource = record || { totalCompra: totalCompraValue || 0, totalPagado: 0 };
+    const calculations = getCompraProveedorCalculations({ ...previewSource, totalCompra: totalCompraValue || previewSource.totalCompra || 0 });
+    const facturaReferencia = record?.facturaReferencia || cleanText(draft.facturaReferencia);
     const observacion = record?.observacion || cleanText(draft.observacion);
 
     return `
-      <form class="compra-form" data-compra-form data-current-pagado="${escapeHtml(record?.totalPagado || 0)}" data-current-ajustes="${escapeHtml(JSON.stringify(record?.ajustes || []))}" novalidate>
+      <form class="compra-form" data-compra-form data-current-pagado="${escapeHtml(record?.totalPagado || 0)}" data-current-ajustes="${escapeHtml(JSON.stringify(record?.ajustes || []))}" data-existing-compra="${record ? '1' : '0'}" data-legacy-total-compra="${escapeHtml(record?.totalCompra || 0)}" novalidate>
         <input type="hidden" name="id" value="${escapeHtml(record?.id || '')}" />
         <div class="form-grid">
           <label class="form-field">
@@ -19209,10 +20350,7 @@ Notas importantes:
           </label>
           <label class="form-field compra-total-field">
             <span>Total compra/deuda C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <div class="input-action-row compra-total-action-row">
-              <input type="number" name="totalCompra" value="${escapeHtml(formatNumberInput(totalCompraValue))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-compra-calc data-compra-total-input />
-              <button type="button" class="secondary-action compact" data-compra-calculator-open>Calcular</button>
-            </div>
+            <input type="number" name="totalCompra" value="${escapeHtml(formatNumberInput(totalCompraValue))}" min="0" step="0.01" inputmode="decimal" placeholder="Calculado desde facturas" required readonly data-compra-calc data-compra-total-input />
           </label>
         </div>
 
@@ -19240,7 +20378,6 @@ Notas importantes:
           <button type="submit" class="card-action" ${missingProviders ? 'disabled' : ''}>${record ? 'Guardar cambios' : 'Guardar compra/deuda'}</button>
           <button type="button" class="secondary-action" data-compra-clear>${record ? 'Cancelar' : 'Limpiar'}</button>
         </div>
-        ${renderCompraTotalCalculatorModal()}
       </form>
     `;
   }
@@ -19249,7 +20386,6 @@ Notas importantes:
     const legacyReferencia = cleanText(record?.facturaReferencia);
     const storedFacturas = normalizeFacturasProveedorList(record?.facturasRelacionadas || []);
     const facturas = storedFacturas.length ? storedFacturas : normalizeFacturasProveedorList(legacyReferencia ? legacyReferencia : []);
-    const facturasText = formatFacturasProveedorInput(facturas);
     return `
         <section class="facturas-block facturas-proveedor-block" data-facturas-proveedor-block>
           <input type="hidden" name="facturasRelacionadasJson" data-facturas-proveedor-json value="${escapeHtml(JSON.stringify(facturas))}" />
@@ -19260,48 +20396,47 @@ Notas importantes:
             </div>
             <span class="count-pill" data-facturas-proveedor-count>${facturas.length} factura${facturas.length === 1 ? '' : 's'}</span>
           </div>
-          <p class="muted-text compact-note">Captura una o varias facturas que respaldan esta misma compra/deuda. Son referencia documental: sin monto individual y sin crear pagos.</p>
-          <label class="form-field facturas-mass-field">
-            <span>Números de factura</span>
-            <textarea name="facturasRelacionadasTexto" data-facturas-proveedor-mass rows="3" placeholder="000145, 000146, 000147" autocomplete="off" inputmode="numeric">${escapeHtml(facturasText)}</textarea>
-          </label>
-          <p class="compact-note">Separa varias facturas por espacio, coma, punto, punto y coma o salto de línea. Se conservan ceros iniciales.</p>
+          <p class="muted-text compact-note">Una compra madre puede tener una o varias facturas. La suma de montos calcula el Total compra; no crea pagos ni saldos por factura.</p>
+          <div class="facturas-editor-shell" data-facturas-proveedor-editor-shell>
+            <div class="facturas-grid facturas-proveedor-grid" role="table" aria-label="Facturas relacionadas de proveedor">
+              <div class="facturas-grid-row facturas-grid-head" role="row">
+                <span role="columnheader">Factura</span>
+                <span role="columnheader">Monto</span>
+                <span role="columnheader" class="sr-only">Quitar</span>
+              </div>
+              <div data-facturas-proveedor-rows>
+                ${renderCompraFacturaEditorRows(facturas)}
+              </div>
+              <div class="facturas-grid-row facturas-add-row" role="row">
+                <button type="button" class="factura-add-button" data-factura-proveedor-add aria-label="Agregar factura relacionada">+</button>
+              </div>
+            </div>
+          </div>
           <div class="facturas-preview" data-facturas-proveedor-preview>${facturas.length ? `Facturas detectadas: ${escapeHtml(formatFacturasProveedorResumen(facturas))}` : 'Facturas detectadas: ninguna'}</div>
           <p class="compact-note facturas-message" data-facturas-proveedor-message aria-live="polite"></p>
         </section>
     `;
   }
 
-  function renderCompraTotalCalculatorModal() {
+  function renderCompraFacturaEditorRows(facturas) {
+    const rows = normalizeFacturasProveedorList(facturas);
+    return rows.map((factura, index) => renderCompraFacturaEditorRow(factura, index)).join('');
+  }
+
+  function renderCompraFacturaEditorRow(factura, index = 0) {
+    const normalized = normalizeFacturaProveedorRecord(factura) || { id: generateId('facturaProveedor'), numero: '', monto: 0, pendienteMonto: true };
+    const montoValue = normalized.pendienteMonto && !normalized.monto ? '' : formatNumberInput(normalized.monto);
     return `
-      <div class="modal-backdrop compra-calculator-backdrop is-hidden" data-compra-calculator-modal role="presentation">
-        <section class="edit-modal compra-calculator-modal" role="dialog" aria-modal="true" aria-labelledby="compra-calculator-title">
-          <header class="edit-modal-header">
-            <div>
-              <span class="eyebrow mini">Auxiliar</span>
-              <h2 id="compra-calculator-title">Calculadora de Total compra</h2>
-              <p>Suma montos de facturas y usa el resultado sin guardar la compra todavía.</p>
-            </div>
-            <button type="button" class="modal-close" data-compra-calculator-close aria-label="Cerrar calculadora">×</button>
-          </header>
-          <div class="edit-modal-body compra-calculator-body">
-            <div class="calculator-lines" data-compra-calculator-rows></div>
-            <div class="record-actions calculator-line-actions">
-              <button type="button" class="secondary-action compact" data-compra-calculator-add>Agregar línea</button>
-              <button type="button" class="secondary-action compact" data-compra-calculator-clear>Limpiar</button>
-            </div>
-            <div class="formula-card compra-calculator-total" aria-live="polite">
-              <strong>Total calculado</strong>
-              ${renderFormulaSummaryGrid([
-                ['Suma', formatMoney(0), 'data-compra-calculator-total']
-              ], 'calculator-summary-grid')}
-            </div>
-            <div class="form-actions">
-              <button type="button" class="card-action" data-compra-calculator-use>Usar total</button>
-              <button type="button" class="secondary-action" data-compra-calculator-cancel>Cancelar</button>
-            </div>
-          </div>
-        </section>
+      <div class="facturas-grid-row factura-edit-row ${normalized.pendienteMonto ? 'is-pending' : ''} ${isFacturaProveedorInvalid(normalized) ? 'is-invalid' : ''}" role="row" data-factura-proveedor-row data-factura-id="${escapeHtml(normalized.id)}">
+        <label class="factura-cell factura-number-cell">
+          <span>Factura</span>
+          <input type="text" data-factura-proveedor-numero value="${escapeHtml(normalized.numero || '')}" placeholder="No. factura" autocomplete="off" aria-label="Factura relacionada ${index + 1}" />
+        </label>
+        <label class="factura-cell factura-money-cell">
+          <span>Monto</span>
+          <input type="number" data-factura-proveedor-monto value="${escapeHtml(montoValue)}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" aria-label="Monto factura relacionada ${index + 1}" />
+        </label>
+        <button type="button" class="danger-action compact factura-remove-button" data-factura-proveedor-remove aria-label="Quitar factura relacionada">×</button>
       </div>
     `;
   }
@@ -19461,7 +20596,7 @@ Notas importantes:
             <strong>Ajustes:</strong>
             ${ajustes.map((ajuste) => `
               <span class="ajuste-chip ${ajuste.activo ? '' : 'is-inactive'}">
-                ${escapeHtml(formatDate(ajuste.fecha))} — ${escapeHtml(ajuste.tipo)} — ${ajuste.activo ? '-' : ''}${escapeHtml(formatMoney(ajuste.monto))}${ajuste.observacion ? ` — ${escapeHtml(ajuste.observacion)}` : ''}
+                ${escapeHtml(formatDate(ajuste.fecha))} — ${escapeHtml(ajuste.tipo)} — ${ajuste.activo ? '-' : ''}${escapeHtml(formatMoney(ajuste.monto))} — ${escapeHtml(formatAjusteFacturaLabel(ajuste))}${ajuste.observacion ? ` — ${escapeHtml(ajuste.observacion)}` : ''}
                 ${ajuste.activo && canCurrentRole('annulMovements') ? `<button type="button" class="mini-inline-action" data-ajuste-delete="${escapeHtml(record.id)}" data-ajuste-id="${escapeHtml(ajuste.id)}">Eliminar</button>` : ''}
               </span>
             `).join('')}
@@ -19473,7 +20608,7 @@ Notas importantes:
 
   function formatCompraAjustesExport(ajustesSource) {
     const ajustes = normalizeCompraProveedorAjustesList(ajustesSource).filter((ajuste) => ajuste.activo);
-    return ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`).join(' | ');
+    return ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)} · ${formatAjusteFacturaLabel(ajuste)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`).join(' | ');
   }
 
   function getComprasProveedoresOrdenadas(options = {}) {
@@ -19507,8 +20642,9 @@ Notas importantes:
   }
 
   function buildCompraProveedorFromForm(form, existingRecord) {
-    const formData = new FormData(form);
     const timestamp = nowIso();
+    const facturasRelacionadas = syncCompraFacturasRelacionadasToHidden(form);
+    const formData = new FormData(form);
     const proveedorId = cleanText(formData.get('proveedorId'));
     const proveedor = getCatalogRecordById('proveedores', proveedorId);
     const fechaCompra = toDateInputValue(formData.get('fechaCompra'));
@@ -19524,9 +20660,10 @@ Notas importantes:
     const metodoPagoContado = metodoPagoContadoId ? findPaymentMethodByValue(metodoPagoContadoId) : null;
     const bancoPagoContadoId = isContado ? cleanText(formData.get('bancoPagoContadoId')) : '';
     const bancoPagoContado = bancoPagoContadoId ? getCatalogRecordById('cuentasBancos', bancoPagoContadoId) : null;
-    const totalCompra = parseMoney(formData.get('totalCompra'));
-    const facturasRelacionadas = syncCompraFacturasRelacionadasToHidden(form);
     const facturaReferencia = getCompraProveedorFacturaReferenciaValue(facturasRelacionadas, formData.get('facturaReferencia') || existingRecord?.facturaReferencia || '');
+    const facturasStats = getCompraFacturasMontoStats(facturasRelacionadas);
+    const preserveLegacyTotal = Boolean(existingRecord) && facturasStats.pendientes > 0 && facturasStats.completas === 0;
+    const totalCompra = preserveLegacyTotal ? parseMoney(existingRecord?.totalCompra || 0) : facturasStats.total;
     const manualPagado = existingRecord?.id ? calculateManualPagadoForCompra(existingRecord.id, appData.pagosProveedores) : 0;
     const expectedPagado = isContado ? (Number.isNaN(totalCompra) ? 0 : totalCompra) : manualPagado;
     const base = {
@@ -19586,13 +20723,25 @@ Notas importantes:
 
   function validateCompraProveedorRecord(record, existingRecord = null) {
     if (!record.proveedorId || !getActiveCatalogRecords('proveedores').some((proveedor) => proveedor.id === record.proveedorId)) return 'Selecciona un proveedor activo desde Catálogos.';
-    if (!normalizeFacturasProveedorList(record.facturasRelacionadas).length) return 'Ingresa al menos una factura relacionada.';
+    const facturas = normalizeFacturasProveedorList(record.facturasRelacionadas);
+    const stats = getCompraFacturasMontoStats(facturas);
+    const legacyPendingUntouched = Boolean(existingRecord)
+      && facturas.length > 0
+      && stats.pendientes > 0
+      && stats.completas === 0
+      && parseMoney(existingRecord.totalCompra) > 0;
+    if (!facturas.length) return 'Ingresa al menos una factura relacionada con monto.';
+    if (facturas.some((factura) => !factura.numero)) return 'Cada factura relacionada debe tener número.';
+    if (facturas.some((factura) => isFacturaProveedorInvalid(factura))) return 'Revisa facturas relacionadas: los montos deben ser números positivos o cero.';
+    if (stats.pendientes > 0 && !legacyPendingUntouched) return 'Completa el monto de todas las facturas relacionadas para calcular Total compra.';
+    if (!legacyPendingUntouched && stats.completas < 1) return 'Ingresa al menos una factura relacionada con monto válido.';
     if (!record.fechaCompra) return 'La fecha de compra es obligatoria.';
     if (!record.fechaVencimiento) return 'La fecha de vencimiento es obligatoria.';
     if (Number.isNaN(parsePositiveInteger(record.diasCredito))) return 'Días de crédito debe ser cero o un número entero positivo.';
     if (record.condicionPagoSnapshot === 'Contado' && Number(record.diasCredito) !== 0) return 'En compras de contado, días de crédito debe ser 0.';
     if (record.condicionPagoSnapshot === 'Contado' && record.fechaVencimiento !== record.fechaCompra) return 'En compras de contado, el vencimiento debe ser igual a la fecha de compra.';
     if (Number.isNaN(parseMoney(record.totalCompra)) || record.totalCompra <= 0) return 'Total compra/deuda debe ser un número mayor que cero.';
+    if (!legacyPendingUntouched && !isMoneyDifferenceBalanced(roundMoney(record.totalCompra - stats.total))) return 'Total compra debe coincidir con la suma de facturas relacionadas.';
     if (Number.isNaN(parseMoney(record.totalPagado)) || record.totalPagado < 0) return 'Pagado no puede ser negativo.';
     if (record.saldoPorPagar < 0) return 'El saldo por pagar no puede ser negativo.';
     const contadoError = validateCompraContadoPayment(record, existingRecord);
@@ -19600,14 +20749,60 @@ Notas importantes:
     return '';
   }
 
-  function syncCompraFacturasRelacionadasToHidden(form) {
+  function getCompraFacturasMontoStats(facturas) {
+    return normalizeFacturasProveedorList(facturas).reduce((totals, factura) => {
+      totals.cantidad += 1;
+      totals.total = roundMoney(totals.total + factura.monto);
+      if (factura.pendienteMonto) totals.pendientes += 1;
+      else totals.completas += 1;
+      if (isFacturaProveedorInvalid(factura)) totals.invalidas += 1;
+      return totals;
+    }, { cantidad: 0, total: 0, pendientes: 0, completas: 0, invalidas: 0 });
+  }
+
+  function readCompraFacturaProveedorRow(row) {
+    const numero = cleanFacturaVentaNumero(row?.querySelector?.('[data-factura-proveedor-numero]')?.value || '');
+    const montoInfo = getFacturaMoneyInputInfo(row?.querySelector?.('[data-factura-proveedor-monto]')?.value || '');
+    if (!numero && !montoInfo.hasValue) return null;
+    const payload = {
+      id: cleanText(row?.dataset?.facturaId) || generateId('facturaProveedor'),
+      numero,
+      pendienteMonto: !montoInfo.hasValue
+    };
+    if (montoInfo.hasValue) payload.monto = montoInfo.value;
+    if (montoInfo.invalid) payload.invalida = true;
+    return normalizeFacturaProveedorRecord(payload);
+  }
+
+  function readCompraFacturasProveedorRowsFromBlock(block) {
+    const rows = Array.from(block?.querySelectorAll?.('[data-factura-proveedor-row]') || []);
+    if (!rows.length) return [];
+    return normalizeFacturasProveedorList(rows.map((row) => readCompraFacturaProveedorRow(row)).filter(Boolean));
+  }
+
+  function updateCompraTotalInputFromFacturas(form, facturas = null) {
+    const list = facturas || syncCompraFacturasRelacionadasToHidden(form, { skipTotalUpdate: true });
+    const stats = getCompraFacturasMontoStats(list);
+    const totalInput = form?.querySelector?.('[data-compra-total-input]');
+    const preserveLegacyTotal = form?.dataset?.existingCompra === '1' && stats.pendientes > 0 && stats.completas === 0;
+    const legacyTotal = parseMoney(form?.dataset?.legacyTotalCompra || 0);
+    const total = preserveLegacyTotal ? legacyTotal : stats.total;
+    if (totalInput) totalInput.value = formatNumberInput(total);
+    return total;
+  }
+
+  function syncCompraFacturasRelacionadasToHidden(form, options = {}) {
     const block = form?.querySelector?.('[data-facturas-proveedor-block]');
     if (!block) return [];
     const hidden = block.querySelector('[data-facturas-proveedor-json]');
     const massInput = block.querySelector('[data-facturas-proveedor-mass]');
-    const source = massInput ? massInput.value : (hidden?.value || '');
-    const list = normalizeFacturasProveedorList(source);
+    const existing = normalizeFacturasProveedorList(hidden?.value || []);
+    const rowList = readCompraFacturasProveedorRowsFromBlock(block);
+    const hasEditor = Boolean(block.querySelector('[data-facturas-proveedor-rows]'));
+    const typed = hasEditor ? rowList : (massInput ? normalizeFacturasProveedorList(massInput.value) : existing);
+    const list = mergeFacturasProveedorWithExisting(typed, existing);
     if (hidden) hidden.value = JSON.stringify(list);
+    if (!options.skipTotalUpdate) updateCompraTotalInputFromFacturas(form, list);
     return list;
   }
 
@@ -19619,13 +20814,14 @@ Notas importantes:
     const fechaCompra = toDateInputValue(formData.get('fechaCompra')) || todayInputValue();
     const diasCredito = isContado ? 0 : parsePositiveInteger(formData.get('diasCredito'));
     const facturasRelacionadas = syncCompraFacturasRelacionadasToHidden(form);
+    const totalCompra = updateCompraTotalInputFromFacturas(form, facturasRelacionadas);
     return {
       proveedorId,
       facturaReferencia: getCompraProveedorFacturaReferenciaValue(facturasRelacionadas, formData.get('facturaReferencia')),
       fechaCompra,
       diasCredito: Number.isNaN(diasCredito) ? 0 : diasCredito,
       fechaVencimiento: isContado ? fechaCompra : (toDateInputValue(formData.get('fechaVencimiento')) || addDaysToDate(fechaCompra, Number.isNaN(diasCredito) ? 0 : diasCredito) || fechaCompra),
-      totalCompra: cleanText(formData.get('totalCompra')),
+      totalCompra: formatNumberInput(totalCompra),
       facturasRelacionadas,
       condicionPagoSnapshot: terms.condicionPago,
       metodoPagoContadoId: isContado ? cleanText(formData.get('metodoPagoContadoId')) : '',
@@ -19673,12 +20869,24 @@ Notas importantes:
       proveedoresState.message = `Compra/deuda ${compraRefLabel} actualizada; pago automático anterior quedó anulado.`;
     }
 
+    const facturasSyncResult = syncCompraFacturasToFacturasModulo(newRecord);
+    registerFacturasSyncSessionChanges(facturasSyncResult, existingRecord ? 'editar' : 'crear', 'Proveedores / Compras');
+    const facturasSyncMessage = formatCompraFacturasSyncMessage(facturasSyncResult);
+    if (facturasSyncMessage) proveedoresState.message = `${proveedoresState.message} ${facturasSyncMessage}`;
+
     proveedoresState.editingId = null;
     const savedRecord = appData.comprasProveedores.find((record) => record.id === newRecord.id) || newRecord;
     openAccordionGroupForRecord('compras', savedRecord);
     if (syncResult.pago) openAccordionGroupForRecord('pagos', syncResult.pago);
     proveedoresState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Proveedores / Compras', operation: existingRecord ? 'editar' : 'crear', recordId: newRecord.id });
+    if (syncResult.pago && (syncResult.action === 'created' || syncResult.action === 'updated')) {
+      registerSessionChange({ module: 'Pagos a proveedores', operation: syncResult.action === 'created' ? 'crear' : 'editar', recordId: syncResult.pago.id, sourceModule: 'Proveedores / Compras' });
+    }
+    if (syncResult.pago && syncResult.action === 'annulled') {
+      registerSessionChange({ module: 'Pagos a proveedores', operation: 'anular', recordId: syncResult.pago.id, sourceModule: 'Proveedores / Compras' });
+    }
     registerActivity({
       module: 'Proveedores / Compras',
       action: existingRecord ? 'Editado' : 'Creado',
@@ -19740,6 +20948,13 @@ Notas importantes:
     if (syncResult.action === 'created' || syncResult.action === 'updated') proveedoresState.message += ' Pago automático relacionado sincronizado.';
     proveedoresState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Proveedores / Compras', operation: shouldActivate ? 'editar' : 'anular', recordId });
+    if (syncResult.pago && (syncResult.action === 'created' || syncResult.action === 'updated')) {
+      registerSessionChange({ module: 'Pagos a proveedores', operation: syncResult.action === 'created' ? 'crear' : 'editar', recordId: syncResult.pago.id, sourceModule: 'Proveedores / Compras' });
+    }
+    if (syncResult.pago && syncResult.action === 'annulled') {
+      registerSessionChange({ module: 'Pagos a proveedores', operation: 'anular', recordId: syncResult.pago.id, sourceModule: 'Proveedores / Compras' });
+    }
     renderRoute();
   }
 
@@ -19770,14 +20985,20 @@ Notas importantes:
     renderRoute();
   }
 
-  function buildProveedorAjusteFromForm(form) {
+  function buildProveedorAjusteFromForm(form, compraRecord = null) {
     const formData = new FormData(form);
+    const facturaSelection = decodeAjusteFacturaOptionValue(formData.get('facturaAfectada'));
+    const facturaMatch = compraRecord
+      ? findAjusteFacturaInList(compraRecord.facturasRelacionadas, { facturaAfectadaId: facturaSelection.id, facturaAfectadaNumero: facturaSelection.numero }, normalizeFacturasProveedorList)
+      : null;
     return normalizeCompraProveedorAjusteRecord({
       id: generateId('ajusteProveedor'),
       fecha: toDateInputValue(formData.get('fecha')),
       tipo: cleanText(formData.get('tipo')),
       monto: parseMoney(formData.get('monto')),
       observacion: cleanText(formData.get('observacion')),
+      facturaAfectadaId: cleanText(facturaMatch?.id || facturaSelection.id),
+      facturaAfectadaNumero: cleanFacturaVentaNumero(facturaMatch?.numero || facturaSelection.numero),
       activo: true,
       createdAt: nowIso(),
       updatedAt: nowIso()
@@ -19791,6 +21012,8 @@ Notas importantes:
     if (!COMPRA_AJUSTE_TYPES.includes(ajuste.tipo)) return 'Selecciona un tipo de ajuste válido.';
     if (Number.isNaN(parseMoney(ajuste.monto)) || ajuste.monto <= 0) return 'El monto del ajuste debe ser mayor que cero.';
     if (ajuste.monto > compra.saldoPorPagar) return `El ajuste no puede superar el saldo lógico disponible de ${formatMoney(compra.saldoPorPagar)}. Si ya se pagó de más, registra la corrección fuera de pagos para no crear caja falsa.`;
+    const facturaError = validateAjusteFacturaReferencia(compra.facturasRelacionadas, ajuste, normalizeFacturasProveedorList, 'esta compra');
+    if (facturaError) return facturaError;
     return '';
   }
 
@@ -19800,7 +21023,7 @@ Notas importantes:
     const proveedorId = cleanText(formData.get('proveedorId'));
     const compras = Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [];
     const compra = compras.map((record) => normalizeCompraProveedorRecord(record)).find((record) => record.id === compraProveedorId);
-    const ajuste = buildProveedorAjusteFromForm(form);
+    const ajuste = buildProveedorAjusteFromForm(form, compra);
     const validationError = validateProveedorAjusteRecord(compra, ajuste, proveedorId);
 
     if (validationError) {
@@ -19825,19 +21048,27 @@ Notas importantes:
 
     const savedCompra = appData.comprasProveedores.find((record) => record.id === compraProveedorId);
     const syncResult = savedCompra ? syncAutoPagoCompraContado(savedCompra) : { action: 'none' };
+    if (savedCompra) {
+      const facturasSyncResult = syncCompraFacturasToFacturasModulo(savedCompra);
+      registerFacturasSyncSessionChanges(facturasSyncResult, 'editar', 'Proveedores / Compras');
+    }
     proveedoresState.selectedAjusteCompraId = compraProveedorId;
     openAccordionGroupForRecord('compras', savedCompra || compra);
-    proveedoresState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${compra.facturaReferencia}. Saldo recalculado sin crear pago.`;
+    proveedoresState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${compra.facturaReferencia} (${getAjusteFacturaActivityPart(ajuste)}). Saldo recalculado sin crear pago.`;
     if (syncResult.action === 'updated') proveedoresState.message += ' Pago automático de contado sincronizado defensivamente.';
     proveedoresState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Proveedores / Compras', operation: 'editar', recordId: compraProveedorId, relatedId: ajuste.id });
+    if (syncResult.pago && syncResult.action === 'updated') {
+      registerSessionChange({ module: 'Pagos a proveedores', operation: 'editar', recordId: syncResult.pago.id, sourceModule: 'Proveedores / Compras' });
+    }
     registerActivity({
       module: 'Proveedores / Compras',
       action: 'Ajuste registrado',
       entityType: 'Ajuste proveedor',
       entityRef: compra.facturaReferencia,
       amount: ajuste.monto,
-      detail: buildActivityDetail(['Ajuste proveedor registrado', compra.facturaReferencia, ajuste.tipo, formatMoney(ajuste.monto)]),
+      detail: buildActivityDetail(['Ajuste proveedor registrado', compra.facturaReferencia, getAjusteFacturaActivityPart(ajuste), ajuste.tipo, formatMoney(ajuste.monto)]),
       source: 'local'
     });
     renderRoute();
@@ -19879,17 +21110,23 @@ Notas importantes:
 
     const savedCompra = appData.comprasProveedores.find((record) => record.id === compraProveedorId);
     syncAutoPagoCompraContado(savedCompra || compra);
+    if (savedCompra) {
+      const facturasSyncResult = syncCompraFacturasToFacturasModulo(savedCompra);
+      registerFacturasSyncSessionChanges(facturasSyncResult, 'editar', 'Proveedores / Compras');
+    }
     proveedoresState.selectedAjusteCompraId = compraProveedorId;
     openAccordionGroupForRecord('compras', savedCompra || compra);
     proveedoresState.message = `Ajuste eliminado de ${compra.facturaReferencia}. Saldo recalculado.`;
     proveedoresState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Proveedores / Compras', operation: 'editar', recordId: compraProveedorId, relatedId: ajusteId });
     renderRoute();
   }
 
   function setupProveedorAjusteForm(form) {
     const providerSelect = form.querySelector('[data-ajuste-provider]');
     const compraSelect = form.querySelector('[data-ajuste-compra]');
+    const facturaSelect = form.querySelector('[data-ajuste-proveedor-factura]');
     const preview = form.querySelector('[data-ajuste-preview]');
     if (!providerSelect || !compraSelect) return;
 
@@ -19898,6 +21135,7 @@ Notas importantes:
       const compras = Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [];
       const compra = compras.map((record) => normalizeCompraProveedorRecord(record)).find((record) => record.id === compraId);
       if (preview && compra) preview.innerHTML = renderAjustePreview(compra);
+      syncAjusteFacturaSelectOptions(facturaSelect, compra?.facturasRelacionadas || [], normalizeFacturasProveedorList);
       proveedoresState.selectedAjusteCompraId = compraId;
     };
 
@@ -19930,7 +21168,6 @@ Notas importantes:
     updateCompraProveedorPreviewFromForm(form, false);
     setupCompraContadoPaymentBlock(form);
     setupCompraFacturasRelacionadasForm(form);
-    setupCompraTotalCalculator(form);
 
     form.querySelectorAll('[data-compra-calc]').forEach((input) => {
       input.addEventListener('input', () => updateCompraProveedorPreviewFromForm(form, false));
@@ -19948,12 +21185,12 @@ Notas importantes:
   function setupCompraFacturasRelacionadasForm(form) {
     const block = form.querySelector('[data-facturas-proveedor-block]');
     if (!block) return;
-    const hidden = block.querySelector('[data-facturas-proveedor-json]');
-    const massInput = block.querySelector('[data-facturas-proveedor-mass]');
+    const rowsNode = block.querySelector('[data-facturas-proveedor-rows]');
+    const addButton = block.querySelector('[data-factura-proveedor-add]');
     const countNode = block.querySelector('[data-facturas-proveedor-count]');
     const previewNode = block.querySelector('[data-facturas-proveedor-preview]');
     const messageNode = block.querySelector('[data-facturas-proveedor-message]');
-    if (!massInput) return;
+    if (!rowsNode) return;
 
     const showMessage = (message, isError = false) => {
       if (!messageNode) return;
@@ -19961,129 +21198,63 @@ Notas importantes:
       messageNode.classList.toggle('is-error', Boolean(isError));
     };
 
+    const createRow = (factura = {}) => {
+      const temp = document.createElement('div');
+      temp.innerHTML = renderCompraFacturaEditorRow(factura).trim();
+      const row = temp.firstElementChild;
+      rowsNode.appendChild(row);
+      bindRow(row);
+      return row;
+    };
+
+    const updateRow = (row) => {
+      const montoInfo = getFacturaMoneyInputInfo(row.querySelector('[data-factura-proveedor-monto]')?.value || '');
+      row.classList.toggle('is-invalid', montoInfo.invalid);
+      row.classList.toggle('is-pending', !montoInfo.hasValue);
+    };
+
     const sync = () => {
-      const list = normalizeFacturasProveedorList(massInput.value);
-      if (hidden) hidden.value = JSON.stringify(list);
+      Array.from(rowsNode.querySelectorAll('[data-factura-proveedor-row]')).forEach(updateRow);
+      const list = syncCompraFacturasRelacionadasToHidden(form);
+      const stats = getCompraFacturasMontoStats(list);
       if (countNode) countNode.textContent = `${list.length} factura${list.length === 1 ? '' : 's'}`;
-      if (previewNode) previewNode.textContent = list.length ? `Facturas detectadas: ${formatFacturasProveedorResumen(list)}` : 'Facturas detectadas: ninguna';
+      if (previewNode) {
+        const totalText = stats.completas || stats.pendientes ? ` · Total facturas: ${formatMoney(updateCompraTotalInputFromFacturas(form, list))}` : '';
+        previewNode.textContent = list.length ? `Facturas detectadas: ${formatFacturasProveedorResumen(list)}${totalText}` : 'Facturas detectadas: ninguna';
+      }
+      updateCompraProveedorPreviewFromForm(form, false);
       return list;
     };
 
-    const current = normalizeFacturasProveedorList(hidden?.value || []);
-    massInput.value = formatFacturasProveedorInput(current);
-    sync();
-
-    massInput.addEventListener('input', () => {
-      sync();
-      showMessage('', false);
-    });
-    massInput.addEventListener('blur', () => {
-      const list = sync();
-      massInput.value = formatFacturasProveedorInput(list);
-      sync();
-    });
-  }
-
-  function setupCompraTotalCalculator(form) {
-    const openButton = form.querySelector('[data-compra-calculator-open]');
-    const modal = form.querySelector('[data-compra-calculator-modal]');
-    const rowsNode = form.querySelector('[data-compra-calculator-rows]');
-    const totalNode = form.querySelector('[data-compra-calculator-total]');
-    const totalInput = form.querySelector('[data-compra-total-input]');
-    if (!openButton || !modal || !rowsNode || !totalInput) return;
-
-    const getValues = () => Array.from(rowsNode.querySelectorAll('[data-compra-calculator-input]')).map((input) => input.value);
-
-    const calculateTotal = () => getValues().reduce((sum, value) => {
-      const amount = parseMoney(value);
-      return roundMoney(sum + (Number.isNaN(amount) ? 0 : amount));
-    }, 0);
-
-    const updateTotal = () => {
-      const total = calculateTotal();
-      if (totalNode) totalNode.textContent = formatMoney(total);
-      return total;
-    };
-
-    const renumberRows = () => {
-      rowsNode.querySelectorAll('[data-compra-calculator-row]').forEach((row, index) => {
-        const label = row.querySelector('[data-compra-calculator-label]');
-        if (label) label.textContent = `Monto ${index + 1}`;
-        const removeButton = row.querySelector('[data-compra-calculator-remove]');
-        if (removeButton) removeButton.disabled = rowsNode.querySelectorAll('[data-compra-calculator-row]').length <= 1;
+    function bindRow(row) {
+      row.querySelectorAll('input').forEach((input) => {
+        input.addEventListener('input', () => {
+          sync();
+          showMessage('', false);
+        });
+        input.addEventListener('blur', () => {
+          if (input.matches('[data-factura-proveedor-monto]')) {
+            const info = getFacturaMoneyInputInfo(input.value);
+            input.value = info.hasValue && !Number.isNaN(info.value) ? formatNumberInput(info.value) : '';
+          }
+          sync();
+        });
       });
-    };
-
-    const addRow = (value = '') => {
-      const row = document.createElement('div');
-      row.className = 'calculator-line-row';
-      row.setAttribute('data-compra-calculator-row', '1');
-      row.innerHTML = `
-        <label class="form-field calculator-line-field">
-          <span data-compra-calculator-label>Monto</span>
-          <input type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" data-compra-calculator-input />
-        </label>
-        <button type="button" class="danger-action compact" data-compra-calculator-remove>Quitar</button>
-      `;
-      const input = row.querySelector('[data-compra-calculator-input]');
-      input.value = cleanText(value);
-      input.addEventListener('input', updateTotal);
-      row.querySelector('[data-compra-calculator-remove]')?.addEventListener('click', () => {
-        if (rowsNode.querySelectorAll('[data-compra-calculator-row]').length <= 1) {
-          input.value = '';
-          updateTotal();
-          return;
-        }
+      row.querySelector('[data-factura-proveedor-remove]')?.addEventListener('click', () => {
         row.remove();
-        renumberRows();
-        updateTotal();
+        sync();
       });
-      rowsNode.appendChild(row);
-      renumberRows();
-      updateTotal();
-      return input;
-    };
+      updateRow(row);
+    }
 
-    const resetRows = (values = ['', '']) => {
-      rowsNode.innerHTML = '';
-      const safeValues = Array.isArray(values) && values.length ? values : [''];
-      safeValues.forEach((value) => addRow(value));
-      renumberRows();
-      updateTotal();
-    };
-
-    const closeModal = () => {
-      modal.classList.add('is-hidden');
-    };
-
-    openButton.addEventListener('click', () => {
-      const currentRows = getValues().filter((value) => cleanText(value));
-      resetRows(currentRows.length ? currentRows : ['', '']);
-      modal.classList.remove('is-hidden');
-      rowsNode.querySelector('[data-compra-calculator-input]')?.focus();
+    Array.from(rowsNode.querySelectorAll('[data-factura-proveedor-row]')).forEach(bindRow);
+    addButton?.addEventListener('click', () => {
+      const row = createRow({ id: generateId('facturaProveedor'), numero: '', pendienteMonto: true });
+      sync();
+      row.querySelector('[data-factura-proveedor-numero]')?.focus();
     });
 
-    form.querySelector('[data-compra-calculator-add]')?.addEventListener('click', () => {
-      const input = addRow('');
-      input.focus();
-    });
-
-    form.querySelector('[data-compra-calculator-clear]')?.addEventListener('click', () => resetRows(['', '']));
-    form.querySelector('[data-compra-calculator-cancel]')?.addEventListener('click', closeModal);
-    form.querySelector('[data-compra-calculator-close]')?.addEventListener('click', closeModal);
-    modal.addEventListener('click', (event) => {
-      if (event.target === modal) closeModal();
-    });
-
-    form.querySelector('[data-compra-calculator-use]')?.addEventListener('click', () => {
-      const total = updateTotal();
-      totalInput.value = formatNumberInput(total);
-      totalInput.dispatchEvent(new Event('input', { bubbles: true }));
-      updateCompraProveedorPreviewFromForm(form, false);
-      closeModal();
-    });
-
-    resetRows(['', '']);
+    sync();
   }
 
   function applyCompraPaymentTermsSuggestion(form) {
@@ -20645,6 +21816,11 @@ Notas importantes:
     pagosState.editingId = null;
     pagosState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Pagos a proveedores', operation: existingRecord ? 'editar' : 'crear', recordId: newRecord.id });
+    registerSessionChange({ module: 'Proveedores / Compras', operation: 'editar', recordId: newRecord.compraProveedorId, sourceModule: 'Pagos a proveedores' });
+    if (existingRecord && existingRecord.compraProveedorId !== newRecord.compraProveedorId) {
+      registerSessionChange({ module: 'Proveedores / Compras', operation: 'editar', recordId: existingRecord.compraProveedorId, sourceModule: 'Pagos a proveedores' });
+    }
     registerActivity({
       module: 'Pagos',
       action: existingRecord ? 'Editado' : 'Creado',
@@ -20701,6 +21877,8 @@ Notas importantes:
     pagosState.message = `Pago de ${formatMoney(pago.montoPagado)} anulado y factura/referencia recalculada.`;
     pagosState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Pagos a proveedores', operation: 'anular', recordId: pagoId });
+    registerSessionChange({ module: 'Proveedores / Compras', operation: 'editar', recordId: pago.compraProveedorId, sourceModule: 'Pagos a proveedores' });
     renderRoute();
   }
 
@@ -21057,6 +22235,7 @@ Notas importantes:
     openAccordionGroupForRecord('gastos', newRecord);
     gastosState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Gastos', operation: existingRecord ? 'editar' : 'crear', recordId: newRecord.id });
     registerActivity({
       module: 'Gastos',
       action: existingRecord ? 'Editado' : 'Creado',
@@ -21105,6 +22284,7 @@ Notas importantes:
     gastosState.message = `Gasto de ${formatMoney(record.monto)} anulado. Queda visible y no sumará en reportes futuros.`;
     gastosState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Gastos', operation: 'anular', recordId });
     renderRoute();
   }
 
@@ -21657,6 +22837,7 @@ Notas importantes:
     casaState.editingId = null;
     casaState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Casa', operation: existingRecord ? 'editar' : 'crear', recordId: newRecord.id });
     registerActivity({
       module: 'Casa',
       action: existingRecord ? 'Editado' : 'Creado',
@@ -21689,6 +22870,7 @@ Notas importantes:
     casaState.message = `Gasto Casa eliminado: ${formatMoney(record.monto)}.`;
     casaState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Casa', operation: 'eliminar', recordId });
     renderRoute();
   }
 
@@ -21832,6 +23014,8 @@ Notas importantes:
       message: cloudActive ? 'Firestore está activo como fuente principal. JSON queda como respaldo auxiliar.' : info.message,
       lastCheck: nowIso(),
       lastSyncAt,
+      lastCloudWriteAt: cloudOperationState.lastCloudWriteAt || runtimeStatus.lastCloudWriteAt || '',
+      lastSyncError: cloudOperationState.lastError || runtimeStatus.lastSyncError || '',
       diagnosticsOk: diagnostics?.ok === true,
       localRecords,
       access: authStatus.accessLabel,
@@ -21846,7 +23030,8 @@ Notas importantes:
       projectId: firebaseStatus.projectId || cleanText(getRawKSAFirebaseConfig().projectId),
       sourcePrincipal: cloudActive ? 'Firestore' : 'Local controlado',
       datosMigrados: cloudReady ? 'Sí' : 'No',
-      canRefreshCloud: Boolean(authStatus.authMode === 'firebase' && authStatus.user?.email && cloudReady && !cloudOperationState.isReading)
+      canRefreshCloud: Boolean(authStatus.authMode === 'firebase' && authStatus.user?.email && cloudReady && !cloudOperationState.isReading),
+      sessionChangeCount: getSessionChangePendingCount()
     };
   }
 
@@ -21877,7 +23062,9 @@ Notas importantes:
           <div class="status-item"><strong>Fuente principal</strong><span>${escapeHtml(info.sourcePrincipal || 'Local controlado')}</span></div>
           <div class="status-item"><strong>Datos migrados</strong><span>${escapeHtml(info.datosMigrados || 'No')}</span></div>
           <div class="status-item"><strong>Última sincronización</strong><span>${escapeHtml(info.lastSyncAt ? formatDateTime(info.lastSyncAt) : '—')}</span></div>
-          <div class="status-item"><strong>Cambios de sesión pendientes</strong><span data-session-change-count>${escapeHtml(String(getSessionChangePendingCount()))}</span></div>
+          <div class="status-item"><strong>Última escritura exitosa</strong><span>${escapeHtml(info.lastCloudWriteAt ? formatDateTime(info.lastCloudWriteAt) : '—')}</span></div>
+          <div class="status-item"><strong>Último error</strong><span>${escapeHtml(info.lastSyncError || '—')}</span></div>
+          <div class="status-item"><strong>Cambios de sesión pendientes</strong><span data-session-change-count>${escapeHtml(String(info.sessionChangeCount || 0))}</span><small>Solo cambios hechos después de entrar.</small></div>
           ${Number.isFinite(info.localRecords) ? `<div class="status-item"><strong>Conteos locales</strong><span>${escapeHtml(String(info.localRecords))}</span><small>Solo informativo</small></div>` : ''}
           ${!opts.hideCloudRefresh && info.canRefreshCloud ? '<button type="button" class="secondary-action compact" data-cloud-refresh>Actualizar datos</button>' : ''}
         </div>
@@ -22442,14 +23629,65 @@ Notas importantes:
   }
 
 
-  function renderConfigAccordionItem({ title, eyebrow = 'Configuración', badgeText = '', badgeClass = '', open = false, body = '' } = {}) {
+  function normalizeConfigAccordionKey(key) {
+    return cleanText(key)
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  function getConfigOpenAccordionSet() {
+    if (!Array.isArray(configState.openAccordions)) {
+      configState.openAccordions = [];
+    }
+    const keys = configState.openAccordions
+      .map((key) => normalizeConfigAccordionKey(key))
+      .filter(Boolean);
+    const uniqueKeys = Array.from(new Set(keys));
+    if (uniqueKeys.length !== configState.openAccordions.length) {
+      configState.openAccordions = uniqueKeys;
+    }
+    return new Set(uniqueKeys);
+  }
+
+  function isConfigAccordionOpen(key, fallbackOpen = false) {
+    const cleanKey = normalizeConfigAccordionKey(key);
+    if (!cleanKey) return Boolean(fallbackOpen);
+    const openSet = getConfigOpenAccordionSet();
+    if (Array.isArray(configState.openAccordions)) {
+      return openSet.has(cleanKey);
+    }
+    return Boolean(fallbackOpen);
+  }
+
+  function resetConfigAccordionVisualState() {
+    configState.openAccordions = [];
+  }
+
+  function syncConfigAccordionState(details) {
+    const cleanKey = normalizeConfigAccordionKey(details?.dataset?.configAccordion);
+    if (!cleanKey) return;
+    const openSet = getConfigOpenAccordionSet();
+    if (details.open) {
+      openSet.add(cleanKey);
+    } else {
+      openSet.delete(cleanKey);
+    }
+    configState.openAccordions = Array.from(openSet);
+  }
+
+  function renderConfigAccordionItem({ key = '', title, eyebrow = 'Configuración', badgeText = '', badgeClass = '', open = false, body = '' } = {}) {
     const safeTitle = escapeHtml(title || 'Módulo');
     const safeEyebrow = escapeHtml(eyebrow || 'Configuración');
+    const cleanKey = normalizeConfigAccordionKey(key || title || 'modulo');
+    const shouldOpen = isConfigAccordionOpen(cleanKey, open);
     const badge = badgeText
       ? `<span class="entity-accordion-count config-accordion-badge ${escapeHtml(badgeClass || '')}">${escapeHtml(badgeText)}</span>`
       : '';
     return `
-      <details class="config-accordion-item entity-accordion-item" ${open ? 'open' : ''}>
+      <details class="config-accordion-item entity-accordion-item" data-config-accordion="${escapeHtml(cleanKey)}" ${shouldOpen ? 'open' : ''}>
         <summary class="config-accordion-toggle entity-accordion-toggle">
           <span class="config-accordion-chevron entity-accordion-chevron" aria-hidden="true"></span>
           <span class="entity-accordion-name config-accordion-name">
@@ -22479,10 +23717,8 @@ Notas importantes:
     const canImport = canCurrentRole('importJson') && !jsonImportLockedByCloud;
     const canConfig = canCurrentRole('changeConfig');
     const canRefreshData = canCurrentRole('updateData');
-    const topRefreshEnabled = Boolean(dataSyncInfo.canRefreshCloud && canRefreshData && !cloudOperationState.isWriting && !onlineDiagnosticState.isWriting);
-    const topSaveEnabled = Boolean(canRefreshData && !cloudOperationState.isWriting && !onlineDiagnosticState.isWriting);
+    const topRefreshEnabled = Boolean(dataSyncInfo.canRefreshCloud && canRefreshData);
     const lastDataRefreshAt = dataSyncInfo.lastSyncAt || usersStatus.lastSyncAt || '';
-    const sessionPendingChanges = getSessionChangePendingCount();
     const modeOptions = getOperationalRecordCount() > 0
       ? `
         <label class="form-field">
@@ -22649,7 +23885,7 @@ Notas importantes:
               <h2>Datos en línea</h2>
             </div>
             <div class="config-top-actions">
-              <button type="button" class="secondary-action config-top-save" data-cloud-session-save ${topSaveEnabled ? '' : 'disabled'}>Guardar datos</button>
+              <button type="button" class="card-action config-top-save" data-session-save>Guardar datos</button>
               <button type="button" class="card-action config-top-refresh" data-cloud-refresh ${topRefreshEnabled ? '' : 'disabled'}>Actualizar datos</button>
             </div>
           </div>
@@ -22661,9 +23897,9 @@ Notas importantes:
             <div class="status-item"><strong>Usuario actual</strong><span>${escapeHtml(usersStatus.currentUser || '—')}</span></div>
             <div class="status-item"><strong>Rol actual</strong><span>${escapeHtml(usersStatus.currentRole || currentRole.label)}</span></div>
             <div class="status-item"><strong>Última actualización de datos</strong><span>${escapeHtml(lastDataRefreshAt ? formatDateTime(lastDataRefreshAt) : '—')}</span></div>
-            <div class="status-item"><strong>Cambios de sesión pendientes</strong><span data-session-change-count>${escapeHtml(String(sessionPendingChanges))}</span></div>
+            <div class="status-item"><strong>Cambios de sesión pendientes</strong><span data-session-change-count>${escapeHtml(String(getSessionChangePendingCount()))}</span></div>
           </div>
-          <p class="compact-note">Guardar datos sube solo cambios de esta sesión a Firestore. Actualizar datos trae información desde la nube; no importa JSON ni altera consecutivos.</p>
+          <p class="compact-note">Guardar datos sube solo cambios de esta sesión. Actualizar datos refresca desde Firestore cuando la nube está activa.</p>
         </article>
 
         ${configState.message ? `<div class="form-message ${configState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(configState.message)}</div>` : ''}
@@ -22671,11 +23907,12 @@ Notas importantes:
 
         <div class="config-accordion-list entity-accordion-list">
           ${renderConfigAccordionItem({
+            key: CONFIG_ACCORDION_DEFAULT_KEY,
             title: 'Datos y sincronización',
             eyebrow: 'Configuración',
             badgeText: dataSyncInfo.estado,
             badgeClass: dataSyncInfo.badgeClass,
-            open: true,
+            open: false,
             body: `
               ${generalConfigCard}
               ${renderDataSyncStatusCard({ hideCloudRefresh: true })}
@@ -22685,6 +23922,7 @@ Notas importantes:
           })}
 
           ${renderConfigAccordionItem({
+            key: 'usuarios',
             title: 'Usuarios',
             eyebrow: 'Acceso',
             badgeText: usersStatus.currentRole || currentRole.label,
@@ -22693,6 +23931,7 @@ Notas importantes:
           })}
 
           ${renderConfigAccordionItem({
+            key: 'respaldo-json-auxiliar',
             title: 'Respaldo JSON auxiliar',
             eyebrow: 'Respaldo',
             badgeText: jsonAuxInfo.jsonTipo,
@@ -22701,6 +23940,7 @@ Notas importantes:
           })}
 
           ${renderConfigAccordionItem({
+            key: 'importacion-recuperacion',
             title: 'Importación y recuperación',
             eyebrow: 'Herramientas delicadas',
             badgeText: jsonImportLockedByCloud ? 'Bloqueado con nube activa' : 'Validado manual',
@@ -22709,6 +23949,7 @@ Notas importantes:
           })}
 
           ${renderConfigAccordionItem({
+            key: 'sistema-pwa',
             title: 'Sistema / PWA',
             eyebrow: 'Aplicación',
             badgeText: APP_VERSION,
@@ -25074,6 +26315,82 @@ Notas importantes:
     return { name: 'Resumen', rows, cols: [34, 18, 18, 16, 18, 14, 18, 18] };
   }
 
+  function formatVentaAjustesForFactura(venta, factura) {
+    const target = normalizeFacturaVentaRecord(factura) || factura || {};
+    const ajustes = normalizeVentaAjustesList(venta?.ajustes || []).filter((ajuste) => {
+      if (!ajuste.activo || !hasAjusteFacturaSnapshot(ajuste)) return false;
+      const ajusteId = cleanText(ajuste.facturaAfectadaId);
+      const ajusteNo = normalizeFacturaModuloNoKey(ajuste.facturaAfectadaNumero);
+      const targetId = cleanText(target.id);
+      const targetNo = normalizeFacturaModuloNoKey(target.numero || target.no || '');
+      return Boolean((targetId && ajusteId && targetId === ajusteId) || (targetNo && ajusteNo && targetNo === ajusteNo));
+    });
+    return ajustes.length ? ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)}`).join(' | ') : '';
+  }
+
+  function formatCompraAjustesForFactura(compra, factura) {
+    const target = normalizeFacturaProveedorRecord(factura) || factura || {};
+    const ajustes = normalizeCompraProveedorAjustesList(compra?.ajustes || []).filter((ajuste) => {
+      if (!ajuste.activo || !hasAjusteFacturaSnapshot(ajuste)) return false;
+      const ajusteId = cleanText(ajuste.facturaAfectadaId);
+      const ajusteNo = normalizeFacturaModuloNoKey(ajuste.facturaAfectadaNumero);
+      const targetId = cleanText(target.id);
+      const targetNo = normalizeFacturaModuloNoKey(target.numero || target.no || '');
+      return Boolean((targetId && ajusteId && targetId === ajusteId) || (targetNo && ajusteNo && targetNo === ajusteNo));
+    });
+    return ajustes.length ? ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)}`).join(' | ') : '';
+  }
+
+  function pushVentasFacturasDetalleRows(rows, ventasExport) {
+    rows.push([], [xlsxSubtitle('Detalle de facturas de Ventas / OC')]);
+    rows.push(xlsxHeaderRow(['OC', 'Cliente', 'Factura', 'Subtotal factura', 'Descuento factura', 'Total factura', 'Ajuste ligado', 'Factura afectada en ajustes']));
+    const ventas = Array.isArray(ventasExport) ? ventasExport : [];
+    let added = 0;
+    ventas.forEach((venta) => {
+      const facturas = normalizeFacturasVentaList(venta.facturas);
+      const cliente = getCatalogRecordById('clientes', venta.clienteId);
+      facturas.forEach((factura) => {
+        const ajustes = formatVentaAjustesForFactura(venta, factura);
+        rows.push([
+          xlsxText(venta.numeroDocumento),
+          xlsxText(venta.clienteNombre || cliente?.nombre || ''),
+          xlsxText(factura.numero),
+          xlsxMoney(factura.subtotal || 0),
+          xlsxMoney(factura.descuento || 0),
+          xlsxMoney(factura.total || 0),
+          xlsxText(ajustes || 'No'),
+          xlsxText(ajustes ? factura.numero : '')
+        ]);
+        added += 1;
+      });
+    });
+    if (!added) rows.push([xlsxText('Sin facturas con monto registradas en ventas para este período.')]);
+  }
+
+  function pushProveedoresFacturasDetalleRows(rows, comprasExport) {
+    rows.push([], [xlsxSubtitle('Detalle de facturas de Proveedores / Compras')]);
+    rows.push(xlsxHeaderRow(['Proveedor', 'Compra / referencia', 'Factura', 'Monto factura', 'Ajuste ligado', 'Factura afectada en ajustes']));
+    const compras = Array.isArray(comprasExport) ? comprasExport : [];
+    let added = 0;
+    compras.forEach((compra) => {
+      const facturas = normalizeFacturasProveedorList(compra.facturasRelacionadas);
+      const proveedor = getCatalogRecordById('proveedores', compra.proveedorId);
+      facturas.forEach((factura) => {
+        const ajustes = formatCompraAjustesForFactura(compra, factura);
+        rows.push([
+          xlsxText(compra.proveedorNombre || proveedor?.nombre || ''),
+          xlsxText(compra.facturaReferencia || getCompraProveedorReferenciaCompacta(compra)),
+          xlsxText(factura.numero),
+          xlsxMoney(factura.monto || 0),
+          xlsxText(ajustes || 'No'),
+          xlsxText(ajustes ? factura.numero : '')
+        ]);
+        added += 1;
+      });
+    });
+    if (!added) rows.push([xlsxText('Sin facturas con monto registradas en proveedores para este período.')]);
+  }
+
   function buildVentasSheet(summary) {
     const rows = [
       [xlsxTitle('Ventas / OC')],
@@ -25112,6 +26429,7 @@ Notas importantes:
         xlsxText(venta.observacion)
       ]);
     });
+    pushVentasFacturasDetalleRows(rows, ventasExport);
     return { name: 'Ventas', rows, cols: [14, 16, 24, 24, 18, 30, 14, 20, 16, 16, 16, 18, 14, 14, 14, 14, 16, 16, 16, 12, 14, 38, 32] };
   }
 
@@ -25175,6 +26493,7 @@ Notas importantes:
         xlsxText(compra.observacion)
       ]);
     });
+    pushProveedoresFacturasDetalleRows(rows, comprasExport);
     return { name: 'Proveedores', rows, cols: [16, 28, 22, 16, 18, 14, 18, 16, 16, 12, 14, 38, 34] };
   }
 
@@ -26514,6 +27833,7 @@ ${rowsXml}
     catalogState.editingId = null;
     catalogState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Catálogos', operation: existingRecord ? 'editar' : 'crear', recordId: recordToSave.id, sourceModule: catalog.id });
     renderRoute();
   }
 
@@ -26561,6 +27881,7 @@ ${rowsXml}
       catalogState.message = `${record.nombre} eliminado de Categorías Casa.`;
       catalogState.messageType = 'success';
       saveData(appData);
+      registerSessionChange({ module: 'Catálogos', operation: 'eliminar', recordId, sourceModule: catalog.id });
       renderRoute();
       return;
     }
@@ -26589,6 +27910,7 @@ ${rowsXml}
       : `${record.nombre} quedó ${shouldActivate ? 'activo' : 'inactivo'}.`;
     catalogState.messageType = 'success';
     saveData(appData);
+    registerSessionChange({ module: 'Catálogos', operation: shouldActivate ? 'editar' : 'anular', recordId, sourceModule: catalog.id });
     renderRoute();
   }
 
@@ -26626,6 +27948,7 @@ ${rowsXml}
     else if (id === getGastoModalId()) clearGastoForm();
     else if (id === getCasaModalId()) clearCasaForm();
     else if (id === getFacturasModalId()) clearFacturaForm();
+    else if (id === getFacturasGlobalModalId()) closeFacturasGlobalModal();
     else if (id === getNotasModalId()) {
       notasState.detailType = '';
       notasState.detailId = '';
@@ -26707,6 +28030,32 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-factura-search-clear]').forEach((button) => {
       button.addEventListener('click', clearFacturasSearch);
+    });
+
+    viewRoot.querySelectorAll('[data-factura-global-open]').forEach((button) => {
+      button.addEventListener('click', openFacturasGlobalModal);
+    });
+
+    viewRoot.querySelectorAll('[data-factura-global-page]').forEach((button) => {
+      button.addEventListener('click', () => changeFacturasGlobalPage(button.dataset.facturaGlobalPage));
+    });
+
+    viewRoot.querySelectorAll('[data-factura-global-filters]').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const field = form.querySelector('[data-factura-global-search]');
+        updateFacturasGlobalFilters(form, { focusName: field?.name || '', cursor: field?.selectionStart });
+      });
+      form.querySelectorAll('[data-factura-global-search]').forEach((field) => {
+        field.addEventListener('input', () => updateFacturasGlobalFilters(form, { focusName: field.name, cursor: field.selectionStart }));
+      });
+      form.querySelectorAll('[data-factura-global-filter]').forEach((field) => {
+        field.addEventListener('change', () => updateFacturasGlobalFilters(form));
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-factura-global-clear]').forEach((button) => {
+      button.addEventListener('click', clearFacturasGlobalFilters);
     });
 
     viewRoot.querySelectorAll('[data-factura-page]').forEach((button) => {
@@ -27207,8 +28556,8 @@ ${rowsXml}
       button.addEventListener('click', () => handleCloudOperationActivate(button));
     });
 
-    viewRoot.querySelectorAll('[data-cloud-session-save]').forEach((button) => {
-      button.addEventListener('click', () => handleSessionCloudSave(button));
+    viewRoot.querySelectorAll('[data-session-save]').forEach((button) => {
+      button.addEventListener('click', () => handleSessionSavePreview(button));
     });
 
     viewRoot.querySelectorAll('[data-cloud-refresh]').forEach((button) => {
@@ -27264,12 +28613,24 @@ ${rowsXml}
       button.addEventListener('click', () => resetCloudInitialImportState('Vista de importación inicial limpiada.'));
     });
 
+    viewRoot.querySelectorAll('[data-config-accordion]').forEach((details) => {
+      details.addEventListener('toggle', () => syncConfigAccordionState(details));
+    });
+
     viewRoot.querySelectorAll('[data-pwa-check-update]').forEach((button) => {
-      button.addEventListener('click', checkForPwaUpdate);
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        checkForPwaUpdate();
+      });
     });
 
     viewRoot.querySelectorAll('[data-pwa-apply-update]').forEach((button) => {
-      button.addEventListener('click', applyPwaUpdate);
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        applyPwaUpdate();
+      });
     });
 
     viewRoot.querySelectorAll('[data-json-export]').forEach((button) => {

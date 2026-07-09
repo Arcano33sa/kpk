@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_20_post12_firebaseonline_guardar_sesion_etapa2';
+const CACHE_VERSION = 'v0_18_32_post12_guardar_sesion_etapa2_subida_parcial';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
