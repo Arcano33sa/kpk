@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_34_post12_syncsegura_etapa4_actualizardatosfinal';
+const CACHE_VERSION = 'v0_18_35_post12_syncsegura_ajustefinal_guardardatos';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

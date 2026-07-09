@@ -9353,6 +9353,35 @@ body,
   overflow-wrap: anywhere;
 }
 
+.sync-action-row {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sync-action-row .card-action.compact,
+.sync-action-row .secondary-action.compact {
+  min-height: 38px;
+  padding: 8px 13px;
+  white-space: nowrap;
+}
+
+@media (max-width: 620px) {
+  .sync-action-row {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .sync-action-row .card-action.compact,
+  .sync-action-row .secondary-action.compact {
+    width: 100%;
+  }
+}
+
 .sync-mode-badge {
   display: inline-flex;
   align-items: center;
