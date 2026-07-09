@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_32_post12_guardar_sesion_etapa2_subida_parcial';
+const CACHE_VERSION = 'v0_18_34_post12_casa_credito_etapa2_pendientes';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

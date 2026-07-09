@@ -11279,3 +11279,102 @@ body,
     min-width: 850px;
   }
 }
+
+/* Casa crédito simple — Etapa 2/2: modal Pendientes */
+.casa-list-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.casa-pendientes-open {
+  min-height: 34px;
+  border-radius: 999px;
+  white-space: nowrap;
+  font-weight: 900;
+}
+
+.casa-pendientes-modal {
+  width: min(980px, calc(100vw - clamp(18px, 4vw, 56px)));
+  max-height: min(90vh, 860px);
+  border-radius: 24px;
+}
+
+.casa-pendientes-modal-header p {
+  max-width: 760px;
+}
+
+.casa-pendientes-modal-body {
+  display: grid;
+  gap: 12px;
+}
+
+.casa-pendientes-message {
+  margin: 0;
+}
+
+.casa-pendientes-empty {
+  margin: 0;
+  padding: 16px 14px;
+  border: 1px dashed rgba(148, 163, 184, 0.28);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.028);
+}
+
+.casa-pendientes-table-wrap {
+  max-height: min(56vh, 560px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-radius: 16px;
+}
+
+.casa-pendientes-table {
+  min-width: 760px;
+}
+
+.casa-pendientes-table :where(th, td) {
+  white-space: nowrap;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.casa-pendientes-table td:nth-child(3) span {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.casa-pendiente-status-select {
+  min-height: 34px;
+  width: 100%;
+  max-width: 132px;
+  padding: 7px 10px;
+  border-radius: 12px;
+  font-size: 0.86rem;
+  font-weight: 850;
+}
+
+@media (max-width: 720px) {
+  .casa-list-card .section-title-row {
+    align-items: flex-start;
+  }
+
+  .casa-list-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .casa-pendientes-modal {
+    width: min(100%, calc(100vw - 16px));
+    border-radius: 18px;
+  }
+
+  .casa-pendientes-table {
+    min-width: 720px;
+  }
+}

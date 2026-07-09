@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.32-post12-guardar-sesion-etapa2-subida-parcial';
+  const APP_VERSION = '0.18.34-post12-casa-credito-etapa2-pendientes';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1280,6 +1280,7 @@ Notas importantes:
   let casaState = {
     editingId: null,
     openGroupKey: '',
+    pendientesOpen: false,
     month: getCurrentMonthValue(),
     year: getCurrentYearValue(),
     categoriaCasaId: '',
@@ -1476,6 +1477,7 @@ Notas importantes:
     '[data-pago-annul]',
     '[data-gasto-annul]',
     '[data-casa-delete]',
+    '[data-casa-pendientes-open]',
     '[data-bdatos-delete]'
   ].join(',');
 
@@ -4177,6 +4179,9 @@ Notas importantes:
     const timestamp = nowIso();
     const monto = parseMoney(raw.monto || raw.importe || raw.valor);
     const activo = typeof raw.activo === 'boolean' ? raw.activo : raw.estado !== 'Eliminado';
+    const metodoPagoId = cleanText(raw.metodoPagoId);
+    const metodoPagoNombre = cleanText(raw.metodoPagoNombre || raw.metodoPago || raw.metodo);
+    const isCredit = isCasaCreditPaymentMethod(metodoPagoId || metodoPagoNombre);
     return {
       id: raw.id || generateId('casaGasto'),
       fecha: toDateInputValue(raw.fecha || raw.fechaGasto || '') || todayInputValue(),
@@ -4184,8 +4189,9 @@ Notas importantes:
       categoriaCasaNombre: cleanText(raw.categoriaCasaNombre || raw.categoriaCasa || raw.categoria || raw.tipoCasa),
       descripcion: cleanText(raw.descripcion || raw.detalle || raw.concepto),
       monto: Number.isNaN(monto) ? 0 : monto,
-      metodoPagoId: cleanText(raw.metodoPagoId),
-      metodoPagoNombre: cleanText(raw.metodoPagoNombre || raw.metodoPago || raw.metodo),
+      metodoPagoId,
+      metodoPagoNombre,
+      estadoCreditoCasa: isCredit ? (normalizeCasaCreditStatus(raw.estadoCreditoCasa || raw.casaCreditoEstado || raw.estadoCredito || raw.estadoCasaCredito, 'Pendiente') || 'Pendiente') : '',
       cuentaBancoId: cleanText(raw.cuentaBancoId),
       cuentaBancoNombre: cleanText(raw.cuentaBancoNombre || raw.cuentaBanco || raw.banco || raw.cuenta),
       cuentaBancoTipo: normalizeBankType(raw.cuentaBancoTipo || raw.bancoTipo || raw.tipoBanco || raw.bankType || raw.tipoCuentaBanco),
@@ -9625,6 +9631,23 @@ Notas importantes:
 
   function paymentMethodRequiresBank(value) {
     return Boolean(getBankTypeForPaymentMethod(value));
+  }
+
+  function isCasaCreditPaymentMethod(value) {
+    const method = findPaymentMethodByValue(value);
+    const methodName = cleanText(method?.nombre || value);
+    const key = normalizeKeyForCompare(methodName);
+    return Boolean(key && (key.includes('credito') || key.includes('credit')));
+  }
+
+  function normalizeCasaCreditStatus(value, fallback = '') {
+    const key = normalizeKeyForCompare(value);
+    if (key.includes('pagado') || key.includes('paid')) return 'Pagado';
+    if (key.includes('pendiente') || key.includes('pending')) return 'Pendiente';
+    const fallbackKey = normalizeKeyForCompare(fallback);
+    if (fallbackKey.includes('pagado') || fallbackKey.includes('paid')) return 'Pagado';
+    if (fallbackKey.includes('pendiente') || fallbackKey.includes('pending')) return 'Pendiente';
+    return '';
   }
 
   function getBankEmptyMessage(type) {
@@ -17336,6 +17359,7 @@ Notas importantes:
   function getPagoModalId() { return 'pago'; }
   function getGastoModalId() { return 'gasto'; }
   function getCasaModalId() { return 'casa'; }
+  function getCasaPendientesModalId() { return 'casa-pendientes'; }
   function getFacturasModalId() { return 'factura'; }
   function getFacturasGlobalModalId() { return 'facturas-global'; }
 
@@ -22305,6 +22329,7 @@ Notas importantes:
     const metodosActivos = getActiveCatalogRecords('metodosPago');
     const cuentasActivas = getActiveBankRecords();
     const casaGastos = getCasaGastosFiltrados();
+    const casaPendientes = getCasaCreditoPendientes();
     const allCasaGastos = getCasaGastosOrdenados({ filtered: false });
     const totals = getCasaTotals(casaGastos);
     const utilidadKpkSummary = buildCasaUtilidadKpkSummary();
@@ -22408,7 +22433,10 @@ Notas importantes:
                 <span class="eyebrow mini">Listado</span>
                 <h2>Gastos Casa registrados</h2>
               </div>
-              <div class="count-pill">${casaGastos.length} registros</div>
+              <div class="casa-list-actions">
+                <button type="button" class="secondary-action compact casa-pendientes-open" data-casa-pendientes-open title="Ver gastos Casa pendientes al crédito">Pendientes${casaPendientes.length ? ` · ${casaPendientes.length}` : ''}</button>
+                <div class="count-pill">${casaGastos.length} registros</div>
+              </div>
             </div>
             <label class="form-field search-field">
               <span>Buscar por categoría, descripción, método, banco u observación</span>
@@ -22418,6 +22446,7 @@ Notas importantes:
           </article>
         </div>
         ${editingRecord ? renderEditModal(getCasaModalId(), 'Editar gasto Casa', 'Corrige este registro sin tocar Gastos productivos ni el Resumen operativo.', renderCasaForm(editingRecord, getSelectableCatalogRecords('categoriasCasa', editingRecord.categoriaCasaId), metodosActivos, cuentasActivas, missingCatalogs)) : ''}
+        ${casaState.pendientesOpen ? renderCasaPendientesModal(casaPendientes) : ''}
       </section>
     `;
   }
@@ -22482,6 +22511,7 @@ Notas importantes:
               ${metodosActivos.map((metodo) => `<option value="${escapeHtml(metodo.id)}" ${metodo.id === record?.metodoPagoId ? 'selected' : ''}>${escapeHtml(metodo.nombre || 'Método sin nombre')}</option>`).join('')}
             </select>
           </label>
+          ${renderCasaCreditStatusField(record, cannotCreate)}
           ${renderPaymentBankField(cuentasActivas, record, cannotCreate, { label: 'Banco / cuenta' })}
         </div>
 
@@ -22496,6 +22526,185 @@ Notas importantes:
         </div>
       </form>
     `;
+  }
+
+  function renderCasaCreditStatusField(record = {}, disabled = false) {
+    const selectedMethod = cleanText(record?.metodoPagoId || record?.metodoPagoNombre);
+    const isCredit = isCasaCreditPaymentMethod(selectedMethod);
+    const selectedStatus = normalizeCasaCreditStatus(record?.estadoCreditoCasa || record?.casaCreditoEstado || record?.estadoCredito || record?.estadoCasaCredito, 'Pendiente') || 'Pendiente';
+    return `
+      <label class="form-field casa-credit-state-field${isCredit ? '' : ' is-hidden'}" data-casa-credit-state-field>
+        <span>Estado crédito Casa <span class="required-dot" data-casa-credit-required-dot aria-label="obligatorio">*</span></span>
+        <select name="estadoCreditoCasa" data-casa-credit-state-select ${isCredit ? 'required' : ''} ${disabled || !isCredit ? 'disabled' : ''}>
+          <option value="Pendiente" ${selectedStatus === 'Pendiente' ? 'selected' : ''}>Pendiente</option>
+          <option value="Pagado" ${selectedStatus === 'Pagado' ? 'selected' : ''}>Pagado</option>
+        </select>
+      </label>
+    `;
+  }
+
+  function setupCasaCreditStateField(form) {
+    const methodSelect = form.querySelector('[data-payment-method-select]');
+    const stateField = form.querySelector('[data-casa-credit-state-field]');
+    const stateSelect = form.querySelector('[data-casa-credit-state-select]');
+    const requiredDot = form.querySelector('[data-casa-credit-required-dot]');
+    if (!methodSelect || !stateField || !stateSelect) return;
+
+    const sync = () => {
+      const isCredit = isCasaCreditPaymentMethod(methodSelect.value);
+      const baseDisabled = methodSelect.disabled;
+      stateField.classList.toggle('is-hidden', !isCredit);
+      stateSelect.required = isCredit;
+      stateSelect.disabled = baseDisabled || !isCredit;
+      requiredDot?.classList.toggle('is-hidden', !isCredit);
+      if (isCredit) {
+        stateSelect.value = normalizeCasaCreditStatus(stateSelect.value, 'Pendiente') || 'Pendiente';
+      } else {
+        stateSelect.value = '';
+      }
+    };
+
+    methodSelect.addEventListener('change', sync);
+    sync();
+  }
+
+  function isCasaCreditoPendiente(record) {
+    const normalized = normalizeCasaGastoRecord(record);
+    if (!normalized.activo) return false;
+    if (!isCasaCreditPaymentMethod(normalized.metodoPagoId || normalized.metodoPagoNombre)) return false;
+    return (normalizeCasaCreditStatus(normalized.estadoCreditoCasa, 'Pendiente') || 'Pendiente') === 'Pendiente';
+  }
+
+  function isCasaGastoVisibleEnCategoria(record) {
+    return !isCasaCreditoPendiente(record);
+  }
+
+  function getCasaCreditoPendientes() {
+    return getCasaGastosOrdenados()
+      .filter((record) => isCasaCreditoPendiente(record));
+  }
+
+  function openCasaPendientesModal() {
+    casaState.pendientesOpen = true;
+    casaState.message = null;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function closeCasaPendientesModal() {
+    casaState.pendientesOpen = false;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function renderCasaPendientesModal(records = getCasaCreditoPendientes()) {
+    const pendientes = Array.isArray(records) ? records.map((record) => normalizeCasaGastoRecord(record)).filter(isCasaCreditoPendiente) : [];
+    const modalId = getCasaPendientesModalId();
+    const messageHtml = casaState.message ? `<div class="form-message ${casaState.messageType === 'error' ? 'is-error' : 'is-success'} casa-pendientes-message" role="status">${escapeHtml(casaState.message)}</div>` : '';
+    return `
+      <div class="modal-backdrop casa-pendientes-backdrop" data-modal-backdrop="${escapeHtml(modalId)}" role="presentation">
+        <section class="edit-modal casa-pendientes-modal" role="dialog" aria-modal="true" aria-labelledby="${escapeHtml(modalId)}-title">
+          <header class="edit-modal-header casa-pendientes-modal-header">
+            <div>
+              <span class="eyebrow mini">Crédito Casa</span>
+              <h2 id="${escapeHtml(modalId)}-title">Pendientes</h2>
+              <p>Gastos Casa con método Crédito y estado Pendiente. Al marcarlos como Pagado pasan a su categoría correspondiente.</p>
+            </div>
+            <button type="button" class="modal-close" data-modal-close="${escapeHtml(modalId)}" aria-label="Cerrar Pendientes">×</button>
+          </header>
+          <div class="edit-modal-body casa-pendientes-modal-body">
+            ${messageHtml}
+            ${pendientes.length ? renderCasaPendientesTable(pendientes) : '<p class="muted-text compact-note casa-pendientes-empty">No hay gastos de Casa pendientes al crédito.</p>'}
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  function renderCasaPendientesTable(records = []) {
+    return renderOperationalTableShell({
+      shellClass: 'casa-pendientes-scroll-shell',
+      wrapClass: 'casa-pendientes-table-wrap',
+      ariaLabel: 'Gastos Casa pendientes al crédito',
+      tableClass: 'operational-table-casa casa-pendientes-table',
+      headers: `
+        <th>Fecha</th>
+        <th>Categoría</th>
+        <th>Descripción</th>
+        <th class="amount-cell">Monto</th>
+        <th>Estado</th>
+      `,
+      rows: records.map((record) => renderCasaPendienteRow(record)).join(''),
+      colgroup: `
+        <col style="width: 110px;">
+        <col style="width: 180px;">
+        <col style="width: 240px;">
+        <col style="width: 128px;">
+        <col style="width: 150px;">
+      `
+    });
+  }
+
+  function renderCasaPendienteRow(gasto) {
+    const record = normalizeCasaGastoRecord(gasto);
+    const categoria = getCatalogRecordById('categoriasCasa', record.categoriaCasaId);
+    const categoriaNombre = categoria?.nombre || record.categoriaCasaNombre || 'Categoría no encontrada';
+    const descripcion = record.descripcion || '—';
+    const estado = normalizeCasaCreditStatus(record.estadoCreditoCasa, 'Pendiente') || 'Pendiente';
+    return `
+      <tr class="compact-record-row casa-pendiente-row">
+        <td data-label="Fecha"><span class="compact-primary critical-value-date" title="${escapeHtml(formatDate(record.fecha))}">${escapeHtml(formatDate(record.fecha))}</span></td>
+        <td data-label="Categoría"><span title="${escapeHtml(categoriaNombre)}">${escapeHtml(categoriaNombre)}</span></td>
+        <td data-label="Descripción"><span title="${escapeHtml(descripcion)}">${escapeHtml(descripcion)}</span></td>
+        <td data-label="Monto" class="amount-cell"><span class="compact-primary critical-value-money" title="${escapeHtml(formatMoney(record.monto))}">${escapeHtml(formatMoney(record.monto))}</span></td>
+        <td data-label="Estado">
+          <select class="casa-pendiente-status-select" data-casa-pending-status="${escapeHtml(record.id)}" aria-label="Estado de ${escapeHtml(descripcion)}">
+            <option value="Pendiente" ${estado === 'Pendiente' ? 'selected' : ''}>Pendiente</option>
+            <option value="Pagado" ${estado === 'Pagado' ? 'selected' : ''}>Pagado</option>
+          </select>
+        </td>
+      </tr>
+    `;
+  }
+
+  function updateCasaPendienteStatus(recordId, statusValue) {
+    try {
+      const safeId = cleanText(recordId);
+      const nextStatus = normalizeCasaCreditStatus(statusValue, 'Pendiente') || 'Pendiente';
+      if (!safeId || !['Pendiente', 'Pagado'].includes(nextStatus)) throw new Error('Estado Casa inválido.');
+      const records = Array.isArray(appData.casaGastos) ? appData.casaGastos : [];
+      const current = records.find((record) => record.id === safeId);
+      if (!current) throw new Error('Gasto Casa no encontrado.');
+      const normalizedCurrent = normalizeCasaGastoRecord(current);
+      if (!isCasaCreditPaymentMethod(normalizedCurrent.metodoPagoId || normalizedCurrent.metodoPagoNombre)) throw new Error('El gasto no es crédito Casa.');
+
+      const updated = normalizeCasaGastoRecord({
+        ...normalizedCurrent,
+        estadoCreditoCasa: nextStatus,
+        updatedAt: nowIso()
+      });
+      appData.casaGastos = records.map((record) => record.id === safeId ? updated : record);
+      if (nextStatus === 'Pagado') openAccordionGroupForRecord('casa', updated);
+      casaState.pendientesOpen = true;
+      casaState.message = nextStatus === 'Pagado' ? 'Gasto marcado como Pagado.' : 'Estado de gasto actualizado.';
+      casaState.messageType = 'success';
+      saveData(appData);
+      registerSessionChange({ module: 'Casa', operation: nextStatus === 'Pagado' ? 'marcar-pagado' : 'actualizar-estado-credito', recordId: safeId });
+      registerActivity({
+        module: 'Casa',
+        action: nextStatus === 'Pagado' ? 'Pagado' : 'Actualizado',
+        entityType: 'Gasto Casa',
+        entityRef: updated.categoriaCasaNombre || updated.descripcion || 'Casa',
+        amount: updated.monto,
+        detail: buildActivityDetail(['Estado crédito Casa actualizado', nextStatus, updated.categoriaCasaNombre || 'Casa', formatMoney(updated.monto)]),
+        source: 'local'
+      });
+      renderRoute({ preserveScroll: true });
+    } catch (error) {
+      console.error('KSA PRÁCTIKA Casa: no se pudo actualizar el estado del gasto.', error);
+      casaState.pendientesOpen = true;
+      casaState.message = 'No se pudo actualizar el estado del gasto.';
+      casaState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+    }
   }
 
   function renderCasaList(gastos) {
@@ -22546,7 +22755,7 @@ Notas importantes:
     return {
       key: makeAccordionGroupKey('casa-categoria', record.categoriaCasaId, label),
       label,
-      searchText: `${label} ${record.descripcion} ${metodo?.nombre || record.metodoPagoNombre || ''} ${cuenta?.nombre || record.cuentaBancoNombre || ''} ${record.observacion} ${formatMoney(record.monto)}`
+      searchText: `${label} ${record.descripcion} ${metodo?.nombre || record.metodoPagoNombre || ''} ${record.estadoCreditoCasa || ''} ${cuenta?.nombre || record.cuentaBancoNombre || ''} ${record.observacion} ${formatMoney(record.monto)}`
     };
   }
 
@@ -22562,6 +22771,7 @@ Notas importantes:
         <th>Descripción</th>
         <th class="amount-cell">Monto</th>
         <th>Método</th>
+        <th>Estado</th>
         <th>Banco / cuenta</th>
         <th>Observación</th>
         <th class="actions-cell">Acciones</th>
@@ -22573,6 +22783,7 @@ Notas importantes:
         <col style="width: 180px;">
         <col style="width: 118px;">
         <col style="width: 126px;">
+        <col style="width: 110px;">
         <col style="width: 150px;">
         <col style="width: 180px;">
         <col style="width: 160px;">
@@ -22586,7 +22797,8 @@ Notas importantes:
     const metodo = getCatalogRecordById('metodosPago', record.metodoPagoId);
     const cuenta = getCatalogRecordById('cuentasBancos', record.cuentaBancoId);
     const categoriaNombre = categoria?.nombre || record.categoriaCasaNombre || 'Categoría no encontrada';
-    const searchText = normalizeNameForCompare([categoriaNombre, record.descripcion, metodo?.nombre, record.metodoPagoNombre, cuenta?.nombre, record.cuentaBancoNombre, record.observacion].join(' '));
+    const estadoCreditoCasa = isCasaCreditPaymentMethod(record.metodoPagoId || record.metodoPagoNombre) ? (record.estadoCreditoCasa || 'Pendiente') : '';
+    const searchText = normalizeNameForCompare([categoriaNombre, record.descripcion, metodo?.nombre, record.metodoPagoNombre, estadoCreditoCasa, cuenta?.nombre, record.cuentaBancoNombre, record.observacion].join(' '));
 
     return `
       <tr class="compact-record-row casa-row" data-casa-card data-search-text="${escapeHtml(searchText)}">
@@ -22595,6 +22807,7 @@ Notas importantes:
         <td data-label="Descripción"><span title="${escapeHtml(record.descripcion || '—')}">${escapeHtml(record.descripcion || '—')}</span></td>
         <td data-label="Monto" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.monto))}</span></td>
         <td data-label="Método"><span>${escapeHtml(metodo?.nombre || record.metodoPagoNombre || 'Método no encontrado')}</span></td>
+        <td data-label="Estado"><span>${escapeHtml(estadoCreditoCasa || '—')}</span></td>
         <td data-label="Banco / cuenta"><span>${escapeHtml(cuenta?.nombre || record.cuentaBancoNombre || '—')}</span></td>
         <td data-label="Observación"><span title="${escapeHtml(record.observacion || '—')}">${escapeHtml(record.observacion || '—')}</span></td>
         <td data-label="Acciones" class="actions-cell">
@@ -22616,6 +22829,7 @@ Notas importantes:
 
   function getCasaGastosFiltrados() {
     return getCasaGastosOrdenados().filter((record) => {
+      if (!isCasaGastoVisibleEnCategoria(record)) return false;
       if (casaState.month && record.fecha.slice(5, 7) !== casaState.month) return false;
       if (casaState.year && record.fecha.slice(0, 4) !== casaState.year) return false;
       if (casaState.categoriaCasaId && record.categoriaCasaId !== casaState.categoriaCasaId) return false;
@@ -22624,7 +22838,8 @@ Notas importantes:
   }
 
   function getCasaTotals(recordsSource = null) {
-    const records = Array.isArray(recordsSource) ? recordsSource.map((record) => normalizeCasaGastoRecord(record)) : getCasaGastosFiltrados();
+    const records = (Array.isArray(recordsSource) ? recordsSource.map((record) => normalizeCasaGastoRecord(record)) : getCasaGastosFiltrados())
+      .filter((record) => isCasaGastoVisibleEnCategoria(record));
     return records.reduce((totals, record) => {
       totals.registros += 1;
       totals.total = roundMoney(totals.total + record.monto);
@@ -22681,7 +22896,8 @@ Notas importantes:
   }
 
   function getCasaCategoryTotals(recordsSource = null) {
-    const records = Array.isArray(recordsSource) ? recordsSource.map((record) => normalizeCasaGastoRecord(record)) : getCasaGastosFiltrados();
+    const records = (Array.isArray(recordsSource) ? recordsSource.map((record) => normalizeCasaGastoRecord(record)) : getCasaGastosFiltrados())
+      .filter((record) => isCasaGastoVisibleEnCategoria(record));
     const totalsByCategory = new Map();
     records.forEach((record) => {
       const categoryId = record.categoriaCasaId || '__sin_categoria__';
@@ -22778,6 +22994,9 @@ Notas importantes:
     const methodValue = metodo?.id || metodo?.nombre || formData.get('metodoPagoId');
     const requiredBankType = getBankTypeForPaymentMethod(methodValue);
     const cuenta = requiredBankType ? getValidBankForPaymentMethod(methodValue, formData.get('cuentaBancoId'), existingRecord) : null;
+    const estadoCreditoCasa = isCasaCreditPaymentMethod(methodValue)
+      ? (normalizeCasaCreditStatus(formData.get('estadoCreditoCasa'), 'Pendiente') || 'Pendiente')
+      : '';
 
     return normalizeCasaGastoRecord({
       ...(existingRecord || {}),
@@ -22789,6 +23008,7 @@ Notas importantes:
       monto: parseMoney(formData.get('monto')),
       metodoPagoId: metodo?.id || '',
       metodoPagoNombre: metodo?.nombre || '',
+      estadoCreditoCasa,
       cuentaBancoId: requiredBankType ? (cuenta?.id || '') : '',
       cuentaBancoNombre: requiredBankType ? (cuenta?.nombre || '') : '',
       cuentaBancoTipo: requiredBankType ? normalizeBankType(cuenta?.tipo) : '',
@@ -22806,6 +23026,7 @@ Notas importantes:
     if (!getActiveCatalogRecords('categoriasCasa').some((item) => item.id === record.categoriaCasaId) && record.categoriaCasaId !== existingRecord?.categoriaCasaId) return 'Selecciona una Categoría Casa activa.';
     if (Number.isNaN(parseMoney(record.monto)) || record.monto <= 0) return 'El monto debe ser mayor que cero.';
     if (!record.metodoPagoId || !getActiveCatalogRecords('metodosPago').some((item) => item.id === record.metodoPagoId)) return 'Selecciona un método de pago activo.';
+    if (isCasaCreditPaymentMethod(record.metodoPagoId || record.metodoPagoNombre) && !['Pendiente', 'Pagado'].includes(record.estadoCreditoCasa)) return 'Selecciona un estado válido para el crédito Casa.';
     const bankError = validateBankForPaymentMethod(record, existingRecord);
     if (bankError) return bankError;
     return '';
@@ -26156,7 +26377,7 @@ Notas importantes:
   function getCasaGastosForExcel(range) {
     return (Array.isArray(appData.casaGastos) ? appData.casaGastos : [])
       .map((record) => normalizeCasaGastoRecord(record))
-      .filter((record) => record.activo && isDateInResumenRange(record.fecha, range))
+      .filter((record) => record.activo && isCasaGastoVisibleEnCategoria(record) && isDateInResumenRange(record.fecha, range))
       .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || compareVisualText(a.categoriaCasaNombre || '', b.categoriaCasaNombre || '') || compareVisualText(a.descripcion || '', b.descripcion || ''));
   }
 
@@ -27947,6 +28168,7 @@ ${rowsXml}
     else if (id === getPagoModalId()) clearPagoProveedorForm();
     else if (id === getGastoModalId()) clearGastoForm();
     else if (id === getCasaModalId()) clearCasaForm();
+    else if (id === getCasaPendientesModalId()) closeCasaPendientesModal();
     else if (id === getFacturasModalId()) clearFacturaForm();
     else if (id === getFacturasGlobalModalId()) closeFacturasGlobalModal();
     else if (id === getNotasModalId()) {
@@ -28422,6 +28644,7 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-casa-form]').forEach((form) => {
       setupPaymentBankField(form);
+      setupCasaCreditStateField(form);
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         saveCasaGastoRecord(form);
@@ -28438,6 +28661,14 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-casa-delete]').forEach((button) => {
       button.addEventListener('click', () => deleteCasaGastoRecord(button.dataset.casaDelete));
+    });
+
+    viewRoot.querySelectorAll('[data-casa-pendientes-open]').forEach((button) => {
+      button.addEventListener('click', openCasaPendientesModal);
+    });
+
+    viewRoot.querySelectorAll('[data-casa-pending-status]').forEach((select) => {
+      select.addEventListener('change', () => updateCasaPendienteStatus(select.dataset.casaPendingStatus, select.value));
     });
 
     viewRoot.querySelectorAll('[data-history-venta]').forEach((button) => {
