@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.30-post12-config-etapa3-bloques-cerrados';
+  const APP_VERSION = '0.18.34-post12-syncsegura-etapa4-actualizardatosfinal';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -16,6 +16,7 @@
   const FACTURAS_STORAGE_KEY = 'ksa_facturas_v1';
   const WORK_PERIOD_STORAGE_KEY = 'KSA_PRACTIKA_WORK_PERIOD_v1';
   const AUTH_LOCAL_SESSION_STORAGE_KEY = 'KSA_PRACTIKA_AUTH_LOCAL_SESSION_v1';
+  const CLOUD_SYNC_DIAGNOSTIC_STORAGE_KEY = 'KSA_PRACTIKA_CLOUD_SYNC_DIAGNOSTIC_v1';
   const JSON_IMPORT_HISTORY_MAX_ENTRIES = 80;
   const ACTIVITY_LOG_MAX_ENTRIES = 300;
   const FACTURAS_PAGE_SIZE = 20;
@@ -1004,6 +1005,7 @@
   const FIRESTORE_GUIDE_FILENAME = 'GUIA_APLICAR_REGLAS_FIRESTORE.txt';
   const JSON_AUXILIAR_NUBE_GUIDE_FILENAME = 'GUIA_JSON_AUXILIAR_NUBE_KSA_PRACTIKA.txt';
   const FIRESTORE_OPERATION_TIMEOUT_MS = 25000;
+  const FIRESTORE_MODULE_READ_TIMEOUT_MS = 12000;
   const FIRESTORE_TIMEOUT_SAVE_USER_MESSAGE = 'Tiempo de espera agotado. Revisa conexión, reglas de Firestore o UID.';
   const FIRESTORE_TIMEOUT_REFRESH_MESSAGE = 'Tiempo de espera agotado al actualizar datos.';
 
@@ -1065,6 +1067,7 @@
     { key: 'gastos', label: 'Gastos' },
     { key: 'casaGastos', label: 'Casa gastos' },
     { key: 'facturasModulo', label: 'Facturas' },
+    { key: 'notasModulo', label: 'Notas' },
     { key: 'catalogos', label: 'Catálogos' },
     { key: 'cierresMensuales', label: 'Cierres mensuales' },
     { key: 'usuarios', label: 'Usuarios' }
@@ -5122,14 +5125,243 @@ Notas importantes:
       });
     }
 
+    function getCloudReadModuleStatusLabel(status = '') {
+      const key = cleanText(status).toLowerCase();
+      const labels = {
+        ok: 'OK',
+        leyendo: 'Leyendo…',
+        fallo: 'Falló',
+        no_disponible: 'No disponible',
+        saltado_proteccion: 'Saltado por protección anti-pérdida',
+        timeout: 'Timeout',
+        permisos_insuficientes: 'Permisos insuficientes',
+        sin_cambios: 'Sin cambios',
+        error_desconocido: 'Error desconocido'
+      };
+      return labels[key] || labels.error_desconocido;
+    }
+
+    function classifyCloudReadModuleError(error) {
+      const code = cleanText(error?.code || error?.name || '').toLowerCase();
+      if (isOperationTimeoutError(error) || code.includes('deadline-exceeded')) return 'timeout';
+      if (code.includes('permission-denied') || code.includes('unauthorized') || code.includes('forbidden')) return 'permisos_insuficientes';
+      if (code.includes('not-found') || code.includes('unavailable')) return 'no_disponible';
+      if (code.includes('failed-precondition') || code.includes('resource-exhausted') || code.includes('cancelled')) return 'fallo';
+      return 'error_desconocido';
+    }
+
+    function getCloudReadModuleCount(key = '', value = null) {
+      const cleanKey = cleanText(key);
+      if (cleanKey === 'metadata') return Number(Boolean(value?.metadata)) + Number(Boolean(value?.configuracion));
+      if (cleanKey === 'catalogos') {
+        const lists = isPlainObject(value?.catalogos) ? Object.values(value.catalogos) : [];
+        return lists.reduce((sum, list) => sum + (Array.isArray(list) ? list.length : 0), 0);
+      }
+      if (cleanKey === 'notasModulo') return Array.isArray(value?.records) ? value.records.length : buildCloudNotasRecords(value).length;
+      if (cleanKey === 'facturasModulo') return Array.isArray(value?.records) ? value.records.length : normalizeFacturasData(value || {}).facturas.length;
+      if (cleanKey === 'consecutivos') return Object.keys(isPlainObject(value?.consecutivos) ? value.consecutivos : (isPlainObject(value) ? value : {})).length;
+      if (Array.isArray(value?.records)) return value.records.length;
+      if (Array.isArray(value)) return value.length;
+      if (isPlainObject(value)) return Object.keys(value).length;
+      return 0;
+    }
+
+    function buildCloudReadModuleResult(input = {}) {
+      const raw = isPlainObject(input) ? input : {};
+      const status = cleanText(raw.status || (raw.ok ? 'ok' : 'fallo')) || 'fallo';
+      const count = Number(raw.count);
+      return {
+        key: cleanText(raw.key || 'modulo'),
+        label: cleanText(raw.label || raw.key || 'Módulo'),
+        ok: raw.ok === true,
+        status,
+        statusLabel: cleanText(raw.statusLabel || getCloudReadModuleStatusLabel(status)),
+        count: Number.isFinite(count) ? count : 0,
+        message: cleanText(raw.message || getCloudReadModuleStatusLabel(status)),
+        code: cleanText(raw.code || ''),
+        startedAt: cleanText(raw.startedAt || ''),
+        finishedAt: cleanText(raw.finishedAt || ''),
+        durationMs: Number.isFinite(Number(raw.durationMs)) ? Number(raw.durationMs) : 0
+      };
+    }
+
+    async function runCloudReadModule(definition = {}, context = {}, options = {}) {
+      const def = isPlainObject(definition) ? definition : {};
+      const opts = isPlainObject(options) ? options : {};
+      const onModuleResult = typeof opts.onModuleResult === 'function' ? opts.onModuleResult : null;
+      const key = cleanText(def.key || 'modulo');
+      const label = cleanText(def.label || key || 'Módulo');
+      const startedAt = nowIso();
+      const startedMs = Date.now();
+      const publish = (payload) => {
+        const result = buildCloudReadModuleResult({ key, label, startedAt, ...payload });
+        if (onModuleResult) {
+          try { onModuleResult(result); } catch (_) { /* El progreso visual no debe romper lectura. */ }
+        }
+        return result;
+      };
+      publish({ ok: false, status: 'leyendo', statusLabel: 'Leyendo…', message: `Leyendo ${label}…`, count: 0 });
+      try {
+        const value = await withOperationTimeout(
+          () => def.reader(context),
+          {
+            ms: Number(def.timeoutMs) > 0 ? Number(def.timeoutMs) : FIRESTORE_MODULE_READ_TIMEOUT_MS,
+            message: `Tiempo de espera al leer ${label}.`,
+            code: `app/read-${key || 'module'}-timeout`
+          }
+        );
+        const count = getCloudReadModuleCount(key, value);
+        const result = publish({
+          ok: true,
+          status: count > 0 ? 'ok' : 'sin_cambios',
+          statusLabel: count > 0 ? 'OK' : 'Sin cambios',
+          message: count > 0 ? `${label}: ${count} registro(s) leídos.` : `${label}: sin registros en nube.`,
+          count,
+          finishedAt: nowIso(),
+          durationMs: Date.now() - startedMs
+        });
+        return { ...result, value };
+      } catch (error) {
+        const status = classifyCloudReadModuleError(error);
+        const message = cleanText(error?.message || getCloudReadModuleStatusLabel(status));
+        const result = publish({
+          ok: false,
+          status,
+          statusLabel: getCloudReadModuleStatusLabel(status),
+          message: `${label}: ${message}`,
+          code: cleanText(error?.code || error?.name || 'firebase/firestore-error'),
+          finishedAt: nowIso(),
+          durationMs: Date.now() - startedMs
+        });
+        return { ...result, error };
+      }
+    }
+
+    function getCloudOperationalReadModules() {
+      const listReaderDefinitions = [
+        { key: 'ventas', label: 'Ventas / OC', normalizer: normalizeVentaRecord },
+        { key: 'cobros', label: 'Cobros', normalizer: normalizeCobroRecord },
+        { key: 'comprasProveedores', label: 'Proveedores / Compras', normalizer: normalizeCompraProveedorRecord },
+        { key: 'pagosProveedores', label: 'Pagos', normalizer: normalizePagoProveedorRecord },
+        { key: 'gastos', label: 'Gastos', normalizer: normalizeGastoRecord },
+        { key: 'casaGastos', label: 'Casa', normalizer: normalizeCasaGastoRecord },
+        { key: 'cierresMensuales', label: 'Cierres', normalizer: normalizeCierreMensualRecord },
+        { key: 'exportacionesExcel', label: 'Exportaciones Excel', normalizer: normalizeExcelExportRecord }
+      ];
+      return [
+        {
+          key: 'catalogos',
+          label: 'Catálogos',
+          reader: async ({ db, fs, workspaceId }) => {
+            const catalogos = {};
+            for (const catalog of CATALOGS) {
+              const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'catalogos', catalog.id, 'items');
+              catalogos[catalog.id] = records.map((record) => normalizeCatalogRecord(record, catalog));
+            }
+            return { catalogos };
+          }
+        },
+        ...listReaderDefinitions.map((definition) => ({
+          key: definition.key,
+          label: definition.label,
+          reader: async ({ db, fs, workspaceId }) => {
+            const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, definition.key);
+            return { records: records.map((record) => definition.normalizer(record)) };
+          }
+        })),
+        {
+          key: 'facturasModulo',
+          label: 'Facturas',
+          reader: async ({ db, fs, workspaceId }) => {
+            const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'facturasModulo');
+            return { records: records.map((record) => normalizeFacturaModuloRecord(record)) };
+          }
+        },
+        {
+          key: 'notasModulo',
+          label: 'Notas',
+          reader: async ({ db, fs, workspaceId }) => {
+            const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'notasModulo');
+            return { records };
+          }
+        },
+        {
+          key: 'bitacora',
+          label: 'Bitácora',
+          reader: async ({ db, fs, workspaceId }) => {
+            const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'bitacora');
+            return { records: records.map((entry) => normalizeActivityEntry(entry)) };
+          }
+        },
+        {
+          key: 'consecutivos',
+          label: 'Consecutivos',
+          reader: async ({ db, fs, workspaceId }) => {
+            const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'consecutivos');
+            const consecutivos = {};
+            records.forEach((record) => {
+              const key = cleanText(record.tipo || record.id);
+              if (key) consecutivos[key] = record.valor ?? record.value ?? record.consecutivo ?? '';
+            });
+            return { records, consecutivos };
+          }
+        }
+      ];
+    }
+
+    function buildCloudReadIncompleteResult(message = '', moduleResults = [], extra = {}) {
+      return {
+        ok: false,
+        action: 'readCloudOperationalSnapshot',
+        code: cleanText(extra?.code || 'cloud/read-incomplete'),
+        message: cleanText(message) || 'La lectura desde Firestore quedó incompleta. Se conservaron los datos locales.',
+        snapshot: null,
+        snapshotComplete: false,
+        moduleResults: (Array.isArray(moduleResults) ? moduleResults : []).map(buildCloudReadModuleResult),
+        ...extra
+      };
+    }
+
     async function readCloudOperationalSnapshot(options = {}) {
       const opts = isPlainObject(options) ? options : {};
+      const onModuleResult = typeof opts.onModuleResult === 'function' ? opts.onModuleResult : null;
+      const moduleResults = [];
+      const upsertModuleResult = (payload) => {
+        const result = buildCloudReadModuleResult(payload);
+        const index = moduleResults.findIndex((item) => item.key === result.key);
+        if (index >= 0) moduleResults[index] = result;
+        else moduleResults.push(result);
+        if (onModuleResult) {
+          try { onModuleResult(result, moduleResults.map(buildCloudReadModuleResult)); } catch (_) { /* Progreso visual no debe romper lectura. */ }
+        }
+        return result;
+      };
       try {
         const { user, role, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: false });
         const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
-        const metadataRef = fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
-        const metadataSnap = await fs.getDoc(metadataRef);
-        const metadata = metadataSnap.exists() ? normalizeFirestoreDoc(metadataSnap) : {};
+        const metadataModule = await runCloudReadModule({
+          key: 'metadata',
+          label: 'Configuración / metadatos',
+          reader: async () => {
+            const metadataRef = fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
+            const configRef = fs.doc(db, 'workspaces', workspaceId, 'configuracion', 'sistema');
+            const [metadataSnap, configSnap] = await Promise.all([fs.getDoc(metadataRef), fs.getDoc(configRef)]);
+            const metadata = metadataSnap.exists() ? normalizeFirestoreDoc(metadataSnap) : {};
+            const configuracion = configSnap.exists() ? normalizeConfiguracion(normalizeFirestoreDoc(configSnap)) : normalizeConfiguracion(appData?.configuracion || {});
+            return { metadata, configuracion, metadataExists: metadataSnap.exists(), configExists: configSnap.exists() };
+          }
+        }, { db, fs, workspaceId }, { onModuleResult: upsertModuleResult });
+
+        if (!metadataModule.ok) {
+          const message = metadataModule.status === 'timeout'
+            ? 'Tiempo de espera al leer Configuración / metadatos. Se conservaron los datos locales.'
+            : 'No se pudo leer Configuración / metadatos. Se conservaron los datos locales.';
+          state.lastSyncError = message;
+          publishKSAFirebaseRuntime({ lastSyncError: message, lastSyncErrorAt: nowIso(), lastCloudStatus: 'lectura_incompleta', message, lastRefreshModules: moduleResults.map(buildCloudReadModuleResult) });
+          return buildCloudReadIncompleteResult(message, moduleResults, { code: metadataModule.code || 'cloud/metadata-read-failed', metadata: {}, user, role });
+        }
+
+        const metadata = isPlainObject(metadataModule.value?.metadata) ? metadataModule.value.metadata : {};
         const ready = isCloudReadyMetadata(metadata);
         const activeByMetadata = cleanText(metadata.fuentePrincipal).toLowerCase() === 'firestore' || metadata.cloudActive === true;
         if (!ready) {
@@ -5142,10 +5374,12 @@ Notas importantes:
             cloudWritesEnabled: false,
             cloudDataReady: false,
             workspaceId,
-            workspaceInitialized: Boolean(metadataSnap.exists()),
+            workspaceInitialized: Boolean(metadataModule.value?.metadataExists),
+            lastCloudStatus: 'nube_no_confirmada',
+            lastRefreshModules: moduleResults.map(buildCloudReadModuleResult),
             message: state.lastSyncError
           });
-          return { ok: false, action: 'readCloudOperationalSnapshot', code: 'cloud/not-ready', message: state.lastSyncError, snapshot: null, metadata, user, role };
+          return buildCloudReadIncompleteResult(state.lastSyncError, moduleResults, { code: 'cloud/not-ready', metadata, user, role });
         }
         if (!activeByMetadata && opts.requireActive !== false) {
           state.cloudActive = false;
@@ -5158,58 +5392,67 @@ Notas importantes:
             cloudDataReady: true,
             workspaceId,
             workspaceInitialized: true,
+            lastCloudStatus: 'nube_no_confirmada',
+            lastRefreshModules: moduleResults.map(buildCloudReadModuleResult),
             message: state.lastSyncError
           });
-          return { ok: false, action: 'readCloudOperationalSnapshot', code: 'cloud/not-active', message: state.lastSyncError, snapshot: null, metadata, user, role };
+          return buildCloudReadIncompleteResult(state.lastSyncError, moduleResults, { code: 'cloud/not-active', metadata, user, role });
         }
 
+        const context = { db, fs, workspaceId };
+        const readModules = getCloudOperationalReadModules();
+        const readResults = await Promise.all(readModules.map((definition) => runCloudReadModule(definition, context, { onModuleResult: upsertModuleResult })));
+        readResults.forEach(upsertModuleResult);
+        const failedModules = moduleResults.filter((item) => item.key !== 'metadata' && item.ok !== true);
+        if (failedModules.length) {
+          const failedText = failedModules.map((item) => `${item.label}: ${item.statusLabel}`).join(' · ');
+          const hasTimeout = failedModules.some((item) => item.status === 'timeout');
+          const message = hasTimeout
+            ? `Tiempo de espera en uno o más módulos (${failedText}). Se conservaron los datos locales.`
+            : `Actualización parcial no aplicada (${failedText}). Se conservaron los datos locales.`;
+          state.lastSyncError = message;
+          publishKSAFirebaseRuntime({
+            cloudActive: true,
+            cloudReadsEnabled: true,
+            cloudWritesEnabled: true,
+            cloudDataReady: true,
+            workspaceId,
+            lastSyncError: message,
+            lastSyncErrorAt: nowIso(),
+            lastCloudStatus: 'lectura_incompleta',
+            lastRefreshModules: moduleResults.map(buildCloudReadModuleResult),
+            message
+          });
+          return buildCloudReadIncompleteResult(message, moduleResults, { code: hasTimeout ? 'app/refresh-cloud-timeout' : 'cloud/read-incomplete', metadata, user, role });
+        }
+
+        const valuesByKey = {};
+        readResults.forEach((result) => { valuesByKey[result.key] = result.value; });
         const snapshot = createInitialData();
-        CATALOGS.forEach((catalog) => { snapshot[catalog.id] = []; });
-        for (const catalog of CATALOGS) {
-          const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'catalogos', catalog.id, 'items');
-          snapshot[catalog.id] = records.map((record) => normalizeCatalogRecord(record, catalog));
-        }
-
-        const listReaders = [
-          ['ventas', normalizeVentaRecord],
-          ['cobros', normalizeCobroRecord],
-          ['comprasProveedores', normalizeCompraProveedorRecord],
-          ['pagosProveedores', normalizePagoProveedorRecord],
-          ['gastos', normalizeGastoRecord],
-          ['casaGastos', normalizeCasaGastoRecord],
-          ['cierresMensuales', normalizeCierreMensualRecord],
-          ['exportacionesExcel', normalizeExcelExportRecord]
-        ];
-        for (const [key, normalizer] of listReaders) {
-          const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, key);
-          snapshot[key] = records.map((record) => normalizer(record));
-        }
-
-        const configSnap = await fs.getDoc(fs.doc(db, 'workspaces', workspaceId, 'configuracion', 'sistema'));
-        snapshot.configuracion = configSnap.exists()
-          ? normalizeConfiguracion(normalizeFirestoreDoc(configSnap))
-          : normalizeConfiguracion(appData?.configuracion || {});
+        CATALOGS.forEach((catalog) => {
+          snapshot[catalog.id] = Array.isArray(valuesByKey.catalogos?.catalogos?.[catalog.id]) ? valuesByKey.catalogos.catalogos[catalog.id] : [];
+        });
+        ['ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'casaGastos', 'cierresMensuales', 'exportacionesExcel'].forEach((key) => {
+          snapshot[key] = Array.isArray(valuesByKey[key]?.records) ? valuesByKey[key].records : [];
+        });
+        snapshot.configuracion = metadataModule.value?.configuracion || normalizeConfiguracion(appData?.configuracion || {});
         snapshot.metadata = {
           ...(isPlainObject(appData?.metadata) ? appData.metadata : {}),
           ...metadata,
           fuentePrincipal: 'firestore',
           cloudActive: true,
+          cloudDataReady: true,
           lastCloudReadAt: nowIso()
         };
-
-        const facturasRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'facturasModulo');
-        const notasRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'notasModulo');
-        const bitacoraRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'bitacora');
-        const consecutivosRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'consecutivos');
-        const consecutivos = {};
-        consecutivosRecords.forEach((record) => {
-          const key = cleanText(record.tipo || record.id);
-          if (key) consecutivos[key] = record.valor ?? record.value ?? record.consecutivo ?? '';
-        });
 
         const normalized = normalizeData(snapshot);
         normalized.bdatos = normalizeBdatosList(snapshot.bdatos || normalized.bdatos);
         normalized.bdatosUpdatedAt = cleanText(snapshot.bdatosUpdatedAt || normalized.bdatosUpdatedAt);
+        const facturasRecords = Array.isArray(valuesByKey.facturasModulo?.records) ? valuesByKey.facturasModulo.records : [];
+        const notasRecords = Array.isArray(valuesByKey.notasModulo?.records) ? valuesByKey.notasModulo.records : [];
+        const bitacoraRecords = Array.isArray(valuesByKey.bitacora?.records) ? valuesByKey.bitacora.records : [];
+        const consecutivos = isPlainObject(valuesByKey.consecutivos?.consecutivos) ? valuesByKey.consecutivos.consecutivos : {};
+
         state.cloudActive = true;
         state.cloudMetadata = snapshot.metadata;
         state.lastCloudReadAt = nowIso();
@@ -5227,13 +5470,16 @@ Notas importantes:
           workspace: workspaceId,
           workspaceInitialized: true,
           lastSyncAt: state.lastSyncAt,
+          lastCloudReadAt: state.lastCloudReadAt,
+          lastCloudStatus: 'sincronizado',
+          lastRefreshModules: moduleResults.map(buildCloudReadModuleResult),
           message: 'Firestore activo como fuente principal.'
         });
         return {
           ok: true,
           action: 'readCloudOperationalSnapshot',
           code: 'cloud/read-ok',
-          message: 'Datos leídos desde Firestore.',
+          message: 'Actualización completada.',
           snapshot: normalized,
           notasModulo: rebuildNotasDataFromCloud(notasRecords),
           facturasModulo: normalizeFacturasData({ facturas: facturasRecords }),
@@ -5242,18 +5488,22 @@ Notas importantes:
           metadata: snapshot.metadata,
           user,
           role,
-          lastSyncAt: state.lastSyncAt
+          lastSyncAt: state.lastSyncAt,
+          snapshotComplete: true,
+          moduleResults: moduleResults.map(buildCloudReadModuleResult)
         };
       } catch (error) {
-        const message = translateFirestorePrepError(error);
+        const timeout = isOperationTimeoutError(error);
+        const message = timeout ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : translateFirestorePrepError(error);
         state.lastSyncError = message;
         publishKSAFirebaseRuntime({
-          cloudActive: false,
-          cloudReadsEnabled: false,
-          cloudWritesEnabled: false,
+          lastSyncError: message,
+          lastSyncErrorAt: nowIso(),
+          lastCloudStatus: 'lectura_incompleta',
+          lastRefreshModules: moduleResults.map(buildCloudReadModuleResult),
           message
         });
-        return { ok: false, action: 'readCloudOperationalSnapshot', code: cleanText(error?.code || 'firebase/firestore-error'), message, snapshot: null, error };
+        return buildCloudReadIncompleteResult(`${message} Se conservaron los datos locales.`, moduleResults, { action: 'readCloudOperationalSnapshot', code: cleanText(error?.code || (timeout ? 'app/refresh-cloud-timeout' : 'firebase/firestore-error')), error });
       }
     }
 
@@ -5467,13 +5717,15 @@ Notas importantes:
           workspace: workspaceId,
           workspaceInitialized: true,
           lastSyncAt: state.lastSyncAt,
+          lastCloudWriteAt: state.lastCloudWriteAt,
+          lastCloudStatus: 'sincronizado',
           message: 'Cambios sincronizados en Firestore.'
         });
         return { ok: true, action: 'writeCloudOperationalSnapshot', code: 'cloud/write-ok', message: 'Cambios guardados en Firestore.', count: totalQueued, lastSyncAt: state.lastSyncAt };
       } catch (error) {
         const message = translateFirestorePrepError(error);
         state.lastSyncError = message;
-        publishKSAFirebaseRuntime({ lastSyncError: message, message });
+        publishKSAFirebaseRuntime({ lastSyncError: message, lastSyncErrorAt: nowIso(), lastCloudStatus: 'error_sincronizacion', message });
         return { ok: false, action: 'writeCloudOperationalSnapshot', code: cleanText(error?.code || 'firebase/firestore-error'), message, error };
       }
     }
@@ -5512,7 +5764,9 @@ Notas importantes:
         lastSyncAt: state.lastSyncAt || cleanText(runtime?.lastSyncAt || ''),
         lastCloudReadAt: state.lastCloudReadAt || cleanText(runtime?.lastCloudReadAt || ''),
         lastCloudWriteAt: state.lastCloudWriteAt || cleanText(runtime?.lastCloudWriteAt || ''),
-        lastSyncError: state.lastSyncError || cleanText(runtime?.lastSyncError || '')
+        lastSyncError: state.lastSyncError || cleanText(runtime?.lastSyncError || ''),
+        lastSyncErrorAt: cleanText(runtime?.lastSyncErrorAt || ''),
+        lastCloudStatus: cleanText(runtime?.lastCloudStatus || '')
       };
     }
 
@@ -6099,14 +6353,18 @@ Notas importantes:
       const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
       const counts = {};
       for (const item of ONLINE_DIAGNOSTIC_COLLECTIONS) {
-        if (item.key === 'catalogos') {
-          let total = 0;
-          for (const catalog of CATALOGS) {
-            total += await countFirestoreCollection(db, fs, 'workspaces', workspaceId, 'catalogos', catalog.id, 'items');
+        try {
+          if (item.key === 'catalogos') {
+            let total = 0;
+            for (const catalog of CATALOGS) {
+              total += await countFirestoreCollection(db, fs, 'workspaces', workspaceId, 'catalogos', catalog.id, 'items');
+            }
+            counts.catalogos = total;
+          } else {
+            counts[item.key] = await countFirestoreCollection(db, fs, 'workspaces', workspaceId, item.key);
           }
-          counts.catalogos = total;
-        } else {
-          counts[item.key] = await countFirestoreCollection(db, fs, 'workspaces', workspaceId, item.key);
+        } catch (error) {
+          counts[item.key] = 'No disponible';
         }
       }
       return counts;
@@ -7197,10 +7455,520 @@ Notas importantes:
         updatedAt: nowIso()
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      markLocalChangesPending('saveData');
       scheduleCloudSnapshotSync('saveData');
     } catch (error) {
       console.error('KSA PRÁCTIKA: no se pudo guardar en localStorage.', error);
     }
+  }
+
+
+  function getCloudRefreshModuleStatusLabel(status = '') {
+    const key = cleanText(status).toLowerCase();
+    const labels = {
+      ok: 'OK',
+      leyendo: 'Leyendo…',
+      fallo: 'Falló',
+      no_disponible: 'No disponible',
+      saltado_proteccion: 'Saltado por protección anti-pérdida',
+      timeout: 'Timeout',
+      permisos_insuficientes: 'Permisos insuficientes',
+      sin_cambios: 'Sin cambios',
+      error_desconocido: 'Error desconocido'
+    };
+    return labels[key] || labels.error_desconocido;
+  }
+
+  function normalizeCloudRefreshModuleResult(input = {}) {
+    const raw = isPlainObject(input) ? input : {};
+    const status = cleanText(raw.status || (raw.ok ? 'ok' : 'fallo')) || 'fallo';
+    const count = Number(raw.count);
+    const duration = Number(raw.durationMs);
+    return {
+      key: cleanText(raw.key || 'modulo'),
+      label: cleanText(raw.label || raw.key || 'Módulo'),
+      ok: raw.ok === true,
+      status,
+      statusLabel: cleanText(raw.statusLabel || getCloudRefreshModuleStatusLabel(status)),
+      count: Number.isFinite(count) ? count : 0,
+      message: cleanText(raw.message || getCloudRefreshModuleStatusLabel(status)),
+      code: cleanText(raw.code || ''),
+      startedAt: cleanText(raw.startedAt || ''),
+      finishedAt: cleanText(raw.finishedAt || ''),
+      durationMs: Number.isFinite(duration) ? duration : 0
+    };
+  }
+
+  function mergeCloudRefreshModuleResults(current = [], incoming = {}) {
+    const list = Array.isArray(current) ? current.map(normalizeCloudRefreshModuleResult) : [];
+    const item = normalizeCloudRefreshModuleResult(incoming);
+    const index = list.findIndex((row) => row.key === item.key);
+    if (index >= 0) list[index] = item;
+    else list.push(item);
+    return list;
+  }
+
+  function summarizeCloudRefreshModules(modules = []) {
+    const list = (Array.isArray(modules) ? modules : []).map(normalizeCloudRefreshModuleResult);
+    const total = list.length;
+    const ok = list.filter((item) => item.ok === true || item.status === 'sin_cambios').length;
+    const reading = list.filter((item) => item.status === 'leyendo').length;
+    const timeout = list.filter((item) => item.status === 'timeout').length;
+    const failed = list.filter((item) => item.ok !== true && item.status !== 'sin_cambios' && item.status !== 'leyendo').length;
+    if (!total) return 'Sin detalle por módulo todavía.';
+    if (reading) return `Leyendo módulos: ${ok}/${total} OK · ${reading} en proceso.`;
+    if (failed || timeout) return `Lectura parcial: ${ok}/${total} OK · ${failed} con error${timeout ? ` · ${timeout} timeout` : ''}.`;
+    return `Lectura completa: ${ok}/${total} módulos OK.`;
+  }
+
+  function saveCloudRefreshModuleDiagnostics(moduleResult = {}, status = 'sincronizando', message = '') {
+    const modules = mergeCloudRefreshModuleResults(cloudSyncDiagnostics?.lastManualRefreshModules, moduleResult);
+    cloudOperationState.refreshModuleResults = modules;
+    cloudOperationState.refreshMessage = summarizeCloudRefreshModules(modules);
+    return saveCloudSyncDiagnostics({
+      lastManualRefreshAt: nowIso(),
+      lastManualRefreshStatus: cleanText(status) || 'sincronizando',
+      lastManualRefreshMessage: cleanText(message) || cloudOperationState.refreshMessage,
+      lastManualRefreshModules: modules
+    });
+  }
+
+  function createDefaultCloudSyncDiagnostics() {
+    return {
+      lastCloudReadAt: '',
+      lastCloudWriteAt: '',
+      lastSyncAttemptAt: '',
+      lastSyncAttemptOperation: '',
+      lastSyncErrorAt: '',
+      lastSyncErrorMessage: '',
+      lastSyncErrorOperation: '',
+      pendingLocalChanges: false,
+      pendingLocalChangesCount: null,
+      lastCloudStatus: 'nube_no_confirmada',
+      lastStatusMessage: '',
+      lastProtectionAt: '',
+      lastProtectionReason: '',
+      lastProtectionMessage: '',
+      lastProtectionStatus: '',
+      lastManualRefreshAt: '',
+      lastManualRefreshStatus: '',
+      lastManualRefreshMessage: '',
+      lastManualRefreshModules: [],
+      lastUpdatedAt: ''
+    };
+  }
+
+  function normalizeCloudSyncDiagnostics(input = {}) {
+    const base = createDefaultCloudSyncDiagnostics();
+    const raw = isPlainObject(input) ? input : {};
+    const pendingCountRaw = raw.pendingLocalChangesCount ?? raw.pendingCount ?? null;
+    const pendingCount = Number(pendingCountRaw);
+    return {
+      ...base,
+      ...raw,
+      lastCloudReadAt: cleanText(raw.lastCloudReadAt || raw.lastReadAt || raw.ultimaLecturaFirestore || ''),
+      lastCloudWriteAt: cleanText(raw.lastCloudWriteAt || raw.lastWriteAt || raw.ultimaEscrituraFirestore || ''),
+      lastSyncAttemptAt: cleanText(raw.lastSyncAttemptAt || raw.lastAttemptAt || raw.ultimoIntentoSincronizacion || ''),
+      lastSyncAttemptOperation: cleanText(raw.lastSyncAttemptOperation || raw.lastOperation || ''),
+      lastSyncErrorAt: cleanText(raw.lastSyncErrorAt || raw.lastErrorAt || raw.ultimoErrorSincronizacionAt || ''),
+      lastSyncErrorMessage: cleanText(raw.lastSyncErrorMessage || raw.lastSyncError || raw.lastError || raw.ultimoErrorSincronizacion || ''),
+      lastSyncErrorOperation: cleanText(raw.lastSyncErrorOperation || raw.errorOperation || ''),
+      pendingLocalChanges: raw.pendingLocalChanges === true || raw.cambiosLocalesPendientes === true,
+      pendingLocalChangesCount: Number.isFinite(pendingCount) ? pendingCount : null,
+      lastCloudStatus: cleanText(raw.lastCloudStatus || raw.estadoNube || 'nube_no_confirmada') || 'nube_no_confirmada',
+      lastStatusMessage: cleanText(raw.lastStatusMessage || raw.statusMessage || ''),
+      lastProtectionAt: cleanText(raw.lastProtectionAt || raw.lastCloudProtectionAt || raw.ultimaProteccionAt || ''),
+      lastProtectionReason: cleanText(raw.lastProtectionReason || raw.protectionReason || raw.motivoProteccion || ''),
+      lastProtectionMessage: cleanText(raw.lastProtectionMessage || raw.protectionMessage || raw.mensajeProteccion || ''),
+      lastProtectionStatus: cleanText(raw.lastProtectionStatus || raw.protectionStatus || ''),
+      lastManualRefreshAt: cleanText(raw.lastManualRefreshAt || raw.ultimoIntentoActualizacionManual || ''),
+      lastManualRefreshStatus: cleanText(raw.lastManualRefreshStatus || raw.estadoActualizacionManual || ''),
+      lastManualRefreshMessage: cleanText(raw.lastManualRefreshMessage || raw.resultadoActualizacionManual || ''),
+      lastManualRefreshModules: Array.isArray(raw.lastManualRefreshModules) ? raw.lastManualRefreshModules.map(normalizeCloudRefreshModuleResult) : [],
+      lastUpdatedAt: cleanText(raw.lastUpdatedAt || raw.updatedAt || '')
+    };
+  }
+
+  function loadCloudSyncDiagnostics() {
+    try {
+      const raw = localStorage.getItem(CLOUD_SYNC_DIAGNOSTIC_STORAGE_KEY);
+      return normalizeCloudSyncDiagnostics(raw ? JSON.parse(raw) : {});
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo leer diagnóstico de sincronización.', error);
+      return createDefaultCloudSyncDiagnostics();
+    }
+  }
+
+  let cloudSyncDiagnostics = loadCloudSyncDiagnostics();
+
+  function saveCloudSyncDiagnostics(update = {}) {
+    cloudSyncDiagnostics = normalizeCloudSyncDiagnostics({
+      ...cloudSyncDiagnostics,
+      ...(isPlainObject(update) ? update : {}),
+      lastUpdatedAt: nowIso()
+    });
+    try {
+      localStorage.setItem(CLOUD_SYNC_DIAGNOSTIC_STORAGE_KEY, JSON.stringify(cloudSyncDiagnostics));
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo guardar diagnóstico de sincronización.', error);
+    }
+    return cloudSyncDiagnostics;
+  }
+
+  function getLocalSyncCounts() {
+    const counts = getJsonRecordCounts(appData || {});
+    return [
+      { key: 'ventas', label: 'Ventas / OC', value: counts.ventas },
+      { key: 'cobros', label: 'Cobros', value: counts.cobros },
+      { key: 'comprasProveedores', label: 'Proveedores / Compras', value: counts.comprasProveedores },
+      { key: 'pagosProveedores', label: 'Pagos', value: counts.pagosProveedores },
+      { key: 'gastos', label: 'Gastos', value: counts.gastos },
+      { key: 'facturasModulo', label: 'Facturas', value: counts.facturasModulo },
+      { key: 'casaGastos', label: 'Casa', value: counts.casaGastos },
+      { key: 'notasModulo', label: 'Notas', value: counts.notasModulo },
+      { key: 'catalogos', label: 'Catálogos', value: counts.catalogos }
+    ].map((item) => ({ ...item, value: Number.isFinite(Number(item.value)) ? Number(item.value) : 0 }));
+  }
+
+  function estimatePendingLocalChangesCount() {
+    try {
+      return getLocalSyncCounts().reduce((sum, item) => sum + (Number(item.value) || 0), 0);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function markLocalChangesPending(reason = '') {
+    if (!cloudOperationState?.active || cloudOperationState?.isHydrating) return cloudSyncDiagnostics;
+    return saveCloudSyncDiagnostics({
+      pendingLocalChanges: true,
+      pendingLocalChangesCount: estimatePendingLocalChangesCount(),
+      lastCloudStatus: 'pendiente_sincronizar',
+      lastStatusMessage: cleanText(reason) || 'Cambios locales pendientes de subir.'
+    });
+  }
+
+  function recordCloudSyncAttempt(operation = 'sincronizacion') {
+    const ts = nowIso();
+    const op = cleanText(operation) || 'sincronizacion';
+    const update = {
+      lastSyncAttemptAt: ts,
+      lastSyncAttemptOperation: op,
+      lastCloudStatus: 'sincronizando',
+      lastStatusMessage: `Intento de ${op} iniciado.`
+    };
+    if (op.includes('lectura')) {
+      cloudOperationState.refreshModuleResults = [];
+      cloudOperationState.refreshMessage = 'Actualizando por módulos…';
+      update.lastManualRefreshAt = ts;
+      update.lastManualRefreshStatus = 'sincronizando';
+      update.lastManualRefreshMessage = 'Actualizando por módulos…';
+      update.lastManualRefreshModules = [];
+    }
+    return saveCloudSyncDiagnostics(update);
+  }
+
+  function recordCloudSyncSuccess(operation = 'sincronizacion', timestamp = nowIso(), details = {}) {
+    const op = cleanText(operation) || 'sincronizacion';
+    const update = {
+      lastCloudStatus: 'sincronizado',
+      lastStatusMessage: cleanText(details?.message) || 'Operación de nube confirmada.',
+      lastSyncErrorMessage: '',
+      lastSyncErrorAt: '',
+      lastSyncErrorOperation: ''
+    };
+    if (op.includes('lectura')) {
+      update.lastCloudReadAt = cleanText(timestamp) || nowIso();
+      update.lastManualRefreshAt = cleanText(timestamp) || nowIso();
+      update.lastManualRefreshStatus = 'sincronizado';
+      update.lastManualRefreshMessage = cleanText(details?.message) || summarizeCloudRefreshModules(cloudOperationState.refreshModuleResults);
+      update.lastManualRefreshModules = Array.isArray(cloudOperationState.refreshModuleResults) ? cloudOperationState.refreshModuleResults.map(normalizeCloudRefreshModuleResult) : [];
+    }
+    if (op.includes('escritura')) {
+      update.lastCloudWriteAt = cleanText(timestamp) || nowIso();
+      update.pendingLocalChanges = false;
+      update.pendingLocalChangesCount = 0;
+    }
+    return saveCloudSyncDiagnostics(update);
+  }
+
+  function recordCloudSyncError(operation = 'sincronizacion', message = '', status = 'error_sincronizacion') {
+    const ts = nowIso();
+    const op = cleanText(operation) || 'sincronizacion';
+    const safeMessage = cleanText(message) || 'Error de sincronización.';
+    const safeStatus = cleanText(status) || 'error_sincronizacion';
+    const update = {
+      lastSyncErrorAt: ts,
+      lastSyncErrorMessage: safeMessage,
+      lastSyncErrorOperation: op,
+      lastCloudStatus: safeStatus,
+      lastStatusMessage: safeMessage
+    };
+    if (op.includes('lectura')) {
+      update.lastManualRefreshAt = ts;
+      update.lastManualRefreshStatus = safeStatus;
+      update.lastManualRefreshMessage = safeMessage;
+      update.lastManualRefreshModules = Array.isArray(cloudOperationState.refreshModuleResults) ? cloudOperationState.refreshModuleResults.map(normalizeCloudRefreshModuleResult) : [];
+    }
+    return saveCloudSyncDiagnostics(update);
+  }
+
+  function getCloudSyncDiagnosticsSnapshot() {
+    return normalizeCloudSyncDiagnostics(cloudSyncDiagnostics || loadCloudSyncDiagnostics());
+  }
+
+  function getCloudStatusLabel(statusValue = '') {
+    const key = cleanText(statusValue).toLowerCase();
+    const labels = {
+      sincronizado: 'Sincronizado',
+      pendiente_sincronizar: 'Pendiente de sincronizar',
+      error_sincronizacion: 'Error de sincronización',
+      lectura_incompleta: 'Lectura incompleta',
+      nube_no_confirmada: 'Nube no confirmada',
+      proteccion_anti_perdida: 'Protección anti-pérdida',
+      sincronizando: 'Sincronizando',
+      local_controlado: 'Local controlado'
+    };
+    return labels[key] || (key ? cleanText(statusValue) : 'Nube no confirmada');
+  }
+
+  function isCloudSyncErrorRecent(meta) {
+    const m = normalizeCloudSyncDiagnostics(meta);
+    if (!m.lastSyncErrorAt || !m.lastSyncErrorMessage) return false;
+    const lastOk = [m.lastCloudReadAt, m.lastCloudWriteAt]
+      .filter(Boolean)
+      .sort()
+      .pop() || '';
+    return !lastOk || String(m.lastSyncErrorAt) > String(lastOk);
+  }
+
+  function parseCloudComparableTime(value) {
+    if (value === null || value === undefined || value === '') return 0;
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (value && typeof value.toDate === 'function') {
+      try {
+        const time = value.toDate().getTime();
+        return Number.isFinite(time) ? time : 0;
+      } catch (_) {
+        return 0;
+      }
+    }
+    if (isPlainObject(value)) {
+      const seconds = Number(value.seconds ?? value._seconds);
+      const nanos = Number(value.nanoseconds ?? value._nanoseconds ?? 0);
+      if (Number.isFinite(seconds)) return (seconds * 1000) + (Number.isFinite(nanos) ? Math.floor(nanos / 1000000) : 0);
+    }
+    const text = cleanText(value);
+    if (!text) return 0;
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function maxCloudComparableTime(...values) {
+    return values.flat().reduce((max, value) => Math.max(max, parseCloudComparableTime(value)), 0);
+  }
+
+  function getLocalDataComparableTime() {
+    const metadata = isPlainObject(appData?.metadata) ? appData.metadata : {};
+    return maxCloudComparableTime(
+      metadata.lastLocalChangeAt,
+      metadata.updatedAt,
+      metadata.lastUpdatedAt,
+      metadata.lastModifiedAt,
+      cloudSyncDiagnostics?.lastLocalChangeAt
+    );
+  }
+
+  function getCloudResultComparableTime(result = {}) {
+    const metadata = isPlainObject(result?.metadata) ? result.metadata : (isPlainObject(result?.snapshot?.metadata) ? result.snapshot.metadata : {});
+    return maxCloudComparableTime(
+      metadata.lastSyncAtLocal,
+      metadata.updatedAt,
+      metadata.lastSyncAt,
+      metadata.lastCloudWriteAt,
+      metadata.ultimaImportacionAt
+    );
+  }
+
+  function getLocalConsecutivosCount() {
+    return [
+      JSON_EXPORT_SEQUENCE_STORAGE_KEY,
+      EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY,
+      EXCEL_CIERRE_SEQUENCE_STORAGE_KEY
+    ].reduce((total, key) => {
+      const value = readCloudSequenceValue(key);
+      return total + (value === null || value === undefined || value === '' ? 0 : 1);
+    }, 0);
+  }
+
+  function getCloudHydrationCriticalCounts(result = null) {
+    const source = isPlainObject(result?.snapshot) ? result.snapshot : (isPlainObject(result) ? result : {});
+    const counts = getJsonRecordCounts(source, Array.isArray(result?.bitacora) ? result.bitacora : null);
+    const facturasData = normalizeFacturasData(result?.facturasModulo || getFacturasBackupFromSource(source) || {});
+    counts.facturasModulo = countFacturasModuleRecords(facturasData);
+    counts.consecutivos = isPlainObject(result?.consecutivos) ? Object.keys(result.consecutivos).filter((key) => result.consecutivos[key] !== null && result.consecutivos[key] !== undefined && result.consecutivos[key] !== '').length : 0;
+    counts.totalCritico = [
+      counts.ventas,
+      counts.cobros,
+      counts.comprasProveedores,
+      counts.pagosProveedores,
+      counts.gastos,
+      counts.facturasModulo,
+      counts.casaGastos,
+      counts.catalogos,
+      counts.consecutivos
+    ].reduce((sum, value) => sum + (Number(value) || 0), 0);
+    return counts;
+  }
+
+  function getLocalHydrationCriticalCounts() {
+    const counts = getJsonRecordCounts(appData || {}, Array.isArray(appActivityLog) ? appActivityLog : null);
+    counts.consecutivos = getLocalConsecutivosCount();
+    counts.totalCritico = [
+      counts.ventas,
+      counts.cobros,
+      counts.comprasProveedores,
+      counts.pagosProveedores,
+      counts.gastos,
+      counts.facturasModulo,
+      counts.casaGastos,
+      counts.catalogos,
+      counts.consecutivos
+    ].reduce((sum, value) => sum + (Number(value) || 0), 0);
+    return counts;
+  }
+
+  function buildCloudHydrationBlock(reason = '', message = '', status = 'proteccion_anti_perdida', extra = {}) {
+    const safeReason = cleanText(reason) || 'seguridad_no_confirmada';
+    const safeStatus = cleanText(status) || 'proteccion_anti_perdida';
+    const fallbackMessages = {
+      cambios_locales_pendientes: 'Hay cambios locales pendientes. No se actualizará desde nube para evitar pérdida de datos.',
+      lectura_incompleta: 'La actualización desde nube no se completó. Se conservaron los datos locales.',
+      timeout: 'La actualización desde nube no se completó. Se conservaron los datos locales.',
+      nube_antigua: 'La nube parece tener una versión anterior. Se conservaron los datos locales.',
+      payload_vacio: 'No se pudo confirmar seguridad de actualización. Se conservaron datos locales.',
+      seguridad_no_confirmada: 'No se pudo confirmar seguridad de actualización. Se conservaron datos locales.'
+    };
+    return {
+      ok: false,
+      blocked: true,
+      applied: false,
+      action: 'applyCloudSnapshotToRuntime',
+      code: `cloud/hydration-blocked-${safeReason}`,
+      reason: safeReason,
+      status: safeStatus,
+      message: cleanText(message) || fallbackMessages[safeReason] || fallbackMessages.seguridad_no_confirmada,
+      ...extra
+    };
+  }
+
+  function recordCloudHydrationProtectionBlock(block = {}) {
+    const reason = cleanText(block?.reason || 'seguridad_no_confirmada');
+    const status = cleanText(block?.status || 'proteccion_anti_perdida') || 'proteccion_anti_perdida';
+    const message = cleanText(block?.message || 'No se pudo confirmar seguridad de actualización. Se conservaron datos locales.');
+    const pending = reason === 'cambios_locales_pendientes' || cloudSyncDiagnostics?.pendingLocalChanges === true;
+    cloudOperationState.lastError = message;
+    cloudOperationState.message = message;
+    return saveCloudSyncDiagnostics({
+      lastCloudStatus: pending ? 'pendiente_sincronizar' : status,
+      lastStatusMessage: message,
+      lastSyncErrorAt: nowIso(),
+      lastSyncErrorMessage: message,
+      lastSyncErrorOperation: 'lectura',
+      lastProtectionAt: nowIso(),
+      lastProtectionReason: reason,
+      lastProtectionMessage: message,
+      lastProtectionStatus: status,
+      lastManualRefreshAt: nowIso(),
+      lastManualRefreshStatus: status,
+      lastManualRefreshMessage: message,
+      lastManualRefreshModules: Array.isArray(cloudOperationState.refreshModuleResults) ? cloudOperationState.refreshModuleResults.map(normalizeCloudRefreshModuleResult) : [],
+      pendingLocalChanges: pending,
+      pendingLocalChangesCount: pending ? (cloudSyncDiagnostics?.pendingLocalChangesCount ?? estimatePendingLocalChangesCount()) : cloudSyncDiagnostics?.pendingLocalChangesCount
+    });
+  }
+
+  function validateCloudSnapshotHydrationSafety(result = {}, options = {}) {
+    const opts = isPlainObject(options) ? options : {};
+    const syncMeta = getCloudSyncDiagnosticsSnapshot();
+    const hasPending = syncMeta.pendingLocalChanges === true || cloudOperationState.isWriting === true || Boolean(cloudOperationState.timer);
+    if (hasPending && opts.ignorePendingLocalChanges !== true) {
+      return buildCloudHydrationBlock(
+        'cambios_locales_pendientes',
+        'Hay cambios locales pendientes. No se actualizará desde nube para evitar pérdida de datos.',
+        'pendiente_sincronizar'
+      );
+    }
+
+    if (!result?.ok || !isPlainObject(result?.snapshot) || result.snapshotComplete !== true) {
+      return buildCloudHydrationBlock(
+        result?.code === 'app/refresh-cloud-timeout' ? 'timeout' : 'lectura_incompleta',
+        'La actualización desde nube no se completó. Se conservaron los datos locales.',
+        'lectura_incompleta',
+        { originalCode: result?.code || '' }
+      );
+    }
+
+    const requiredArrays = ['ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'casaGastos'];
+    const missingArray = requiredArrays.find((key) => !Array.isArray(result.snapshot?.[key]));
+    if (missingArray) {
+      return buildCloudHydrationBlock(
+        'lectura_incompleta',
+        `La lectura desde Firestore llegó incompleta (${missingArray}). Se conservaron los datos locales.`,
+        'lectura_incompleta',
+        { missingCollection: missingArray }
+      );
+    }
+
+    const localCounts = getLocalHydrationCriticalCounts();
+    const cloudCounts = getCloudHydrationCriticalCounts(result);
+    const criticalPairs = [
+      ['ventas', 'Ventas / OC'],
+      ['cobros', 'Cobros'],
+      ['comprasProveedores', 'Proveedores / Compras'],
+      ['pagosProveedores', 'Pagos'],
+      ['gastos', 'Gastos'],
+      ['facturasModulo', 'Facturas'],
+      ['casaGastos', 'Casa'],
+      ['catalogos', 'Catálogos esenciales'],
+      ['consecutivos', 'Consecutivos']
+    ];
+    const emptied = criticalPairs.find(([key]) => (Number(localCounts[key]) || 0) > 0 && (Number(cloudCounts[key]) || 0) === 0);
+    if (emptied) {
+      return buildCloudHydrationBlock(
+        'lectura_incompleta',
+        `La nube no confirmó datos críticos de ${emptied[1]}. Se conservaron los datos locales.`,
+        'lectura_incompleta',
+        { localCounts, cloudCounts, missingCollection: emptied[0] }
+      );
+    }
+
+    if ((Number(localCounts.totalCritico) || 0) > 0 && (Number(cloudCounts.totalCritico) || 0) === 0) {
+      return buildCloudHydrationBlock(
+        'payload_vacio',
+        'No se pudo confirmar seguridad de actualización. Se conservaron datos locales.',
+        'nube_no_confirmada',
+        { localCounts, cloudCounts }
+      );
+    }
+
+    const localTime = getLocalDataComparableTime();
+    const cloudTime = getCloudResultComparableTime(result);
+    const lastConfirmedCloud = maxCloudComparableTime(syncMeta.lastCloudWriteAt, syncMeta.lastCloudReadAt);
+    const localIsNewerThanCloud = localTime > 0 && cloudTime > 0 && localTime > cloudTime + 1000 && localTime > lastConfirmedCloud + 1000;
+    const cannotConfirmCloudFreshness = localTime > 0 && cloudTime === 0 && localTime > lastConfirmedCloud + 1000 && (Number(localCounts.totalCritico) || 0) > 0;
+    if (localIsNewerThanCloud || cannotConfirmCloudFreshness) {
+      return buildCloudHydrationBlock(
+        localIsNewerThanCloud ? 'nube_antigua' : 'seguridad_no_confirmada',
+        localIsNewerThanCloud
+          ? 'La nube parece tener una versión anterior. Se conservaron los datos locales.'
+          : 'No se pudo confirmar seguridad de actualización. Se conservaron datos locales.',
+        'nube_no_confirmada',
+        { localTime, cloudTime, lastConfirmedCloud, localCounts, cloudCounts }
+      );
+    }
+
+    return { ok: true, allowed: true, localCounts, cloudCounts, localTime, cloudTime };
   }
 
   let cloudOperationState = {
@@ -7214,6 +7982,8 @@ Notas importantes:
     lastRefreshAt: '',
     lastError: '',
     message: '',
+    refreshModuleResults: [],
+    refreshMessage: '',
     bootstrappedForUid: ''
   };
 
@@ -7232,6 +8002,7 @@ Notas importantes:
 
   function scheduleCloudSnapshotSync(reason = '') {
     if (!cloudOperationState.runtimeReady || cloudOperationState.isHydrating || !cloudOperationState.active) return;
+    markLocalChangesPending(reason || 'operacion_local');
     if (typeof window === 'undefined') return;
     if (cloudOperationState.timer) window.clearTimeout(cloudOperationState.timer);
     cloudOperationState.timer = window.setTimeout(() => {
@@ -7241,26 +8012,107 @@ Notas importantes:
   }
 
   async function flushCloudSnapshotSync(reason = '') {
-    if (!cloudOperationState.runtimeReady || cloudOperationState.isHydrating || cloudOperationState.isWriting) return null;
-    if (!cloudOperationState.active) return null;
+    if (!cloudOperationState.runtimeReady || cloudOperationState.isHydrating) return { ok: false, code: 'cloud/not-ready', message: 'Firebase todavía está preparando el runtime.' };
+    if (cloudOperationState.isWriting) return { ok: false, code: 'cloud/write-busy', message: 'Ya hay una escritura de nube en curso. El cambio local queda pendiente de sincronizar.' };
+    if (!cloudOperationState.active) return { ok: false, code: 'cloud/not-active', message: 'Nube no activa; no se escribe a Firestore.' };
+    if (cloudOperationState.timer && typeof window !== 'undefined') {
+      window.clearTimeout(cloudOperationState.timer);
+      cloudOperationState.timer = null;
+    }
     try {
-      if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.writeCloudOperationalSnapshot) return null;
+      if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.writeCloudOperationalSnapshot) {
+        markLocalChangesPending(reason || 'escritura_sin_adaptador');
+        return { ok: false, code: 'cloud/adapter-missing', message: 'Adaptador Firestore no disponible. El cambio local queda pendiente de sincronizar.' };
+      }
       cloudOperationState.isWriting = true;
-      const result = await KSAFirebaseAdapter.writeCloudOperationalSnapshot(null, { reason: cleanText(reason) });
+      markLocalChangesPending(reason || 'escritura_inmediata');
+      recordCloudSyncAttempt('escritura');
+      const result = await withOperationTimeout(
+        () => KSAFirebaseAdapter.writeCloudOperationalSnapshot(null, { reason: cleanText(reason) }),
+        { message: FIRESTORE_TIMEOUT_SAVE_USER_MESSAGE, code: 'app/write-cloud-timeout' }
+      );
       cloudOperationState.isWriting = false;
-      cloudOperationState.lastSyncAt = result?.lastSyncAt || nowIso();
-      cloudOperationState.lastError = result?.ok ? '' : cleanText(result?.message || 'No se pudo sincronizar con Firestore.');
+      if (result?.ok) {
+        cloudOperationState.lastSyncAt = result?.lastSyncAt || nowIso();
+        cloudOperationState.lastError = '';
+        recordCloudSyncSuccess('escritura', cloudOperationState.lastSyncAt, { message: result.message });
+      } else {
+        cloudOperationState.lastError = cleanText(result?.message || 'No se pudo sincronizar con Firestore.');
+        markLocalChangesPending(reason || 'escritura_fallida');
+        recordCloudSyncError('escritura', cloudOperationState.lastError, 'error_sincronizacion');
+      }
       cloudOperationState.message = result?.message || '';
       return result;
     } catch (error) {
       cloudOperationState.isWriting = false;
       cloudOperationState.lastError = cleanText(error?.message || 'No se pudo sincronizar con Firestore.');
-      return { ok: false, message: cloudOperationState.lastError };
+      markLocalChangesPending(reason || 'escritura_fallida');
+      recordCloudSyncError('escritura', cloudOperationState.lastError, isOperationTimeoutError(error) ? 'error_sincronizacion' : 'error_sincronizacion');
+      return { ok: false, code: cleanText(error?.code || 'firebase/firestore-error'), message: cloudOperationState.lastError, error };
     }
   }
 
-  function applyCloudSnapshotToRuntime(result) {
-    if (!result?.ok || !isPlainObject(result.snapshot)) return false;
+
+  function isCloudActiveForCriticalSave() {
+    const runtime = getKSAFirebaseRuntime();
+    return Boolean(cloudOperationState.active || runtime?.cloudActive || appData?.metadata?.cloudActive || cleanText(appData?.metadata?.fuentePrincipal).toLowerCase() === 'firestore');
+  }
+
+  function buildCriticalCloudSaveMessage(result = {}) {
+    if (result?.localOnly) return 'Guardado localmente.';
+    if (result?.ok) return 'Guardado y sincronizado con nube.';
+    return 'Guardado localmente. Pendiente de sincronizar con nube.';
+  }
+
+  function appendCriticalCloudMessage(baseMessage = '', result = {}) {
+    const base = cleanText(baseMessage);
+    const suffix = buildCriticalCloudSaveMessage(result);
+    return base ? `${base} ${suffix}` : suffix;
+  }
+
+  async function confirmCriticalCloudSave(stateTarget = null, options = {}) {
+    const opts = isPlainObject(options) ? options : {};
+    const operation = cleanText(opts.operation || 'guardado_critico');
+    const messageKey = cleanText(opts.messageKey || 'message') || 'message';
+    const messageTypeKey = cleanText(opts.messageTypeKey || 'messageType') || 'messageType';
+    const baseMessage = cleanText(opts.baseMessage || (stateTarget && stateTarget[messageKey]) || '');
+
+    if (!isCloudActiveForCriticalSave()) {
+      const localResult = { ok: true, localOnly: true, code: 'local/only', message: 'Guardado localmente.' };
+      if (stateTarget) {
+        stateTarget[messageKey] = appendCriticalCloudMessage(baseMessage, localResult);
+        stateTarget[messageTypeKey] = 'success';
+      }
+      saveCloudSyncDiagnostics({
+        lastCloudStatus: 'local_controlado',
+        lastStatusMessage: 'Guardado localmente.',
+        pendingLocalChanges: false,
+        pendingLocalChangesCount: 0
+      });
+      return localResult;
+    }
+
+    if (cloudOperationState.timer && typeof window !== 'undefined') {
+      window.clearTimeout(cloudOperationState.timer);
+      cloudOperationState.timer = null;
+    }
+
+    markLocalChangesPending(operation);
+    const result = await flushCloudSnapshotSync(operation);
+    const normalizedResult = result || { ok: false, code: 'cloud/no-result', message: 'No se confirmó escritura en Firestore.' };
+    if (stateTarget) {
+      stateTarget[messageKey] = appendCriticalCloudMessage(baseMessage, normalizedResult);
+      stateTarget[messageTypeKey] = normalizedResult.ok ? 'success' : 'error';
+    }
+    return normalizedResult;
+  }
+
+  function applyCloudSnapshotToRuntime(result, options = {}) {
+    const validation = validateCloudSnapshotHydrationSafety(result, options);
+    if (!validation.ok) {
+      recordCloudHydrationProtectionBlock(validation);
+      return validation;
+    }
     cloudOperationState.isHydrating = true;
     try {
       appData = normalizeData(result.snapshot);
@@ -7286,7 +8138,8 @@ Notas importantes:
       cloudOperationState.lastSyncAt = result.lastSyncAt || cloudOperationState.lastSyncAt || nowIso();
       cloudOperationState.lastError = '';
       cloudOperationState.message = result.message || 'Datos actualizados desde Firestore.';
-      return true;
+      recordCloudSyncSuccess('lectura', cloudOperationState.lastRefreshAt, { message: result.message });
+      return { ok: true, applied: true, blocked: false, action: 'applyCloudSnapshotToRuntime', message: cloudOperationState.message, validation };
     } finally {
       cloudOperationState.isHydrating = false;
     }
@@ -7299,41 +8152,104 @@ Notas importantes:
       return { ok: false, message: 'Adaptador Firestore no disponible.' };
     }
     if (cloudOperationState.isReading) return { ok: false, message: 'Ya hay una actualización de nube en curso.' };
+    const syncMetaBeforeRead = getCloudSyncDiagnosticsSnapshot();
+    if (syncMetaBeforeRead.pendingLocalChanges === true || cloudOperationState.isWriting === true || Boolean(cloudOperationState.timer)) {
+      const block = buildCloudHydrationBlock(
+        'cambios_locales_pendientes',
+        'Hay cambios locales pendientes. No se actualizará desde nube para evitar pérdida de datos.',
+        'pendiente_sincronizar'
+      );
+      recordCloudHydrationProtectionBlock(block);
+      if (opts.render === true && typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
+      return block;
+    }
     cloudOperationState.isReading = true;
+    recordCloudSyncAttempt('lectura');
     cloudOperationState.message = 'Verificando Firestore…';
     try {
-      let result = await withOperationTimeout(
-        () => KSAFirebaseAdapter.readCloudOperationalSnapshot({ requireActive: true }),
-        { message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
-      );
+      const onModuleResult = (moduleResult) => {
+        saveCloudRefreshModuleDiagnostics(moduleResult, 'sincronizando');
+        if (opts.renderProgress === true && typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
+      };
+      let result = await KSAFirebaseAdapter.readCloudOperationalSnapshot({ requireActive: true, onModuleResult });
       if (!result.ok && result.code === 'cloud/not-active' && opts.activateIfReady !== false && KSAFirebaseAdapter.activateCloudOperation) {
         const activated = await withOperationTimeout(
           () => KSAFirebaseAdapter.activateCloudOperation({ source: 'auto_bootstrap' }),
           { message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
         );
         if (activated.ok) {
-          result = await withOperationTimeout(
-            () => KSAFirebaseAdapter.readCloudOperationalSnapshot({ requireActive: true }),
-            { message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
-          );
+          result = await KSAFirebaseAdapter.readCloudOperationalSnapshot({ requireActive: true, onModuleResult });
         } else result = { ...result, message: activated.message || result.message };
       }
+      if (Array.isArray(result?.moduleResults)) {
+        cloudOperationState.refreshModuleResults = result.moduleResults.map(normalizeCloudRefreshModuleResult);
+        saveCloudSyncDiagnostics({
+          lastManualRefreshAt: nowIso(),
+          lastManualRefreshStatus: result.ok ? 'sincronizado' : (result.code === 'app/refresh-cloud-timeout' ? 'lectura_incompleta' : 'lectura_incompleta'),
+          lastManualRefreshMessage: result.message || summarizeCloudRefreshModules(result.moduleResults),
+          lastManualRefreshModules: cloudOperationState.refreshModuleResults
+        });
+      }
       if (result.ok) {
-        applyCloudSnapshotToRuntime(result);
+        const applyResult = applyCloudSnapshotToRuntime(result, { source: 'cloud_refresh' });
+        if (applyResult?.blocked) {
+          result = {
+            ...result,
+            ok: false,
+            blocked: true,
+            applied: false,
+            code: applyResult.code,
+            reason: applyResult.reason,
+            message: applyResult.message
+          };
+        } else {
+          result = { ...result, applied: true };
+        }
       } else {
-        cloudOperationState.active = false;
         cloudOperationState.lastError = cleanText(result.message || 'No se pudo activar nube.');
         cloudOperationState.message = cloudOperationState.lastError;
+        recordCloudSyncError('lectura', cloudOperationState.lastError, result?.code === 'app/refresh-cloud-timeout' ? 'lectura_incompleta' : 'error_sincronizacion');
       }
       if (opts.render === true && typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
       return result;
     } catch (error) {
-      cloudOperationState.active = false;
       cloudOperationState.lastError = cleanText(error?.message || 'No se pudo leer Firestore.');
+      recordCloudSyncError('lectura', cloudOperationState.lastError, isOperationTimeoutError(error) ? 'lectura_incompleta' : 'error_sincronizacion');
       if (opts.render === true && typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
-      return { ok: false, message: cloudOperationState.lastError, error };
+      return { ok: false, message: cloudOperationState.lastError, error, code: cleanText(error?.code || '') };
     } finally {
       cloudOperationState.isReading = false;
+    }
+  }
+
+  async function handleCloudPendingUpload(button = null) {
+    if (!requireRolePermission('updateData', configState, { preserveScroll: true })) return null;
+    if (!isCloudActiveForCriticalSave()) {
+      configState.message = 'Nube no activa. No hay escritura pendiente hacia Firestore.';
+      configState.messageType = 'success';
+      renderRoute({ preserveScroll: true });
+      return { ok: true, localOnly: true };
+    }
+    if (button) button.disabled = true;
+    configState.message = 'Subiendo cambios pendientes a Firestore...';
+    configState.messageType = 'success';
+    renderRoute({ preserveScroll: true });
+    try {
+      const result = await flushCloudSnapshotSync('subir_pendientes_configuracion');
+      configState.message = result?.ok
+        ? 'Cambios pendientes sincronizados con nube.'
+        : 'Guardado localmente. Pendiente de sincronizar con nube.';
+      configState.messageType = result?.ok ? 'success' : 'error';
+      renderRoute({ preserveScroll: true });
+      return result;
+    } catch (error) {
+      const message = cleanText(error?.message || 'No se pudieron subir los cambios pendientes.');
+      markLocalChangesPending('subir_pendientes_configuracion');
+      recordCloudSyncError('escritura', message, 'error_sincronizacion');
+      configState.message = 'Guardado localmente. Pendiente de sincronizar con nube.';
+      configState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return { ok: false, message };
     }
   }
 
@@ -7345,17 +8261,20 @@ Notas importantes:
     configState.messageType = 'success';
     renderRoute({ preserveScroll: true });
     try {
-      const result = await activateAndLoadCloudOperation({ activateIfReady: false, render: false });
+      const result = await activateAndLoadCloudOperation({ activateIfReady: false, render: false, renderProgress: true });
       const message = cleanText(result?.message || '');
       configState.message = result?.ok
         ? 'Datos actualizados correctamente.'
-        : (message === FIRESTORE_TIMEOUT_REFRESH_MESSAGE ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : (message || 'No se pudieron actualizar los datos.'));
+        : (result?.blocked
+          ? (message || 'No se pudo confirmar seguridad de actualización. Se conservaron datos locales.')
+          : `${message === FIRESTORE_TIMEOUT_REFRESH_MESSAGE ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : (message || 'No se pudieron actualizar los datos.')} La actualización desde nube no se completó. Se conservaron los datos locales.`);
       configState.messageType = result?.ok ? 'success' : 'error';
       renderRoute({ preserveScroll: true });
       return result;
     } catch (error) {
       cloudOperationState.isReading = false;
-      configState.message = isOperationTimeoutError(error) ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : (cleanText(error?.message) || 'No se pudieron actualizar los datos.');
+      configState.message = `${isOperationTimeoutError(error) ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : (cleanText(error?.message) || 'No se pudieron actualizar los datos.')} La actualización desde nube no se completó. Se conservaron los datos locales.`;
+      recordCloudSyncError('lectura', configState.message, isOperationTimeoutError(error) ? 'lectura_incompleta' : 'error_sincronizacion');
       configState.messageType = 'error';
       renderRoute({ preserveScroll: true });
       return { ok: false, message: configState.message };
@@ -7376,7 +8295,7 @@ Notas importantes:
         renderRoute({ preserveScroll: true });
         return;
       }
-      const result = await activateAndLoadCloudOperation({ activateIfReady: false, render: false });
+      const result = await activateAndLoadCloudOperation({ activateIfReady: false, render: false, renderProgress: true });
       configState.message = result.ok ? 'Nube activa. Firestore queda como fuente principal.' : (result.message || 'Nube activada, pero no se pudo refrescar datos.');
       configState.messageType = result.ok ? 'success' : 'error';
     } catch (error) {
@@ -8289,7 +9208,10 @@ Notas importantes:
     }
     renderRoute({ preserveScroll: true });
     try {
-      const result = await KSAFirebaseAdapter.readOnlineDiagnostic();
+      const result = await withOperationTimeout(
+        () => KSAFirebaseAdapter.readOnlineDiagnostic(),
+        { message: 'Tiempo de espera agotado al revisar conteos en nube.', code: 'app/diagnostic-counts-timeout' }
+      );
       applyOnlineDiagnosticReadResult(result);
       if (!opts.silent) {
         configState.message = result.message || (result.ok ? 'Lectura correcta.' : 'Error de conexión.');
@@ -8298,7 +9220,7 @@ Notas importantes:
       renderRoute({ preserveScroll: true });
       return result;
     } catch (error) {
-      const message = 'Error de conexión.';
+      const message = isOperationTimeoutError(error) ? 'Tiempo de espera agotado al revisar conteos en nube.' : 'Error de conexión.';
       applyOnlineDiagnosticReadResult({ ok: false, message, code: cleanText(error?.code || 'diagnostic/error') });
       if (!opts.silent) {
         configState.message = message;
@@ -8348,20 +9270,8 @@ Notas importantes:
   }
 
   function scheduleOnlineDiagnosticAutoRead() {
-    if (!isConfigRoute(getRoute())) return;
-    if (onlineDiagnosticState.isReading || onlineDiagnosticState.isWriting) return;
-    const status = getPreparedUsersStatus();
-    const authStatus = getPreparedAuthStatus();
-    const signedUser = authStatus.authMode === 'firebase' ? authStatus.user : null;
-    const uid = cleanText(signedUser?.uid || signedUser?.email || '');
-    if (!uid || !status.firebaseConfigured || !status.cloudActive || !canCurrentRole('onlineDiagnostic')) return;
-    if (onlineDiagnosticState.autoRequestedForUid === uid && Object.keys(onlineDiagnosticState.counts || {}).length) return;
-    onlineDiagnosticState.autoRequestedForUid = uid;
-    window.setTimeout(() => {
-      if (isConfigRoute(getRoute()) && !onlineDiagnosticState.isReading && !onlineDiagnosticState.isWriting) {
-        handleOnlineDiagnosticRead(null, { silent: true });
-      }
-    }, 350);
+    // Etapa 1 sincronización segura: no leer Firestore automáticamente al entrar a Configuración.
+    // Los conteos nube se revisan manualmente para evitar que una conexión lenta bloquee la entrada.
   }
 
   async function handleFirestoreVerify(button = null) {
@@ -12238,7 +13148,7 @@ Notas importantes:
     clearFacturaForm({ resetCapture: true });
   }
 
-  function saveFacturaRecord(form) {
+  async function saveFacturaRecord(form) {
     const formData = new FormData(form);
     const isCreateMode = isFacturaCreateForm(form);
     const no = cleanText(formData.get('no'));
@@ -12316,6 +13226,7 @@ Notas importantes:
     }
     clampFacturasPageForCurrentPeriod(data);
     setFacturasMessage(existing ? 'Factura actualizada correctamente.' : 'Factura agregada correctamente.');
+    await confirmCriticalCloudSave(facturasState, { operation: 'facturas' });
     renderRoute({ preserveScroll: true });
   }
 
@@ -12336,7 +13247,7 @@ Notas importantes:
     renderRoute({ preserveScroll: true });
   }
 
-  function deleteFacturaRecord(id) {
+  async function deleteFacturaRecord(id) {
     const record = findFacturaModuloById(id);
     if (!record) {
       setFacturasMessage('No se encontró la factura para borrar.', 'error');
@@ -12352,6 +13263,7 @@ Notas importantes:
     const totalPages = Math.max(1, Math.ceil(periodRecords.length / FACTURAS_PAGE_SIZE));
     facturasState.page = Math.min(Math.max(1, facturasState.page), totalPages);
     setFacturasMessage('Factura borrada correctamente. Sin drama, sin tocar saldos.');
+    await confirmCriticalCloudSave(facturasState, { operation: 'facturas_borrar' });
     renderRoute({ preserveScroll: true });
   }
 
@@ -13211,7 +14123,7 @@ Notas importantes:
     renderRoute();
   }
 
-  function saveNotaGeneralRecord(form) {
+  async function saveNotaGeneralRecord(form) {
     const formData = new FormData(form);
     const timestamp = nowIso();
     const data = getNotasData();
@@ -13241,10 +14153,11 @@ Notas importantes:
     saveNotasData(data);
     clearNotasForms();
     setNotasMessage(completed ? 'Nota general guardada en Histórico.' : 'Nota general guardada.');
+    await confirmCriticalCloudSave(notasState, { operation: 'notas' });
     renderRoute();
   }
 
-  function savePendienteRecord(form) {
+  async function savePendienteRecord(form) {
     const formData = new FormData(form);
     const timestamp = nowIso();
     const data = getNotasData();
@@ -13279,10 +14192,11 @@ Notas importantes:
     saveNotasData(data);
     clearNotasForms();
     setNotasMessage('Pendiente de registrar guardado sin afectar Gastos ni Resumen. Así sí: apunte es apunte.');
+    await confirmCriticalCloudSave(notasState, { operation: 'notas_pendiente' });
     renderRoute();
   }
 
-  function saveRecordatorioRecord(form) {
+  async function saveRecordatorioRecord(form) {
     const formData = new FormData(form);
     const timestamp = nowIso();
     const data = getNotasData();
@@ -13321,6 +14235,7 @@ Notas importantes:
     saveNotasData(data);
     clearNotasForms();
     setNotasMessage(completed ? 'Recordatorio guardado en Histórico.' : 'Recordatorio guardado.');
+    await confirmCriticalCloudSave(notasState, { operation: 'notas_recordatorio' });
     renderRoute();
   }
 
@@ -13352,7 +14267,7 @@ Notas importantes:
     renderRoute();
   }
 
-  function completeNotaRecord(type, id) {
+  async function completeNotaRecord(type, id) {
     const data = getNotasData();
     const timestamp = nowIso();
     if (type === 'nota') {
@@ -13363,20 +14278,22 @@ Notas importantes:
     saveNotasData(data);
     clearNotasForms();
     setNotasMessage('Registro marcado como cumplido y enviado al Histórico.');
+    await confirmCriticalCloudSave(notasState, { operation: 'notas_cumplido' });
     renderRoute();
   }
 
-  function completeRecordatorioRecord(id) {
+  async function completeRecordatorioRecord(id) {
     const data = getNotasData();
     const timestamp = nowIso();
     data.recordatorios = data.recordatorios.map((record) => record.id === id ? normalizeRecordatorioRecord({ ...record, estado: 'Cumplido', completed: true, completedAt: record.completedAt || timestamp, updatedAt: timestamp }) : record);
     saveNotasData(data);
     clearNotasForms();
     setNotasMessage('Recordatorio marcado como cumplido y enviado al Histórico.');
+    await confirmCriticalCloudSave(notasState, { operation: 'notas_recordatorio_cumplido' });
     renderRoute();
   }
 
-  function deleteNotaRecord(type, id) {
+  async function deleteNotaRecord(type, id) {
     const label = type === 'pendiente' ? 'este pendiente' : 'esta nota';
     if (!window.confirm(`¿Borrar ${label}? Esta acción no toca datos de negocio.`)) return;
     const data = getNotasData();
@@ -13385,16 +14302,18 @@ Notas importantes:
     saveNotasData(data);
     clearNotasForms();
     setNotasMessage('Registro borrado definitivamente del módulo Notas.');
+    await confirmCriticalCloudSave(notasState, { operation: 'notas_borrar' });
     renderRoute();
   }
 
-  function deleteRecordatorioRecord(id) {
+  async function deleteRecordatorioRecord(id) {
     if (!window.confirm('¿Borrar este recordatorio? Esta acción no toca datos de negocio.')) return;
     const data = getNotasData();
     data.recordatorios = data.recordatorios.filter((record) => record.id !== id);
     saveNotasData(data);
     clearNotasForms();
     setNotasMessage('Recordatorio borrado definitivamente.');
+    await confirmCriticalCloudSave(notasState, { operation: 'notas_recordatorio_borrar' });
     renderRoute();
   }
 
@@ -16135,7 +17054,7 @@ Notas importantes:
     return '';
   }
 
-  function saveBdatosCreate(form) {
+  async function saveBdatosCreate(form) {
     if (!canCurrentRole('editCatalogs')) {
       bdatosState.message = ADMIN_RESTRICTED_MESSAGE;
       bdatosState.messageType = 'error';
@@ -16175,10 +17094,11 @@ Notas importantes:
       detail: buildActivityDetail(['Artículo agregado', record.codigo, record.descripcion, formatMoney(record.precio)]),
       source: 'local'
     });
+    await confirmCriticalCloudSave(bdatosState, { operation: 'bdatos' });
     renderRoute({ preserveScroll: true });
   }
 
-  function saveBdatosEdit(form) {
+  async function saveBdatosEdit(form) {
     if (!canCurrentRole('editCatalogs')) {
       bdatosState.message = ADMIN_RESTRICTED_MESSAGE;
       bdatosState.messageType = 'error';
@@ -16227,6 +17147,7 @@ Notas importantes:
       detail: buildActivityDetail(['Artículo actualizado', updated.codigo, updated.descripcion, formatMoney(updated.precio)]),
       source: 'local'
     });
+    await confirmCriticalCloudSave(bdatosState, { operation: 'bdatos' });
     renderRoute({ preserveScroll: true });
   }
 
@@ -16244,7 +17165,7 @@ Notas importantes:
     renderRoute({ preserveScroll: true });
   }
 
-  function deleteBdatosRecord(recordId) {
+  async function deleteBdatosRecord(recordId) {
     if (!canCurrentRole('editCatalogs')) {
       bdatosState.message = ADMIN_RESTRICTED_MESSAGE;
       bdatosState.messageType = 'error';
@@ -16272,6 +17193,7 @@ Notas importantes:
       detail: buildActivityDetail(['Artículo borrado', record.codigo, record.descripcion]),
       source: 'local'
     });
+    await confirmCriticalCloudSave(bdatosState, { operation: 'bdatos_borrar' });
     renderRoute({ preserveScroll: true });
   }
 
@@ -17932,7 +18854,7 @@ Notas importantes:
     return '';
   }
 
-  function saveVentaAjusteRecord(form) {
+  async function saveVentaAjusteRecord(form) {
     const formData = new FormData(form);
     const ventaId = cleanText(formData.get('ventaId'));
     const clienteId = cleanText(formData.get('clienteId'));
@@ -17977,6 +18899,7 @@ Notas importantes:
       detail: buildActivityDetail(['Ajuste cliente registrado', venta.numeroDocumento, getAjusteFacturaActivityPart(ajuste), ajuste.tipo, formatMoney(ajuste.monto)]),
       source: 'local'
     });
+    await confirmCriticalCloudSave(ventasState, { operation: 'ventas_ajuste' });
     renderRoute();
   }
 
@@ -17989,7 +18912,7 @@ Notas importantes:
     renderRoute({ preserveScroll: true });
   }
 
-  function deleteVentaAjuste(ventaId, ajusteId) {
+  async function deleteVentaAjuste(ventaId, ajusteId) {
     if (!canCurrentRole('annulMovements')) {
       ventasState.message = ADMIN_RESTRICTED_MESSAGE;
       ventasState.messageType = 'error';
@@ -18021,6 +18944,7 @@ Notas importantes:
     ventasState.message = `Ajuste eliminado de ${venta.numeroDocumento}. Saldo recalculado.`;
     ventasState.messageType = 'success';
     saveData(appData);
+    await confirmCriticalCloudSave(ventasState, { operation: 'ventas_ajuste_borrar' });
     renderRoute();
   }
 
@@ -18065,7 +18989,7 @@ Notas importantes:
     syncVentaOptions();
   }
 
-  function saveVentaRecord(form) {
+  async function saveVentaRecord(form) {
     const existingId = cleanText(new FormData(form).get('id'));
     const records = Array.isArray(appData.ventas) ? appData.ventas : [];
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
@@ -18122,6 +19046,7 @@ Notas importantes:
       detail: buildActivityDetail([existingRecord ? 'OC editada' : 'OC creada', newRecord.numeroDocumento, formatMoney(newRecord.ventaNetaAjustada || newRecord.total || newRecord.ventaNetaOriginal)]),
       source: 'local'
     });
+    await confirmCriticalCloudSave(ventasState, { operation: 'ventas_oc' });
     renderRoute();
   }
 
@@ -18134,7 +19059,7 @@ Notas importantes:
     renderRoute();
   }
 
-  function toggleVentaRecord(recordId) {
+  async function toggleVentaRecord(recordId) {
     if (!canCurrentRole('annulMovements')) {
       ventasState.message = ADMIN_RESTRICTED_MESSAGE;
       ventasState.messageType = 'error';
@@ -18162,6 +19087,7 @@ Notas importantes:
     ventasState.message = `OC ${record.numeroDocumento || ''} quedó ${shouldActivate ? 'reactivada' : 'anulada'}.${autoGastoMessage ? ` ${autoGastoMessage}` : ''}`;
     ventasState.messageType = 'success';
     saveData(appData);
+    await confirmCriticalCloudSave(ventasState, { operation: 'ventas_toggle' });
     renderRoute();
   }
 
@@ -19294,7 +20220,7 @@ Notas importantes:
     return '';
   }
 
-  function saveCobroRecord(form) {
+  async function saveCobroRecord(form) {
     const existingId = cleanText(new FormData(form).get('id'));
     const records = Array.isArray(appData.cobros) ? appData.cobros : [];
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
@@ -19370,6 +20296,7 @@ Notas importantes:
       ]),
       source: 'local'
     });
+    await confirmCriticalCloudSave(cobrosState, { operation: 'cobros' });
     renderRoute();
   }
 
@@ -19396,7 +20323,7 @@ Notas importantes:
     renderRoute();
   }
 
-  function annulCobroRecord(cobroId) {
+  async function annulCobroRecord(cobroId) {
     if (!canCurrentRole('annulMovements')) {
       cobrosState.message = ADMIN_RESTRICTED_MESSAGE;
       cobrosState.messageType = 'error';
@@ -19418,6 +20345,7 @@ Notas importantes:
     cobrosState.message = `Cobro de ${formatMoney(cobro.montoCobrado)} anulado y OC recalculada.${facturaSync.reverted ? ` Facturas auto-pagadas revertidas: ${facturaSync.reverted}.` : ''}`;
     cobrosState.messageType = 'success';
     saveData(appData);
+    await confirmCriticalCloudSave(cobrosState, { operation: 'cobros_anular' });
     renderRoute();
   }
 
@@ -20271,7 +21199,7 @@ Notas importantes:
     };
   }
 
-  function saveCompraProveedorRecord(form) {
+  async function saveCompraProveedorRecord(form) {
     const existingId = cleanText(new FormData(form).get('id'));
     const records = Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [];
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
@@ -20339,6 +21267,7 @@ Notas importantes:
         source: 'sistema'
       });
     }
+    await confirmCriticalCloudSave(proveedoresState, { operation: 'proveedores_compras' });
     renderRoute();
   }
 
@@ -20352,7 +21281,7 @@ Notas importantes:
     renderRoute();
   }
 
-  function toggleCompraProveedorRecord(recordId) {
+  async function toggleCompraProveedorRecord(recordId) {
     if (!canCurrentRole('annulMovements')) {
       proveedoresState.message = ADMIN_RESTRICTED_MESSAGE;
       proveedoresState.messageType = 'error';
@@ -20380,6 +21309,7 @@ Notas importantes:
     if (syncResult.action === 'created' || syncResult.action === 'updated') proveedoresState.message += ' Pago automático relacionado sincronizado.';
     proveedoresState.messageType = 'success';
     saveData(appData);
+    await confirmCriticalCloudSave(proveedoresState, { operation: 'proveedores_toggle' });
     renderRoute();
   }
 
@@ -20442,7 +21372,7 @@ Notas importantes:
     return '';
   }
 
-  function saveProveedorAjusteRecord(form) {
+  async function saveProveedorAjusteRecord(form) {
     const formData = new FormData(form);
     const compraProveedorId = cleanText(formData.get('compraProveedorId'));
     const proveedorId = cleanText(formData.get('proveedorId'));
@@ -20489,6 +21419,7 @@ Notas importantes:
       detail: buildActivityDetail(['Ajuste proveedor registrado', compra.facturaReferencia, getAjusteFacturaActivityPart(ajuste), ajuste.tipo, formatMoney(ajuste.monto)]),
       source: 'local'
     });
+    await confirmCriticalCloudSave(proveedoresState, { operation: 'proveedores_ajuste' });
     renderRoute();
   }
 
@@ -20501,7 +21432,7 @@ Notas importantes:
     renderRoute({ preserveScroll: true });
   }
 
-  function deleteCompraProveedorAjuste(compraProveedorId, ajusteId) {
+  async function deleteCompraProveedorAjuste(compraProveedorId, ajusteId) {
     if (!canCurrentRole('annulMovements')) {
       proveedoresState.message = ADMIN_RESTRICTED_MESSAGE;
       proveedoresState.messageType = 'error';
@@ -20534,6 +21465,7 @@ Notas importantes:
     proveedoresState.message = `Ajuste eliminado de ${compra.facturaReferencia}. Saldo recalculado.`;
     proveedoresState.messageType = 'success';
     saveData(appData);
+    await confirmCriticalCloudSave(proveedoresState, { operation: 'proveedores_ajuste_borrar' });
     renderRoute();
   }
 
@@ -21188,7 +22120,7 @@ Notas importantes:
     return '';
   }
 
-  function savePagoProveedorRecord(form) {
+  async function savePagoProveedorRecord(form) {
     const existingId = cleanText(new FormData(form).get('id'));
     const records = Array.isArray(appData.pagosProveedores) ? appData.pagosProveedores : [];
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
@@ -21239,6 +22171,7 @@ Notas importantes:
       detail: buildActivityDetail([existingRecord ? 'Pago editado' : 'Pago registrado', newRecord.facturaReferencia, formatMoney(newRecord.montoPagado)]),
       source: 'local'
     });
+    await confirmCriticalCloudSave(pagosState, { operation: 'pagos' });
     renderRoute();
   }
 
@@ -21265,7 +22198,7 @@ Notas importantes:
     renderRoute();
   }
 
-  function annulPagoProveedorRecord(pagoId) {
+  async function annulPagoProveedorRecord(pagoId) {
     if (!canCurrentRole('annulMovements')) {
       pagosState.message = ADMIN_RESTRICTED_MESSAGE;
       pagosState.messageType = 'error';
@@ -21286,6 +22219,7 @@ Notas importantes:
     pagosState.message = `Pago de ${formatMoney(pago.montoPagado)} anulado y factura/referencia recalculada.`;
     pagosState.messageType = 'success';
     saveData(appData);
+    await confirmCriticalCloudSave(pagosState, { operation: 'pagos_anular' });
     renderRoute();
   }
 
@@ -21606,7 +22540,7 @@ Notas importantes:
     return '';
   }
 
-  function saveGastoRecord(form) {
+  async function saveGastoRecord(form) {
     const existingId = cleanText(new FormData(form).get('id'));
     const records = Array.isArray(appData.gastos) ? appData.gastos : [];
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
@@ -21651,6 +22585,7 @@ Notas importantes:
       detail: buildActivityDetail([existingRecord ? 'Gasto editado' : 'Gasto registrado', newRecord.tipoGastoNombre || 'Gasto', formatMoney(newRecord.monto)]),
       source: 'local'
     });
+    await confirmCriticalCloudSave(gastosState, { operation: 'gastos' });
     renderRoute();
   }
 
@@ -21670,7 +22605,7 @@ Notas importantes:
     renderRoute();
   }
 
-  function annulGastoRecord(recordId) {
+  async function annulGastoRecord(recordId) {
     if (!canCurrentRole('annulMovements')) {
       gastosState.message = ADMIN_RESTRICTED_MESSAGE;
       gastosState.messageType = 'error';
@@ -21690,6 +22625,7 @@ Notas importantes:
     gastosState.message = `Gasto de ${formatMoney(record.monto)} anulado. Queda visible y no sumará en reportes futuros.`;
     gastosState.messageType = 'success';
     saveData(appData);
+    await confirmCriticalCloudSave(gastosState, { operation: 'gastos_anular' });
     renderRoute();
   }
 
@@ -22216,7 +23152,7 @@ Notas importantes:
     return '';
   }
 
-  function saveCasaGastoRecord(form) {
+  async function saveCasaGastoRecord(form) {
     const existingId = cleanText(new FormData(form).get('id'));
     const records = Array.isArray(appData.casaGastos) ? appData.casaGastos : [];
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
@@ -22251,6 +23187,7 @@ Notas importantes:
       detail: buildActivityDetail([existingRecord ? 'Gasto Casa editado' : 'Gasto Casa registrado', newRecord.categoriaCasaNombre || 'Casa', formatMoney(newRecord.monto)]),
       source: 'local'
     });
+    await confirmCriticalCloudSave(casaState, { operation: 'casa' });
     renderRoute();
   }
 
@@ -22263,7 +23200,7 @@ Notas importantes:
     renderRoute();
   }
 
-  function deleteCasaGastoRecord(recordId) {
+  async function deleteCasaGastoRecord(recordId) {
     const records = Array.isArray(appData.casaGastos) ? appData.casaGastos : [];
     const record = records.find((item) => item.id === recordId);
     if (!record) return;
@@ -22274,6 +23211,7 @@ Notas importantes:
     casaState.message = `Gasto Casa eliminado: ${formatMoney(record.monto)}.`;
     casaState.messageType = 'success';
     saveData(appData);
+    await confirmCriticalCloudSave(casaState, { operation: 'casa_borrar' });
     renderRoute();
   }
 
@@ -22403,9 +23341,24 @@ Notas importantes:
     const authStatus = getPreparedAuthStatus();
     const firebaseStatus = getKSAFirebaseStatusSafe();
     const runtimeStatus = getCloudRuntimeStatusSafe();
+    const syncMeta = getCloudSyncDiagnosticsSnapshot();
     const cloudActive = Boolean(cloudOperationState.active || runtimeStatus.cloudActive || firebaseStatus.cloudActive || mode === 'cloud_active');
     const cloudReady = Boolean(runtimeStatus.cloudDataReady || firebaseStatus.cloudDataReady || runtimeStatus.datosMigrados || mode === 'cloud_ready' || cloudActive);
-    const lastSyncAt = cloudOperationState.lastSyncAt || runtimeStatus.lastSyncAt || runtimeStatus.lastCloudReadAt || runtimeStatus.lastCloudWriteAt || '';
+    const lastCloudReadAt = syncMeta.lastCloudReadAt || runtimeStatus.lastCloudReadAt || '';
+    const lastCloudWriteAt = syncMeta.lastCloudWriteAt || runtimeStatus.lastCloudWriteAt || '';
+    const lastSyncAttemptAt = syncMeta.lastSyncAttemptAt || cloudOperationState.lastSyncAt || runtimeStatus.lastSyncAt || '';
+    const lastSyncErrorMessage = syncMeta.lastSyncErrorMessage || cloudOperationState.lastError || runtimeStatus.lastSyncError || '';
+    const lastSyncErrorAt = syncMeta.lastSyncErrorAt || runtimeStatus.lastSyncErrorAt || '';
+    const hasRecentError = isCloudSyncErrorRecent(syncMeta) || Boolean(lastSyncErrorMessage && !lastCloudReadAt && !lastCloudWriteAt);
+    const lastProtectionAt = syncMeta.lastProtectionAt || '';
+    const protectionIsRecent = Boolean(lastProtectionAt && (!lastCloudReadAt || String(lastProtectionAt) > String(lastCloudReadAt)));
+    const protectionStatusKey = cleanText(syncMeta.lastProtectionStatus || syncMeta.lastCloudStatus || 'proteccion_anti_perdida') || 'proteccion_anti_perdida';
+    const realStatusKey = protectionIsRecent
+      ? (syncMeta.pendingLocalChanges ? 'pendiente_sincronizar' : protectionStatusKey)
+      : (hasRecentError
+        ? (syncMeta.lastCloudStatus === 'lectura_incompleta' ? 'lectura_incompleta' : 'error_sincronizacion')
+        : (syncMeta.pendingLocalChanges ? 'pendiente_sincronizar' : (cloudActive && (lastCloudReadAt || lastCloudWriteAt) ? 'sincronizado' : (cloudActive ? 'nube_no_confirmada' : 'local_controlado'))));
+    const lastSyncAt = lastSyncAttemptAt || lastCloudReadAt || lastCloudWriteAt || '';
 
     return {
       ...info,
@@ -22416,7 +23369,29 @@ Notas importantes:
       badgeClass: cloudActive ? 'is-cloud' : info.badgeClass,
       message: cloudActive ? 'Firestore está activo como fuente principal. JSON queda como respaldo auxiliar.' : info.message,
       lastCheck: nowIso(),
+      cloudActive,
+      cloudReady,
       lastSyncAt,
+      lastCloudReadAt,
+      lastCloudWriteAt,
+      lastSyncAttemptAt,
+      lastSyncErrorAt,
+      lastSyncErrorMessage,
+      lastSyncErrorOperation: syncMeta.lastSyncErrorOperation,
+      lastProtectionAt: syncMeta.lastProtectionAt,
+      lastProtectionReason: syncMeta.lastProtectionReason,
+      lastProtectionMessage: syncMeta.lastProtectionMessage,
+      lastProtectionStatus: syncMeta.lastProtectionStatus,
+      lastManualRefreshAt: syncMeta.lastManualRefreshAt,
+      lastManualRefreshStatus: syncMeta.lastManualRefreshStatus,
+      lastManualRefreshMessage: syncMeta.lastManualRefreshMessage,
+      lastManualRefreshModules: Array.isArray(syncMeta.lastManualRefreshModules) ? syncMeta.lastManualRefreshModules.map(normalizeCloudRefreshModuleResult) : [],
+      isRefreshingCloud: Boolean(cloudOperationState.isReading),
+      pendingLocalChanges: syncMeta.pendingLocalChanges,
+      pendingLocalChangesCount: syncMeta.pendingLocalChangesCount,
+      realStatus: getCloudStatusLabel(realStatusKey),
+      realStatusKey,
+      realStatusMessage: syncMeta.lastStatusMessage,
       diagnosticsOk: diagnostics?.ok === true,
       localRecords,
       access: authStatus.accessLabel,
@@ -22435,35 +23410,143 @@ Notas importantes:
     };
   }
 
+  function renderSyncCountRows(items = []) {
+    const list = Array.isArray(items) ? items : [];
+    const rows = list.map((item) => {
+      const rawValue = item?.value;
+      const numeric = Number(rawValue);
+      const display = Number.isFinite(numeric) ? String(numeric) : cleanText(rawValue || 'No disponible');
+      return `
+        <tr class="compact-record-row">
+          <td><span class="compact-primary">${escapeHtml(item?.label || 'Módulo')}</span></td>
+          <td class="amount-cell"><span>${escapeHtml(display || 'No disponible')}</span></td>
+        </tr>
+      `;
+    }).join('');
+    return rows || '<tr class="compact-record-row"><td><span class="compact-primary">Sin datos</span></td><td class="amount-cell"><span>0</span></td></tr>';
+  }
+
+  function renderLocalSyncCountsTable() {
+    return renderOperationalTableShell({
+      shellClass: 'sync-local-counts-scroll-shell',
+      wrapClass: 'sync-local-counts-table-wrap',
+      ariaLabel: 'Conteos locales por módulo',
+      tableClass: 'sync-local-counts-table',
+      headers: '<th>Módulo</th><th class="amount-cell">Local</th>',
+      rows: renderSyncCountRows(getLocalSyncCounts())
+    });
+  }
+
+  function renderCloudRefreshModuleRows(items = []) {
+    const list = (Array.isArray(items) ? items : []).map(normalizeCloudRefreshModuleResult);
+    const rows = list.map((item) => {
+      const countText = Number.isFinite(Number(item.count)) ? String(Number(item.count)) : '0';
+      const durationText = item.durationMs > 0 ? `${Math.round(item.durationMs / 100) / 10}s` : '—';
+      const messageText = item.message || item.statusLabel || getCloudRefreshModuleStatusLabel(item.status);
+      return `
+        <tr class="compact-record-row">
+          <td><span class="compact-primary">${escapeHtml(item.label || 'Módulo')}</span><small>${escapeHtml(item.key || '')}</small></td>
+          <td><span>${escapeHtml(item.statusLabel || getCloudRefreshModuleStatusLabel(item.status))}</span></td>
+          <td class="amount-cell"><span>${escapeHtml(countText)}</span></td>
+          <td><span>${escapeHtml(durationText)}</span></td>
+          <td><span>${escapeHtml(messageText)}</span><small>${escapeHtml(item.code || '')}</small></td>
+        </tr>
+      `;
+    }).join('');
+    return rows || '<tr class="compact-record-row"><td colspan="5"><span class="compact-primary">Sin actualización manual registrada</span><small>Al usar Actualizar datos se mostrará el resultado por módulo.</small></td></tr>';
+  }
+
+  function renderCloudRefreshModulesTable(items = []) {
+    return renderOperationalTableShell({
+      shellClass: 'sync-module-results-scroll-shell',
+      wrapClass: 'sync-module-results-table-wrap',
+      ariaLabel: 'Resultado de actualización por módulo',
+      tableClass: 'sync-module-results-table',
+      headers: '<th>Módulo</th><th>Estado</th><th class="amount-cell">Registros</th><th>Tiempo</th><th>Detalle</th>',
+      rows: renderCloudRefreshModuleRows(items)
+    });
+  }
+
+  function formatSyncDateOrEmpty(value, emptyText = 'Sin lectura registrada') {
+    const clean = cleanText(value);
+    return clean ? formatDateTime(clean) : emptyText;
+  }
+
   function renderDataSyncStatusCard(options = {}) {
     const opts = isPlainObject(options) ? options : {};
     const info = getDataSyncStatusInfo();
+    const errorText = info.lastSyncErrorMessage
+      ? `${info.lastSyncErrorMessage}${info.lastSyncErrorAt ? ` · ${formatDateTime(info.lastSyncErrorAt)}` : ''}`
+      : 'Sin errores recientes';
+    const pendingText = info.pendingLocalChanges
+      ? (Number.isFinite(Number(info.pendingLocalChangesCount)) ? `Sí · ${Number(info.pendingLocalChangesCount)} registro(s) estimado(s)` : 'Sí · No determinado')
+      : 'No';
+    const statusBadgeClass = info.realStatusKey === 'sincronizado'
+      ? 'is-cloud'
+      : (info.realStatusKey === 'error_sincronizacion' || info.realStatusKey === 'lectura_incompleta' || info.realStatusKey === 'proteccion_anti_perdida' || info.realStatusKey === 'nube_no_confirmada' ? 'is-warning' : 'is-pending');
+    const warningHtml = (info.realStatusKey === 'lectura_incompleta' || info.realStatusKey === 'error_sincronizacion')
+      ? '<div class="form-message is-error" role="alert">La actualización desde nube no se completó. Se conservaron los datos locales.</div>'
+      : (info.lastProtectionAt ? `<div class="form-message is-error" role="alert">${escapeHtml(info.lastProtectionMessage || 'No se pudo confirmar seguridad de actualización. Se conservaron datos locales.')}</div>` : '');
+    const protectionText = info.lastProtectionAt
+      ? `${info.lastProtectionMessage || 'Protección anti-pérdida aplicada.'} · ${formatDateTime(info.lastProtectionAt)}`
+      : 'Sin bloqueo anti-pérdida registrado';
+    const manualRefreshStatus = info.isRefreshingCloud ? 'Actualizando…' : (info.lastManualRefreshStatus ? getCloudStatusLabel(info.lastManualRefreshStatus) : 'Sin actualización manual');
+    const manualRefreshMessage = info.isRefreshingCloud
+      ? (cloudOperationState.refreshMessage || summarizeCloudRefreshModules(info.lastManualRefreshModules))
+      : (info.lastManualRefreshMessage || summarizeCloudRefreshModules(info.lastManualRefreshModules));
+    const refreshButtonLabel = info.isRefreshingCloud ? 'Actualizando…' : 'Actualizar datos';
     return `
       <article class="panel-card config-card full-span data-sync-status-card">
         <div class="section-title-row">
           <div>
-            <span class="eyebrow mini">Sincronización</span>
-            <h2>Estado de datos</h2>
+            <span class="eyebrow mini">Sincronización segura</span>
+            <h2>Estado real de nube/local</h2>
           </div>
-          <span class="sync-mode-badge ${escapeHtml(info.badgeClass)}">${escapeHtml(info.estado)}</span>
+          <span class="sync-mode-badge ${escapeHtml(statusBadgeClass)}">${escapeHtml(info.realStatus)}</span>
         </div>
         <p class="notice">${escapeHtml(info.message)}</p>
+        ${warningHtml}
         <div class="import-summary-grid compact-summary data-sync-grid">
-          <div class="status-item"><strong>Modo de datos</strong><span>${escapeHtml(info.estado)}</span></div>
+          <div class="status-item"><strong>Modo de datos actual</strong><span>${escapeHtml(info.cloudActive ? 'Nube activa' : info.estado)}</span></div>
           <div class="status-item"><strong>Fuente de datos</strong><span>${escapeHtml(info.fuente)}</span></div>
+          <div class="status-item"><strong>Estado real</strong><span>${escapeHtml(info.realStatus)}</span><small>${escapeHtml(info.realStatusMessage || 'Diagnóstico local/nube separado.')}</small></div>
+          <div class="status-item"><strong>Última lectura desde Firestore</strong><span>${escapeHtml(formatSyncDateOrEmpty(info.lastCloudReadAt, 'Sin lectura registrada'))}</span></div>
+          <div class="status-item"><strong>Última escritura exitosa en Firestore</strong><span>${escapeHtml(formatSyncDateOrEmpty(info.lastCloudWriteAt, 'Sin escritura confirmada'))}</span></div>
+          <div class="status-item"><strong>Último intento de sincronización</strong><span>${escapeHtml(formatSyncDateOrEmpty(info.lastSyncAttemptAt, 'Sin intento registrado'))}</span></div>
+          <div class="status-item"><strong>Resultado última actualización manual</strong><span>${escapeHtml(manualRefreshStatus)}</span><small>${escapeHtml(manualRefreshMessage)}</small></div>
+          <div class="status-item"><strong>Último error de escritura/sincronización</strong><span>${escapeHtml(errorText)}</span><small>${escapeHtml(info.lastSyncErrorOperation || '')}</small></div>
+          <div class="status-item"><strong>Última protección anti-pérdida</strong><span>${escapeHtml(protectionText)}</span><small>${escapeHtml(info.lastProtectionReason || '')}</small></div>
+          <div class="status-item"><strong>Cambios pendientes</strong><span>${escapeHtml(pendingText)}</span></div>
           <div class="status-item"><strong>Firebase</strong><span>${escapeHtml(info.firebase)}</span></div>
           <div class="status-item"><strong>Auth</strong><span>${escapeHtml(info.firebaseAuth || 'Pendiente')}</span></div>
           <div class="status-item"><strong>Firestore</strong><span>${escapeHtml(info.firestore || 'Pendiente')}</span></div>
           <div class="status-item"><strong>Workspace</strong><span>${escapeHtml(info.workspace || 'ksa_practika')}</span></div>
           <div class="status-item"><strong>Acceso</strong><span>${escapeHtml(info.access || 'Modo local')}</span></div>
-          <div class="status-item"><strong>Última comprobación</strong><span>${escapeHtml(formatDateTime(info.lastCheck))}</span></div>
+          <div class="status-item"><strong>Última comprobación visual</strong><span>${escapeHtml(formatDateTime(info.lastCheck))}</span></div>
           <div class="status-item"><strong>Nube</strong><span>${escapeHtml(info.nube)}</span></div>
           <div class="status-item"><strong>Proyecto</strong><span>${escapeHtml(info.projectName || 'ksakpk')}</span></div>
           <div class="status-item"><strong>Fuente principal</strong><span>${escapeHtml(info.sourcePrincipal || 'Local controlado')}</span></div>
           <div class="status-item"><strong>Datos migrados</strong><span>${escapeHtml(info.datosMigrados || 'No')}</span></div>
-          <div class="status-item"><strong>Última sincronización</strong><span>${escapeHtml(info.lastSyncAt ? formatDateTime(info.lastSyncAt) : '—')}</span></div>
-          ${Number.isFinite(info.localRecords) ? `<div class="status-item"><strong>Conteos locales</strong><span>${escapeHtml(String(info.localRecords))}</span><small>Solo informativo</small></div>` : ''}
-          ${!opts.hideCloudRefresh && info.canRefreshCloud ? '<button type="button" class="secondary-action compact" data-cloud-refresh>Actualizar datos</button>' : ''}
+          ${!opts.hideCloudRefresh && (info.canRefreshCloud || info.isRefreshingCloud) ? `<button type="button" class="secondary-action compact" data-cloud-refresh ${info.isRefreshingCloud ? 'disabled' : ''}>${escapeHtml(refreshButtonLabel)}</button>` : ''}
+          ${info.cloudActive ? '<button type="button" class="secondary-action compact" data-cloud-upload-pending>Subir pendientes</button>' : ''}
+        </div>
+        <div class="sync-counts-block sync-module-results-block">
+          <div class="compact-title-row">
+            <div>
+              <span class="eyebrow mini">Actualización manual</span>
+              <h3>Resultado por módulo</h3>
+            </div>
+          </div>
+          ${renderCloudRefreshModulesTable(info.lastManualRefreshModules)}
+        </div>
+        <div class="sync-counts-block">
+          <div class="compact-title-row">
+            <div>
+              <span class="eyebrow mini">Base local</span>
+              <h3>Conteos locales por módulo</h3>
+            </div>
+          </div>
+          ${renderLocalSyncCountsTable()}
         </div>
       </article>
     `;
@@ -22597,11 +23680,15 @@ Notas importantes:
     const counts = isPlainObject(countsInput) ? countsInput : {};
     const rows = ONLINE_DIAGNOSTIC_COLLECTIONS.map((item) => {
       const hasValue = Object.prototype.hasOwnProperty.call(counts, item.key);
-      const value = hasValue ? Number(counts[item.key]) : null;
+      const rawValue = hasValue ? counts[item.key] : null;
+      const value = Number(rawValue);
+      const display = hasValue
+        ? (Number.isFinite(value) ? String(value) : cleanText(rawValue || 'No disponible'))
+        : 'No revisado';
       return `
         <tr class="compact-record-row">
           <td><span class="compact-primary">${escapeHtml(item.label)}</span></td>
-          <td class="amount-cell"><span>${escapeHtml(hasValue && Number.isFinite(value) ? String(value) : '—')}</span></td>
+          <td class="amount-cell"><span>${escapeHtml(display || 'No disponible')}</span></td>
         </tr>
       `;
     }).join('');
@@ -22647,11 +23734,11 @@ Notas importantes:
         <div class="compact-title-row">
           <div>
             <span class="eyebrow mini">Firestore seguro</span>
-            <h3>Diagnóstico online</h3>
+            <h3>Conteos nube y diagnóstico online</h3>
           </div>
           <span class="sync-mode-badge ${escapeHtml(readBadgeClass)}">${escapeHtml(readStatus)}</span>
         </div>
-        <p class="notice">Validación liviana de Firestore. Solo lee datos y la prueba de escritura usa metadata/diagnostico; los módulos operativos ni se despeinan.</p>
+        <p class="notice">Validación segura de Firestore. Los conteos nube son lectura no destructiva: no reemplazan datos locales ni escriben en módulos operativos.</p>
         <div class="import-summary-grid compact-summary online-diagnostic-grid">
           <div class="status-item"><strong>Usuario actual</strong><span>${escapeHtml(signedUser?.displayName || signedUser?.email || status.currentUser || '—')}</span></div>
           <div class="status-item"><strong>Correo actual</strong><span>${escapeHtml(signedUser?.email || status.currentUser || '—')}</span></div>
@@ -22662,12 +23749,12 @@ Notas importantes:
           <div class="status-item"><strong>Modo de datos</strong><span>${escapeHtml(dataMode)}</span></div>
           <div class="status-item"><strong>Fuente principal</strong><span>${escapeHtml(sourcePrincipal)}</span></div>
           <div class="status-item"><strong>Importación inicial</strong><span>${escapeHtml(importCompleted ? 'Completada' : 'Pendiente')}</span></div>
-          <div class="status-item"><strong>Última sincronización</strong><span>${escapeHtml(lastSyncAt ? formatDateTime(lastSyncAt) : '—')}</span></div>
+          <div class="status-item"><strong>Última revisión de conteos nube</strong><span>${escapeHtml(lastSyncAt ? formatDateTime(lastSyncAt) : '—')}</span></div>
           <div class="status-item"><strong>Estado de lectura Firestore</strong><span>${escapeHtml(readStatus)}</span></div>
           <div class="status-item"><strong>Estado de escritura de diagnóstico</strong><span>${escapeHtml(writeStatus)}</span></div>
         </div>
         <div class="config-actions-row online-diagnostic-actions">
-          <button type="button" class="secondary-action compact" data-online-diagnostic-read ${canRead ? '' : 'disabled'}>Probar lectura Firestore</button>
+          <button type="button" class="secondary-action compact" data-online-diagnostic-read ${canRead ? '' : 'disabled'}>Revisar conteos en nube</button>
           <button type="button" class="card-action compact" data-online-diagnostic-write ${canWrite ? '' : 'disabled'}>Probar escritura de diagnóstico</button>
           <small>La escritura se limita a workspaces/ksa_practika/metadata/diagnostico.</small>
         </div>
@@ -23114,7 +24201,8 @@ Notas importantes:
     const canImport = canCurrentRole('importJson') && !jsonImportLockedByCloud;
     const canConfig = canCurrentRole('changeConfig');
     const canRefreshData = canCurrentRole('updateData');
-    const topRefreshEnabled = Boolean(dataSyncInfo.canRefreshCloud && canRefreshData);
+    const topRefreshEnabled = Boolean(dataSyncInfo.canRefreshCloud && canRefreshData && !dataSyncInfo.isRefreshingCloud);
+    const topRefreshLabel = dataSyncInfo.isRefreshingCloud ? 'Actualizando…' : 'Actualizar datos';
     const lastDataRefreshAt = dataSyncInfo.lastSyncAt || usersStatus.lastSyncAt || '';
     const modeOptions = getOperationalRecordCount() > 0
       ? `
@@ -23281,7 +24369,7 @@ Notas importantes:
               <span class="eyebrow mini">Estado rápido</span>
               <h2>Datos en línea</h2>
             </div>
-            <button type="button" class="card-action config-top-refresh" data-cloud-refresh ${topRefreshEnabled ? '' : 'disabled'}>Actualizar datos</button>
+            <button type="button" class="card-action config-top-refresh" data-cloud-refresh ${topRefreshEnabled ? '' : 'disabled'}>${escapeHtml(topRefreshLabel)}</button>
           </div>
           <div class="import-summary-grid compact-summary config-top-status-grid">
             <div class="status-item"><strong>Estado de nube</strong><span>${escapeHtml(dataSyncInfo.estado)}</span></div>
@@ -27192,7 +28280,7 @@ ${rowsXml}
     return '';
   }
 
-  function saveCatalogRecord(form) {
+  async function saveCatalogRecord(form) {
     if (!canCurrentRole('editCatalogs')) {
       catalogState.message = ADMIN_RESTRICTED_MESSAGE;
       catalogState.messageType = 'error';
@@ -27226,6 +28314,7 @@ ${rowsXml}
     catalogState.editingId = null;
     catalogState.messageType = 'success';
     saveData(appData);
+    await confirmCriticalCloudSave(catalogState, { operation: 'catalogos' });
     renderRoute();
   }
 
@@ -27255,7 +28344,7 @@ ${rowsXml}
     renderRoute();
   }
 
-  function toggleCatalogRecord(recordId) {
+  async function toggleCatalogRecord(recordId) {
     if (!canCurrentRole('editCatalogs')) {
       catalogState.message = ADMIN_RESTRICTED_MESSAGE;
       catalogState.messageType = 'error';
@@ -27273,6 +28362,7 @@ ${rowsXml}
       catalogState.message = `${record.nombre} eliminado de Categorías Casa.`;
       catalogState.messageType = 'success';
       saveData(appData);
+      await confirmCriticalCloudSave(catalogState, { operation: 'catalogos_borrar' });
       renderRoute();
       return;
     }
@@ -27301,6 +28391,7 @@ ${rowsXml}
       : `${record.nombre} quedó ${shouldActivate ? 'activo' : 'inactivo'}.`;
     catalogState.messageType = 'success';
     saveData(appData);
+    await confirmCriticalCloudSave(catalogState, { operation: 'catalogos_toggle' });
     renderRoute();
   }
 
@@ -27948,6 +29039,10 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-cloud-refresh]').forEach((button) => {
       button.addEventListener('click', () => handleCloudDataRefresh(button));
+    });
+
+    viewRoot.querySelectorAll('[data-cloud-upload-pending]').forEach((button) => {
+      button.addEventListener('click', () => handleCloudPendingUpload(button));
     });
 
     viewRoot.querySelectorAll('[data-online-diagnostic-read]').forEach((button) => {

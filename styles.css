@@ -11262,3 +11262,14 @@ body,
     min-width: 850px;
   }
 }
+
+/* Sync segura Etapa 1 — diagnóstico nube/local */
+.sync-counts-block {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.sync-local-counts-table {
+  min-width: 360px;
+}
