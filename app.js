@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.35-post12-syncsegura-ajustefinal-guardardatos';
+  const APP_VERSION = '0.18.36-post12-syncsegura-ajustefinal2-guardarlocalconfirmado';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1009,7 +1009,7 @@
   const FIRESTORE_TIMEOUT_SAVE_USER_MESSAGE = 'Tiempo de espera agotado. Revisa conexión, reglas de Firestore o UID.';
   const FIRESTORE_TIMEOUT_REFRESH_MESSAGE = 'Tiempo de espera agotado al actualizar datos.';
   const FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE = 'Tiempo de espera agotado al guardar datos. No se confirmó la escritura en nube.';
-  const FIRESTORE_MANUAL_SAVE_CONFIRM_MESSAGE = 'Se guardarán los datos locales actuales en la nube. ¿Deseas continuar?';
+  const FIRESTORE_MANUAL_SAVE_CONFIRM_MESSAGE = 'Se guardarán los datos locales actuales en la nube. Si la nube tiene una versión anterior, será reemplazada por estos datos locales. ¿Deseas continuar?';
 
   function createOperationTimeoutError(message, code = 'app/operation-timeout') {
     const error = new Error(cleanText(message) || 'Tiempo de espera agotado.');
@@ -5560,15 +5560,38 @@ Notas importantes:
 
     async function writeCloudOperationalSnapshot(snapshotInput = null, options = {}) {
       const opts = isPlainObject(options) ? options : {};
+      let failureStage = 'validación_workspace';
       if (opts.force !== true && !(state.cloudActive || getKSAFirebaseRuntime()?.cloudActive)) {
-        return { ok: false, action: 'writeCloudOperationalSnapshot', code: 'cloud/not-active', message: 'Nube no activa; no se escribe a Firestore.' };
+        return {
+          ok: false,
+          action: 'writeCloudOperationalSnapshot',
+          code: 'cloud/not-active',
+          stage: 'validación_workspace',
+          technicalMessage: 'validación_workspace · cloud/not-active · Nube no activa; no se escribe a Firestore.',
+          message: 'Nube no activa; no se escribe a Firestore.'
+        };
       }
       try {
+        failureStage = 'firestore_no_preparado';
         const { user, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: false });
         const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
         const stamp = getFirestoreTimestampValue(fs);
+        const manualSaveToken = cleanText(opts.confirmationToken || opts.manualSaveToken || '');
+        const manualSaveLocalAt = nowIso();
+        failureStage = 'preparación_payload';
         const payload = snapshotInput && isPlainObject(snapshotInput) && snapshotInput.data ? snapshotInput : buildCloudSnapshotPayload(appData);
+        if (!payload || !isPlainObject(payload.data)) {
+          return {
+            ok: false,
+            action: 'writeCloudOperationalSnapshot',
+            code: 'cloud/payload-empty',
+            stage: 'payload_vacío',
+            message: 'No se pudo preparar el estado local actual para subirlo a Firestore.',
+            technicalMessage: 'payload_vacío · cloud/payload-empty · Payload local vacío o inválido.'
+          };
+        }
         const data = normalizeData(payload.data || appData);
+        failureStage = 'escritura_firestore';
         let batch = fs.writeBatch(db);
         let count = 0;
         let totalQueued = 0;
@@ -5684,7 +5707,8 @@ Notas importantes:
           });
         }
 
-        await queueSet(fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID), {
+        const metadataRef = fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
+        await queueSet(metadataRef, {
           ...(isPlainObject(data.metadata) ? data.metadata : {}),
           id: FIRESTORE_METADATA_SYSTEM_ID,
           appName: APP_NAME,
@@ -5699,15 +5723,53 @@ Notas importantes:
           modoDatos: 'nube_activa',
           fuentePrincipal: 'firestore',
           lastSyncAt: stamp,
-          lastSyncAtLocal: nowIso(),
+          lastSyncAtLocal: manualSaveLocalAt,
           lastSyncBy: user.email,
+          lastManualSaveToken: manualSaveToken || undefined,
+          lastManualSaveAtLocal: manualSaveToken ? manualSaveLocalAt : undefined,
+          lastManualSaveBy: manualSaveToken ? user.email : undefined,
+          lastManualSaveReason: manualSaveToken ? cleanText(opts.reason || opts.source || 'guardar_datos_manual') : undefined,
           updatedAt: stamp
         });
         await commit();
+
+        failureStage = 'confirmación_escritura';
+        const confirmationSnap = await fs.getDoc(metadataRef);
+        const confirmationMetadata = confirmationSnap.exists() ? normalizeFirestoreDoc(confirmationSnap) : {};
+        const tokenConfirmed = !manualSaveToken || cleanText(confirmationMetadata.lastManualSaveToken) === manualSaveToken;
+        if (!confirmationSnap.exists() || !tokenConfirmed) {
+          const message = 'No se confirmó la escritura en nube después de guardar.';
+          state.lastSyncError = message;
+          publishKSAFirebaseRuntime({
+            lastSyncError: message,
+            lastSyncErrorAt: nowIso(),
+            lastCloudStatus: 'error_sincronizacion',
+            message
+          });
+          return {
+            ok: false,
+            action: 'writeCloudOperationalSnapshot',
+            code: 'cloud/write-confirmation-failed',
+            stage: 'confirmación_escritura',
+            message,
+            technicalMessage: `confirmación_escritura · cloud/write-confirmation-failed · token=${manualSaveToken ? 'no_confirmado' : 'sin_token'} · metadata=${confirmationSnap.exists() ? 'existe' : 'no_existe'}`,
+            count: totalQueued,
+            confirmationMetadata
+          };
+        }
+
         state.cloudActive = true;
-        state.lastCloudWriteAt = nowIso();
+        state.lastCloudWriteAt = manualSaveLocalAt;
         state.lastSyncAt = state.lastCloudWriteAt;
         state.lastSyncError = '';
+        state.cloudMetadata = {
+          ...(isPlainObject(state.cloudMetadata) ? state.cloudMetadata : {}),
+          ...confirmationMetadata,
+          fuentePrincipal: 'firestore',
+          cloudActive: true,
+          cloudDataReady: true,
+          cloudReady: true
+        };
         publishKSAFirebaseRuntime({
           cloudActive: true,
           cloudReadsEnabled: true,
@@ -5724,12 +5786,33 @@ Notas importantes:
           lastCloudStatus: 'sincronizado',
           message: 'Cambios sincronizados en Firestore.'
         });
-        return { ok: true, action: 'writeCloudOperationalSnapshot', code: 'cloud/write-ok', message: 'Cambios guardados en Firestore.', count: totalQueued, lastSyncAt: state.lastSyncAt };
+        return {
+          ok: true,
+          action: 'writeCloudOperationalSnapshot',
+          code: 'cloud/write-confirmed',
+          stage: 'confirmación_escritura',
+          message: 'Cambios guardados y confirmados en Firestore.',
+          count: totalQueued,
+          confirmed: true,
+          confirmationToken: manualSaveToken,
+          lastSyncAt: state.lastSyncAt,
+          lastCloudWriteAt: state.lastCloudWriteAt,
+          confirmationMetadata
+        };
       } catch (error) {
         const message = translateFirestorePrepError(error);
+        const code = cleanText(error?.code || (isOperationTimeoutError(error) ? 'app/write-cloud-timeout' : 'firebase/firestore-error'));
         state.lastSyncError = message;
-        publishKSAFirebaseRuntime({ lastSyncError: message, lastSyncErrorAt: nowIso(), lastCloudStatus: 'error_sincronizacion', message });
-        return { ok: false, action: 'writeCloudOperationalSnapshot', code: cleanText(error?.code || 'firebase/firestore-error'), message, error };
+        publishKSAFirebaseRuntime({ lastSyncError: `${failureStage} · ${code} · ${cleanText(error?.message || message)}`, lastSyncErrorAt: nowIso(), lastCloudStatus: 'error_sincronizacion', message });
+        return {
+          ok: false,
+          action: 'writeCloudOperationalSnapshot',
+          code,
+          stage: failureStage,
+          message,
+          technicalMessage: `${failureStage} · ${code} · ${cleanText(error?.message || message)}`,
+          error
+        };
       }
     }
 
@@ -8237,6 +8320,26 @@ Notas importantes:
     }
   }
 
+  function getManualCloudSaveFailureStage(result = {}, fallback = 'error_desconocido') {
+    const rawStage = cleanText(result?.stage || result?.failureStage || result?.errorStage || '');
+    if (rawStage) return rawStage;
+    const code = cleanText(result?.code || result?.error?.code || '').toLowerCase();
+    if (code.includes('permission-denied') || code.includes('permission')) return 'permiso_denegado';
+    if (code.includes('unauth') || code.includes('auth')) return 'auth_no_activo';
+    if (code.includes('not-ready') || code.includes('unavailable') || code.includes('firestore')) return 'firestore_no_preparado';
+    if (code.includes('timeout') || code.includes('deadline')) return 'timeout_guardado_manual';
+    if (code.includes('payload')) return 'payload_vacío';
+    if (code.includes('route') || code.includes('path')) return 'ruta_no_resuelta';
+    return cleanText(fallback) || 'error_desconocido';
+  }
+
+  function getManualCloudSaveTechnicalMessage(result = {}, fallbackStage = 'error_desconocido') {
+    const stage = getManualCloudSaveFailureStage(result, fallbackStage);
+    const code = cleanText(result?.code || result?.error?.code || result?.error?.name || 'error_desconocido') || 'error_desconocido';
+    const raw = cleanText(result?.technicalMessage || result?.error?.message || result?.message || 'Sin detalle técnico.');
+    return `${stage} · ${code} · ${raw}`;
+  }
+
   function getManualCloudSaveMessage(result = {}) {
     const code = cleanText(result?.code || '').toLowerCase();
     const rawMessage = cleanText(result?.message || '');
@@ -8247,7 +8350,98 @@ Notas importantes:
     if (result?.blocked || code.includes('blocked') || code.includes('unsafe') || code.includes('write-busy')) {
       return 'No se guardó para evitar sobrescritura peligrosa.';
     }
-    return 'No se pudo completar el guardado en la nube. Se conservaron los datos locales.';
+    if (code.includes('permission-denied') || code.includes('permission') || code.includes('unauth')) {
+      return 'No se pudo completar el guardado en la nube. Revisa permisos o conexión. Se conservaron los datos locales.';
+    }
+    if (code.includes('unavailable') || code.includes('network') || code.includes('offline') || rawMessage.toLowerCase().includes('conexión') || rawMessage.toLowerCase().includes('internet')) {
+      return 'No se pudo completar el guardado en la nube. Revisa tu conexión. Se conservaron los datos locales.';
+    }
+    return 'No se pudo completar el guardado en la nube. Revisa permisos o conexión. Se conservaron los datos locales.';
+  }
+
+  async function forceSaveLocalStateToFirestore(reason = 'guardar_datos_manual') {
+    const operation = cleanText(reason) || 'guardar_datos_manual';
+    if (!cloudOperationState.runtimeReady) {
+      return {
+        ok: false,
+        code: 'cloud/not-ready',
+        stage: 'firestore_no_preparado',
+        message: 'Firebase todavía está preparando el runtime.',
+        technicalMessage: 'firestore_no_preparado · cloud/not-ready · Firebase runtime no está listo.'
+      };
+    }
+    if (cloudOperationState.isWriting || cloudOperationState.isReading || cloudOperationState.isHydrating) {
+      return {
+        ok: false,
+        blocked: true,
+        code: 'cloud/manual-save-write-busy',
+        stage: 'sobrescritura_peligrosa',
+        message: 'No se guardó para evitar sobrescritura peligrosa.',
+        technicalMessage: 'sobrescritura_peligrosa · cloud/manual-save-write-busy · Hay lectura/escritura/hidratación en curso.'
+      };
+    }
+    if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.writeCloudOperationalSnapshot) {
+      return {
+        ok: false,
+        code: 'cloud/adapter-missing',
+        stage: 'firestore_no_preparado',
+        message: 'Adaptador Firestore no disponible.',
+        technicalMessage: 'firestore_no_preparado · cloud/adapter-missing · KSAFirebaseAdapter.writeCloudOperationalSnapshot no está disponible.'
+      };
+    }
+
+    const confirmationToken = `manual_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    if (cloudOperationState.timer && typeof window !== 'undefined') {
+      window.clearTimeout(cloudOperationState.timer);
+      cloudOperationState.timer = null;
+    }
+
+    cloudOperationState.isWriting = true;
+    recordCloudSyncAttempt('escritura_guardado_manual');
+    try {
+      const result = await withOperationTimeout(
+        () => KSAFirebaseAdapter.writeCloudOperationalSnapshot(null, {
+          force: true,
+          confirm: true,
+          source: 'guardar_datos_manual',
+          reason: operation,
+          confirmationToken
+        }),
+        { ms: FIRESTORE_OPERATION_TIMEOUT_MS, message: FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE, code: 'app/manual-save-timeout' }
+      );
+      if (result?.ok && result?.confirmed !== false) {
+        const ts = cleanText(result.lastCloudWriteAt || result.lastSyncAt) || nowIso();
+        cloudOperationState.active = true;
+        cloudOperationState.lastSyncAt = ts;
+        cloudOperationState.lastError = '';
+        cloudOperationState.message = 'Guardado correcto. Los datos fueron confirmados en la nube.';
+        recordCloudSyncSuccess('escritura', ts, { message: cloudOperationState.message });
+        return { ...result, message: cloudOperationState.message, stage: result.stage || 'confirmación_escritura' };
+      }
+      const failedResult = isPlainObject(result) ? result : { ok: false, code: 'cloud/no-result', message: 'No se confirmó escritura en Firestore.' };
+      cloudOperationState.lastError = getManualCloudSaveTechnicalMessage(failedResult, 'confirmación_escritura');
+      cloudOperationState.message = getManualCloudSaveMessage(failedResult);
+      markLocalChangesPending(`${operation}_fallido`);
+      recordCloudSyncError('escritura_guardado_manual', cloudOperationState.lastError, 'error_sincronizacion');
+      return { ...failedResult, message: cloudOperationState.message, technicalMessage: cloudOperationState.lastError };
+    } catch (error) {
+      const timeout = isOperationTimeoutError(error);
+      const result = {
+        ok: false,
+        code: cleanText(error?.code || (timeout ? 'app/manual-save-timeout' : 'firebase/firestore-error')),
+        stage: timeout ? 'timeout_guardado_manual' : getManualCloudSaveFailureStage({ error }, 'error_desconocido'),
+        message: timeout ? FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE : cleanText(error?.message || 'No se confirmó escritura en Firestore.'),
+        error
+      };
+      result.technicalMessage = getManualCloudSaveTechnicalMessage(result, result.stage);
+      cloudOperationState.lastError = result.technicalMessage;
+      cloudOperationState.message = getManualCloudSaveMessage(result);
+      markLocalChangesPending(`${operation}_fallido`);
+      recordCloudSyncError('escritura_guardado_manual', result.technicalMessage, timeout ? 'error_sincronizacion' : 'error_sincronizacion');
+      return { ...result, message: cloudOperationState.message };
+    } finally {
+      cloudOperationState.isWriting = false;
+    }
   }
 
   function recordManualCloudSaveResult(status = 'guardado_fallido', message = '', extra = {}) {
@@ -8272,17 +8466,13 @@ Notas importantes:
       const riskMessage = 'No se guardó para evitar sobrescritura peligrosa.';
       configState.message = riskMessage;
       configState.messageType = 'error';
-      recordManualCloudSaveResult('guardado_bloqueado', riskMessage, { lastSyncErrorAt: nowIso(), lastSyncErrorMessage: riskMessage, lastSyncErrorOperation: 'guardado_manual' });
+      recordManualCloudSaveResult('guardado_bloqueado', riskMessage, {
+        lastSyncErrorAt: nowIso(),
+        lastSyncErrorMessage: 'sobrescritura_peligrosa · cloud/manual-save-blocked · Hay lectura o hidratación en curso.',
+        lastSyncErrorOperation: 'guardado_manual'
+      });
       renderRoute({ preserveScroll: true });
       return { ok: false, blocked: true, code: 'cloud/manual-save-blocked', message: riskMessage };
-    }
-    if (!isCloudActiveForCriticalSave()) {
-      const message = 'No se pudo completar el guardado en la nube. Se conservaron los datos locales.';
-      configState.message = message;
-      configState.messageType = 'error';
-      recordManualCloudSaveResult('guardado_fallido', message, { lastSyncErrorAt: nowIso(), lastSyncErrorMessage: message, lastSyncErrorOperation: 'guardado_manual' });
-      renderRoute({ preserveScroll: true });
-      return { ok: false, code: 'cloud/not-active', message };
     }
 
     const confirmed = typeof window === 'undefined' || typeof window.confirm !== 'function'
@@ -8297,49 +8487,71 @@ Notas importantes:
 
     cloudOperationState.isManualSaving = true;
     if (button) button.disabled = true;
-    configState.message = 'Guardando datos en Firestore…';
+    configState.message = 'Guardando datos locales actuales en Firestore…';
     configState.messageType = 'success';
-    recordManualCloudSaveResult('guardando', 'Guardando datos en Firestore…');
+    recordManualCloudSaveResult('guardando', 'Guardando datos locales actuales en Firestore…', {
+      lastSyncErrorMessage: '',
+      lastSyncErrorAt: '',
+      lastSyncErrorOperation: ''
+    });
     renderRoute({ preserveScroll: true });
 
     try {
-      const result = await flushCloudSnapshotSync('guardar_datos_manual', {
-        timeoutMessage: FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE,
-        timeoutCode: 'app/manual-save-timeout'
-      });
+      const result = await forceSaveLocalStateToFirestore('guardar_datos_manual');
       const message = getManualCloudSaveMessage(result);
+      const technicalMessage = result?.ok ? 'Sin error de guardado manual' : getManualCloudSaveTechnicalMessage(result, getManualCloudSaveFailureStage(result));
       const status = result?.ok
         ? 'guardado_correcto'
         : (message === 'No se guardó para evitar sobrescritura peligrosa.' ? 'guardado_bloqueado' : 'guardado_fallido');
       configState.message = message;
       configState.messageType = result?.ok ? 'success' : 'error';
-      cloudOperationState.isManualSaving = false;
-      recordManualCloudSaveResult(status, message, result?.ok ? {} : {
+      recordManualCloudSaveResult(status, message, result?.ok ? {
+        lastSyncErrorAt: '',
+        lastSyncErrorMessage: 'Sin error de guardado manual',
+        lastSyncErrorOperation: 'guardado_manual',
+        lastCloudWriteAt: cleanText(result.lastCloudWriteAt || result.lastSyncAt) || nowIso(),
+        pendingLocalChanges: false,
+        pendingLocalChangesCount: 0
+      } : {
         lastSyncErrorAt: nowIso(),
-        lastSyncErrorMessage: message,
+        lastSyncErrorMessage: technicalMessage,
         lastSyncErrorOperation: 'guardado_manual'
       });
       renderRoute({ preserveScroll: true });
       return { ...(isPlainObject(result) ? result : {}), message };
     } catch (error) {
       const timeout = isOperationTimeoutError(error);
-      const message = timeout ? FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE : 'No se pudo completar el guardado en la nube. Se conservaron los datos locales.';
+      const result = {
+        ok: false,
+        code: cleanText(error?.code || (timeout ? 'app/manual-save-timeout' : 'firebase/firestore-error')),
+        stage: timeout ? 'timeout_guardado_manual' : 'error_desconocido',
+        message: timeout ? FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE : 'No se pudo completar el guardado en la nube. Revisa permisos o conexión. Se conservaron los datos locales.',
+        error
+      };
+      const message = getManualCloudSaveMessage(result);
+      const technicalMessage = getManualCloudSaveTechnicalMessage(result, result.stage);
       markLocalChangesPending('guardar_datos_manual_fallido');
-      recordCloudSyncError('escritura', message, 'error_sincronizacion');
-      recordManualCloudSaveResult('guardado_fallido', message, { lastSyncErrorAt: nowIso(), lastSyncErrorMessage: message, lastSyncErrorOperation: 'guardado_manual' });
+      recordCloudSyncError('escritura_guardado_manual', technicalMessage, 'error_sincronizacion');
+      recordManualCloudSaveResult('guardado_fallido', message, { lastSyncErrorAt: nowIso(), lastSyncErrorMessage: technicalMessage, lastSyncErrorOperation: 'guardado_manual' });
       configState.message = message;
       configState.messageType = 'error';
-      cloudOperationState.isManualSaving = false;
       renderRoute({ preserveScroll: true });
-      return { ok: false, code: cleanText(error?.code || (timeout ? 'app/manual-save-timeout' : 'firebase/firestore-error')), message, error };
+      return { ...result, message };
     } finally {
       cloudOperationState.isManualSaving = false;
       if (button) button.disabled = false;
+      renderRoute({ preserveScroll: true });
     }
   }
 
   async function handleCloudPendingUpload(button = null) {
     if (!requireRolePermission('updateData', configState, { preserveScroll: true })) return null;
+    if (cloudOperationState.isManualSaving || cloudOperationState.isWriting || cloudOperationState.isReading || cloudOperationState.isHydrating) {
+      configState.message = 'Hay una operación de nube en curso. No se subirán pendientes para evitar cruces peligrosos.';
+      configState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return { ok: false, blocked: true, code: 'cloud/upload-pending-busy', message: configState.message };
+    }
     if (!isCloudActiveForCriticalSave()) {
       configState.message = 'Nube no activa. No hay escritura pendiente hacia Firestore.';
       configState.messageType = 'success';
@@ -23633,7 +23845,7 @@ Notas importantes:
           <div class="sync-action-row">
             ${canShowManualSave ? `<button type="button" class="card-action compact" data-cloud-manual-save ${saveDisabled ? 'disabled' : ''}>${escapeHtml(saveButtonLabel)}</button>` : ''}
             ${(info.canRefreshCloud || info.isRefreshingCloud) ? `<button type="button" class="secondary-action compact" data-cloud-refresh ${refreshDisabled ? 'disabled' : ''}>${escapeHtml(refreshButtonLabel)}</button>` : ''}
-            ${info.cloudActive ? '<button type="button" class="secondary-action compact" data-cloud-upload-pending>Subir pendientes</button>' : ''}
+            ${info.cloudActive ? `<button type="button" class="secondary-action compact" data-cloud-upload-pending ${(saveDisabled || refreshDisabled) ? 'disabled' : ''}>Subir pendientes</button>` : ''}
           </div>` : '';
     return `
       <article class="panel-card config-card full-span data-sync-status-card">
