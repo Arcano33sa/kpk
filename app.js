@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.34-post12-casa-credito-etapa2-pendientes';
+  const APP_VERSION = '0.18.35-post12-casa-credito-ajuste-pendientes-virtual';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -22334,7 +22334,7 @@ Notas importantes:
     const totals = getCasaTotals(casaGastos);
     const utilidadKpkSummary = buildCasaUtilidadKpkSummary();
     const casaFinancialSummary = buildCasaFinancialSummary(totals, utilidadKpkSummary);
-    const categoryTotals = getCasaCategoryTotals(casaGastos);
+    const categoryTotals = getCasaCategoryTotals();
     const editingRecord = casaState.editingId ? allCasaGastos.find((record) => record.id === casaState.editingId) : null;
     const missingCatalogs = !categoriasActivas.length || !metodosActivos.length;
     const yearOptions = getCasaYearOptions();
@@ -22579,9 +22579,48 @@ Notas importantes:
     return !isCasaCreditoPendiente(record);
   }
 
-  function getCasaCreditoPendientes() {
+  function getCasaCreditoPendientes(options = {}) {
+    const applyFilters = Boolean(options.applyFilters);
     return getCasaGastosOrdenados()
+      .filter((record) => isCasaCreditoPendiente(record))
+      .filter((record) => {
+        if (!applyFilters) return true;
+        if (casaState.month && record.fecha.slice(5, 7) !== casaState.month) return false;
+        if (casaState.year && record.fecha.slice(0, 4) !== casaState.year) return false;
+        if (casaState.categoriaCasaId && record.categoriaCasaId !== casaState.categoriaCasaId) return false;
+        return true;
+      });
+  }
+
+  function buildCasaPendientesVirtualGroup(records = null) {
+    const pendientes = (Array.isArray(records) ? records.map((record) => normalizeCasaGastoRecord(record)) : getCasaCreditoPendientes({ applyFilters: true }))
       .filter((record) => isCasaCreditoPendiente(record));
+    const total = pendientes.reduce((sum, gasto) => roundMoney(sum + normalizeCasaGastoRecord(gasto).monto), 0);
+    return {
+      key: makeAccordionGroupKey('casa-virtual', 'pendientes', 'Pendientes'),
+      label: 'Pendientes',
+      records: pendientes,
+      total,
+      isCasaPendientesVirtual: true,
+      searchText: normalizeNameForCompare(`Pendientes crédito Casa ${pendientes.map((record) => {
+        const categoria = getCatalogRecordById('categoriasCasa', record.categoriaCasaId);
+        const metodo = getCatalogRecordById('metodosPago', record.metodoPagoId);
+        const cuenta = getCatalogRecordById('cuentasBancos', record.cuentaBancoId);
+        return [categoria?.nombre || record.categoriaCasaNombre, record.descripcion, metodo?.nombre || record.metodoPagoNombre, record.estadoCreditoCasa, cuenta?.nombre || record.cuentaBancoNombre, record.observacion, formatMoney(record.monto)].join(' ');
+      }).join(' ')}`)
+    };
+  }
+
+  function getCasaPendientesVirtualCategoryTotal(records = null) {
+    const group = buildCasaPendientesVirtualGroup(records);
+    return {
+      id: '__pendientes_virtual__',
+      nombre: 'Pendientes',
+      total: roundMoney(group.total || 0),
+      registros: group.records.length,
+      activo: true,
+      virtual: true
+    };
   }
 
   function openCasaPendientesModal() {
@@ -22650,7 +22689,7 @@ Notas importantes:
     const descripcion = record.descripcion || '—';
     const estado = normalizeCasaCreditStatus(record.estadoCreditoCasa, 'Pendiente') || 'Pendiente';
     return `
-      <tr class="compact-record-row casa-pendiente-row">
+      <tr class="compact-record-row casa-pendiente-row" data-casa-card data-search-text="${escapeHtml(normalizeNameForCompare([categoriaNombre, descripcion, formatMoney(record.monto), estado, record.observacion].join(' ')))}">
         <td data-label="Fecha"><span class="compact-primary critical-value-date" title="${escapeHtml(formatDate(record.fecha))}">${escapeHtml(formatDate(record.fecha))}</span></td>
         <td data-label="Categoría"><span title="${escapeHtml(categoriaNombre)}">${escapeHtml(categoriaNombre)}</span></td>
         <td data-label="Descripción"><span title="${escapeHtml(descripcion)}">${escapeHtml(descripcion)}</span></td>
@@ -22683,7 +22722,7 @@ Notas importantes:
       });
       appData.casaGastos = records.map((record) => record.id === safeId ? updated : record);
       if (nextStatus === 'Pagado') openAccordionGroupForRecord('casa', updated);
-      casaState.pendientesOpen = true;
+      casaState.pendientesOpen = Boolean(casaState.pendientesOpen);
       casaState.message = nextStatus === 'Pagado' ? 'Gasto marcado como Pagado.' : 'Estado de gasto actualizado.';
       casaState.messageType = 'success';
       saveData(appData);
@@ -22700,7 +22739,7 @@ Notas importantes:
       renderRoute({ preserveScroll: true });
     } catch (error) {
       console.error('KSA PRÁCTIKA Casa: no se pudo actualizar el estado del gasto.', error);
-      casaState.pendientesOpen = true;
+      casaState.pendientesOpen = Boolean(casaState.pendientesOpen);
       casaState.message = 'No se pudo actualizar el estado del gasto.';
       casaState.messageType = 'error';
       renderRoute({ preserveScroll: true });
@@ -22708,31 +22747,38 @@ Notas importantes:
   }
 
   function renderCasaList(gastos) {
-    if (!gastos.length) {
+    const groups = buildCasaAccordionGroups(gastos);
+    ensureOpenAccordionGroup(casaState, groups);
+
+    if (!groups.length) {
       return `
         <div class="empty-state">
           <strong>No hay gastos de Casa registrados para este filtro.</strong>
-          <p>Guarda el primer gasto familiar cuando toque; no hay premio por sufrir con Excel paralelo.</p>
+          <p>No hay gastos pagados ni pendientes al crédito para este filtro. El Excel paralelo no fue invitado.</p>
         </div>
       `;
     }
-
-    const groups = buildCasaAccordionGroups(gastos);
-    ensureOpenAccordionGroup(casaState, groups);
 
     return renderAccordionGroups({
       module: 'casa',
       groups,
       openGroupKey: casaState.openGroupKey,
-      renderOpenGroup: (group) => renderCasaTable(group.records, group.label)
+      renderOpenGroup: (group) => group.isCasaPendientesVirtual ? renderCasaPendientesTable(group.records) : renderCasaTable(group.records, group.label)
     });
   }
 
   function buildCasaAccordionGroups(gastos) {
-    return buildAccordionGroups(gastos, getCasaAccordionInfo).map((group) => ({
+    const normalGroups = buildAccordionGroups(gastos, getCasaAccordionInfo).map((group) => ({
       ...group,
       total: group.records.reduce((sum, gasto) => roundMoney(sum + normalizeCasaGastoRecord(gasto).monto), 0)
     }));
+    const pendientesGroup = buildCasaPendientesVirtualGroup();
+    const groups = pendientesGroup.records.length ? [pendientesGroup, ...normalGroups] : normalGroups;
+    return groups.sort((a, b) => {
+      if (a.isCasaPendientesVirtual && !b.isCasaPendientesVirtual) return -1;
+      if (!a.isCasaPendientesVirtual && b.isCasaPendientesVirtual) return 1;
+      return compareVisualText(a.label, b.label) || compareVisualText(a.key, b.key);
+    });
   }
 
   function renderCasaAccordionTotal(group) {
@@ -22751,6 +22797,14 @@ Notas importantes:
     const categoria = getCatalogRecordById('categoriasCasa', record.categoriaCasaId);
     const metodo = getCatalogRecordById('metodosPago', record.metodoPagoId);
     const cuenta = getCatalogRecordById('cuentasBancos', record.cuentaBancoId);
+    if (isCasaCreditoPendiente(record)) {
+      const realCategoryLabel = cleanText(categoria?.nombre || record.categoriaCasaNombre) || 'Sin categoría';
+      return {
+        key: makeAccordionGroupKey('casa-virtual', 'pendientes', 'Pendientes'),
+        label: 'Pendientes',
+        searchText: `Pendientes ${realCategoryLabel} ${record.descripcion} ${metodo?.nombre || record.metodoPagoNombre || ''} ${record.estadoCreditoCasa || ''} ${cuenta?.nombre || record.cuentaBancoNombre || ''} ${record.observacion} ${formatMoney(record.monto)}`
+      };
+    }
     const label = cleanText(categoria?.nombre || record.categoriaCasaNombre) || 'Sin categoría';
     return {
       key: makeAccordionGroupKey('casa-categoria', record.categoriaCasaId, label),
@@ -22896,7 +22950,8 @@ Notas importantes:
   }
 
   function getCasaCategoryTotals(recordsSource = null) {
-    const records = (Array.isArray(recordsSource) ? recordsSource.map((record) => normalizeCasaGastoRecord(record)) : getCasaGastosFiltrados())
+    const externalRecords = Array.isArray(recordsSource) ? recordsSource.map((record) => normalizeCasaGastoRecord(record)) : null;
+    const records = (externalRecords || getCasaGastosFiltrados())
       .filter((record) => isCasaGastoVisibleEnCategoria(record));
     const totalsByCategory = new Map();
     records.forEach((record) => {
@@ -22934,7 +22989,14 @@ Notas importantes:
       }
     });
 
-    return baseCategories.sort((a, b) => compareVisualText(a.nombre, b.nombre));
+    const pendientesTotal = getCasaPendientesVirtualCategoryTotal(externalRecords);
+    if (pendientesTotal.registros > 0) baseCategories.unshift(pendientesTotal);
+
+    return baseCategories.sort((a, b) => {
+      if (a.virtual && !b.virtual) return -1;
+      if (!a.virtual && b.virtual) return 1;
+      return compareVisualText(a.nombre, b.nombre);
+    });
   }
 
   function renderCasaCategoryTotals(categoryTotals) {
@@ -22950,8 +23012,9 @@ Notas importantes:
     return `
       <div class="casa-category-total-list">
         ${categoryTotals.map((item) => `
-          <div class="casa-category-total-row ${item.registros ? '' : 'is-empty'}">
-            <span title="${escapeHtml(item.nombre)}">${escapeHtml(item.nombre)}${item.activo ? '' : ' · inactiva'}</span>
+          <div class="casa-category-total-row ${item.registros ? '' : 'is-empty'} ${item.virtual ? 'is-virtual' : ''}">
+            <span title="${escapeHtml(item.nombre)}">${escapeHtml(item.nombre)}${item.activo || item.virtual ? '' : ' · inactiva'}</span>
+            <small>${item.registros} ${item.registros === 1 ? 'registro' : 'registros'}</small>
             <strong>${escapeHtml(formatMoney(item.total))}</strong>
           </div>
         `).join('')}

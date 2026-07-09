@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_34_post12_casa_credito_etapa2_pendientes';
+const CACHE_VERSION = 'v0_18_35_post12_casa_credito_ajuste_pendientes_virtual';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
