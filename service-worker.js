@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_36_post12_syncsegura_ajustefinal2_guardarlocalconfirmado';
+const CACHE_VERSION = 'v0_18_37_post12_syncsegura_ajustefinal3_guardarporbloques';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

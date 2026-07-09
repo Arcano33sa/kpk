@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.36-post12-syncsegura-ajustefinal2-guardarlocalconfirmado';
+  const APP_VERSION = '0.18.37-post12-syncsegura-ajustefinal3-guardarporbloques';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1054,6 +1054,26 @@
           reject(error);
         });
     });
+  }
+
+
+  function waitForUiFrame() {
+    return new Promise((resolve) => {
+      try {
+        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+          window.requestAnimationFrame(() => resolve());
+          return;
+        }
+      } catch (_) {}
+      const safeSetTimeout = typeof window !== 'undefined' && typeof window.setTimeout === 'function'
+        ? window.setTimeout.bind(window)
+        : setTimeout;
+      safeSetTimeout(resolve, 0);
+    });
+  }
+
+  async function yieldToBrowser() {
+    await waitForUiFrame();
   }
   const FIRESTORE_WORKSPACE_NAME = 'KSA PRÁCTIKA';
   const FIRESTORE_METADATA_SYSTEM_ID = 'sistema';
@@ -5560,7 +5580,38 @@ Notas importantes:
 
     async function writeCloudOperationalSnapshot(snapshotInput = null, options = {}) {
       const opts = isPlainObject(options) ? options : {};
+      const manualProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
+      const manualTimeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : FIRESTORE_OPERATION_TIMEOUT_MS;
+      const manualStartedAtMs = Number(opts.startedAtMs) > 0 ? Number(opts.startedAtMs) : Date.now();
+      const manualDeadlineAtMs = Number(opts.deadlineAtMs) > 0 ? Number(opts.deadlineAtMs) : (manualStartedAtMs + manualTimeoutMs);
       let failureStage = 'validación_workspace';
+
+      const throwIfManualSaveExpired = () => {
+        if (typeof opts.isCancelled === 'function' && opts.isCancelled()) {
+          throw createOperationTimeoutError(FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE, 'app/manual-save-timeout');
+        }
+        if (Date.now() > manualDeadlineAtMs) {
+          throw createOperationTimeoutError(FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE, 'app/manual-save-timeout');
+        }
+      };
+
+      const emitProgress = async (stage, label, message, extra = {}) => {
+        const payload = {
+          stage: cleanText(stage) || failureStage,
+          label: cleanText(label),
+          message: cleanText(message || label || 'Guardando datos locales actuales en Firestore…'),
+          totalQueued: Number(extra.totalQueued) || 0,
+          blockCount: Number(extra.blockCount) || 0,
+          ...extra
+        };
+        if (manualProgress) {
+          try { manualProgress(payload); } catch (_) { /* El progreso visual no debe romper el guardado. */ }
+        }
+        await yieldToBrowser();
+        throwIfManualSaveExpired();
+        return payload;
+      };
+
       if (opts.force !== true && !(state.cloudActive || getKSAFirebaseRuntime()?.cloudActive)) {
         return {
           ok: false,
@@ -5572,13 +5623,16 @@ Notas importantes:
         };
       }
       try {
+        await emitProgress('validación_workspace', 'Validando workspace…', 'Validando workspace…');
         failureStage = 'firestore_no_preparado';
         const { user, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: false });
         const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
         const stamp = getFirestoreTimestampValue(fs);
         const manualSaveToken = cleanText(opts.confirmationToken || opts.manualSaveToken || '');
         const manualSaveLocalAt = nowIso();
+
         failureStage = 'preparación_payload';
+        await emitProgress(failureStage, 'Preparando guardado local…', 'Preparando guardado local…');
         const payload = snapshotInput && isPlainObject(snapshotInput) && snapshotInput.data ? snapshotInput : buildCloudSnapshotPayload(appData);
         if (!payload || !isPlainObject(payload.data)) {
           return {
@@ -5590,7 +5644,9 @@ Notas importantes:
             technicalMessage: 'payload_vacío · cloud/payload-empty · Payload local vacío o inválido.'
           };
         }
-        const data = normalizeData(payload.data || appData);
+        const data = snapshotInput && isPlainObject(snapshotInput) && snapshotInput.data ? normalizeData(payload.data || appData) : payload.data;
+        await emitProgress(failureStage, 'Payload local preparado.', 'Payload local preparado.');
+
         failureStage = 'escritura_firestore';
         let batch = fs.writeBatch(db);
         let count = 0;
@@ -5598,6 +5654,8 @@ Notas importantes:
         const commit = async () => {
           if (!count) return;
           await batch.commit();
+          await yieldToBrowser();
+          throwIfManualSaveExpired();
           batch = fs.writeBatch(db);
           count = 0;
         };
@@ -5607,7 +5665,32 @@ Notas importantes:
           totalQueued += 1;
           if (count >= FIRESTORE_IMPORT_BATCH_LIMIT) await commit();
         };
+        const commitBlock = async (stage, label) => {
+          await commit();
+          await emitProgress(stage, label, `${label} listo.`, { totalQueued });
+        };
+        const queueRecordList = async ({ key, label, list, normalizer, docIdPrefix }) => {
+          failureStage = `escritura_firestore_bloque_${key}`;
+          const records = Array.isArray(list) ? list : [];
+          await emitProgress(failureStage, label, `Subiendo bloque ${label}…`, { totalQueued, blockCount: records.length });
+          for (let index = 0; index < records.length; index += 1) {
+            const rawRecord = records[index];
+            const record = normalizer(rawRecord);
+            const docId = getCloudDocumentId(record, docIdPrefix || key);
+            await queueSet(fs.doc(db, 'workspaces', workspaceId, key, docId), {
+              ...record,
+              updatedAt: record.updatedAt || nowIso(),
+              _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
+            });
+            if ((index + 1) % 75 === 0) {
+              await emitProgress(failureStage, label, `Subiendo bloque ${label}: ${index + 1}/${records.length}…`, { totalQueued, blockCount: records.length });
+            }
+          }
+          await commitBlock(failureStage, label);
+        };
 
+        failureStage = 'escritura_firestore_bloque_configuracion';
+        await emitProgress(failureStage, 'Configuración / metadata segura', 'Subiendo bloque Configuración / metadata segura…', { totalQueued, blockCount: 2 });
         await queueSet(fs.doc(db, 'workspaces', workspaceId), {
           id: workspaceId,
           nombre: FIRESTORE_WORKSPACE_NAME,
@@ -5624,7 +5707,12 @@ Notas importantes:
           updatedAt: stamp,
           fuentePrincipal: 'firestore'
         });
+        await commitBlock(failureStage, 'Configuración / metadata segura');
 
+        failureStage = 'escritura_firestore_bloque_catalogos';
+        const catalogRecordsCount = CATALOGS.reduce((sum, catalog) => sum + (Array.isArray(data[catalog.id]) ? data[catalog.id].length : 0), 0);
+        await emitProgress(failureStage, 'Catálogos', 'Subiendo bloque Catálogos…', { totalQueued, blockCount: catalogRecordsCount });
+        let catalogProgress = 0;
         for (const catalog of CATALOGS) {
           const list = Array.isArray(data[catalog.id]) ? data[catalog.id] : [];
           for (const record of list) {
@@ -5635,68 +5723,90 @@ Notas importantes:
               updatedAt: record.updatedAt || nowIso(),
               _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
             });
+            catalogProgress += 1;
+            if (catalogProgress % 75 === 0) {
+              await emitProgress(failureStage, 'Catálogos', `Subiendo bloque Catálogos: ${catalogProgress}/${catalogRecordsCount}…`, { totalQueued, blockCount: catalogRecordsCount });
+            }
           }
+          await yieldToBrowser();
+          throwIfManualSaveExpired();
         }
+        await commitBlock(failureStage, 'Catálogos');
 
         const listWriters = [
-          ['ventas', data.ventas || [], normalizeVentaRecord],
-          ['cobros', data.cobros || [], normalizeCobroRecord],
-          ['comprasProveedores', data.comprasProveedores || [], normalizeCompraProveedorRecord],
-          ['pagosProveedores', data.pagosProveedores || [], normalizePagoProveedorRecord],
-          ['gastos', data.gastos || [], normalizeGastoRecord],
-          ['casaGastos', data.casaGastos || [], normalizeCasaGastoRecord],
-          ['cierresMensuales', data.cierresMensuales || [], normalizeCierreMensualRecord],
-          ['exportacionesExcel', data.exportacionesExcel || [], normalizeExcelExportRecord]
+          { key: 'ventas', label: 'Ventas / OC', list: data.ventas || [], normalizer: normalizeVentaRecord },
+          { key: 'cobros', label: 'Cobros', list: data.cobros || [], normalizer: normalizeCobroRecord },
+          { key: 'comprasProveedores', label: 'Proveedores / Compras', list: data.comprasProveedores || [], normalizer: normalizeCompraProveedorRecord },
+          { key: 'pagosProveedores', label: 'Pagos', list: data.pagosProveedores || [], normalizer: normalizePagoProveedorRecord },
+          { key: 'gastos', label: 'Gastos', list: data.gastos || [], normalizer: normalizeGastoRecord },
+          { key: 'casaGastos', label: 'Casa', list: data.casaGastos || [], normalizer: normalizeCasaGastoRecord },
+          { key: 'cierresMensuales', label: 'Cierres', list: data.cierresMensuales || [], normalizer: normalizeCierreMensualRecord },
+          { key: 'exportacionesExcel', label: 'Exportaciones Excel', list: data.exportacionesExcel || [], normalizer: normalizeExcelExportRecord }
         ];
-        for (const [key, list, normalizer] of listWriters) {
-          for (const rawRecord of list) {
-            const record = normalizer(rawRecord);
-            const docId = getCloudDocumentId(record, key);
-            await queueSet(fs.doc(db, 'workspaces', workspaceId, key, docId), {
-              ...record,
-              updatedAt: record.updatedAt || nowIso(),
-              _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
-            });
-          }
+        for (const writer of listWriters) {
+          await queueRecordList(writer);
         }
 
+        failureStage = 'escritura_firestore_bloque_notasModulo';
         const notasRecords = buildCloudNotasRecords(payload.notasModulo || cloneNotasModuleData());
-        for (const rawRecord of notasRecords) {
+        await emitProgress(failureStage, 'Notas', 'Subiendo bloque Notas…', { totalQueued, blockCount: notasRecords.length });
+        for (let index = 0; index < notasRecords.length; index += 1) {
+          const rawRecord = notasRecords[index];
           const prefix = cleanText(rawRecord._docPrefix || rawRecord.tipoRegistro || 'nota');
           const record = { ...rawRecord };
           delete record._docPrefix;
-          const docId = sanitizeFirestoreDocId(`${prefix}_${cleanText(record.id) || simpleHashText(JSON.stringify(record)).slice(0, 12)}`, 'nota');
+          const stableId = cleanText(record.id) || simpleHashText(`${prefix}_${cleanText(record.titulo || record.descripcion || record.fecha || index)}`).slice(0, 12);
+          const docId = sanitizeFirestoreDocId(`${prefix}_${stableId}`, 'nota');
           await queueSet(fs.doc(db, 'workspaces', workspaceId, 'notasModulo', docId), {
             ...record,
             updatedAt: record.updatedAt || nowIso(),
             _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
           });
+          if ((index + 1) % 75 === 0) {
+            await emitProgress(failureStage, 'Notas', `Subiendo bloque Notas: ${index + 1}/${notasRecords.length}…`, { totalQueued, blockCount: notasRecords.length });
+          }
         }
+        await commitBlock(failureStage, 'Notas');
 
+        failureStage = 'escritura_firestore_bloque_facturasModulo';
         const facturasData = normalizeFacturasData(payload.facturasModulo || cloneFacturasModuleData());
-        for (const rawRecord of facturasData.facturas) {
-          const record = normalizeFacturaModuloRecord(rawRecord);
+        const facturasList = Array.isArray(facturasData.facturas) ? facturasData.facturas : [];
+        await emitProgress(failureStage, 'Facturas', 'Subiendo bloque Facturas…', { totalQueued, blockCount: facturasList.length });
+        for (let index = 0; index < facturasList.length; index += 1) {
+          const record = normalizeFacturaModuloRecord(facturasList[index]);
           const docId = getCloudDocumentId(record, 'factura');
           await queueSet(fs.doc(db, 'workspaces', workspaceId, 'facturasModulo', docId), {
             ...record,
             updatedAt: record.updatedAt || nowIso(),
             _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
           });
+          if ((index + 1) % 75 === 0) {
+            await emitProgress(failureStage, 'Facturas', `Subiendo bloque Facturas: ${index + 1}/${facturasList.length}…`, { totalQueued, blockCount: facturasList.length });
+          }
         }
+        await commitBlock(failureStage, 'Facturas');
 
-        const activityEntries = Array.isArray(payload.bitacora) ? payload.bitacora : [];
-        for (const entry of activityEntries.slice(0, ACTIVITY_LOG_MAX_ENTRIES)) {
-          const record = normalizeActivityEntry(entry);
+        failureStage = 'escritura_firestore_bloque_bitacora';
+        const activityEntries = Array.isArray(payload.bitacora) ? payload.bitacora.slice(0, ACTIVITY_LOG_MAX_ENTRIES) : [];
+        await emitProgress(failureStage, 'Bitácora', 'Subiendo bloque Bitácora…', { totalQueued, blockCount: activityEntries.length });
+        for (let index = 0; index < activityEntries.length; index += 1) {
+          const record = normalizeActivityEntry(activityEntries[index]);
           const docId = getCloudDocumentId(record, 'actividad');
           await queueSet(fs.doc(db, 'workspaces', workspaceId, 'bitacora', docId), {
             ...record,
             _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
           });
+          if ((index + 1) % 75 === 0) {
+            await emitProgress(failureStage, 'Bitácora', `Subiendo bloque Bitácora: ${index + 1}/${activityEntries.length}…`, { totalQueued, blockCount: activityEntries.length });
+          }
         }
+        await commitBlock(failureStage, 'Bitácora');
 
+        failureStage = 'escritura_firestore_bloque_consecutivos';
         const consecutivos = isPlainObject(payload.consecutivos) ? payload.consecutivos : {};
-        for (const [key, value] of Object.entries(consecutivos)) {
-          if (value === null || value === undefined || value === '') continue;
+        const consecutivoEntries = Object.entries(consecutivos).filter(([, value]) => value !== null && value !== undefined && value !== '');
+        await emitProgress(failureStage, 'Consecutivos', 'Subiendo bloque Consecutivos…', { totalQueued, blockCount: consecutivoEntries.length });
+        for (const [key, value] of consecutivoEntries) {
           const docId = sanitizeFirestoreDocId(key, 'consecutivo');
           await queueSet(fs.doc(db, 'workspaces', workspaceId, 'consecutivos', docId), {
             id: docId,
@@ -5706,8 +5816,11 @@ Notas importantes:
             _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
           });
         }
+        await commitBlock(failureStage, 'Consecutivos');
 
+        failureStage = 'escritura_firestore_bloque_metadata';
         const metadataRef = fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
+        await emitProgress(failureStage, 'Confirmando escritura en Firestore…', 'Confirmando escritura en Firestore…', { totalQueued, blockCount: 1 });
         await queueSet(metadataRef, {
           ...(isPlainObject(data.metadata) ? data.metadata : {}),
           id: FIRESTORE_METADATA_SYSTEM_ID,
@@ -5731,10 +5844,13 @@ Notas importantes:
           lastManualSaveReason: manualSaveToken ? cleanText(opts.reason || opts.source || 'guardar_datos_manual') : undefined,
           updatedAt: stamp
         });
-        await commit();
+        await commitBlock(failureStage, 'Metadata de confirmación');
 
         failureStage = 'confirmación_escritura';
+        await emitProgress(failureStage, 'Confirmando escritura en Firestore…', 'Confirmando escritura en Firestore…', { totalQueued });
         const confirmationSnap = await fs.getDoc(metadataRef);
+        await yieldToBrowser();
+        throwIfManualSaveExpired();
         const confirmationMetadata = confirmationSnap.exists() ? normalizeFirestoreDoc(confirmationSnap) : {};
         const tokenConfirmed = !manualSaveToken || cleanText(confirmationMetadata.lastManualSaveToken) === manualSaveToken;
         if (!confirmationSnap.exists() || !tokenConfirmed) {
@@ -5770,6 +5886,7 @@ Notas importantes:
           cloudDataReady: true,
           cloudReady: true
         };
+        throwIfManualSaveExpired();
         publishKSAFirebaseRuntime({
           cloudActive: true,
           cloudReadsEnabled: true,
@@ -5786,6 +5903,7 @@ Notas importantes:
           lastCloudStatus: 'sincronizado',
           message: 'Cambios sincronizados en Firestore.'
         });
+        await emitProgress('guardado_correcto', 'Guardado correcto', 'Guardado correcto. Los datos fueron confirmados en la nube.', { totalQueued });
         return {
           ok: true,
           action: 'writeCloudOperationalSnapshot',
@@ -5800,17 +5918,19 @@ Notas importantes:
           confirmationMetadata
         };
       } catch (error) {
-        const message = translateFirestorePrepError(error);
-        const code = cleanText(error?.code || (isOperationTimeoutError(error) ? 'app/write-cloud-timeout' : 'firebase/firestore-error'));
+        const timeout = isOperationTimeoutError(error);
+        const message = timeout ? FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE : translateFirestorePrepError(error);
+        const code = cleanText(error?.code || (timeout ? 'app/manual-save-timeout' : 'firebase/firestore-error'));
+        const stage = timeout ? 'timeout_guardado_manual' : failureStage;
         state.lastSyncError = message;
-        publishKSAFirebaseRuntime({ lastSyncError: `${failureStage} · ${code} · ${cleanText(error?.message || message)}`, lastSyncErrorAt: nowIso(), lastCloudStatus: 'error_sincronizacion', message });
+        publishKSAFirebaseRuntime({ lastSyncError: `${stage} · ${code} · ${cleanText(error?.message || message)}`, lastSyncErrorAt: nowIso(), lastCloudStatus: 'error_sincronizacion', message });
         return {
           ok: false,
           action: 'writeCloudOperationalSnapshot',
           code,
-          stage: failureStage,
+          stage,
           message,
-          technicalMessage: `${failureStage} · ${code} · ${cleanText(error?.message || message)}`,
+          technicalMessage: `${stage} · ${code} · ${cleanText(error?.message || message)}`,
           error
         };
       }
@@ -8081,6 +8201,8 @@ Notas importantes:
     message: '',
     refreshModuleResults: [],
     refreshMessage: '',
+    manualSaveMessage: '',
+    manualSaveRunId: '',
     bootstrappedForUid: ''
   };
 
@@ -8391,12 +8513,33 @@ Notas importantes:
     }
 
     const confirmationToken = `manual_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    let manualSaveCancelled = false;
     if (cloudOperationState.timer && typeof window !== 'undefined') {
       window.clearTimeout(cloudOperationState.timer);
       cloudOperationState.timer = null;
     }
 
     cloudOperationState.isWriting = true;
+    cloudOperationState.manualSaveRunId = confirmationToken;
+    cloudOperationState.manualSaveMessage = 'Preparando guardado local…';
+    const manualSaveStartedAtMs = Date.now();
+    const updateManualSaveProgress = (progress = {}) => {
+      if (manualSaveCancelled || cloudOperationState.manualSaveRunId !== confirmationToken) return;
+      const rawMessage = cleanText(progress?.message || progress?.label || 'Guardando datos locales actuales en Firestore…');
+      const message = rawMessage || 'Guardando datos locales actuales en Firestore…';
+      cloudOperationState.manualSaveMessage = message;
+      saveCloudSyncDiagnostics({
+        lastManualSaveAt: nowIso(),
+        lastManualSaveStatus: 'guardando',
+        lastManualSaveMessage: message,
+        lastCloudStatus: 'sincronizando',
+        lastStatusMessage: message,
+        lastSyncErrorMessage: '',
+        lastSyncErrorAt: '',
+        lastSyncErrorOperation: ''
+      });
+      if (typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
+    };
     recordCloudSyncAttempt('escritura_guardado_manual');
     try {
       const result = await withOperationTimeout(
@@ -8405,7 +8548,12 @@ Notas importantes:
           confirm: true,
           source: 'guardar_datos_manual',
           reason: operation,
-          confirmationToken
+          confirmationToken,
+          startedAtMs: manualSaveStartedAtMs,
+          timeoutMs: FIRESTORE_OPERATION_TIMEOUT_MS,
+          deadlineAtMs: manualSaveStartedAtMs + FIRESTORE_OPERATION_TIMEOUT_MS,
+          isCancelled: () => manualSaveCancelled || cloudOperationState.manualSaveRunId !== confirmationToken,
+          onProgress: updateManualSaveProgress
         }),
         { ms: FIRESTORE_OPERATION_TIMEOUT_MS, message: FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE, code: 'app/manual-save-timeout' }
       );
@@ -8415,16 +8563,19 @@ Notas importantes:
         cloudOperationState.lastSyncAt = ts;
         cloudOperationState.lastError = '';
         cloudOperationState.message = 'Guardado correcto. Los datos fueron confirmados en la nube.';
+        cloudOperationState.manualSaveMessage = cloudOperationState.message;
         recordCloudSyncSuccess('escritura', ts, { message: cloudOperationState.message });
         return { ...result, message: cloudOperationState.message, stage: result.stage || 'confirmación_escritura' };
       }
       const failedResult = isPlainObject(result) ? result : { ok: false, code: 'cloud/no-result', message: 'No se confirmó escritura en Firestore.' };
       cloudOperationState.lastError = getManualCloudSaveTechnicalMessage(failedResult, 'confirmación_escritura');
       cloudOperationState.message = getManualCloudSaveMessage(failedResult);
+      cloudOperationState.manualSaveMessage = cloudOperationState.message;
       markLocalChangesPending(`${operation}_fallido`);
       recordCloudSyncError('escritura_guardado_manual', cloudOperationState.lastError, 'error_sincronizacion');
       return { ...failedResult, message: cloudOperationState.message, technicalMessage: cloudOperationState.lastError };
     } catch (error) {
+      manualSaveCancelled = true;
       const timeout = isOperationTimeoutError(error);
       const result = {
         ok: false,
@@ -8436,11 +8587,15 @@ Notas importantes:
       result.technicalMessage = getManualCloudSaveTechnicalMessage(result, result.stage);
       cloudOperationState.lastError = result.technicalMessage;
       cloudOperationState.message = getManualCloudSaveMessage(result);
+      cloudOperationState.manualSaveMessage = cloudOperationState.message;
       markLocalChangesPending(`${operation}_fallido`);
       recordCloudSyncError('escritura_guardado_manual', result.technicalMessage, timeout ? 'error_sincronizacion' : 'error_sincronizacion');
       return { ...result, message: cloudOperationState.message };
     } finally {
       cloudOperationState.isWriting = false;
+      if (cloudOperationState.manualSaveRunId === confirmationToken) {
+        cloudOperationState.manualSaveRunId = '';
+      }
     }
   }
 
@@ -9687,11 +9842,22 @@ Notas importantes:
     return candidate.slice(0, 900) || `doc_${Date.now().toString(36)}`;
   }
 
+  function isLikelyFirestoreSpecialValue(value) {
+    if (!value || typeof value !== 'object') return false;
+    const constructorName = cleanText(value?.constructor?.name || '');
+    if (/FieldValue|Timestamp|GeoPoint|DocumentReference|Bytes|VectorValue/i.test(constructorName)) return true;
+    const methodName = cleanText(value?._methodName || value?.methodName || value?.type || '');
+    if (/serverTimestamp|arrayUnion|arrayRemove|increment|deleteField|Timestamp/i.test(methodName)) return true;
+    if (typeof value.isEqual === 'function' && (value?._delegate || value?._methodName || constructorName)) return true;
+    return false;
+  }
+
   function stripUndefinedForFirestore(value) {
     if (Array.isArray(value)) {
       return value.map(stripUndefinedForFirestore).filter((item) => item !== undefined);
     }
     if (value && typeof value === 'object') {
+      if (isLikelyFirestoreSpecialValue(value)) return value;
       if (value instanceof Date) return value.toISOString();
       const cleaned = {};
       Object.entries(value).forEach(([key, item]) => {
@@ -23836,7 +24002,7 @@ Notas importantes:
     const saveButtonLabel = info.isSavingCloud ? 'Guardando…' : 'Guardar datos';
     const manualSaveStatus = info.lastManualSaveStatus ? getCloudStatusLabel(info.lastManualSaveStatus) : 'Sin guardado manual';
     const manualSaveMessage = info.isSavingCloud
-      ? 'Guardando datos locales actuales en Firestore…'
+      ? (cloudOperationState.manualSaveMessage || info.lastManualSaveMessage || 'Guardando datos locales actuales en Firestore…')
       : (info.lastManualSaveMessage || 'Al usar Guardar datos se mostrará la confirmación de escritura en nube.');
     const canShowManualSave = Boolean(info.cloudActive || info.isSavingCloud);
     const saveDisabled = info.isSavingCloud || info.isRefreshingCloud;
