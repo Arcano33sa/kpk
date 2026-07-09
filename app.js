@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.37-post12-syncsegura-ajustefinal3-guardarporbloques';
+  const APP_VERSION = '0.18.20-post12-firebaseonline-guardar-sesion-etapa2';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -16,7 +16,6 @@
   const FACTURAS_STORAGE_KEY = 'ksa_facturas_v1';
   const WORK_PERIOD_STORAGE_KEY = 'KSA_PRACTIKA_WORK_PERIOD_v1';
   const AUTH_LOCAL_SESSION_STORAGE_KEY = 'KSA_PRACTIKA_AUTH_LOCAL_SESSION_v1';
-  const CLOUD_SYNC_DIAGNOSTIC_STORAGE_KEY = 'KSA_PRACTIKA_CLOUD_SYNC_DIAGNOSTIC_v1';
   const JSON_IMPORT_HISTORY_MAX_ENTRIES = 80;
   const ACTIVITY_LOG_MAX_ENTRIES = 300;
   const FACTURAS_PAGE_SIZE = 20;
@@ -1004,12 +1003,9 @@
   const FIRESTORE_RULES_FILENAME = 'FIRESTORE_RULES_KSA_PRACTIKA.rules';
   const FIRESTORE_GUIDE_FILENAME = 'GUIA_APLICAR_REGLAS_FIRESTORE.txt';
   const JSON_AUXILIAR_NUBE_GUIDE_FILENAME = 'GUIA_JSON_AUXILIAR_NUBE_KSA_PRACTIKA.txt';
-  const FIRESTORE_OPERATION_TIMEOUT_MS = 60000;
-  const FIRESTORE_MODULE_READ_TIMEOUT_MS = 60000;
+  const FIRESTORE_OPERATION_TIMEOUT_MS = 25000;
   const FIRESTORE_TIMEOUT_SAVE_USER_MESSAGE = 'Tiempo de espera agotado. Revisa conexión, reglas de Firestore o UID.';
   const FIRESTORE_TIMEOUT_REFRESH_MESSAGE = 'Tiempo de espera agotado al actualizar datos.';
-  const FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE = 'Tiempo de espera agotado al guardar datos. No se confirmó la escritura en nube.';
-  const FIRESTORE_MANUAL_SAVE_CONFIRM_MESSAGE = 'Se guardarán los datos locales actuales en la nube. Si la nube tiene una versión anterior, será reemplazada por estos datos locales. ¿Deseas continuar?';
 
   function createOperationTimeoutError(message, code = 'app/operation-timeout') {
     const error = new Error(cleanText(message) || 'Tiempo de espera agotado.');
@@ -1055,26 +1051,6 @@
         });
     });
   }
-
-
-  function waitForUiFrame() {
-    return new Promise((resolve) => {
-      try {
-        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-          window.requestAnimationFrame(() => resolve());
-          return;
-        }
-      } catch (_) {}
-      const safeSetTimeout = typeof window !== 'undefined' && typeof window.setTimeout === 'function'
-        ? window.setTimeout.bind(window)
-        : setTimeout;
-      safeSetTimeout(resolve, 0);
-    });
-  }
-
-  async function yieldToBrowser() {
-    await waitForUiFrame();
-  }
   const FIRESTORE_WORKSPACE_NAME = 'KSA PRÁCTIKA';
   const FIRESTORE_METADATA_SYSTEM_ID = 'sistema';
   const FIRESTORE_VERIFY_DOC_ID = 'verificacion';
@@ -1089,7 +1065,6 @@
     { key: 'gastos', label: 'Gastos' },
     { key: 'casaGastos', label: 'Casa gastos' },
     { key: 'facturasModulo', label: 'Facturas' },
-    { key: 'notasModulo', label: 'Notas' },
     { key: 'catalogos', label: 'Catálogos' },
     { key: 'cierresMensuales', label: 'Cierres mensuales' },
     { key: 'usuarios', label: 'Usuarios' }
@@ -1330,12 +1305,6 @@ Notas importantes:
     editingId: null,
     search: '',
     page: 1,
-    globalOpen: false,
-    globalPage: 1,
-    globalSearch: '',
-    globalCliente: '',
-    globalSucursal: '',
-    globalEstado: '',
     historyOpenPeriod: '',
     historyPages: {},
     captureDraft: {
@@ -1443,12 +1412,9 @@ Notas importantes:
     messageType: 'success'
   };
 
-  const CONFIG_ACCORDION_DEFAULT_KEY = 'datos-sincronizacion';
-
   let configState = {
     message: null,
-    messageType: 'success',
-    openAccordions: []
+    messageType: 'success'
   };
 
   let pwaState = {
@@ -2705,17 +2671,6 @@ Notas importantes:
     return String(value ?? '').replace(/\s+/g, ' ').trim();
   }
 
-  function readCloudSequenceValue(storageKey) {
-    try {
-      const raw = localStorage.getItem(storageKey);
-      if (raw === null || raw === '') return null;
-      const numberValue = Number(raw);
-      return Number.isFinite(numberValue) ? numberValue : cleanText(raw);
-    } catch (_) {
-      return null;
-    }
-  }
-
   function sanitizeFileNameSegment(value, fallback = 'Equipo sin nombre') {
     const sanitized = cleanText(value)
       .replace(/[\/\\:*?"<>|]+/g, ' ')
@@ -3085,73 +3040,6 @@ Notas importantes:
       .trim();
   }
 
-  function hasFacturaExplicitValue(value) {
-    return value !== undefined && value !== null && cleanText(value) !== '';
-  }
-
-  function readFacturaMoneyField(raw, keys = []) {
-    const source = isPlainObject(raw) ? raw : {};
-    for (const key of keys) {
-      if (!hasFacturaExplicitValue(source[key])) continue;
-      const value = parseMoney(source[key]);
-      return { hasValue: true, value: Number.isNaN(value) ? Number.NaN : value };
-    }
-    return { hasValue: false, value: 0 };
-  }
-
-  function readFacturaPendingFlag(raw, fallback = false) {
-    const source = isPlainObject(raw) ? raw : {};
-    const candidate = source.pendienteMonto ?? source.montoPendiente ?? source.requiereCompletarMonto ?? source.montoPorCompletar;
-    if (candidate === undefined || candidate === null || cleanText(candidate) === '') return Boolean(fallback);
-    if (typeof candidate === 'boolean') return candidate;
-    const normalized = cleanText(candidate)
-      .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '')
-      .toLocaleLowerCase('es-NI');
-    if (['1', 'true', 'si', 'sí', 'yes', 'pendiente'].includes(normalized)) return true;
-    if (['0', 'false', 'no', 'completo', 'completado'].includes(normalized)) return false;
-    return Boolean(fallback);
-  }
-
-  function isFacturaVentaInvalid(record) {
-    const factura = isPlainObject(record) ? record : {};
-    const subtotal = parseMoney(factura.subtotal);
-    const descuento = parseMoney(factura.descuento);
-    const total = roundMoney((Number.isNaN(subtotal) ? 0 : subtotal) - (Number.isNaN(descuento) ? 0 : descuento));
-    return Boolean(
-      factura.invalida
-      || Number.isNaN(subtotal)
-      || Number.isNaN(descuento)
-      || subtotal < 0
-      || descuento < 0
-      || descuento > subtotal
-      || total < 0
-    );
-  }
-
-  function isFacturaProveedorInvalid(record) {
-    const factura = isPlainObject(record) ? record : {};
-    const monto = parseMoney(factura.monto);
-    return Boolean(factura.invalida || Number.isNaN(monto) || monto < 0);
-  }
-
-  function getFacturaMoneyInputInfo(value) {
-    const raw = cleanText(value);
-    if (!raw) return { hasValue: false, value: 0, invalid: false };
-    const parsed = parseMoney(raw);
-    return { hasValue: true, value: parsed, invalid: Number.isNaN(parsed) || parsed < 0 };
-  }
-
-  function isMoneyDifferenceBalanced(value) {
-    return Math.abs(roundMoney(value)) <= 0.01;
-  }
-
-  function formatMoneyDifference(value) {
-    const diff = roundMoney(value);
-    const prefix = diff > 0 ? '+' : '';
-    return `${prefix}${formatMoney(diff)}`;
-  }
-
   function isSafeFacturaSpaceToken(token) {
     const value = cleanFacturaVentaNumero(token);
     if (!value) return false;
@@ -3190,35 +3078,9 @@ Notas importantes:
     const directValue = typeof record === 'string' || typeof record === 'number' ? record : '';
     const numero = cleanFacturaVentaNumero(directValue || raw.numero || raw.numeroFactura || raw.factura || raw.documento || raw.referencia || raw.value);
     if (!numero) return null;
-
-    const subtotalField = readFacturaMoneyField(raw, ['subtotal', 'montoSubtotal', 'subTotal', 'base', 'baseFactura', 'baseImponible']);
-    const descuentoField = readFacturaMoneyField(raw, ['descuento', 'descuentoFactura', 'descuentoAplicado', 'rebaja', 'rebajaFactura']);
-    const totalField = readFacturaMoneyField(raw, ['total', 'monto', 'importe', 'valor', 'montoFactura', 'facturaMonto', 'totalFactura']);
-    const descuento = descuentoField.hasValue && !Number.isNaN(descuentoField.value) ? roundMoney(descuentoField.value) : 0;
-    const subtotal = subtotalField.hasValue && !Number.isNaN(subtotalField.value)
-      ? roundMoney(subtotalField.value)
-      : (totalField.hasValue && !Number.isNaN(totalField.value) ? roundMoney(totalField.value + descuento) : 0);
-    const total = roundMoney(subtotal - descuento);
-    const pendienteMonto = readFacturaPendingFlag(raw, !(subtotalField.hasValue || totalField.hasValue));
-    const invalida = Boolean(
-      (subtotalField.hasValue && Number.isNaN(subtotalField.value))
-      || (descuentoField.hasValue && Number.isNaN(descuentoField.value))
-      || subtotal < 0
-      || descuento < 0
-      || descuento > subtotal
-      || total < 0
-    );
-
     return {
       id: cleanText(raw.id) || generateId('factura'),
-      numero,
-      subtotal,
-      descuento,
-      total,
-      pendienteMonto,
-      invalida,
-      motivoInvalidez: invalida ? 'Descuento mayor que subtotal' : '',
-      legacyNumeroSolo: Boolean(pendienteMonto && !subtotalField.hasValue && !totalField.hasValue)
+      numero
     };
   }
 
@@ -3254,86 +3116,18 @@ Notas importantes:
       }), (item) => item.numero);
   }
 
-  function mergeFacturasVentaWithExisting(nextFacturas, existingFacturas) {
-    const existingByNumero = new Map(normalizeFacturasVentaList(existingFacturas)
-      .map((factura) => [normalizeNameForCompare(factura.numero), factura]));
-    return normalizeFacturasVentaList(nextFacturas).map((factura) => {
-      const existing = existingByNumero.get(normalizeNameForCompare(factura.numero));
-      const nextHasAmounts = !factura.pendienteMonto || factura.subtotal > 0 || factura.descuento > 0 || factura.total > 0;
-      if (!existing || nextHasAmounts) return normalizeFacturaVentaRecord(factura);
-      return normalizeFacturaVentaRecord({ ...existing, numero: factura.numero });
-    }).filter(Boolean);
-  }
-
-  function getVentaFacturasMetrics(facturas) {
-    const list = normalizeFacturasVentaList(facturas);
-    return list.reduce((totals, factura) => {
-      totals.cantidad += 1;
-      totals.subtotal = roundMoney(totals.subtotal + factura.subtotal);
-      totals.descuento = roundMoney(totals.descuento + factura.descuento);
-      totals.total = roundMoney(totals.total + factura.total);
-      if (factura.pendienteMonto) totals.pendientesMonto += 1;
-      if (isFacturaVentaInvalid(factura)) totals.invalidas += 1;
-      return totals;
-    }, { cantidad: 0, subtotal: 0, descuento: 0, total: 0, pendientesMonto: 0, invalidas: 0 });
-  }
-
-  function getVentaFacturasSource(input) {
-    if (isPlainObject(input)) return input.facturas || [];
-    return input;
-  }
-
-  function sumaSubtotalesFacturas(input) {
-    return getVentaFacturasMetrics(getVentaFacturasSource(input)).subtotal;
-  }
-
-  function sumaDescuentosFacturas(input) {
-    return getVentaFacturasMetrics(getVentaFacturasSource(input)).descuento;
-  }
-
-  function sumaTotalesFacturas(input) {
-    return getVentaFacturasMetrics(getVentaFacturasSource(input)).total;
-  }
-
-  function diferenciaSubtotalVsOC(input, ocSubtotal = null) {
-    const record = isPlainObject(input) ? input : {};
-    const targetRaw = ocSubtotal ?? record.subtotal ?? record.montoOc ?? 0;
-    const target = parseMoney(targetRaw);
-    return roundMoney(sumaSubtotalesFacturas(input) - (Number.isNaN(target) ? 0 : target));
-  }
-
-  function diferenciaDescuentoVsOC(input, ocDescuento = null) {
-    const record = isPlainObject(input) ? input : {};
-    const targetRaw = ocDescuento ?? record.descuento ?? 0;
-    const target = parseMoney(targetRaw);
-    return roundMoney(sumaDescuentosFacturas(input) - (Number.isNaN(target) ? 0 : target));
-  }
-
-  function diferenciaTotalVsOC(input, ocTotal = null) {
-    const record = isPlainObject(input) ? input : {};
-    const subtotal = parseMoney(record.subtotal ?? record.montoOc ?? 0);
-    const descuento = parseMoney(record.descuento ?? 0);
-    const fallbackTotal = roundMoney((Number.isNaN(subtotal) ? 0 : subtotal) - (Number.isNaN(descuento) ? 0 : descuento));
-    const targetRaw = ocTotal ?? record.ventaNetaOriginal ?? record.total ?? record.ventaNeta ?? fallbackTotal;
-    const target = parseMoney(targetRaw);
-    return roundMoney(sumaTotalesFacturas(input) - (Number.isNaN(target) ? 0 : target));
-  }
-
   function normalizeVentaAjusteRecord(record) {
     const raw = isPlainObject(record) ? record : {};
     const timestamp = nowIso();
     const monto = parseMoney(raw.monto || raw.importe || raw.valor);
     const tipo = VENTA_AJUSTE_TYPES.includes(raw.tipo) ? raw.tipo : (cleanText(raw.tipo) || 'Corrección');
     const activo = typeof raw.activo === 'boolean' ? raw.activo : raw.estado !== 'Anulado';
-    const facturaSnapshot = getAjusteFacturaSnapshot(raw);
     return {
       id: cleanText(raw.id) || generateId('ajusteCliente'),
       fecha: toDateInputValue(raw.fecha || raw.fechaAjuste || '') || todayInputValue(),
       tipo: VENTA_AJUSTE_TYPES.includes(tipo) ? tipo : 'Corrección',
       monto: Number.isNaN(monto) ? 0 : Math.abs(monto),
       observacion: cleanText(raw.observacion || raw.nota || raw.descripcion),
-      facturaAfectadaId: facturaSnapshot.id,
-      facturaAfectadaNumero: facturaSnapshot.numero,
       activo,
       estado: activo ? 'Registrado' : 'Anulado',
       createdAt: raw.createdAt || timestamp,
@@ -3371,108 +3165,6 @@ Notas importantes:
     return list.map((factura) => factura.numero).join(', ');
   }
 
-  function encodeAjusteFacturaOptionValue(facturaRecord) {
-    const factura = isPlainObject(facturaRecord) ? facturaRecord : {};
-    const id = cleanText(factura.id);
-    const numero = cleanFacturaVentaNumero(factura.numero || factura.numeroFactura || factura.factura || factura.referencia || '');
-    if (!id && !numero) return '';
-    return `${encodeURIComponent(id)}|${encodeURIComponent(numero)}`;
-  }
-
-  function decodeAjusteFacturaOptionValue(value) {
-    const raw = cleanText(value);
-    if (!raw) return { id: '', numero: '' };
-    const parts = raw.split('|');
-    const decodePart = (part) => {
-      try {
-        return cleanText(decodeURIComponent(part || ''));
-      } catch (_) {
-        return cleanText(part || '');
-      }
-    };
-    return {
-      id: decodePart(parts[0]),
-      numero: cleanFacturaVentaNumero(decodePart(parts.slice(1).join('|')))
-    };
-  }
-
-  function getAjusteFacturaSnapshot(raw) {
-    const source = isPlainObject(raw) ? raw : {};
-    const facturaObject = isPlainObject(source.facturaAfectada)
-      ? source.facturaAfectada
-      : (isPlainObject(source.factura) ? source.factura : {});
-    const id = cleanText(
-      source.facturaAfectadaId
-      || source.facturaId
-      || source.facturaReferenciaId
-      || source.facturaRelacionadaId
-      || facturaObject.id
-    );
-    const numero = cleanFacturaVentaNumero(
-      source.facturaAfectadaNumero
-      || source.facturaNumero
-      || source.numeroFactura
-      || source.facturaAfectada
-      || source.factura
-      || facturaObject.numero
-      || facturaObject.numeroFactura
-      || facturaObject.referencia
-    );
-    return { id, numero };
-  }
-
-  function hasAjusteFacturaSnapshot(ajusteRecord) {
-    const ajuste = isPlainObject(ajusteRecord) ? ajusteRecord : {};
-    return Boolean(cleanText(ajuste.facturaAfectadaId) || cleanText(ajuste.facturaAfectadaNumero));
-  }
-
-  function findAjusteFacturaInList(facturas, ajusteRecord, normalizer = normalizeFacturasVentaList) {
-    const ajuste = isPlainObject(ajusteRecord) ? ajusteRecord : {};
-    const facturaId = cleanText(ajuste.facturaAfectadaId);
-    const facturaNumero = normalizeNameForCompare(ajuste.facturaAfectadaNumero);
-    if (!facturaId && !facturaNumero) return null;
-    return normalizer(facturas).find((factura) => {
-      const currentId = cleanText(factura.id);
-      const currentNumero = normalizeNameForCompare(factura.numero);
-      return Boolean((facturaId && currentId === facturaId) || (facturaNumero && currentNumero === facturaNumero));
-    }) || null;
-  }
-
-  function renderAjusteFacturaOptions(facturas, selectedValue = '', normalizer = normalizeFacturasVentaList) {
-    const selected = cleanText(selectedValue);
-    const list = normalizer(facturas);
-    const baseSelected = selected ? '' : 'selected';
-    const baseLabel = list.length ? 'General / sin factura asignada' : 'General (sin facturas registradas)';
-    return [
-      `<option value="" ${baseSelected}>${escapeHtml(baseLabel)}</option>`,
-      ...list.map((factura) => {
-        const value = encodeAjusteFacturaOptionValue(factura);
-        const amount = factura.pendienteMonto ? '' : ` · ${formatMoney(factura.total ?? factura.monto ?? 0)}`;
-        return `<option value="${escapeHtml(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(`Factura: ${factura.numero}${amount}`)}</option>`;
-      })
-    ].join('');
-  }
-
-  function syncAjusteFacturaSelectOptions(select, facturas, normalizer = normalizeFacturasVentaList) {
-    if (!select) return;
-    const previous = cleanText(select.value);
-    select.innerHTML = renderAjusteFacturaOptions(facturas, previous, normalizer);
-    if (previous && !Array.from(select.options).some((option) => option.value === previous)) select.value = '';
-  }
-
-  function formatAjusteFacturaLabel(ajusteRecord) {
-    const ajuste = isPlainObject(ajusteRecord) ? ajusteRecord : {};
-    const numero = cleanFacturaVentaNumero(ajuste.facturaAfectadaNumero);
-    if (numero) return `Factura: ${numero}`;
-    if (cleanText(ajuste.facturaAfectadaId)) return 'Factura asignada';
-    return 'General';
-  }
-
-  function getAjusteFacturaActivityPart(ajusteRecord) {
-    const label = formatAjusteFacturaLabel(ajusteRecord);
-    return label === 'General' ? 'General' : label;
-  }
-
   function splitFacturasProveedorText(value) {
     const text = String(value ?? '').trim();
     if (!text) return [];
@@ -3491,18 +3183,9 @@ Notas importantes:
     const directValue = typeof record === 'string' || typeof record === 'number' ? record : '';
     const numero = cleanFacturaVentaNumero(directValue || raw.numero || raw.numeroFactura || raw.factura || raw.documento || raw.referencia || raw.value);
     if (!numero) return null;
-    const montoField = readFacturaMoneyField(raw, ['monto', 'total', 'importe', 'valor', 'montoFactura', 'facturaMonto', 'totalFactura']);
-    const monto = montoField.hasValue && !Number.isNaN(montoField.value) ? roundMoney(montoField.value) : 0;
-    const pendienteMonto = readFacturaPendingFlag(raw, !montoField.hasValue);
-    const invalida = Boolean((montoField.hasValue && Number.isNaN(montoField.value)) || monto < 0);
     return {
       id: cleanText(raw.id) || generateId('facturaProveedor'),
-      numero,
-      monto,
-      pendienteMonto,
-      invalida,
-      motivoInvalidez: invalida ? 'Monto inválido' : '',
-      legacyNumeroSolo: Boolean(pendienteMonto && !montoField.hasValue)
+      numero
     };
   }
 
@@ -3538,17 +3221,6 @@ Notas importantes:
       }), (item) => item.numero);
   }
 
-  function mergeFacturasProveedorWithExisting(nextFacturas, existingFacturas) {
-    const existingByNumero = new Map(normalizeFacturasProveedorList(existingFacturas)
-      .map((factura) => [normalizeNameForCompare(factura.numero), factura]));
-    return normalizeFacturasProveedorList(nextFacturas).map((factura) => {
-      const existing = existingByNumero.get(normalizeNameForCompare(factura.numero));
-      const nextHasAmount = !factura.pendienteMonto || factura.monto > 0;
-      if (!existing || nextHasAmount) return normalizeFacturaProveedorRecord(factura);
-      return normalizeFacturaProveedorRecord({ ...existing, numero: factura.numero });
-    }).filter(Boolean);
-  }
-
   function normalizeCompraProveedorFacturasFromRaw(raw) {
     const source = isPlainObject(raw) ? raw : {};
     return normalizeFacturasProveedorList(source.facturasRelacionadas || source.facturasProveedor || source.facturasCompra || source.facturasRelacionadasProveedor || source.documentosRelacionados || []);
@@ -3571,17 +3243,6 @@ Notas importantes:
     return `Facturas: ${list.length} registradas`;
   }
 
-  function sumaMontosFacturas(input) {
-    const facturas = isPlainObject(input) ? (input.facturasRelacionadas || input.facturasProveedor || input.facturasCompra || []) : input;
-    return normalizeFacturasProveedorList(facturas).reduce((sum, factura) => roundMoney(sum + factura.monto), 0);
-  }
-
-  function diferenciaFacturasVsTotalCompra(input, totalCompra = null) {
-    const record = isPlainObject(input) ? input : {};
-    const targetRaw = totalCompra ?? record.totalCompra ?? record.totalDeuda ?? record.monto ?? record.total ?? 0;
-    const target = parseMoney(targetRaw);
-    return roundMoney(sumaMontosFacturas(input) - (Number.isNaN(target) ? 0 : target));
-  }
 
   function getCompraProveedorFacturaReferenciaValue(facturas, fallback = '') {
     const list = normalizeFacturasProveedorList(facturas);
@@ -3818,15 +3479,12 @@ Notas importantes:
     const monto = parseMoney(raw.monto || raw.importe || raw.valor);
     const tipo = COMPRA_AJUSTE_TYPES.includes(raw.tipo) ? raw.tipo : (cleanText(raw.tipo) || 'Corrección');
     const activo = typeof raw.activo === 'boolean' ? raw.activo : raw.estado !== 'Anulado';
-    const facturaSnapshot = getAjusteFacturaSnapshot(raw);
     return {
       id: cleanText(raw.id) || generateId('ajusteProveedor'),
       fecha: toDateInputValue(raw.fecha || raw.fechaAjuste || '') || todayInputValue(),
       tipo: COMPRA_AJUSTE_TYPES.includes(tipo) ? tipo : 'Corrección',
       monto: Number.isNaN(monto) ? 0 : Math.abs(monto),
       observacion: cleanText(raw.observacion || raw.nota || raw.descripcion),
-      facturaAfectadaId: facturaSnapshot.id,
-      facturaAfectadaNumero: facturaSnapshot.numero,
       activo,
       estado: activo ? 'Registrado' : 'Anulado',
       createdAt: raw.createdAt || timestamp,
@@ -5134,6 +4792,16 @@ Notas importantes:
       };
     }
 
+    function readCloudSequenceValue(storageKey) {
+      try {
+        const raw = localStorage.getItem(storageKey);
+        if (raw === null || raw === '') return null;
+        const numberValue = Number(raw);
+        return Number.isFinite(numberValue) ? numberValue : cleanText(raw);
+      } catch (_) {
+        return null;
+      }
+    }
 
     function writeCloudSequenceMirror(consecutivos = {}) {
       const pairs = [
@@ -5148,243 +4816,14 @@ Notas importantes:
       });
     }
 
-    function getCloudReadModuleStatusLabel(status = '') {
-      const key = cleanText(status).toLowerCase();
-      const labels = {
-        ok: 'OK',
-        leyendo: 'Leyendo…',
-        fallo: 'Falló',
-        no_disponible: 'No disponible',
-        saltado_proteccion: 'Saltado por protección anti-pérdida',
-        timeout: 'Timeout',
-        permisos_insuficientes: 'Permisos insuficientes',
-        sin_cambios: 'Sin cambios',
-        error_desconocido: 'Error desconocido'
-      };
-      return labels[key] || labels.error_desconocido;
-    }
-
-    function classifyCloudReadModuleError(error) {
-      const code = cleanText(error?.code || error?.name || '').toLowerCase();
-      if (isOperationTimeoutError(error) || code.includes('deadline-exceeded')) return 'timeout';
-      if (code.includes('permission-denied') || code.includes('unauthorized') || code.includes('forbidden')) return 'permisos_insuficientes';
-      if (code.includes('not-found') || code.includes('unavailable')) return 'no_disponible';
-      if (code.includes('failed-precondition') || code.includes('resource-exhausted') || code.includes('cancelled')) return 'fallo';
-      return 'error_desconocido';
-    }
-
-    function getCloudReadModuleCount(key = '', value = null) {
-      const cleanKey = cleanText(key);
-      if (cleanKey === 'metadata') return Number(Boolean(value?.metadata)) + Number(Boolean(value?.configuracion));
-      if (cleanKey === 'catalogos') {
-        const lists = isPlainObject(value?.catalogos) ? Object.values(value.catalogos) : [];
-        return lists.reduce((sum, list) => sum + (Array.isArray(list) ? list.length : 0), 0);
-      }
-      if (cleanKey === 'notasModulo') return Array.isArray(value?.records) ? value.records.length : buildCloudNotasRecords(value).length;
-      if (cleanKey === 'facturasModulo') return Array.isArray(value?.records) ? value.records.length : normalizeFacturasData(value || {}).facturas.length;
-      if (cleanKey === 'consecutivos') return Object.keys(isPlainObject(value?.consecutivos) ? value.consecutivos : (isPlainObject(value) ? value : {})).length;
-      if (Array.isArray(value?.records)) return value.records.length;
-      if (Array.isArray(value)) return value.length;
-      if (isPlainObject(value)) return Object.keys(value).length;
-      return 0;
-    }
-
-    function buildCloudReadModuleResult(input = {}) {
-      const raw = isPlainObject(input) ? input : {};
-      const status = cleanText(raw.status || (raw.ok ? 'ok' : 'fallo')) || 'fallo';
-      const count = Number(raw.count);
-      return {
-        key: cleanText(raw.key || 'modulo'),
-        label: cleanText(raw.label || raw.key || 'Módulo'),
-        ok: raw.ok === true,
-        status,
-        statusLabel: cleanText(raw.statusLabel || getCloudReadModuleStatusLabel(status)),
-        count: Number.isFinite(count) ? count : 0,
-        message: cleanText(raw.message || getCloudReadModuleStatusLabel(status)),
-        code: cleanText(raw.code || ''),
-        startedAt: cleanText(raw.startedAt || ''),
-        finishedAt: cleanText(raw.finishedAt || ''),
-        durationMs: Number.isFinite(Number(raw.durationMs)) ? Number(raw.durationMs) : 0
-      };
-    }
-
-    async function runCloudReadModule(definition = {}, context = {}, options = {}) {
-      const def = isPlainObject(definition) ? definition : {};
-      const opts = isPlainObject(options) ? options : {};
-      const onModuleResult = typeof opts.onModuleResult === 'function' ? opts.onModuleResult : null;
-      const key = cleanText(def.key || 'modulo');
-      const label = cleanText(def.label || key || 'Módulo');
-      const startedAt = nowIso();
-      const startedMs = Date.now();
-      const publish = (payload) => {
-        const result = buildCloudReadModuleResult({ key, label, startedAt, ...payload });
-        if (onModuleResult) {
-          try { onModuleResult(result); } catch (_) { /* El progreso visual no debe romper lectura. */ }
-        }
-        return result;
-      };
-      publish({ ok: false, status: 'leyendo', statusLabel: 'Leyendo…', message: `Leyendo ${label}…`, count: 0 });
-      try {
-        const value = await withOperationTimeout(
-          () => def.reader(context),
-          {
-            ms: Number(def.timeoutMs) > 0 ? Number(def.timeoutMs) : FIRESTORE_MODULE_READ_TIMEOUT_MS,
-            message: `Tiempo de espera al leer ${label}.`,
-            code: `app/read-${key || 'module'}-timeout`
-          }
-        );
-        const count = getCloudReadModuleCount(key, value);
-        const result = publish({
-          ok: true,
-          status: count > 0 ? 'ok' : 'sin_cambios',
-          statusLabel: count > 0 ? 'OK' : 'Sin cambios',
-          message: count > 0 ? `${label}: ${count} registro(s) leídos.` : `${label}: sin registros en nube.`,
-          count,
-          finishedAt: nowIso(),
-          durationMs: Date.now() - startedMs
-        });
-        return { ...result, value };
-      } catch (error) {
-        const status = classifyCloudReadModuleError(error);
-        const message = cleanText(error?.message || getCloudReadModuleStatusLabel(status));
-        const result = publish({
-          ok: false,
-          status,
-          statusLabel: getCloudReadModuleStatusLabel(status),
-          message: `${label}: ${message}`,
-          code: cleanText(error?.code || error?.name || 'firebase/firestore-error'),
-          finishedAt: nowIso(),
-          durationMs: Date.now() - startedMs
-        });
-        return { ...result, error };
-      }
-    }
-
-    function getCloudOperationalReadModules() {
-      const listReaderDefinitions = [
-        { key: 'ventas', label: 'Ventas / OC', normalizer: normalizeVentaRecord },
-        { key: 'cobros', label: 'Cobros', normalizer: normalizeCobroRecord },
-        { key: 'comprasProveedores', label: 'Proveedores / Compras', normalizer: normalizeCompraProveedorRecord },
-        { key: 'pagosProveedores', label: 'Pagos', normalizer: normalizePagoProveedorRecord },
-        { key: 'gastos', label: 'Gastos', normalizer: normalizeGastoRecord },
-        { key: 'casaGastos', label: 'Casa', normalizer: normalizeCasaGastoRecord },
-        { key: 'cierresMensuales', label: 'Cierres', normalizer: normalizeCierreMensualRecord },
-        { key: 'exportacionesExcel', label: 'Exportaciones Excel', normalizer: normalizeExcelExportRecord }
-      ];
-      return [
-        {
-          key: 'catalogos',
-          label: 'Catálogos',
-          reader: async ({ db, fs, workspaceId }) => {
-            const catalogos = {};
-            for (const catalog of CATALOGS) {
-              const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'catalogos', catalog.id, 'items');
-              catalogos[catalog.id] = records.map((record) => normalizeCatalogRecord(record, catalog));
-            }
-            return { catalogos };
-          }
-        },
-        ...listReaderDefinitions.map((definition) => ({
-          key: definition.key,
-          label: definition.label,
-          reader: async ({ db, fs, workspaceId }) => {
-            const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, definition.key);
-            return { records: records.map((record) => definition.normalizer(record)) };
-          }
-        })),
-        {
-          key: 'facturasModulo',
-          label: 'Facturas',
-          reader: async ({ db, fs, workspaceId }) => {
-            const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'facturasModulo');
-            return { records: records.map((record) => normalizeFacturaModuloRecord(record)) };
-          }
-        },
-        {
-          key: 'notasModulo',
-          label: 'Notas',
-          reader: async ({ db, fs, workspaceId }) => {
-            const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'notasModulo');
-            return { records };
-          }
-        },
-        {
-          key: 'bitacora',
-          label: 'Bitácora',
-          reader: async ({ db, fs, workspaceId }) => {
-            const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'bitacora');
-            return { records: records.map((entry) => normalizeActivityEntry(entry)) };
-          }
-        },
-        {
-          key: 'consecutivos',
-          label: 'Consecutivos',
-          reader: async ({ db, fs, workspaceId }) => {
-            const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'consecutivos');
-            const consecutivos = {};
-            records.forEach((record) => {
-              const key = cleanText(record.tipo || record.id);
-              if (key) consecutivos[key] = record.valor ?? record.value ?? record.consecutivo ?? '';
-            });
-            return { records, consecutivos };
-          }
-        }
-      ];
-    }
-
-    function buildCloudReadIncompleteResult(message = '', moduleResults = [], extra = {}) {
-      return {
-        ok: false,
-        action: 'readCloudOperationalSnapshot',
-        code: cleanText(extra?.code || 'cloud/read-incomplete'),
-        message: cleanText(message) || 'La lectura desde Firestore quedó incompleta. Se conservaron los datos locales.',
-        snapshot: null,
-        snapshotComplete: false,
-        moduleResults: (Array.isArray(moduleResults) ? moduleResults : []).map(buildCloudReadModuleResult),
-        ...extra
-      };
-    }
-
     async function readCloudOperationalSnapshot(options = {}) {
       const opts = isPlainObject(options) ? options : {};
-      const onModuleResult = typeof opts.onModuleResult === 'function' ? opts.onModuleResult : null;
-      const moduleResults = [];
-      const upsertModuleResult = (payload) => {
-        const result = buildCloudReadModuleResult(payload);
-        const index = moduleResults.findIndex((item) => item.key === result.key);
-        if (index >= 0) moduleResults[index] = result;
-        else moduleResults.push(result);
-        if (onModuleResult) {
-          try { onModuleResult(result, moduleResults.map(buildCloudReadModuleResult)); } catch (_) { /* Progreso visual no debe romper lectura. */ }
-        }
-        return result;
-      };
       try {
         const { user, role, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: false });
         const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
-        const metadataModule = await runCloudReadModule({
-          key: 'metadata',
-          label: 'Configuración / metadatos',
-          reader: async () => {
-            const metadataRef = fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
-            const configRef = fs.doc(db, 'workspaces', workspaceId, 'configuracion', 'sistema');
-            const [metadataSnap, configSnap] = await Promise.all([fs.getDoc(metadataRef), fs.getDoc(configRef)]);
-            const metadata = metadataSnap.exists() ? normalizeFirestoreDoc(metadataSnap) : {};
-            const configuracion = configSnap.exists() ? normalizeConfiguracion(normalizeFirestoreDoc(configSnap)) : normalizeConfiguracion(appData?.configuracion || {});
-            return { metadata, configuracion, metadataExists: metadataSnap.exists(), configExists: configSnap.exists() };
-          }
-        }, { db, fs, workspaceId }, { onModuleResult: upsertModuleResult });
-
-        if (!metadataModule.ok) {
-          const message = metadataModule.status === 'timeout'
-            ? 'Tiempo de espera al leer Configuración / metadatos. Se conservaron los datos locales.'
-            : 'No se pudo leer Configuración / metadatos. Se conservaron los datos locales.';
-          state.lastSyncError = message;
-          publishKSAFirebaseRuntime({ lastSyncError: message, lastSyncErrorAt: nowIso(), lastCloudStatus: 'lectura_incompleta', message, lastRefreshModules: moduleResults.map(buildCloudReadModuleResult) });
-          return buildCloudReadIncompleteResult(message, moduleResults, { code: metadataModule.code || 'cloud/metadata-read-failed', metadata: {}, user, role });
-        }
-
-        const metadata = isPlainObject(metadataModule.value?.metadata) ? metadataModule.value.metadata : {};
+        const metadataRef = fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
+        const metadataSnap = await fs.getDoc(metadataRef);
+        const metadata = metadataSnap.exists() ? normalizeFirestoreDoc(metadataSnap) : {};
         const ready = isCloudReadyMetadata(metadata);
         const activeByMetadata = cleanText(metadata.fuentePrincipal).toLowerCase() === 'firestore' || metadata.cloudActive === true;
         if (!ready) {
@@ -5397,12 +4836,10 @@ Notas importantes:
             cloudWritesEnabled: false,
             cloudDataReady: false,
             workspaceId,
-            workspaceInitialized: Boolean(metadataModule.value?.metadataExists),
-            lastCloudStatus: 'nube_no_confirmada',
-            lastRefreshModules: moduleResults.map(buildCloudReadModuleResult),
+            workspaceInitialized: Boolean(metadataSnap.exists()),
             message: state.lastSyncError
           });
-          return buildCloudReadIncompleteResult(state.lastSyncError, moduleResults, { code: 'cloud/not-ready', metadata, user, role });
+          return { ok: false, action: 'readCloudOperationalSnapshot', code: 'cloud/not-ready', message: state.lastSyncError, snapshot: null, metadata, user, role };
         }
         if (!activeByMetadata && opts.requireActive !== false) {
           state.cloudActive = false;
@@ -5415,67 +4852,58 @@ Notas importantes:
             cloudDataReady: true,
             workspaceId,
             workspaceInitialized: true,
-            lastCloudStatus: 'nube_no_confirmada',
-            lastRefreshModules: moduleResults.map(buildCloudReadModuleResult),
             message: state.lastSyncError
           });
-          return buildCloudReadIncompleteResult(state.lastSyncError, moduleResults, { code: 'cloud/not-active', metadata, user, role });
+          return { ok: false, action: 'readCloudOperationalSnapshot', code: 'cloud/not-active', message: state.lastSyncError, snapshot: null, metadata, user, role };
         }
 
-        const context = { db, fs, workspaceId };
-        const readModules = getCloudOperationalReadModules();
-        const readResults = await Promise.all(readModules.map((definition) => runCloudReadModule(definition, context, { onModuleResult: upsertModuleResult })));
-        readResults.forEach(upsertModuleResult);
-        const failedModules = moduleResults.filter((item) => item.key !== 'metadata' && item.ok !== true);
-        if (failedModules.length) {
-          const failedText = failedModules.map((item) => `${item.label}: ${item.statusLabel}`).join(' · ');
-          const hasTimeout = failedModules.some((item) => item.status === 'timeout');
-          const message = hasTimeout
-            ? `Tiempo de espera en uno o más módulos (${failedText}). Se conservaron los datos locales.`
-            : `Actualización parcial no aplicada (${failedText}). Se conservaron los datos locales.`;
-          state.lastSyncError = message;
-          publishKSAFirebaseRuntime({
-            cloudActive: true,
-            cloudReadsEnabled: true,
-            cloudWritesEnabled: true,
-            cloudDataReady: true,
-            workspaceId,
-            lastSyncError: message,
-            lastSyncErrorAt: nowIso(),
-            lastCloudStatus: 'lectura_incompleta',
-            lastRefreshModules: moduleResults.map(buildCloudReadModuleResult),
-            message
-          });
-          return buildCloudReadIncompleteResult(message, moduleResults, { code: hasTimeout ? 'app/refresh-cloud-timeout' : 'cloud/read-incomplete', metadata, user, role });
-        }
-
-        const valuesByKey = {};
-        readResults.forEach((result) => { valuesByKey[result.key] = result.value; });
         const snapshot = createInitialData();
-        CATALOGS.forEach((catalog) => {
-          snapshot[catalog.id] = Array.isArray(valuesByKey.catalogos?.catalogos?.[catalog.id]) ? valuesByKey.catalogos.catalogos[catalog.id] : [];
-        });
-        ['ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'casaGastos', 'cierresMensuales', 'exportacionesExcel'].forEach((key) => {
-          snapshot[key] = Array.isArray(valuesByKey[key]?.records) ? valuesByKey[key].records : [];
-        });
-        snapshot.configuracion = metadataModule.value?.configuracion || normalizeConfiguracion(appData?.configuracion || {});
+        CATALOGS.forEach((catalog) => { snapshot[catalog.id] = []; });
+        for (const catalog of CATALOGS) {
+          const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'catalogos', catalog.id, 'items');
+          snapshot[catalog.id] = records.map((record) => normalizeCatalogRecord(record, catalog));
+        }
+
+        const listReaders = [
+          ['ventas', normalizeVentaRecord],
+          ['cobros', normalizeCobroRecord],
+          ['comprasProveedores', normalizeCompraProveedorRecord],
+          ['pagosProveedores', normalizePagoProveedorRecord],
+          ['gastos', normalizeGastoRecord],
+          ['casaGastos', normalizeCasaGastoRecord],
+          ['cierresMensuales', normalizeCierreMensualRecord],
+          ['exportacionesExcel', normalizeExcelExportRecord]
+        ];
+        for (const [key, normalizer] of listReaders) {
+          const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, key);
+          snapshot[key] = records.map((record) => normalizer(record));
+        }
+
+        const configSnap = await fs.getDoc(fs.doc(db, 'workspaces', workspaceId, 'configuracion', 'sistema'));
+        snapshot.configuracion = configSnap.exists()
+          ? normalizeConfiguracion(normalizeFirestoreDoc(configSnap))
+          : normalizeConfiguracion(appData?.configuracion || {});
         snapshot.metadata = {
           ...(isPlainObject(appData?.metadata) ? appData.metadata : {}),
           ...metadata,
           fuentePrincipal: 'firestore',
           cloudActive: true,
-          cloudDataReady: true,
           lastCloudReadAt: nowIso()
         };
+
+        const facturasRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'facturasModulo');
+        const notasRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'notasModulo');
+        const bitacoraRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'bitacora');
+        const consecutivosRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'consecutivos');
+        const consecutivos = {};
+        consecutivosRecords.forEach((record) => {
+          const key = cleanText(record.tipo || record.id);
+          if (key) consecutivos[key] = record.valor ?? record.value ?? record.consecutivo ?? '';
+        });
 
         const normalized = normalizeData(snapshot);
         normalized.bdatos = normalizeBdatosList(snapshot.bdatos || normalized.bdatos);
         normalized.bdatosUpdatedAt = cleanText(snapshot.bdatosUpdatedAt || normalized.bdatosUpdatedAt);
-        const facturasRecords = Array.isArray(valuesByKey.facturasModulo?.records) ? valuesByKey.facturasModulo.records : [];
-        const notasRecords = Array.isArray(valuesByKey.notasModulo?.records) ? valuesByKey.notasModulo.records : [];
-        const bitacoraRecords = Array.isArray(valuesByKey.bitacora?.records) ? valuesByKey.bitacora.records : [];
-        const consecutivos = isPlainObject(valuesByKey.consecutivos?.consecutivos) ? valuesByKey.consecutivos.consecutivos : {};
-
         state.cloudActive = true;
         state.cloudMetadata = snapshot.metadata;
         state.lastCloudReadAt = nowIso();
@@ -5493,16 +4921,13 @@ Notas importantes:
           workspace: workspaceId,
           workspaceInitialized: true,
           lastSyncAt: state.lastSyncAt,
-          lastCloudReadAt: state.lastCloudReadAt,
-          lastCloudStatus: 'sincronizado',
-          lastRefreshModules: moduleResults.map(buildCloudReadModuleResult),
           message: 'Firestore activo como fuente principal.'
         });
         return {
           ok: true,
           action: 'readCloudOperationalSnapshot',
           code: 'cloud/read-ok',
-          message: 'Actualización completada.',
+          message: 'Datos leídos desde Firestore.',
           snapshot: normalized,
           notasModulo: rebuildNotasDataFromCloud(notasRecords),
           facturasModulo: normalizeFacturasData({ facturas: facturasRecords }),
@@ -5511,22 +4936,18 @@ Notas importantes:
           metadata: snapshot.metadata,
           user,
           role,
-          lastSyncAt: state.lastSyncAt,
-          snapshotComplete: true,
-          moduleResults: moduleResults.map(buildCloudReadModuleResult)
+          lastSyncAt: state.lastSyncAt
         };
       } catch (error) {
-        const timeout = isOperationTimeoutError(error);
-        const message = timeout ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : translateFirestorePrepError(error);
+        const message = translateFirestorePrepError(error);
         state.lastSyncError = message;
         publishKSAFirebaseRuntime({
-          lastSyncError: message,
-          lastSyncErrorAt: nowIso(),
-          lastCloudStatus: 'lectura_incompleta',
-          lastRefreshModules: moduleResults.map(buildCloudReadModuleResult),
+          cloudActive: false,
+          cloudReadsEnabled: false,
+          cloudWritesEnabled: false,
           message
         });
-        return buildCloudReadIncompleteResult(`${message} Se conservaron los datos locales.`, moduleResults, { action: 'readCloudOperationalSnapshot', code: cleanText(error?.code || (timeout ? 'app/refresh-cloud-timeout' : 'firebase/firestore-error')), error });
+        return { ok: false, action: 'readCloudOperationalSnapshot', code: cleanText(error?.code || 'firebase/firestore-error'), message, snapshot: null, error };
       }
     }
 
@@ -5580,82 +5001,21 @@ Notas importantes:
 
     async function writeCloudOperationalSnapshot(snapshotInput = null, options = {}) {
       const opts = isPlainObject(options) ? options : {};
-      const manualProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
-      const manualTimeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : FIRESTORE_OPERATION_TIMEOUT_MS;
-      const manualStartedAtMs = Number(opts.startedAtMs) > 0 ? Number(opts.startedAtMs) : Date.now();
-      const manualDeadlineAtMs = Number(opts.deadlineAtMs) > 0 ? Number(opts.deadlineAtMs) : (manualStartedAtMs + manualTimeoutMs);
-      let failureStage = 'validación_workspace';
-
-      const throwIfManualSaveExpired = () => {
-        if (typeof opts.isCancelled === 'function' && opts.isCancelled()) {
-          throw createOperationTimeoutError(FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE, 'app/manual-save-timeout');
-        }
-        if (Date.now() > manualDeadlineAtMs) {
-          throw createOperationTimeoutError(FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE, 'app/manual-save-timeout');
-        }
-      };
-
-      const emitProgress = async (stage, label, message, extra = {}) => {
-        const payload = {
-          stage: cleanText(stage) || failureStage,
-          label: cleanText(label),
-          message: cleanText(message || label || 'Guardando datos locales actuales en Firestore…'),
-          totalQueued: Number(extra.totalQueued) || 0,
-          blockCount: Number(extra.blockCount) || 0,
-          ...extra
-        };
-        if (manualProgress) {
-          try { manualProgress(payload); } catch (_) { /* El progreso visual no debe romper el guardado. */ }
-        }
-        await yieldToBrowser();
-        throwIfManualSaveExpired();
-        return payload;
-      };
-
       if (opts.force !== true && !(state.cloudActive || getKSAFirebaseRuntime()?.cloudActive)) {
-        return {
-          ok: false,
-          action: 'writeCloudOperationalSnapshot',
-          code: 'cloud/not-active',
-          stage: 'validación_workspace',
-          technicalMessage: 'validación_workspace · cloud/not-active · Nube no activa; no se escribe a Firestore.',
-          message: 'Nube no activa; no se escribe a Firestore.'
-        };
+        return { ok: false, action: 'writeCloudOperationalSnapshot', code: 'cloud/not-active', message: 'Nube no activa; no se escribe a Firestore.' };
       }
       try {
-        await emitProgress('validación_workspace', 'Validando workspace…', 'Validando workspace…');
-        failureStage = 'firestore_no_preparado';
         const { user, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: false });
         const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
         const stamp = getFirestoreTimestampValue(fs);
-        const manualSaveToken = cleanText(opts.confirmationToken || opts.manualSaveToken || '');
-        const manualSaveLocalAt = nowIso();
-
-        failureStage = 'preparación_payload';
-        await emitProgress(failureStage, 'Preparando guardado local…', 'Preparando guardado local…');
         const payload = snapshotInput && isPlainObject(snapshotInput) && snapshotInput.data ? snapshotInput : buildCloudSnapshotPayload(appData);
-        if (!payload || !isPlainObject(payload.data)) {
-          return {
-            ok: false,
-            action: 'writeCloudOperationalSnapshot',
-            code: 'cloud/payload-empty',
-            stage: 'payload_vacío',
-            message: 'No se pudo preparar el estado local actual para subirlo a Firestore.',
-            technicalMessage: 'payload_vacío · cloud/payload-empty · Payload local vacío o inválido.'
-          };
-        }
-        const data = snapshotInput && isPlainObject(snapshotInput) && snapshotInput.data ? normalizeData(payload.data || appData) : payload.data;
-        await emitProgress(failureStage, 'Payload local preparado.', 'Payload local preparado.');
-
-        failureStage = 'escritura_firestore';
+        const data = normalizeData(payload.data || appData);
         let batch = fs.writeBatch(db);
         let count = 0;
         let totalQueued = 0;
         const commit = async () => {
           if (!count) return;
           await batch.commit();
-          await yieldToBrowser();
-          throwIfManualSaveExpired();
           batch = fs.writeBatch(db);
           count = 0;
         };
@@ -5665,32 +5025,7 @@ Notas importantes:
           totalQueued += 1;
           if (count >= FIRESTORE_IMPORT_BATCH_LIMIT) await commit();
         };
-        const commitBlock = async (stage, label) => {
-          await commit();
-          await emitProgress(stage, label, `${label} listo.`, { totalQueued });
-        };
-        const queueRecordList = async ({ key, label, list, normalizer, docIdPrefix }) => {
-          failureStage = `escritura_firestore_bloque_${key}`;
-          const records = Array.isArray(list) ? list : [];
-          await emitProgress(failureStage, label, `Subiendo bloque ${label}…`, { totalQueued, blockCount: records.length });
-          for (let index = 0; index < records.length; index += 1) {
-            const rawRecord = records[index];
-            const record = normalizer(rawRecord);
-            const docId = getCloudDocumentId(record, docIdPrefix || key);
-            await queueSet(fs.doc(db, 'workspaces', workspaceId, key, docId), {
-              ...record,
-              updatedAt: record.updatedAt || nowIso(),
-              _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
-            });
-            if ((index + 1) % 75 === 0) {
-              await emitProgress(failureStage, label, `Subiendo bloque ${label}: ${index + 1}/${records.length}…`, { totalQueued, blockCount: records.length });
-            }
-          }
-          await commitBlock(failureStage, label);
-        };
 
-        failureStage = 'escritura_firestore_bloque_configuracion';
-        await emitProgress(failureStage, 'Configuración / metadata segura', 'Subiendo bloque Configuración / metadata segura…', { totalQueued, blockCount: 2 });
         await queueSet(fs.doc(db, 'workspaces', workspaceId), {
           id: workspaceId,
           nombre: FIRESTORE_WORKSPACE_NAME,
@@ -5707,12 +5042,7 @@ Notas importantes:
           updatedAt: stamp,
           fuentePrincipal: 'firestore'
         });
-        await commitBlock(failureStage, 'Configuración / metadata segura');
 
-        failureStage = 'escritura_firestore_bloque_catalogos';
-        const catalogRecordsCount = CATALOGS.reduce((sum, catalog) => sum + (Array.isArray(data[catalog.id]) ? data[catalog.id].length : 0), 0);
-        await emitProgress(failureStage, 'Catálogos', 'Subiendo bloque Catálogos…', { totalQueued, blockCount: catalogRecordsCount });
-        let catalogProgress = 0;
         for (const catalog of CATALOGS) {
           const list = Array.isArray(data[catalog.id]) ? data[catalog.id] : [];
           for (const record of list) {
@@ -5723,90 +5053,68 @@ Notas importantes:
               updatedAt: record.updatedAt || nowIso(),
               _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
             });
-            catalogProgress += 1;
-            if (catalogProgress % 75 === 0) {
-              await emitProgress(failureStage, 'Catálogos', `Subiendo bloque Catálogos: ${catalogProgress}/${catalogRecordsCount}…`, { totalQueued, blockCount: catalogRecordsCount });
-            }
           }
-          await yieldToBrowser();
-          throwIfManualSaveExpired();
         }
-        await commitBlock(failureStage, 'Catálogos');
 
         const listWriters = [
-          { key: 'ventas', label: 'Ventas / OC', list: data.ventas || [], normalizer: normalizeVentaRecord },
-          { key: 'cobros', label: 'Cobros', list: data.cobros || [], normalizer: normalizeCobroRecord },
-          { key: 'comprasProveedores', label: 'Proveedores / Compras', list: data.comprasProveedores || [], normalizer: normalizeCompraProveedorRecord },
-          { key: 'pagosProveedores', label: 'Pagos', list: data.pagosProveedores || [], normalizer: normalizePagoProveedorRecord },
-          { key: 'gastos', label: 'Gastos', list: data.gastos || [], normalizer: normalizeGastoRecord },
-          { key: 'casaGastos', label: 'Casa', list: data.casaGastos || [], normalizer: normalizeCasaGastoRecord },
-          { key: 'cierresMensuales', label: 'Cierres', list: data.cierresMensuales || [], normalizer: normalizeCierreMensualRecord },
-          { key: 'exportacionesExcel', label: 'Exportaciones Excel', list: data.exportacionesExcel || [], normalizer: normalizeExcelExportRecord }
+          ['ventas', data.ventas || [], normalizeVentaRecord],
+          ['cobros', data.cobros || [], normalizeCobroRecord],
+          ['comprasProveedores', data.comprasProveedores || [], normalizeCompraProveedorRecord],
+          ['pagosProveedores', data.pagosProveedores || [], normalizePagoProveedorRecord],
+          ['gastos', data.gastos || [], normalizeGastoRecord],
+          ['casaGastos', data.casaGastos || [], normalizeCasaGastoRecord],
+          ['cierresMensuales', data.cierresMensuales || [], normalizeCierreMensualRecord],
+          ['exportacionesExcel', data.exportacionesExcel || [], normalizeExcelExportRecord]
         ];
-        for (const writer of listWriters) {
-          await queueRecordList(writer);
+        for (const [key, list, normalizer] of listWriters) {
+          for (const rawRecord of list) {
+            const record = normalizer(rawRecord);
+            const docId = getCloudDocumentId(record, key);
+            await queueSet(fs.doc(db, 'workspaces', workspaceId, key, docId), {
+              ...record,
+              updatedAt: record.updatedAt || nowIso(),
+              _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
+            });
+          }
         }
 
-        failureStage = 'escritura_firestore_bloque_notasModulo';
         const notasRecords = buildCloudNotasRecords(payload.notasModulo || cloneNotasModuleData());
-        await emitProgress(failureStage, 'Notas', 'Subiendo bloque Notas…', { totalQueued, blockCount: notasRecords.length });
-        for (let index = 0; index < notasRecords.length; index += 1) {
-          const rawRecord = notasRecords[index];
+        for (const rawRecord of notasRecords) {
           const prefix = cleanText(rawRecord._docPrefix || rawRecord.tipoRegistro || 'nota');
           const record = { ...rawRecord };
           delete record._docPrefix;
-          const stableId = cleanText(record.id) || simpleHashText(`${prefix}_${cleanText(record.titulo || record.descripcion || record.fecha || index)}`).slice(0, 12);
-          const docId = sanitizeFirestoreDocId(`${prefix}_${stableId}`, 'nota');
+          const docId = sanitizeFirestoreDocId(`${prefix}_${cleanText(record.id) || simpleHashText(JSON.stringify(record)).slice(0, 12)}`, 'nota');
           await queueSet(fs.doc(db, 'workspaces', workspaceId, 'notasModulo', docId), {
             ...record,
             updatedAt: record.updatedAt || nowIso(),
             _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
           });
-          if ((index + 1) % 75 === 0) {
-            await emitProgress(failureStage, 'Notas', `Subiendo bloque Notas: ${index + 1}/${notasRecords.length}…`, { totalQueued, blockCount: notasRecords.length });
-          }
         }
-        await commitBlock(failureStage, 'Notas');
 
-        failureStage = 'escritura_firestore_bloque_facturasModulo';
         const facturasData = normalizeFacturasData(payload.facturasModulo || cloneFacturasModuleData());
-        const facturasList = Array.isArray(facturasData.facturas) ? facturasData.facturas : [];
-        await emitProgress(failureStage, 'Facturas', 'Subiendo bloque Facturas…', { totalQueued, blockCount: facturasList.length });
-        for (let index = 0; index < facturasList.length; index += 1) {
-          const record = normalizeFacturaModuloRecord(facturasList[index]);
+        for (const rawRecord of facturasData.facturas) {
+          const record = normalizeFacturaModuloRecord(rawRecord);
           const docId = getCloudDocumentId(record, 'factura');
           await queueSet(fs.doc(db, 'workspaces', workspaceId, 'facturasModulo', docId), {
             ...record,
             updatedAt: record.updatedAt || nowIso(),
             _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
           });
-          if ((index + 1) % 75 === 0) {
-            await emitProgress(failureStage, 'Facturas', `Subiendo bloque Facturas: ${index + 1}/${facturasList.length}…`, { totalQueued, blockCount: facturasList.length });
-          }
         }
-        await commitBlock(failureStage, 'Facturas');
 
-        failureStage = 'escritura_firestore_bloque_bitacora';
-        const activityEntries = Array.isArray(payload.bitacora) ? payload.bitacora.slice(0, ACTIVITY_LOG_MAX_ENTRIES) : [];
-        await emitProgress(failureStage, 'Bitácora', 'Subiendo bloque Bitácora…', { totalQueued, blockCount: activityEntries.length });
-        for (let index = 0; index < activityEntries.length; index += 1) {
-          const record = normalizeActivityEntry(activityEntries[index]);
+        const activityEntries = Array.isArray(payload.bitacora) ? payload.bitacora : [];
+        for (const entry of activityEntries.slice(0, ACTIVITY_LOG_MAX_ENTRIES)) {
+          const record = normalizeActivityEntry(entry);
           const docId = getCloudDocumentId(record, 'actividad');
           await queueSet(fs.doc(db, 'workspaces', workspaceId, 'bitacora', docId), {
             ...record,
             _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
           });
-          if ((index + 1) % 75 === 0) {
-            await emitProgress(failureStage, 'Bitácora', `Subiendo bloque Bitácora: ${index + 1}/${activityEntries.length}…`, { totalQueued, blockCount: activityEntries.length });
-          }
         }
-        await commitBlock(failureStage, 'Bitácora');
 
-        failureStage = 'escritura_firestore_bloque_consecutivos';
         const consecutivos = isPlainObject(payload.consecutivos) ? payload.consecutivos : {};
-        const consecutivoEntries = Object.entries(consecutivos).filter(([, value]) => value !== null && value !== undefined && value !== '');
-        await emitProgress(failureStage, 'Consecutivos', 'Subiendo bloque Consecutivos…', { totalQueued, blockCount: consecutivoEntries.length });
-        for (const [key, value] of consecutivoEntries) {
+        for (const [key, value] of Object.entries(consecutivos)) {
+          if (value === null || value === undefined || value === '') continue;
           const docId = sanitizeFirestoreDocId(key, 'consecutivo');
           await queueSet(fs.doc(db, 'workspaces', workspaceId, 'consecutivos', docId), {
             id: docId,
@@ -5816,12 +5124,8 @@ Notas importantes:
             _cloudSync: { source: 'operacion_online', syncedAt: nowIso() }
           });
         }
-        await commitBlock(failureStage, 'Consecutivos');
 
-        failureStage = 'escritura_firestore_bloque_metadata';
-        const metadataRef = fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
-        await emitProgress(failureStage, 'Confirmando escritura en Firestore…', 'Confirmando escritura en Firestore…', { totalQueued, blockCount: 1 });
-        await queueSet(metadataRef, {
+        await queueSet(fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID), {
           ...(isPlainObject(data.metadata) ? data.metadata : {}),
           id: FIRESTORE_METADATA_SYSTEM_ID,
           appName: APP_NAME,
@@ -5836,57 +5140,296 @@ Notas importantes:
           modoDatos: 'nube_activa',
           fuentePrincipal: 'firestore',
           lastSyncAt: stamp,
-          lastSyncAtLocal: manualSaveLocalAt,
+          lastSyncAtLocal: nowIso(),
           lastSyncBy: user.email,
-          lastManualSaveToken: manualSaveToken || undefined,
-          lastManualSaveAtLocal: manualSaveToken ? manualSaveLocalAt : undefined,
-          lastManualSaveBy: manualSaveToken ? user.email : undefined,
-          lastManualSaveReason: manualSaveToken ? cleanText(opts.reason || opts.source || 'guardar_datos_manual') : undefined,
           updatedAt: stamp
         });
-        await commitBlock(failureStage, 'Metadata de confirmación');
-
-        failureStage = 'confirmación_escritura';
-        await emitProgress(failureStage, 'Confirmando escritura en Firestore…', 'Confirmando escritura en Firestore…', { totalQueued });
-        const confirmationSnap = await fs.getDoc(metadataRef);
-        await yieldToBrowser();
-        throwIfManualSaveExpired();
-        const confirmationMetadata = confirmationSnap.exists() ? normalizeFirestoreDoc(confirmationSnap) : {};
-        const tokenConfirmed = !manualSaveToken || cleanText(confirmationMetadata.lastManualSaveToken) === manualSaveToken;
-        if (!confirmationSnap.exists() || !tokenConfirmed) {
-          const message = 'No se confirmó la escritura en nube después de guardar.';
-          state.lastSyncError = message;
-          publishKSAFirebaseRuntime({
-            lastSyncError: message,
-            lastSyncErrorAt: nowIso(),
-            lastCloudStatus: 'error_sincronizacion',
-            message
-          });
-          return {
-            ok: false,
-            action: 'writeCloudOperationalSnapshot',
-            code: 'cloud/write-confirmation-failed',
-            stage: 'confirmación_escritura',
-            message,
-            technicalMessage: `confirmación_escritura · cloud/write-confirmation-failed · token=${manualSaveToken ? 'no_confirmado' : 'sin_token'} · metadata=${confirmationSnap.exists() ? 'existe' : 'no_existe'}`,
-            count: totalQueued,
-            confirmationMetadata
-          };
-        }
-
+        await commit();
         state.cloudActive = true;
-        state.lastCloudWriteAt = manualSaveLocalAt;
+        state.lastCloudWriteAt = nowIso();
         state.lastSyncAt = state.lastCloudWriteAt;
         state.lastSyncError = '';
-        state.cloudMetadata = {
-          ...(isPlainObject(state.cloudMetadata) ? state.cloudMetadata : {}),
-          ...confirmationMetadata,
-          fuentePrincipal: 'firestore',
+        publishKSAFirebaseRuntime({
           cloudActive: true,
+          cloudReadsEnabled: true,
+          cloudWritesEnabled: true,
           cloudDataReady: true,
-          cloudReady: true
+          cloudReady: true,
+          fuentePrincipal: 'firestore',
+          dataMode: 'Nube activa',
+          workspaceId,
+          workspace: workspaceId,
+          workspaceInitialized: true,
+          lastSyncAt: state.lastSyncAt,
+          message: 'Cambios sincronizados en Firestore.'
+        });
+        return { ok: true, action: 'writeCloudOperationalSnapshot', code: 'cloud/write-ok', message: 'Cambios guardados en Firestore.', count: totalQueued, lastSyncAt: state.lastSyncAt };
+      } catch (error) {
+        const message = translateFirestorePrepError(error);
+        state.lastSyncError = message;
+        publishKSAFirebaseRuntime({ lastSyncError: message, message });
+        return { ok: false, action: 'writeCloudOperationalSnapshot', code: cleanText(error?.code || 'firebase/firestore-error'), message, error };
+      }
+    }
+
+    function isCloudPartialSaveAvailable() {
+      const runtime = getKSAFirebaseRuntime();
+      return Boolean(state.cloudActive || runtime?.cloudActive || runtime?.cloudWritesEnabled || runtime?.fuentePrincipal === 'firestore');
+    }
+
+    function getPartialSaveLocalDataSnapshot() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) return normalizeData(JSON.parse(raw));
+      } catch (error) {
+        console.warn('KSA PRÁCTIKA: no se pudo leer el estado local para guardado parcial.', error);
+      }
+      return normalizeData(appData || createInitialData());
+    }
+
+    function findPartialSaveRecordById(list, recordId) {
+      const id = cleanText(recordId);
+      if (!id) return null;
+      return (Array.isArray(list) ? list : []).find((record) => cleanText(record?.id || record?.uid || record?.codigo || '') === id) || null;
+    }
+
+    function getPartialSaveOperation(change) {
+      return normalizeKeyForCompare(change?.tipoOperacion || change?.operacion || change?.operation || 'editar');
+    }
+
+    function shouldPartialSaveDelete(change, record) {
+      const operation = getPartialSaveOperation(change);
+      if (operation.includes('eliminar') || operation.includes('delete') || operation === 'borrar') return true;
+      return !record;
+    }
+
+    function buildPartialSaveNotasRecord(change, notasData) {
+      const moduleKey = cleanText(change?.moduloKey || '').toLowerCase();
+      const recordId = cleanText(change?.registroId || change?.recordId || '');
+      const normalized = normalizeNotasData(notasData || {});
+      let bucketKey = 'notas';
+      let normalizer = normalizeNotaGeneralRecord;
+      let docPrefix = 'nota';
+      if (moduleKey.includes('pendiente')) {
+        bucketKey = 'pendientes';
+        normalizer = normalizePendienteRecord;
+        docPrefix = 'pendiente';
+      } else if (moduleKey.includes('recordatorio')) {
+        bucketKey = 'recordatorios';
+        normalizer = normalizeRecordatorioRecord;
+        docPrefix = 'recordatorio';
+      }
+      const record = findPartialSaveRecordById(normalized[bucketKey], recordId);
+      const docId = sanitizeFirestoreDocId(`${docPrefix}_${recordId}`, `${docPrefix}_doc`);
+      if (!record && shouldPartialSaveDelete(change, record)) {
+        return { collectionKey: 'notasModulo', docId, deletePhysical: true };
+      }
+      if (!record) return null;
+      const normalizedRecord = normalizer(record);
+      return {
+        collectionKey: 'notasModulo',
+        docId,
+        data: {
+          ...normalizedRecord,
+          tipoRegistro: docPrefix,
+          updatedAt: normalizedRecord.updatedAt || nowIso(),
+          _cloudSync: { source: 'guardar_datos_sesion', syncedAt: nowIso() }
+        }
+      };
+    }
+
+    function buildPartialSaveCatalogRecord(change, data) {
+      const moduleKey = cleanText(change?.moduloKey || '');
+      const catalogId = cleanText(moduleKey.split('.')[1] || '');
+      const catalog = CATALOGS.find((item) => item.id === catalogId);
+      const recordId = cleanText(change?.registroId || change?.recordId || '');
+      if (!catalog || !recordId) return null;
+      const record = findPartialSaveRecordById(data?.[catalog.id], recordId);
+      const docId = sanitizeFirestoreDocId(recordId, `${catalog.id}_doc`);
+      if (!record && shouldPartialSaveDelete(change, record)) {
+        return { pathSegments: ['workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'catalogos', catalog.id, 'items', docId], deletePhysical: true };
+      }
+      if (!record) return null;
+      const normalizedRecord = normalizeCatalogRecord(record, catalog);
+      return {
+        pathSegments: ['workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'catalogos', catalog.id, 'items', getCloudDocumentId(normalizedRecord, catalog.id)],
+        data: {
+          ...normalizedRecord,
+          catalogoId: catalog.id,
+          updatedAt: normalizedRecord.updatedAt || nowIso(),
+          _cloudSync: { source: 'guardar_datos_sesion', syncedAt: nowIso() }
+        }
+      };
+    }
+
+    function buildPartialSaveRecord(change, data, notasData, facturasData) {
+      const moduleKey = cleanText(change?.moduloKey || change?.modulo || '');
+      const recordId = cleanText(change?.registroId || change?.recordId || change?.idRegistro || '');
+      if (!moduleKey || !recordId) return null;
+
+      if (moduleKey.startsWith('catalogos.')) return buildPartialSaveCatalogRecord(change, data);
+      if (moduleKey.startsWith('notasModulo.')) return buildPartialSaveNotasRecord(change, notasData);
+
+      if (moduleKey === 'facturasModulo') {
+        const facturas = normalizeFacturasData(facturasData || {});
+        const record = findPartialSaveRecordById(facturas.facturas, recordId);
+        const docId = getCloudDocumentId(record || { id: recordId }, 'factura');
+        if (!record && shouldPartialSaveDelete(change, record)) {
+          return { collectionKey: 'facturasModulo', docId, deletePhysical: true };
+        }
+        if (!record) return null;
+        const normalizedRecord = normalizeFacturaModuloRecord(record);
+        return {
+          collectionKey: 'facturasModulo',
+          docId,
+          data: {
+            ...normalizedRecord,
+            updatedAt: normalizedRecord.updatedAt || nowIso(),
+            _cloudSync: { source: 'guardar_datos_sesion', syncedAt: nowIso() }
+          }
         };
-        throwIfManualSaveExpired();
+      }
+
+      const simpleWriters = {
+        ventas: { key: 'ventas', normalizer: normalizeVentaRecord, fallback: 'venta' },
+        cobros: { key: 'cobros', normalizer: normalizeCobroRecord, fallback: 'cobro' },
+        comprasProveedores: { key: 'comprasProveedores', normalizer: normalizeCompraProveedorRecord, fallback: 'compraProveedor' },
+        pagosProveedores: { key: 'pagosProveedores', normalizer: normalizePagoProveedorRecord, fallback: 'pagoProveedor' },
+        gastos: { key: 'gastos', normalizer: normalizeGastoRecord, fallback: 'gasto' },
+        casaGastos: { key: 'casaGastos', normalizer: normalizeCasaGastoRecord, fallback: 'casaGasto' }
+      };
+      const writer = simpleWriters[moduleKey];
+      if (!writer) return null;
+      const record = findPartialSaveRecordById(data?.[writer.key], recordId);
+      const docId = getCloudDocumentId(record || { id: recordId }, writer.fallback);
+      if (!record && shouldPartialSaveDelete(change, record)) {
+        return { collectionKey: writer.key, docId, deletePhysical: true };
+      }
+      if (!record) return null;
+      const normalizedRecord = writer.normalizer(record);
+      return {
+        collectionKey: writer.key,
+        docId,
+        data: {
+          ...normalizedRecord,
+          updatedAt: normalizedRecord.updatedAt || nowIso(),
+          _cloudSync: { source: 'guardar_datos_sesion', syncedAt: nowIso() }
+        }
+      };
+    }
+
+    async function saveSessionChangesToCloud(changesInput = [], options = {}) {
+      const changes = (Array.isArray(changesInput) ? changesInput : [])
+        .filter((change) => isPlainObject(change) && cleanText(change.registroId || change.recordId || change.idRegistro));
+      if (!changes.length) {
+        return { ok: true, action: 'saveSessionChangesToCloud', code: 'session/no-changes', message: 'No hay cambios nuevos de esta sesión para guardar.', confirmedQueueKeys: [] };
+      }
+      if (!isCloudPartialSaveAvailable()) {
+        const message = 'No se pudo guardar en la nube. Firestore no está disponible.';
+        state.lastSyncError = message;
+        publishKSAFirebaseRuntime({ lastSyncError: message, message });
+        return { ok: false, action: 'saveSessionChangesToCloud', code: 'cloud/not-available', message, confirmedQueueKeys: [] };
+      }
+      try {
+        const { user, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: false });
+        const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
+        const stamp = getFirestoreTimestampValue(fs);
+        const localData = getPartialSaveLocalDataSnapshot();
+        const notasData = cloneNotasModuleData();
+        const facturasData = cloneFacturasModuleData();
+        const operations = [];
+        const skipped = [];
+
+        changes.forEach((change) => {
+          const operation = buildPartialSaveRecord(change, localData, notasData, facturasData);
+          if (!operation) {
+            skipped.push(change);
+            return;
+          }
+          operations.push({ change, operation });
+        });
+
+        if (!operations.length) {
+          const message = 'No se pudo guardar en la nube. Los cambios de sesión se conservaron para intentar nuevamente.';
+          state.lastSyncError = message;
+          publishKSAFirebaseRuntime({ lastSyncError: message, message });
+          return { ok: false, action: 'saveSessionChangesToCloud', code: 'session/no-writeable-changes', message, confirmedQueueKeys: [], skippedCount: skipped.length };
+        }
+
+        let batch = fs.writeBatch(db);
+        let count = 0;
+        let totalQueued = 0;
+        const queueKeys = [];
+        const commit = async () => {
+          if (!count) return;
+          await batch.commit();
+          batch = fs.writeBatch(db);
+          count = 0;
+        };
+        const queueWrite = async (operation, change) => {
+          const segments = Array.isArray(operation.pathSegments) && operation.pathSegments.length
+            ? operation.pathSegments
+            : ['workspaces', workspaceId, operation.collectionKey, operation.docId];
+          const ref = fs.doc(db, ...segments);
+          if (operation.deletePhysical) {
+            if (typeof batch.delete === 'function') batch.delete(ref);
+            else if (typeof fs.deleteDoc === 'function') await fs.deleteDoc(ref);
+          } else {
+            batch.set(ref, stripUndefinedForFirestore(operation.data), { merge: true });
+          }
+          count += 1;
+          totalQueued += 1;
+          const queueKey = cleanText(change?.queueKey || `${change?.moduloKey || change?.modulo}::${change?.registroId || change?.recordId}`);
+          if (queueKey) queueKeys.push(queueKey);
+          if (count >= FIRESTORE_IMPORT_BATCH_LIMIT) await commit();
+        };
+
+        for (const item of operations) {
+          await queueWrite(item.operation, item.change);
+        }
+
+        batch.set(fs.doc(db, 'workspaces', workspaceId), stripUndefinedForFirestore({
+          id: workspaceId,
+          nombre: FIRESTORE_WORKSPACE_NAME,
+          proyectoFirebase: FIREBASE_PROJECT_NAME,
+          projectId: cleanText(getRawKSAFirebaseConfig().projectId),
+          estado: 'activo',
+          fuentePrincipal: 'firestore',
+          updatedAt: stamp,
+          appVersion: APP_VERSION
+        }), { merge: true });
+        count += 1;
+        totalQueued += 1;
+
+        batch.set(fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID), stripUndefinedForFirestore({
+          id: FIRESTORE_METADATA_SYSTEM_ID,
+          appName: APP_NAME,
+          appVersion: APP_VERSION,
+          schemaVersion: SCHEMA_VERSION,
+          datosMigrados: true,
+          importacionInicialCompletada: true,
+          cloudDataReady: true,
+          cloudReady: true,
+          cloudActive: true,
+          modo: 'online_controlada',
+          modoDatos: 'nube_activa',
+          fuentePrincipal: 'firestore',
+          lastSyncAt: stamp,
+          lastSyncAtLocal: nowIso(),
+          lastPartialSaveAt: stamp,
+          lastPartialSaveAtLocal: nowIso(),
+          lastPartialSaveBy: user.email,
+          lastPartialSaveCount: operations.length,
+          updatedAt: stamp
+        }), { merge: true });
+        count += 1;
+        totalQueued += 1;
+
+        await commit();
+        state.cloudActive = true;
+        state.lastCloudWriteAt = nowIso();
+        state.lastSyncAt = state.lastCloudWriteAt;
+        state.lastSyncError = '';
         publishKSAFirebaseRuntime({
           cloudActive: true,
           cloudReadsEnabled: true,
@@ -5900,41 +5443,28 @@ Notas importantes:
           workspaceInitialized: true,
           lastSyncAt: state.lastSyncAt,
           lastCloudWriteAt: state.lastCloudWriteAt,
-          lastCloudStatus: 'sincronizado',
-          message: 'Cambios sincronizados en Firestore.'
+          lastSessionPartialSaveAt: state.lastCloudWriteAt,
+          message: 'Guardado correcto.'
         });
-        await emitProgress('guardado_correcto', 'Guardado correcto', 'Guardado correcto. Los datos fueron confirmados en la nube.', { totalQueued });
         return {
           ok: true,
-          action: 'writeCloudOperationalSnapshot',
-          code: 'cloud/write-confirmed',
-          stage: 'confirmación_escritura',
-          message: 'Cambios guardados y confirmados en Firestore.',
-          count: totalQueued,
-          confirmed: true,
-          confirmationToken: manualSaveToken,
-          lastSyncAt: state.lastSyncAt,
-          lastCloudWriteAt: state.lastCloudWriteAt,
-          confirmationMetadata
+          action: 'saveSessionChangesToCloud',
+          code: 'cloud/session-partial-write-ok',
+          message: 'Guardado correcto.',
+          count: operations.length,
+          writeCount: totalQueued,
+          skippedCount: skipped.length,
+          confirmedQueueKeys: queueKeys,
+          lastSyncAt: state.lastSyncAt
         };
       } catch (error) {
-        const timeout = isOperationTimeoutError(error);
-        const message = timeout ? FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE : translateFirestorePrepError(error);
-        const code = cleanText(error?.code || (timeout ? 'app/manual-save-timeout' : 'firebase/firestore-error'));
-        const stage = timeout ? 'timeout_guardado_manual' : failureStage;
+        const message = 'No se pudo guardar en la nube. Los cambios de sesión se conservaron para intentar nuevamente.';
         state.lastSyncError = message;
-        publishKSAFirebaseRuntime({ lastSyncError: `${stage} · ${code} · ${cleanText(error?.message || message)}`, lastSyncErrorAt: nowIso(), lastCloudStatus: 'error_sincronizacion', message });
-        return {
-          ok: false,
-          action: 'writeCloudOperationalSnapshot',
-          code,
-          stage,
-          message,
-          technicalMessage: `${stage} · ${code} · ${cleanText(error?.message || message)}`,
-          error
-        };
+        publishKSAFirebaseRuntime({ lastSyncError: message, message });
+        return { ok: false, action: 'saveSessionChangesToCloud', code: cleanText(error?.code || 'firebase/firestore-error'), message, error, confirmedQueueKeys: [] };
       }
     }
+
 
     async function writeCloudDocument(collectionKey, documentId, dataInput = {}, options = {}) {
       const key = cleanText(collectionKey);
@@ -5970,9 +5500,7 @@ Notas importantes:
         lastSyncAt: state.lastSyncAt || cleanText(runtime?.lastSyncAt || ''),
         lastCloudReadAt: state.lastCloudReadAt || cleanText(runtime?.lastCloudReadAt || ''),
         lastCloudWriteAt: state.lastCloudWriteAt || cleanText(runtime?.lastCloudWriteAt || ''),
-        lastSyncError: state.lastSyncError || cleanText(runtime?.lastSyncError || ''),
-        lastSyncErrorAt: cleanText(runtime?.lastSyncErrorAt || ''),
-        lastCloudStatus: cleanText(runtime?.lastCloudStatus || '')
+        lastSyncError: state.lastSyncError || cleanText(runtime?.lastSyncError || '')
       };
     }
 
@@ -6559,18 +6087,14 @@ Notas importantes:
       const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
       const counts = {};
       for (const item of ONLINE_DIAGNOSTIC_COLLECTIONS) {
-        try {
-          if (item.key === 'catalogos') {
-            let total = 0;
-            for (const catalog of CATALOGS) {
-              total += await countFirestoreCollection(db, fs, 'workspaces', workspaceId, 'catalogos', catalog.id, 'items');
-            }
-            counts.catalogos = total;
-          } else {
-            counts[item.key] = await countFirestoreCollection(db, fs, 'workspaces', workspaceId, item.key);
+        if (item.key === 'catalogos') {
+          let total = 0;
+          for (const catalog of CATALOGS) {
+            total += await countFirestoreCollection(db, fs, 'workspaces', workspaceId, 'catalogos', catalog.id, 'items');
           }
-        } catch (error) {
-          counts[item.key] = 'No disponible';
+          counts.catalogos = total;
+        } else {
+          counts[item.key] = await countFirestoreCollection(db, fs, 'workspaces', workspaceId, item.key);
         }
       }
       return counts;
@@ -6958,6 +6482,7 @@ Notas importantes:
       activateCloudOperation,
       writeCloudDocument,
       writeCloudOperationalSnapshot,
+      saveSessionChangesToCloud,
       getCloudRuntimeStatus,
       importInitialBackupToCloud,
       readOnlineDiagnostic,
@@ -7262,7 +6787,7 @@ Notas importantes:
 
   function getAjusteClienteDuplicateKey(record) {
     const ajuste = normalizeVentaAjusteRecord(record);
-    return [ajuste.fecha, ajuste.tipo, roundMoney(ajuste.monto), normalizeNameForCompare(ajuste.facturaAfectadaId), normalizeNameForCompare(ajuste.facturaAfectadaNumero), normalizeNameForCompare(ajuste.observacion)].join('|');
+    return [ajuste.fecha, ajuste.tipo, roundMoney(ajuste.monto), normalizeNameForCompare(ajuste.observacion)].join('|');
   }
 
   function mergeVentaAjustes(existingRecord, incomingRecord) {
@@ -7287,7 +6812,7 @@ Notas importantes:
 
   function getAjusteProveedorDuplicateKey(record) {
     const ajuste = normalizeCompraProveedorAjusteRecord(record);
-    return [ajuste.fecha, ajuste.tipo, roundMoney(ajuste.monto), normalizeNameForCompare(ajuste.facturaAfectadaId), normalizeNameForCompare(ajuste.facturaAfectadaNumero), normalizeNameForCompare(ajuste.observacion)].join('|');
+    return [ajuste.fecha, ajuste.tipo, roundMoney(ajuste.monto), normalizeNameForCompare(ajuste.observacion)].join('|');
   }
 
   function mergeCompraProveedorAjustes(existingRecord, incomingRecord) {
@@ -7629,6 +7154,324 @@ Notas importantes:
     return '';
   }
 
+  let sessionChangeTrackingReady = false;
+  const SESSION_CHANGE_QUEUE_GLOBAL = 'KSA_SESSION_CHANGE_QUEUE';
+  const SESSION_CHANGE_STATE_PENDING = 'pendiente';
+  const SESSION_TRACKED_DATASETS = [
+    { key: 'ventas', moduleKey: 'ventas', moduleLabel: 'Ventas / OC' },
+    { key: 'cobros', moduleKey: 'cobros', moduleLabel: 'Cobros' },
+    { key: 'comprasProveedores', moduleKey: 'comprasProveedores', moduleLabel: 'Proveedores / Compras' },
+    { key: 'pagosProveedores', moduleKey: 'pagosProveedores', moduleLabel: 'Pagos a proveedores' },
+    { key: 'gastos', moduleKey: 'gastos', moduleLabel: 'Gastos' },
+    { key: 'casaGastos', moduleKey: 'casaGastos', moduleLabel: 'Casa' }
+  ];
+
+  function getSessionTrackedDatasets() {
+    const catalogDatasets = Array.isArray(CATALOGS)
+      ? CATALOGS.map((catalog) => ({
+          key: catalog.id,
+          moduleKey: `catalogos.${catalog.id}`,
+          moduleLabel: 'Catálogos'
+        }))
+      : [];
+    return [...SESSION_TRACKED_DATASETS, ...catalogDatasets];
+  }
+
+  function createSessionChangeQueue() {
+    return {
+      version: 1,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+      changes: [],
+      byKey: {}
+    };
+  }
+
+  function ensureSessionChangeQueue() {
+    if (typeof window === 'undefined') return createSessionChangeQueue();
+    const current = window[SESSION_CHANGE_QUEUE_GLOBAL];
+    if (isPlainObject(current) && Array.isArray(current.changes)) {
+      if (!isPlainObject(current.byKey)) {
+        current.byKey = {};
+        current.changes.forEach((change, index) => {
+          const queueKey = cleanText(change.queueKey || `${change.moduloKey || change.modulo || 'modulo'}::${change.registroId || change.recordId || index}`);
+          if (queueKey) current.byKey[queueKey] = index;
+        });
+      }
+      return current;
+    }
+    if (Array.isArray(current)) {
+      const migrated = createSessionChangeQueue();
+      current.forEach((change) => {
+        if (!isPlainObject(change)) return;
+        const recordId = cleanText(change.registroId || change.recordId || change.idRegistro || '');
+        const moduleKey = cleanText(change.moduloKey || change.modulo || 'modulo');
+        if (!recordId) return;
+        const queueKey = `${moduleKey}::${recordId}`;
+        const next = { ...change, queueKey, registroId: recordId, moduloKey: moduleKey, estado: cleanText(change.estado) || SESSION_CHANGE_STATE_PENDING };
+        migrated.byKey[queueKey] = migrated.changes.length;
+        migrated.changes.push(next);
+      });
+      window[SESSION_CHANGE_QUEUE_GLOBAL] = migrated;
+      return migrated;
+    }
+    const queue = createSessionChangeQueue();
+    window[SESSION_CHANGE_QUEUE_GLOBAL] = queue;
+    return queue;
+  }
+
+  function getSessionChangePendingCount() {
+    const queue = ensureSessionChangeQueue();
+    return queue.changes.filter((change) => cleanText(change.estado || SESSION_CHANGE_STATE_PENDING) === SESSION_CHANGE_STATE_PENDING).length;
+  }
+
+  function updateSessionChangeCounterElements() {
+    if (typeof document === 'undefined') return;
+    const count = getSessionChangePendingCount();
+    document.querySelectorAll('[data-session-change-count]').forEach((element) => {
+      element.textContent = String(count);
+    });
+  }
+
+  function mergeSessionChangeOperation(previousOperation, nextOperation) {
+    const previous = cleanText(previousOperation);
+    const next = cleanText(nextOperation) || 'editar';
+    if (previous === 'crear' && next === 'editar') return 'crear';
+    if (next === 'eliminar') return 'eliminar';
+    if (next === 'anular') return 'anular';
+    if (previous === 'crear' && next === 'anular') return 'crear';
+    return next;
+  }
+
+  function registerSessionChange(moduleKey, moduleLabel, operation, recordId) {
+    if (!sessionChangeTrackingReady || typeof window === 'undefined') return null;
+    const cleanRecordId = cleanText(recordId);
+    const cleanModuleKey = cleanText(moduleKey || moduleLabel || 'modulo');
+    if (!cleanRecordId || !cleanModuleKey) return null;
+    const queue = ensureSessionChangeQueue();
+    const queueKey = `${cleanModuleKey}::${cleanRecordId}`;
+    const existingIndex = Number.isInteger(queue.byKey?.[queueKey]) ? queue.byKey[queueKey] : -1;
+    const existing = existingIndex >= 0 ? queue.changes[existingIndex] : null;
+    const timestamp = nowIso();
+    const nextOperation = mergeSessionChangeOperation(existing?.tipoOperacion || existing?.operacion, operation);
+    const payload = {
+      id: existing?.id || generateId('sessionChange'),
+      queueKey,
+      modulo: cleanText(moduleLabel || cleanModuleKey),
+      moduloKey: cleanModuleKey,
+      tipoOperacion: nextOperation,
+      registroId: cleanRecordId,
+      fechaHoraLocal: timestamp,
+      origen: 'session',
+      estado: SESSION_CHANGE_STATE_PENDING
+    };
+    if (existing) {
+      queue.changes[existingIndex] = { ...existing, ...payload };
+    } else {
+      queue.byKey[queueKey] = queue.changes.length;
+      queue.changes.push(payload);
+    }
+    queue.updatedAt = timestamp;
+    window[SESSION_CHANGE_QUEUE_GLOBAL] = queue;
+    updateSessionChangeCounterElements();
+    return payload;
+  }
+
+  function shouldTrackSessionChanges() {
+    if (!sessionChangeTrackingReady) return false;
+    if (typeof window === 'undefined') return false;
+    if (cloudOperationState?.isHydrating) return false;
+    return true;
+  }
+
+  function parseSessionTrackingJson(raw, fallback = {}) {
+    try {
+      if (!raw) return fallback;
+      const parsed = JSON.parse(raw);
+      return isPlainObject(parsed) ? parsed : fallback;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  function cloneComparableSessionValue(value) {
+    if (Array.isArray(value)) return value.map(cloneComparableSessionValue);
+    if (!isPlainObject(value)) return value;
+    return Object.keys(value).sort().reduce((acc, key) => {
+      if (['updatedAt', 'fechaHoraLocal', 'lastSyncAt', 'lastRefreshAt'].includes(key)) return acc;
+      acc[key] = cloneComparableSessionValue(value[key]);
+      return acc;
+    }, {});
+  }
+
+  function stableSessionStringify(value) {
+    try {
+      return JSON.stringify(cloneComparableSessionValue(value));
+    } catch (_) {
+      return String(value);
+    }
+  }
+
+  function inferSessionOperation(previousRecord, nextRecord) {
+    const prevActive = previousRecord?.activo !== false && previousRecord?.anulado !== true;
+    const nextActive = nextRecord?.activo !== false && nextRecord?.anulado !== true;
+    const nextEstado = normalizeKeyForCompare(nextRecord?.estado || nextRecord?.estatus || '');
+    if (prevActive && (!nextActive || nextEstado.includes('anulad'))) return 'anular';
+    return 'editar';
+  }
+
+  function diffSessionRecordList(previousList, nextList, dataset) {
+    const prevRecords = Array.isArray(previousList) ? previousList : [];
+    const nextRecords = Array.isArray(nextList) ? nextList : [];
+    if (!prevRecords.length && !nextRecords.length) return;
+    const prevMap = new Map();
+    const nextMap = new Map();
+    prevRecords.forEach((record) => {
+      const id = cleanText(record?.id || record?.uid || record?.codigo || '');
+      if (id) prevMap.set(id, record);
+    });
+    nextRecords.forEach((record) => {
+      const id = cleanText(record?.id || record?.uid || record?.codigo || '');
+      if (id) nextMap.set(id, record);
+    });
+
+    nextMap.forEach((record, id) => {
+      if (!prevMap.has(id)) {
+        registerSessionChange(dataset.moduleKey, dataset.moduleLabel, 'crear', id);
+        return;
+      }
+      const previous = prevMap.get(id);
+      if (stableSessionStringify(previous) !== stableSessionStringify(record)) {
+        registerSessionChange(dataset.moduleKey, dataset.moduleLabel, inferSessionOperation(previous, record), id);
+      }
+    });
+
+    prevMap.forEach((_record, id) => {
+      if (!nextMap.has(id)) registerSessionChange(dataset.moduleKey, dataset.moduleLabel, 'eliminar', id);
+    });
+  }
+
+  function trackSessionChangesFromMainStorage(nextData) {
+    if (!shouldTrackSessionChanges()) return;
+    const previous = parseSessionTrackingJson(window.localStorage.getItem(STORAGE_KEY), {});
+    if (!isPlainObject(previous) || !Object.keys(previous).length) return;
+    getSessionTrackedDatasets().forEach((dataset) => {
+      diffSessionRecordList(previous[dataset.key], nextData?.[dataset.key], dataset);
+    });
+  }
+
+  function trackSessionChangesFromAuxStorage(storageKey, nextData, datasets) {
+    if (!shouldTrackSessionChanges()) return;
+    const previous = parseSessionTrackingJson(window.localStorage.getItem(storageKey), {});
+    if (!isPlainObject(previous) || !Object.keys(previous).length) return;
+    datasets.forEach((dataset) => {
+      diffSessionRecordList(previous[dataset.key], nextData?.[dataset.key], dataset);
+    });
+  }
+
+  function getPendingSessionChanges() {
+    const queue = ensureSessionChangeQueue();
+    return queue.changes.filter((change) => cleanText(change.estado || SESSION_CHANGE_STATE_PENDING) === SESSION_CHANGE_STATE_PENDING);
+  }
+
+  function rebuildSessionChangeQueueIndex(queue) {
+    queue.byKey = {};
+    queue.changes.forEach((change, index) => {
+      const queueKey = cleanText(change.queueKey || `${change.moduloKey || change.modulo || 'modulo'}::${change.registroId || change.recordId || index}`);
+      if (queueKey) queue.byKey[queueKey] = index;
+    });
+    queue.updatedAt = nowIso();
+    return queue;
+  }
+
+  function clearConfirmedSessionChanges(confirmedQueueKeys = []) {
+    const confirmed = new Set((Array.isArray(confirmedQueueKeys) ? confirmedQueueKeys : []).map(cleanText).filter(Boolean));
+    if (!confirmed.size) return 0;
+    const queue = ensureSessionChangeQueue();
+    const before = queue.changes.length;
+    queue.changes = queue.changes.filter((change) => !confirmed.has(cleanText(change.queueKey || `${change.moduloKey || change.modulo}::${change.registroId || change.recordId}`)));
+    rebuildSessionChangeQueueIndex(queue);
+    if (typeof window !== 'undefined') window[SESSION_CHANGE_QUEUE_GLOBAL] = queue;
+    updateSessionChangeCounterElements();
+    return before - queue.changes.length;
+  }
+
+  function cancelPendingCloudSnapshotTimer() {
+    if (cloudOperationState?.timer && typeof window !== 'undefined') {
+      window.clearTimeout(cloudOperationState.timer);
+      cloudOperationState.timer = null;
+    }
+  }
+
+  function applySessionSaveDiagnostic(result = {}) {
+    const ok = result?.ok === true;
+    onlineDiagnosticState.isWriting = false;
+    onlineDiagnosticState.lastWriteStatus = ok ? 'Escritura correcta' : 'Error de conexión';
+    onlineDiagnosticState.writeMessage = cleanText(result?.message || (ok ? 'Guardado correcto.' : 'No se pudo guardar en la nube.'));
+    onlineDiagnosticState.lastWriteAt = ok ? cleanText(result.lastSyncAt || nowIso()) : onlineDiagnosticState.lastWriteAt;
+    onlineDiagnosticState.lastUpdatedAt = nowIso();
+    cloudOperationState.lastSyncAt = ok ? cleanText(result.lastSyncAt || cloudOperationState.lastSyncAt || nowIso()) : cloudOperationState.lastSyncAt;
+    cloudOperationState.lastError = ok ? '' : onlineDiagnosticState.writeMessage;
+    cloudOperationState.message = onlineDiagnosticState.writeMessage;
+  }
+
+  async function handleSessionCloudSave(button = null) {
+    if (!requireRolePermission('updateData', configState, { preserveScroll: true })) return null;
+    if (cloudOperationState.isWriting || onlineDiagnosticState.isWriting) return null;
+    const changes = getPendingSessionChanges();
+    if (!changes.length) {
+      configState.message = 'No hay cambios nuevos de esta sesión para guardar.';
+      configState.messageType = 'success';
+      applySessionSaveDiagnostic({ ok: true, message: configState.message, lastSyncAt: cloudOperationState.lastSyncAt });
+      updateSessionChangeCounterElements();
+      renderRoute({ preserveScroll: true });
+      return { ok: true, message: configState.message };
+    }
+    if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.saveSessionChangesToCloud) {
+      const message = 'No se pudo guardar en la nube. Firestore no está disponible.';
+      configState.message = message;
+      configState.messageType = 'error';
+      applySessionSaveDiagnostic({ ok: false, message });
+      renderRoute({ preserveScroll: true });
+      return { ok: false, message };
+    }
+    if (button) button.disabled = true;
+    cancelPendingCloudSnapshotTimer();
+    cloudOperationState.isWriting = true;
+    onlineDiagnosticState.isWriting = true;
+    configState.message = 'Guardando datos...';
+    configState.messageType = 'success';
+    onlineDiagnosticState.lastWriteStatus = 'Escribiendo…';
+    onlineDiagnosticState.writeMessage = 'Guardando datos...';
+    renderRoute({ preserveScroll: true });
+    try {
+      const result = await KSAFirebaseAdapter.saveSessionChangesToCloud(changes, { source: 'boton_guardar_datos' });
+      cloudOperationState.isWriting = false;
+      onlineDiagnosticState.isWriting = false;
+      if (result?.ok) {
+        clearConfirmedSessionChanges(result.confirmedQueueKeys || changes.map((change) => cleanText(change.queueKey || `${change.moduloKey || change.modulo}::${change.registroId || change.recordId}`)));
+        configState.message = result.message || 'Guardado correcto.';
+        configState.messageType = 'success';
+      } else {
+        configState.message = result?.message || 'No se pudo guardar en la nube. Los cambios de sesión se conservaron para intentar nuevamente.';
+        configState.messageType = 'error';
+      }
+      applySessionSaveDiagnostic(result || { ok: false, message: configState.message });
+      updateSessionChangeCounterElements();
+      renderRoute({ preserveScroll: true });
+      return result;
+    } catch (error) {
+      const message = 'No se pudo guardar en la nube. Los cambios de sesión se conservaron para intentar nuevamente.';
+      cloudOperationState.isWriting = false;
+      onlineDiagnosticState.isWriting = false;
+      configState.message = message;
+      configState.messageType = 'error';
+      applySessionSaveDiagnostic({ ok: false, message, error });
+      renderRoute({ preserveScroll: true });
+      return { ok: false, message, error };
+    }
+  }
+
   function loadData() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -7660,531 +7503,12 @@ Notas importantes:
         createdAt: data.metadata?.createdAt || nowIso(),
         updatedAt: nowIso()
       };
+      trackSessionChangesFromMainStorage(data);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-      markLocalChangesPending('saveData');
       scheduleCloudSnapshotSync('saveData');
     } catch (error) {
       console.error('KSA PRÁCTIKA: no se pudo guardar en localStorage.', error);
     }
-  }
-
-
-  function getCloudRefreshModuleStatusLabel(status = '') {
-    const key = cleanText(status).toLowerCase();
-    const labels = {
-      ok: 'OK',
-      leyendo: 'Leyendo…',
-      fallo: 'Falló',
-      no_disponible: 'No disponible',
-      saltado_proteccion: 'Saltado por protección anti-pérdida',
-      timeout: 'Timeout',
-      permisos_insuficientes: 'Permisos insuficientes',
-      sin_cambios: 'Sin cambios',
-      error_desconocido: 'Error desconocido'
-    };
-    return labels[key] || labels.error_desconocido;
-  }
-
-  function normalizeCloudRefreshModuleResult(input = {}) {
-    const raw = isPlainObject(input) ? input : {};
-    const status = cleanText(raw.status || (raw.ok ? 'ok' : 'fallo')) || 'fallo';
-    const count = Number(raw.count);
-    const duration = Number(raw.durationMs);
-    return {
-      key: cleanText(raw.key || 'modulo'),
-      label: cleanText(raw.label || raw.key || 'Módulo'),
-      ok: raw.ok === true,
-      status,
-      statusLabel: cleanText(raw.statusLabel || getCloudRefreshModuleStatusLabel(status)),
-      count: Number.isFinite(count) ? count : 0,
-      message: cleanText(raw.message || getCloudRefreshModuleStatusLabel(status)),
-      code: cleanText(raw.code || ''),
-      startedAt: cleanText(raw.startedAt || ''),
-      finishedAt: cleanText(raw.finishedAt || ''),
-      durationMs: Number.isFinite(duration) ? duration : 0
-    };
-  }
-
-  function mergeCloudRefreshModuleResults(current = [], incoming = {}) {
-    const list = Array.isArray(current) ? current.map(normalizeCloudRefreshModuleResult) : [];
-    const item = normalizeCloudRefreshModuleResult(incoming);
-    const index = list.findIndex((row) => row.key === item.key);
-    if (index >= 0) list[index] = item;
-    else list.push(item);
-    return list;
-  }
-
-  function summarizeCloudRefreshModules(modules = []) {
-    const list = (Array.isArray(modules) ? modules : []).map(normalizeCloudRefreshModuleResult);
-    const total = list.length;
-    const ok = list.filter((item) => item.ok === true || item.status === 'sin_cambios').length;
-    const reading = list.filter((item) => item.status === 'leyendo').length;
-    const timeout = list.filter((item) => item.status === 'timeout').length;
-    const failed = list.filter((item) => item.ok !== true && item.status !== 'sin_cambios' && item.status !== 'leyendo').length;
-    if (!total) return 'Sin detalle por módulo todavía.';
-    if (reading) return `Leyendo módulos: ${ok}/${total} OK · ${reading} en proceso.`;
-    if (failed || timeout) return `Lectura parcial: ${ok}/${total} OK · ${failed} con error${timeout ? ` · ${timeout} timeout` : ''}.`;
-    return `Lectura completa: ${ok}/${total} módulos OK.`;
-  }
-
-  function saveCloudRefreshModuleDiagnostics(moduleResult = {}, status = 'sincronizando', message = '') {
-    const modules = mergeCloudRefreshModuleResults(cloudSyncDiagnostics?.lastManualRefreshModules, moduleResult);
-    cloudOperationState.refreshModuleResults = modules;
-    cloudOperationState.refreshMessage = summarizeCloudRefreshModules(modules);
-    return saveCloudSyncDiagnostics({
-      lastManualRefreshAt: nowIso(),
-      lastManualRefreshStatus: cleanText(status) || 'sincronizando',
-      lastManualRefreshMessage: cleanText(message) || cloudOperationState.refreshMessage,
-      lastManualRefreshModules: modules
-    });
-  }
-
-  function createDefaultCloudSyncDiagnostics() {
-    return {
-      lastCloudReadAt: '',
-      lastCloudWriteAt: '',
-      lastSyncAttemptAt: '',
-      lastSyncAttemptOperation: '',
-      lastSyncErrorAt: '',
-      lastSyncErrorMessage: '',
-      lastSyncErrorOperation: '',
-      pendingLocalChanges: false,
-      pendingLocalChangesCount: null,
-      lastCloudStatus: 'nube_no_confirmada',
-      lastStatusMessage: '',
-      lastProtectionAt: '',
-      lastProtectionReason: '',
-      lastProtectionMessage: '',
-      lastProtectionStatus: '',
-      lastManualRefreshAt: '',
-      lastManualRefreshStatus: '',
-      lastManualRefreshMessage: '',
-      lastManualRefreshModules: [],
-      lastManualSaveAt: '',
-      lastManualSaveStatus: '',
-      lastManualSaveMessage: '',
-      lastUpdatedAt: ''
-    };
-  }
-
-  function normalizeCloudSyncDiagnostics(input = {}) {
-    const base = createDefaultCloudSyncDiagnostics();
-    const raw = isPlainObject(input) ? input : {};
-    const pendingCountRaw = raw.pendingLocalChangesCount ?? raw.pendingCount ?? null;
-    const pendingCount = Number(pendingCountRaw);
-    return {
-      ...base,
-      ...raw,
-      lastCloudReadAt: cleanText(raw.lastCloudReadAt || raw.lastReadAt || raw.ultimaLecturaFirestore || ''),
-      lastCloudWriteAt: cleanText(raw.lastCloudWriteAt || raw.lastWriteAt || raw.ultimaEscrituraFirestore || ''),
-      lastSyncAttemptAt: cleanText(raw.lastSyncAttemptAt || raw.lastAttemptAt || raw.ultimoIntentoSincronizacion || ''),
-      lastSyncAttemptOperation: cleanText(raw.lastSyncAttemptOperation || raw.lastOperation || ''),
-      lastSyncErrorAt: cleanText(raw.lastSyncErrorAt || raw.lastErrorAt || raw.ultimoErrorSincronizacionAt || ''),
-      lastSyncErrorMessage: cleanText(raw.lastSyncErrorMessage || raw.lastSyncError || raw.lastError || raw.ultimoErrorSincronizacion || ''),
-      lastSyncErrorOperation: cleanText(raw.lastSyncErrorOperation || raw.errorOperation || ''),
-      pendingLocalChanges: raw.pendingLocalChanges === true || raw.cambiosLocalesPendientes === true,
-      pendingLocalChangesCount: Number.isFinite(pendingCount) ? pendingCount : null,
-      lastCloudStatus: cleanText(raw.lastCloudStatus || raw.estadoNube || 'nube_no_confirmada') || 'nube_no_confirmada',
-      lastStatusMessage: cleanText(raw.lastStatusMessage || raw.statusMessage || ''),
-      lastProtectionAt: cleanText(raw.lastProtectionAt || raw.lastCloudProtectionAt || raw.ultimaProteccionAt || ''),
-      lastProtectionReason: cleanText(raw.lastProtectionReason || raw.protectionReason || raw.motivoProteccion || ''),
-      lastProtectionMessage: cleanText(raw.lastProtectionMessage || raw.protectionMessage || raw.mensajeProteccion || ''),
-      lastProtectionStatus: cleanText(raw.lastProtectionStatus || raw.protectionStatus || ''),
-      lastManualRefreshAt: cleanText(raw.lastManualRefreshAt || raw.ultimoIntentoActualizacionManual || ''),
-      lastManualRefreshStatus: cleanText(raw.lastManualRefreshStatus || raw.estadoActualizacionManual || ''),
-      lastManualRefreshMessage: cleanText(raw.lastManualRefreshMessage || raw.resultadoActualizacionManual || ''),
-      lastManualRefreshModules: Array.isArray(raw.lastManualRefreshModules) ? raw.lastManualRefreshModules.map(normalizeCloudRefreshModuleResult) : [],
-      lastManualSaveAt: cleanText(raw.lastManualSaveAt || raw.ultimoIntentoGuardadoManual || ''),
-      lastManualSaveStatus: cleanText(raw.lastManualSaveStatus || raw.estadoGuardadoManual || ''),
-      lastManualSaveMessage: cleanText(raw.lastManualSaveMessage || raw.resultadoGuardadoManual || ''),
-      lastUpdatedAt: cleanText(raw.lastUpdatedAt || raw.updatedAt || '')
-    };
-  }
-
-  function loadCloudSyncDiagnostics() {
-    try {
-      const raw = localStorage.getItem(CLOUD_SYNC_DIAGNOSTIC_STORAGE_KEY);
-      return normalizeCloudSyncDiagnostics(raw ? JSON.parse(raw) : {});
-    } catch (error) {
-      console.warn('KSA PRÁCTIKA: no se pudo leer diagnóstico de sincronización.', error);
-      return createDefaultCloudSyncDiagnostics();
-    }
-  }
-
-  let cloudSyncDiagnostics = loadCloudSyncDiagnostics();
-
-  function saveCloudSyncDiagnostics(update = {}) {
-    cloudSyncDiagnostics = normalizeCloudSyncDiagnostics({
-      ...cloudSyncDiagnostics,
-      ...(isPlainObject(update) ? update : {}),
-      lastUpdatedAt: nowIso()
-    });
-    try {
-      localStorage.setItem(CLOUD_SYNC_DIAGNOSTIC_STORAGE_KEY, JSON.stringify(cloudSyncDiagnostics));
-    } catch (error) {
-      console.warn('KSA PRÁCTIKA: no se pudo guardar diagnóstico de sincronización.', error);
-    }
-    return cloudSyncDiagnostics;
-  }
-
-  function getLocalSyncCounts() {
-    const counts = getJsonRecordCounts(appData || {});
-    return [
-      { key: 'ventas', label: 'Ventas / OC', value: counts.ventas },
-      { key: 'cobros', label: 'Cobros', value: counts.cobros },
-      { key: 'comprasProveedores', label: 'Proveedores / Compras', value: counts.comprasProveedores },
-      { key: 'pagosProveedores', label: 'Pagos', value: counts.pagosProveedores },
-      { key: 'gastos', label: 'Gastos', value: counts.gastos },
-      { key: 'facturasModulo', label: 'Facturas', value: counts.facturasModulo },
-      { key: 'casaGastos', label: 'Casa', value: counts.casaGastos },
-      { key: 'notasModulo', label: 'Notas', value: counts.notasModulo },
-      { key: 'catalogos', label: 'Catálogos', value: counts.catalogos }
-    ].map((item) => ({ ...item, value: Number.isFinite(Number(item.value)) ? Number(item.value) : 0 }));
-  }
-
-  function estimatePendingLocalChangesCount() {
-    try {
-      return getLocalSyncCounts().reduce((sum, item) => sum + (Number(item.value) || 0), 0);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function markLocalChangesPending(reason = '') {
-    if (!cloudOperationState?.active || cloudOperationState?.isHydrating) return cloudSyncDiagnostics;
-    return saveCloudSyncDiagnostics({
-      pendingLocalChanges: true,
-      pendingLocalChangesCount: estimatePendingLocalChangesCount(),
-      lastCloudStatus: 'pendiente_sincronizar',
-      lastStatusMessage: cleanText(reason) || 'Cambios locales pendientes de subir.'
-    });
-  }
-
-  function recordCloudSyncAttempt(operation = 'sincronizacion') {
-    const ts = nowIso();
-    const op = cleanText(operation) || 'sincronizacion';
-    const update = {
-      lastSyncAttemptAt: ts,
-      lastSyncAttemptOperation: op,
-      lastCloudStatus: 'sincronizando',
-      lastStatusMessage: `Intento de ${op} iniciado.`
-    };
-    if (op.includes('lectura')) {
-      cloudOperationState.refreshModuleResults = [];
-      cloudOperationState.refreshMessage = 'Actualizando por módulos…';
-      update.lastManualRefreshAt = ts;
-      update.lastManualRefreshStatus = 'sincronizando';
-      update.lastManualRefreshMessage = 'Actualizando por módulos…';
-      update.lastManualRefreshModules = [];
-    }
-    return saveCloudSyncDiagnostics(update);
-  }
-
-  function recordCloudSyncSuccess(operation = 'sincronizacion', timestamp = nowIso(), details = {}) {
-    const op = cleanText(operation) || 'sincronizacion';
-    const update = {
-      lastCloudStatus: 'sincronizado',
-      lastStatusMessage: cleanText(details?.message) || 'Operación de nube confirmada.',
-      lastSyncErrorMessage: '',
-      lastSyncErrorAt: '',
-      lastSyncErrorOperation: ''
-    };
-    if (op.includes('lectura')) {
-      update.lastCloudReadAt = cleanText(timestamp) || nowIso();
-      update.lastManualRefreshAt = cleanText(timestamp) || nowIso();
-      update.lastManualRefreshStatus = 'sincronizado';
-      update.lastManualRefreshMessage = cleanText(details?.message) || summarizeCloudRefreshModules(cloudOperationState.refreshModuleResults);
-      update.lastManualRefreshModules = Array.isArray(cloudOperationState.refreshModuleResults) ? cloudOperationState.refreshModuleResults.map(normalizeCloudRefreshModuleResult) : [];
-    }
-    if (op.includes('escritura')) {
-      update.lastCloudWriteAt = cleanText(timestamp) || nowIso();
-      update.pendingLocalChanges = false;
-      update.pendingLocalChangesCount = 0;
-    }
-    return saveCloudSyncDiagnostics(update);
-  }
-
-  function recordCloudSyncError(operation = 'sincronizacion', message = '', status = 'error_sincronizacion') {
-    const ts = nowIso();
-    const op = cleanText(operation) || 'sincronizacion';
-    const safeMessage = cleanText(message) || 'Error de sincronización.';
-    const safeStatus = cleanText(status) || 'error_sincronizacion';
-    const update = {
-      lastSyncErrorAt: ts,
-      lastSyncErrorMessage: safeMessage,
-      lastSyncErrorOperation: op,
-      lastCloudStatus: safeStatus,
-      lastStatusMessage: safeMessage
-    };
-    if (op.includes('lectura')) {
-      update.lastManualRefreshAt = ts;
-      update.lastManualRefreshStatus = safeStatus;
-      update.lastManualRefreshMessage = safeMessage;
-      update.lastManualRefreshModules = Array.isArray(cloudOperationState.refreshModuleResults) ? cloudOperationState.refreshModuleResults.map(normalizeCloudRefreshModuleResult) : [];
-    }
-    return saveCloudSyncDiagnostics(update);
-  }
-
-  function getCloudSyncDiagnosticsSnapshot() {
-    return normalizeCloudSyncDiagnostics(cloudSyncDiagnostics || loadCloudSyncDiagnostics());
-  }
-
-  function getCloudStatusLabel(statusValue = '') {
-    const key = cleanText(statusValue).toLowerCase();
-    const labels = {
-      sincronizado: 'Sincronizado',
-      pendiente_sincronizar: 'Pendiente de sincronizar',
-      error_sincronizacion: 'Error de sincronización',
-      lectura_incompleta: 'Lectura incompleta',
-      nube_no_confirmada: 'Nube no confirmada',
-      proteccion_anti_perdida: 'Protección anti-pérdida',
-      sincronizando: 'Sincronizando',
-      guardando: 'Guardando',
-      guardado_correcto: 'Guardado correcto',
-      guardado_fallido: 'Guardado fallido',
-      guardado_bloqueado: 'Guardado bloqueado',
-      local_controlado: 'Local controlado'
-    };
-    return labels[key] || (key ? cleanText(statusValue) : 'Nube no confirmada');
-  }
-
-  function isCloudSyncErrorRecent(meta) {
-    const m = normalizeCloudSyncDiagnostics(meta);
-    if (!m.lastSyncErrorAt || !m.lastSyncErrorMessage) return false;
-    const lastOk = [m.lastCloudReadAt, m.lastCloudWriteAt]
-      .filter(Boolean)
-      .sort()
-      .pop() || '';
-    return !lastOk || String(m.lastSyncErrorAt) > String(lastOk);
-  }
-
-  function parseCloudComparableTime(value) {
-    if (value === null || value === undefined || value === '') return 0;
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    if (value && typeof value.toDate === 'function') {
-      try {
-        const time = value.toDate().getTime();
-        return Number.isFinite(time) ? time : 0;
-      } catch (_) {
-        return 0;
-      }
-    }
-    if (isPlainObject(value)) {
-      const seconds = Number(value.seconds ?? value._seconds);
-      const nanos = Number(value.nanoseconds ?? value._nanoseconds ?? 0);
-      if (Number.isFinite(seconds)) return (seconds * 1000) + (Number.isFinite(nanos) ? Math.floor(nanos / 1000000) : 0);
-    }
-    const text = cleanText(value);
-    if (!text) return 0;
-    const parsed = Date.parse(text);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-
-  function maxCloudComparableTime(...values) {
-    return values.flat().reduce((max, value) => Math.max(max, parseCloudComparableTime(value)), 0);
-  }
-
-  function getLocalDataComparableTime() {
-    const metadata = isPlainObject(appData?.metadata) ? appData.metadata : {};
-    return maxCloudComparableTime(
-      metadata.lastLocalChangeAt,
-      metadata.updatedAt,
-      metadata.lastUpdatedAt,
-      metadata.lastModifiedAt,
-      cloudSyncDiagnostics?.lastLocalChangeAt
-    );
-  }
-
-  function getCloudResultComparableTime(result = {}) {
-    const metadata = isPlainObject(result?.metadata) ? result.metadata : (isPlainObject(result?.snapshot?.metadata) ? result.snapshot.metadata : {});
-    return maxCloudComparableTime(
-      metadata.lastSyncAtLocal,
-      metadata.updatedAt,
-      metadata.lastSyncAt,
-      metadata.lastCloudWriteAt,
-      metadata.ultimaImportacionAt
-    );
-  }
-
-  function getLocalConsecutivosCount() {
-    return [
-      JSON_EXPORT_SEQUENCE_STORAGE_KEY,
-      EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY,
-      EXCEL_CIERRE_SEQUENCE_STORAGE_KEY
-    ].reduce((total, key) => {
-      const value = readCloudSequenceValue(key);
-      return total + (value === null || value === undefined || value === '' ? 0 : 1);
-    }, 0);
-  }
-
-  function getCloudHydrationCriticalCounts(result = null) {
-    const source = isPlainObject(result?.snapshot) ? result.snapshot : (isPlainObject(result) ? result : {});
-    const counts = getJsonRecordCounts(source, Array.isArray(result?.bitacora) ? result.bitacora : null);
-    const facturasData = normalizeFacturasData(result?.facturasModulo || getFacturasBackupFromSource(source) || {});
-    counts.facturasModulo = countFacturasModuleRecords(facturasData);
-    counts.consecutivos = isPlainObject(result?.consecutivos) ? Object.keys(result.consecutivos).filter((key) => result.consecutivos[key] !== null && result.consecutivos[key] !== undefined && result.consecutivos[key] !== '').length : 0;
-    counts.totalCritico = [
-      counts.ventas,
-      counts.cobros,
-      counts.comprasProveedores,
-      counts.pagosProveedores,
-      counts.gastos,
-      counts.facturasModulo,
-      counts.casaGastos,
-      counts.catalogos,
-      counts.consecutivos
-    ].reduce((sum, value) => sum + (Number(value) || 0), 0);
-    return counts;
-  }
-
-  function getLocalHydrationCriticalCounts() {
-    const counts = getJsonRecordCounts(appData || {}, Array.isArray(appActivityLog) ? appActivityLog : null);
-    counts.consecutivos = getLocalConsecutivosCount();
-    counts.totalCritico = [
-      counts.ventas,
-      counts.cobros,
-      counts.comprasProveedores,
-      counts.pagosProveedores,
-      counts.gastos,
-      counts.facturasModulo,
-      counts.casaGastos,
-      counts.catalogos,
-      counts.consecutivos
-    ].reduce((sum, value) => sum + (Number(value) || 0), 0);
-    return counts;
-  }
-
-  function buildCloudHydrationBlock(reason = '', message = '', status = 'proteccion_anti_perdida', extra = {}) {
-    const safeReason = cleanText(reason) || 'seguridad_no_confirmada';
-    const safeStatus = cleanText(status) || 'proteccion_anti_perdida';
-    const fallbackMessages = {
-      cambios_locales_pendientes: 'Hay cambios locales pendientes. No se actualizará desde nube para evitar pérdida de datos.',
-      lectura_incompleta: 'La actualización desde nube no se completó. Se conservaron los datos locales.',
-      timeout: 'La actualización desde nube no se completó. Se conservaron los datos locales.',
-      nube_antigua: 'La nube parece tener una versión anterior. Se conservaron los datos locales.',
-      payload_vacio: 'No se pudo confirmar seguridad de actualización. Se conservaron datos locales.',
-      seguridad_no_confirmada: 'No se pudo confirmar seguridad de actualización. Se conservaron datos locales.'
-    };
-    return {
-      ok: false,
-      blocked: true,
-      applied: false,
-      action: 'applyCloudSnapshotToRuntime',
-      code: `cloud/hydration-blocked-${safeReason}`,
-      reason: safeReason,
-      status: safeStatus,
-      message: cleanText(message) || fallbackMessages[safeReason] || fallbackMessages.seguridad_no_confirmada,
-      ...extra
-    };
-  }
-
-  function recordCloudHydrationProtectionBlock(block = {}) {
-    const reason = cleanText(block?.reason || 'seguridad_no_confirmada');
-    const status = cleanText(block?.status || 'proteccion_anti_perdida') || 'proteccion_anti_perdida';
-    const message = cleanText(block?.message || 'No se pudo confirmar seguridad de actualización. Se conservaron datos locales.');
-    const pending = reason === 'cambios_locales_pendientes' || cloudSyncDiagnostics?.pendingLocalChanges === true;
-    cloudOperationState.lastError = message;
-    cloudOperationState.message = message;
-    return saveCloudSyncDiagnostics({
-      lastCloudStatus: pending ? 'pendiente_sincronizar' : status,
-      lastStatusMessage: message,
-      lastSyncErrorAt: nowIso(),
-      lastSyncErrorMessage: message,
-      lastSyncErrorOperation: 'lectura',
-      lastProtectionAt: nowIso(),
-      lastProtectionReason: reason,
-      lastProtectionMessage: message,
-      lastProtectionStatus: status,
-      lastManualRefreshAt: nowIso(),
-      lastManualRefreshStatus: status,
-      lastManualRefreshMessage: message,
-      lastManualRefreshModules: Array.isArray(cloudOperationState.refreshModuleResults) ? cloudOperationState.refreshModuleResults.map(normalizeCloudRefreshModuleResult) : [],
-      pendingLocalChanges: pending,
-      pendingLocalChangesCount: pending ? (cloudSyncDiagnostics?.pendingLocalChangesCount ?? estimatePendingLocalChangesCount()) : cloudSyncDiagnostics?.pendingLocalChangesCount
-    });
-  }
-
-  function validateCloudSnapshotHydrationSafety(result = {}, options = {}) {
-    const opts = isPlainObject(options) ? options : {};
-    const syncMeta = getCloudSyncDiagnosticsSnapshot();
-    const hasPending = syncMeta.pendingLocalChanges === true || cloudOperationState.isWriting === true || Boolean(cloudOperationState.timer);
-    if (hasPending && opts.ignorePendingLocalChanges !== true) {
-      return buildCloudHydrationBlock(
-        'cambios_locales_pendientes',
-        'Hay cambios locales pendientes. No se actualizará desde nube para evitar pérdida de datos.',
-        'pendiente_sincronizar'
-      );
-    }
-
-    if (!result?.ok || !isPlainObject(result?.snapshot) || result.snapshotComplete !== true) {
-      return buildCloudHydrationBlock(
-        result?.code === 'app/refresh-cloud-timeout' ? 'timeout' : 'lectura_incompleta',
-        'La actualización desde nube no se completó. Se conservaron los datos locales.',
-        'lectura_incompleta',
-        { originalCode: result?.code || '' }
-      );
-    }
-
-    const requiredArrays = ['ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'casaGastos'];
-    const missingArray = requiredArrays.find((key) => !Array.isArray(result.snapshot?.[key]));
-    if (missingArray) {
-      return buildCloudHydrationBlock(
-        'lectura_incompleta',
-        `La lectura desde Firestore llegó incompleta (${missingArray}). Se conservaron los datos locales.`,
-        'lectura_incompleta',
-        { missingCollection: missingArray }
-      );
-    }
-
-    const localCounts = getLocalHydrationCriticalCounts();
-    const cloudCounts = getCloudHydrationCriticalCounts(result);
-    const criticalPairs = [
-      ['ventas', 'Ventas / OC'],
-      ['cobros', 'Cobros'],
-      ['comprasProveedores', 'Proveedores / Compras'],
-      ['pagosProveedores', 'Pagos'],
-      ['gastos', 'Gastos'],
-      ['facturasModulo', 'Facturas'],
-      ['casaGastos', 'Casa'],
-      ['catalogos', 'Catálogos esenciales'],
-      ['consecutivos', 'Consecutivos']
-    ];
-    const emptied = criticalPairs.find(([key]) => (Number(localCounts[key]) || 0) > 0 && (Number(cloudCounts[key]) || 0) === 0);
-    if (emptied) {
-      return buildCloudHydrationBlock(
-        'lectura_incompleta',
-        `La nube no confirmó datos críticos de ${emptied[1]}. Se conservaron los datos locales.`,
-        'lectura_incompleta',
-        { localCounts, cloudCounts, missingCollection: emptied[0] }
-      );
-    }
-
-    if ((Number(localCounts.totalCritico) || 0) > 0 && (Number(cloudCounts.totalCritico) || 0) === 0) {
-      return buildCloudHydrationBlock(
-        'payload_vacio',
-        'No se pudo confirmar seguridad de actualización. Se conservaron datos locales.',
-        'nube_no_confirmada',
-        { localCounts, cloudCounts }
-      );
-    }
-
-    const localTime = getLocalDataComparableTime();
-    const cloudTime = getCloudResultComparableTime(result);
-    const lastConfirmedCloud = maxCloudComparableTime(syncMeta.lastCloudWriteAt, syncMeta.lastCloudReadAt);
-    const localIsNewerThanCloud = localTime > 0 && cloudTime > 0 && localTime > cloudTime + 1000 && localTime > lastConfirmedCloud + 1000;
-    const cannotConfirmCloudFreshness = localTime > 0 && cloudTime === 0 && localTime > lastConfirmedCloud + 1000 && (Number(localCounts.totalCritico) || 0) > 0;
-    if (localIsNewerThanCloud || cannotConfirmCloudFreshness) {
-      return buildCloudHydrationBlock(
-        localIsNewerThanCloud ? 'nube_antigua' : 'seguridad_no_confirmada',
-        localIsNewerThanCloud
-          ? 'La nube parece tener una versión anterior. Se conservaron los datos locales.'
-          : 'No se pudo confirmar seguridad de actualización. Se conservaron datos locales.',
-        'nube_no_confirmada',
-        { localTime, cloudTime, lastConfirmedCloud, localCounts, cloudCounts }
-      );
-    }
-
-    return { ok: true, allowed: true, localCounts, cloudCounts, localTime, cloudTime };
   }
 
   let cloudOperationState = {
@@ -8193,16 +7517,11 @@ Notas importantes:
     isHydrating: false,
     isWriting: false,
     isReading: false,
-    isManualSaving: false,
     timer: null,
     lastSyncAt: '',
     lastRefreshAt: '',
     lastError: '',
     message: '',
-    refreshModuleResults: [],
-    refreshMessage: '',
-    manualSaveMessage: '',
-    manualSaveRunId: '',
     bootstrappedForUid: ''
   };
 
@@ -8221,7 +7540,6 @@ Notas importantes:
 
   function scheduleCloudSnapshotSync(reason = '') {
     if (!cloudOperationState.runtimeReady || cloudOperationState.isHydrating || !cloudOperationState.active) return;
-    markLocalChangesPending(reason || 'operacion_local');
     if (typeof window === 'undefined') return;
     if (cloudOperationState.timer) window.clearTimeout(cloudOperationState.timer);
     cloudOperationState.timer = window.setTimeout(() => {
@@ -8230,109 +7548,27 @@ Notas importantes:
     }, 900);
   }
 
-  async function flushCloudSnapshotSync(reason = '', options = {}) {
-    const opts = isPlainObject(options) ? options : {};
-    if (!cloudOperationState.runtimeReady || cloudOperationState.isHydrating) return { ok: false, code: 'cloud/not-ready', message: 'Firebase todavía está preparando el runtime.' };
-    if (cloudOperationState.isWriting) return { ok: false, code: 'cloud/write-busy', message: 'Ya hay una escritura de nube en curso. El cambio local queda pendiente de sincronizar.' };
-    if (!cloudOperationState.active) return { ok: false, code: 'cloud/not-active', message: 'Nube no activa; no se escribe a Firestore.' };
-    if (cloudOperationState.timer && typeof window !== 'undefined') {
-      window.clearTimeout(cloudOperationState.timer);
-      cloudOperationState.timer = null;
-    }
+  async function flushCloudSnapshotSync(reason = '') {
+    if (!cloudOperationState.runtimeReady || cloudOperationState.isHydrating || cloudOperationState.isWriting) return null;
+    if (!cloudOperationState.active) return null;
     try {
-      if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.writeCloudOperationalSnapshot) {
-        markLocalChangesPending(reason || 'escritura_sin_adaptador');
-        return { ok: false, code: 'cloud/adapter-missing', message: 'Adaptador Firestore no disponible. El cambio local queda pendiente de sincronizar.' };
-      }
+      if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.writeCloudOperationalSnapshot) return null;
       cloudOperationState.isWriting = true;
-      markLocalChangesPending(reason || 'escritura_inmediata');
-      recordCloudSyncAttempt('escritura');
-      const result = await withOperationTimeout(
-        () => KSAFirebaseAdapter.writeCloudOperationalSnapshot(null, { reason: cleanText(reason) }),
-        { message: cleanText(opts.timeoutMessage) || FIRESTORE_TIMEOUT_SAVE_USER_MESSAGE, code: cleanText(opts.timeoutCode) || 'app/write-cloud-timeout' }
-      );
+      const result = await KSAFirebaseAdapter.writeCloudOperationalSnapshot(null, { reason: cleanText(reason) });
       cloudOperationState.isWriting = false;
-      if (result?.ok) {
-        cloudOperationState.lastSyncAt = result?.lastSyncAt || nowIso();
-        cloudOperationState.lastError = '';
-        recordCloudSyncSuccess('escritura', cloudOperationState.lastSyncAt, { message: result.message });
-      } else {
-        cloudOperationState.lastError = cleanText(result?.message || 'No se pudo sincronizar con Firestore.');
-        markLocalChangesPending(reason || 'escritura_fallida');
-        recordCloudSyncError('escritura', cloudOperationState.lastError, 'error_sincronizacion');
-      }
+      cloudOperationState.lastSyncAt = result?.lastSyncAt || nowIso();
+      cloudOperationState.lastError = result?.ok ? '' : cleanText(result?.message || 'No se pudo sincronizar con Firestore.');
       cloudOperationState.message = result?.message || '';
       return result;
     } catch (error) {
       cloudOperationState.isWriting = false;
       cloudOperationState.lastError = cleanText(error?.message || 'No se pudo sincronizar con Firestore.');
-      markLocalChangesPending(reason || 'escritura_fallida');
-      recordCloudSyncError('escritura', cloudOperationState.lastError, isOperationTimeoutError(error) ? 'error_sincronizacion' : 'error_sincronizacion');
-      return { ok: false, code: cleanText(error?.code || 'firebase/firestore-error'), message: cloudOperationState.lastError, error };
+      return { ok: false, message: cloudOperationState.lastError };
     }
   }
 
-
-  function isCloudActiveForCriticalSave() {
-    const runtime = getKSAFirebaseRuntime();
-    return Boolean(cloudOperationState.active || runtime?.cloudActive || appData?.metadata?.cloudActive || cleanText(appData?.metadata?.fuentePrincipal).toLowerCase() === 'firestore');
-  }
-
-  function buildCriticalCloudSaveMessage(result = {}) {
-    if (result?.localOnly) return 'Guardado localmente.';
-    if (result?.ok) return 'Guardado y sincronizado con nube.';
-    return 'Guardado localmente. Pendiente de sincronizar con nube.';
-  }
-
-  function appendCriticalCloudMessage(baseMessage = '', result = {}) {
-    const base = cleanText(baseMessage);
-    const suffix = buildCriticalCloudSaveMessage(result);
-    return base ? `${base} ${suffix}` : suffix;
-  }
-
-  async function confirmCriticalCloudSave(stateTarget = null, options = {}) {
-    const opts = isPlainObject(options) ? options : {};
-    const operation = cleanText(opts.operation || 'guardado_critico');
-    const messageKey = cleanText(opts.messageKey || 'message') || 'message';
-    const messageTypeKey = cleanText(opts.messageTypeKey || 'messageType') || 'messageType';
-    const baseMessage = cleanText(opts.baseMessage || (stateTarget && stateTarget[messageKey]) || '');
-
-    if (!isCloudActiveForCriticalSave()) {
-      const localResult = { ok: true, localOnly: true, code: 'local/only', message: 'Guardado localmente.' };
-      if (stateTarget) {
-        stateTarget[messageKey] = appendCriticalCloudMessage(baseMessage, localResult);
-        stateTarget[messageTypeKey] = 'success';
-      }
-      saveCloudSyncDiagnostics({
-        lastCloudStatus: 'local_controlado',
-        lastStatusMessage: 'Guardado localmente.',
-        pendingLocalChanges: false,
-        pendingLocalChangesCount: 0
-      });
-      return localResult;
-    }
-
-    if (cloudOperationState.timer && typeof window !== 'undefined') {
-      window.clearTimeout(cloudOperationState.timer);
-      cloudOperationState.timer = null;
-    }
-
-    markLocalChangesPending(operation);
-    const result = await flushCloudSnapshotSync(operation);
-    const normalizedResult = result || { ok: false, code: 'cloud/no-result', message: 'No se confirmó escritura en Firestore.' };
-    if (stateTarget) {
-      stateTarget[messageKey] = appendCriticalCloudMessage(baseMessage, normalizedResult);
-      stateTarget[messageTypeKey] = normalizedResult.ok ? 'success' : 'error';
-    }
-    return normalizedResult;
-  }
-
-  function applyCloudSnapshotToRuntime(result, options = {}) {
-    const validation = validateCloudSnapshotHydrationSafety(result, options);
-    if (!validation.ok) {
-      recordCloudHydrationProtectionBlock(validation);
-      return validation;
-    }
+  function applyCloudSnapshotToRuntime(result) {
+    if (!result?.ok || !isPlainObject(result.snapshot)) return false;
     cloudOperationState.isHydrating = true;
     try {
       appData = normalizeData(result.snapshot);
@@ -8358,8 +7594,7 @@ Notas importantes:
       cloudOperationState.lastSyncAt = result.lastSyncAt || cloudOperationState.lastSyncAt || nowIso();
       cloudOperationState.lastError = '';
       cloudOperationState.message = result.message || 'Datos actualizados desde Firestore.';
-      recordCloudSyncSuccess('lectura', cloudOperationState.lastRefreshAt, { message: result.message });
-      return { ok: true, applied: true, blocked: false, action: 'applyCloudSnapshotToRuntime', message: cloudOperationState.message, validation };
+      return true;
     } finally {
       cloudOperationState.isHydrating = false;
     }
@@ -8372,398 +7607,63 @@ Notas importantes:
       return { ok: false, message: 'Adaptador Firestore no disponible.' };
     }
     if (cloudOperationState.isReading) return { ok: false, message: 'Ya hay una actualización de nube en curso.' };
-    const syncMetaBeforeRead = getCloudSyncDiagnosticsSnapshot();
-    if (syncMetaBeforeRead.pendingLocalChanges === true || cloudOperationState.isWriting === true || Boolean(cloudOperationState.timer)) {
-      const block = buildCloudHydrationBlock(
-        'cambios_locales_pendientes',
-        'Hay cambios locales pendientes. No se actualizará desde nube para evitar pérdida de datos.',
-        'pendiente_sincronizar'
-      );
-      recordCloudHydrationProtectionBlock(block);
-      if (opts.render === true && typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
-      return block;
-    }
     cloudOperationState.isReading = true;
-    recordCloudSyncAttempt('lectura');
     cloudOperationState.message = 'Verificando Firestore…';
     try {
-      const onModuleResult = (moduleResult) => {
-        saveCloudRefreshModuleDiagnostics(moduleResult, 'sincronizando');
-        if (opts.renderProgress === true && typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
-      };
-      let result = await KSAFirebaseAdapter.readCloudOperationalSnapshot({ requireActive: true, onModuleResult });
+      let result = await withOperationTimeout(
+        () => KSAFirebaseAdapter.readCloudOperationalSnapshot({ requireActive: true }),
+        { message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
+      );
       if (!result.ok && result.code === 'cloud/not-active' && opts.activateIfReady !== false && KSAFirebaseAdapter.activateCloudOperation) {
         const activated = await withOperationTimeout(
           () => KSAFirebaseAdapter.activateCloudOperation({ source: 'auto_bootstrap' }),
           { message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
         );
         if (activated.ok) {
-          result = await KSAFirebaseAdapter.readCloudOperationalSnapshot({ requireActive: true, onModuleResult });
+          result = await withOperationTimeout(
+            () => KSAFirebaseAdapter.readCloudOperationalSnapshot({ requireActive: true }),
+            { message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
+          );
         } else result = { ...result, message: activated.message || result.message };
       }
-      if (Array.isArray(result?.moduleResults)) {
-        cloudOperationState.refreshModuleResults = result.moduleResults.map(normalizeCloudRefreshModuleResult);
-        saveCloudSyncDiagnostics({
-          lastManualRefreshAt: nowIso(),
-          lastManualRefreshStatus: result.ok ? 'sincronizado' : (result.code === 'app/refresh-cloud-timeout' ? 'lectura_incompleta' : 'lectura_incompleta'),
-          lastManualRefreshMessage: result.message || summarizeCloudRefreshModules(result.moduleResults),
-          lastManualRefreshModules: cloudOperationState.refreshModuleResults
-        });
-      }
       if (result.ok) {
-        const applyResult = applyCloudSnapshotToRuntime(result, { source: 'cloud_refresh' });
-        if (applyResult?.blocked) {
-          result = {
-            ...result,
-            ok: false,
-            blocked: true,
-            applied: false,
-            code: applyResult.code,
-            reason: applyResult.reason,
-            message: applyResult.message
-          };
-        } else {
-          result = { ...result, applied: true };
-        }
+        applyCloudSnapshotToRuntime(result);
       } else {
+        cloudOperationState.active = false;
         cloudOperationState.lastError = cleanText(result.message || 'No se pudo activar nube.');
         cloudOperationState.message = cloudOperationState.lastError;
-        recordCloudSyncError('lectura', cloudOperationState.lastError, result?.code === 'app/refresh-cloud-timeout' ? 'lectura_incompleta' : 'error_sincronizacion');
       }
       if (opts.render === true && typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
       return result;
     } catch (error) {
+      cloudOperationState.active = false;
       cloudOperationState.lastError = cleanText(error?.message || 'No se pudo leer Firestore.');
-      recordCloudSyncError('lectura', cloudOperationState.lastError, isOperationTimeoutError(error) ? 'lectura_incompleta' : 'error_sincronizacion');
       if (opts.render === true && typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
-      return { ok: false, message: cloudOperationState.lastError, error, code: cleanText(error?.code || '') };
+      return { ok: false, message: cloudOperationState.lastError, error };
     } finally {
       cloudOperationState.isReading = false;
-    }
-  }
-
-  function getManualCloudSaveFailureStage(result = {}, fallback = 'error_desconocido') {
-    const rawStage = cleanText(result?.stage || result?.failureStage || result?.errorStage || '');
-    if (rawStage) return rawStage;
-    const code = cleanText(result?.code || result?.error?.code || '').toLowerCase();
-    if (code.includes('permission-denied') || code.includes('permission')) return 'permiso_denegado';
-    if (code.includes('unauth') || code.includes('auth')) return 'auth_no_activo';
-    if (code.includes('not-ready') || code.includes('unavailable') || code.includes('firestore')) return 'firestore_no_preparado';
-    if (code.includes('timeout') || code.includes('deadline')) return 'timeout_guardado_manual';
-    if (code.includes('payload')) return 'payload_vacío';
-    if (code.includes('route') || code.includes('path')) return 'ruta_no_resuelta';
-    return cleanText(fallback) || 'error_desconocido';
-  }
-
-  function getManualCloudSaveTechnicalMessage(result = {}, fallbackStage = 'error_desconocido') {
-    const stage = getManualCloudSaveFailureStage(result, fallbackStage);
-    const code = cleanText(result?.code || result?.error?.code || result?.error?.name || 'error_desconocido') || 'error_desconocido';
-    const raw = cleanText(result?.technicalMessage || result?.error?.message || result?.message || 'Sin detalle técnico.');
-    return `${stage} · ${code} · ${raw}`;
-  }
-
-  function getManualCloudSaveMessage(result = {}) {
-    const code = cleanText(result?.code || '').toLowerCase();
-    const rawMessage = cleanText(result?.message || '');
-    if (result?.ok) return 'Guardado correcto. Los datos fueron confirmados en la nube.';
-    if (isOperationTimeoutError(result?.error) || code.includes('timeout') || rawMessage.toLowerCase().includes('tiempo de espera agotado')) {
-      return FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE;
-    }
-    if (result?.blocked || code.includes('blocked') || code.includes('unsafe') || code.includes('write-busy')) {
-      return 'No se guardó para evitar sobrescritura peligrosa.';
-    }
-    if (code.includes('permission-denied') || code.includes('permission') || code.includes('unauth')) {
-      return 'No se pudo completar el guardado en la nube. Revisa permisos o conexión. Se conservaron los datos locales.';
-    }
-    if (code.includes('unavailable') || code.includes('network') || code.includes('offline') || rawMessage.toLowerCase().includes('conexión') || rawMessage.toLowerCase().includes('internet')) {
-      return 'No se pudo completar el guardado en la nube. Revisa tu conexión. Se conservaron los datos locales.';
-    }
-    return 'No se pudo completar el guardado en la nube. Revisa permisos o conexión. Se conservaron los datos locales.';
-  }
-
-  async function forceSaveLocalStateToFirestore(reason = 'guardar_datos_manual') {
-    const operation = cleanText(reason) || 'guardar_datos_manual';
-    if (!cloudOperationState.runtimeReady) {
-      return {
-        ok: false,
-        code: 'cloud/not-ready',
-        stage: 'firestore_no_preparado',
-        message: 'Firebase todavía está preparando el runtime.',
-        technicalMessage: 'firestore_no_preparado · cloud/not-ready · Firebase runtime no está listo.'
-      };
-    }
-    if (cloudOperationState.isWriting || cloudOperationState.isReading || cloudOperationState.isHydrating) {
-      return {
-        ok: false,
-        blocked: true,
-        code: 'cloud/manual-save-write-busy',
-        stage: 'sobrescritura_peligrosa',
-        message: 'No se guardó para evitar sobrescritura peligrosa.',
-        technicalMessage: 'sobrescritura_peligrosa · cloud/manual-save-write-busy · Hay lectura/escritura/hidratación en curso.'
-      };
-    }
-    if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.writeCloudOperationalSnapshot) {
-      return {
-        ok: false,
-        code: 'cloud/adapter-missing',
-        stage: 'firestore_no_preparado',
-        message: 'Adaptador Firestore no disponible.',
-        technicalMessage: 'firestore_no_preparado · cloud/adapter-missing · KSAFirebaseAdapter.writeCloudOperationalSnapshot no está disponible.'
-      };
-    }
-
-    const confirmationToken = `manual_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-    let manualSaveCancelled = false;
-    if (cloudOperationState.timer && typeof window !== 'undefined') {
-      window.clearTimeout(cloudOperationState.timer);
-      cloudOperationState.timer = null;
-    }
-
-    cloudOperationState.isWriting = true;
-    cloudOperationState.manualSaveRunId = confirmationToken;
-    cloudOperationState.manualSaveMessage = 'Preparando guardado local…';
-    const manualSaveStartedAtMs = Date.now();
-    const updateManualSaveProgress = (progress = {}) => {
-      if (manualSaveCancelled || cloudOperationState.manualSaveRunId !== confirmationToken) return;
-      const rawMessage = cleanText(progress?.message || progress?.label || 'Guardando datos locales actuales en Firestore…');
-      const message = rawMessage || 'Guardando datos locales actuales en Firestore…';
-      cloudOperationState.manualSaveMessage = message;
-      saveCloudSyncDiagnostics({
-        lastManualSaveAt: nowIso(),
-        lastManualSaveStatus: 'guardando',
-        lastManualSaveMessage: message,
-        lastCloudStatus: 'sincronizando',
-        lastStatusMessage: message,
-        lastSyncErrorMessage: '',
-        lastSyncErrorAt: '',
-        lastSyncErrorOperation: ''
-      });
-      if (typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
-    };
-    recordCloudSyncAttempt('escritura_guardado_manual');
-    try {
-      const result = await withOperationTimeout(
-        () => KSAFirebaseAdapter.writeCloudOperationalSnapshot(null, {
-          force: true,
-          confirm: true,
-          source: 'guardar_datos_manual',
-          reason: operation,
-          confirmationToken,
-          startedAtMs: manualSaveStartedAtMs,
-          timeoutMs: FIRESTORE_OPERATION_TIMEOUT_MS,
-          deadlineAtMs: manualSaveStartedAtMs + FIRESTORE_OPERATION_TIMEOUT_MS,
-          isCancelled: () => manualSaveCancelled || cloudOperationState.manualSaveRunId !== confirmationToken,
-          onProgress: updateManualSaveProgress
-        }),
-        { ms: FIRESTORE_OPERATION_TIMEOUT_MS, message: FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE, code: 'app/manual-save-timeout' }
-      );
-      if (result?.ok && result?.confirmed !== false) {
-        const ts = cleanText(result.lastCloudWriteAt || result.lastSyncAt) || nowIso();
-        cloudOperationState.active = true;
-        cloudOperationState.lastSyncAt = ts;
-        cloudOperationState.lastError = '';
-        cloudOperationState.message = 'Guardado correcto. Los datos fueron confirmados en la nube.';
-        cloudOperationState.manualSaveMessage = cloudOperationState.message;
-        recordCloudSyncSuccess('escritura', ts, { message: cloudOperationState.message });
-        return { ...result, message: cloudOperationState.message, stage: result.stage || 'confirmación_escritura' };
-      }
-      const failedResult = isPlainObject(result) ? result : { ok: false, code: 'cloud/no-result', message: 'No se confirmó escritura en Firestore.' };
-      cloudOperationState.lastError = getManualCloudSaveTechnicalMessage(failedResult, 'confirmación_escritura');
-      cloudOperationState.message = getManualCloudSaveMessage(failedResult);
-      cloudOperationState.manualSaveMessage = cloudOperationState.message;
-      markLocalChangesPending(`${operation}_fallido`);
-      recordCloudSyncError('escritura_guardado_manual', cloudOperationState.lastError, 'error_sincronizacion');
-      return { ...failedResult, message: cloudOperationState.message, technicalMessage: cloudOperationState.lastError };
-    } catch (error) {
-      manualSaveCancelled = true;
-      const timeout = isOperationTimeoutError(error);
-      const result = {
-        ok: false,
-        code: cleanText(error?.code || (timeout ? 'app/manual-save-timeout' : 'firebase/firestore-error')),
-        stage: timeout ? 'timeout_guardado_manual' : getManualCloudSaveFailureStage({ error }, 'error_desconocido'),
-        message: timeout ? FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE : cleanText(error?.message || 'No se confirmó escritura en Firestore.'),
-        error
-      };
-      result.technicalMessage = getManualCloudSaveTechnicalMessage(result, result.stage);
-      cloudOperationState.lastError = result.technicalMessage;
-      cloudOperationState.message = getManualCloudSaveMessage(result);
-      cloudOperationState.manualSaveMessage = cloudOperationState.message;
-      markLocalChangesPending(`${operation}_fallido`);
-      recordCloudSyncError('escritura_guardado_manual', result.technicalMessage, timeout ? 'error_sincronizacion' : 'error_sincronizacion');
-      return { ...result, message: cloudOperationState.message };
-    } finally {
-      cloudOperationState.isWriting = false;
-      if (cloudOperationState.manualSaveRunId === confirmationToken) {
-        cloudOperationState.manualSaveRunId = '';
-      }
-    }
-  }
-
-  function recordManualCloudSaveResult(status = 'guardado_fallido', message = '', extra = {}) {
-    const safeStatus = cleanText(status) || 'guardado_fallido';
-    const safeMessage = cleanText(message) || (safeStatus === 'guardado_correcto'
-      ? 'Guardado correcto. Los datos fueron confirmados en la nube.'
-      : 'No se pudo completar el guardado en la nube. Se conservaron los datos locales.');
-    return saveCloudSyncDiagnostics({
-      lastManualSaveAt: nowIso(),
-      lastManualSaveStatus: safeStatus,
-      lastManualSaveMessage: safeMessage,
-      lastCloudStatus: safeStatus === 'guardado_correcto' ? 'sincronizado' : safeStatus,
-      lastStatusMessage: safeMessage,
-      ...(isPlainObject(extra) ? extra : {})
-    });
-  }
-
-  async function handleCloudManualSave(button = null) {
-    if (!requireRolePermission('updateData', configState, { preserveScroll: true })) return null;
-    if (cloudOperationState.isManualSaving || cloudOperationState.isWriting) return { ok: false, message: 'Ya hay un guardado en nube en curso.' };
-    if (cloudOperationState.isReading || cloudOperationState.isHydrating) {
-      const riskMessage = 'No se guardó para evitar sobrescritura peligrosa.';
-      configState.message = riskMessage;
-      configState.messageType = 'error';
-      recordManualCloudSaveResult('guardado_bloqueado', riskMessage, {
-        lastSyncErrorAt: nowIso(),
-        lastSyncErrorMessage: 'sobrescritura_peligrosa · cloud/manual-save-blocked · Hay lectura o hidratación en curso.',
-        lastSyncErrorOperation: 'guardado_manual'
-      });
-      renderRoute({ preserveScroll: true });
-      return { ok: false, blocked: true, code: 'cloud/manual-save-blocked', message: riskMessage };
-    }
-
-    const confirmed = typeof window === 'undefined' || typeof window.confirm !== 'function'
-      ? true
-      : window.confirm(FIRESTORE_MANUAL_SAVE_CONFIRM_MESSAGE);
-    if (!confirmed) {
-      configState.message = 'Guardado cancelado. No se hicieron cambios en nube.';
-      configState.messageType = 'success';
-      renderRoute({ preserveScroll: true });
-      return { ok: false, cancelled: true, code: 'cloud/manual-save-cancelled', message: configState.message };
-    }
-
-    cloudOperationState.isManualSaving = true;
-    if (button) button.disabled = true;
-    configState.message = 'Guardando datos locales actuales en Firestore…';
-    configState.messageType = 'success';
-    recordManualCloudSaveResult('guardando', 'Guardando datos locales actuales en Firestore…', {
-      lastSyncErrorMessage: '',
-      lastSyncErrorAt: '',
-      lastSyncErrorOperation: ''
-    });
-    renderRoute({ preserveScroll: true });
-
-    try {
-      const result = await forceSaveLocalStateToFirestore('guardar_datos_manual');
-      const message = getManualCloudSaveMessage(result);
-      const technicalMessage = result?.ok ? 'Sin error de guardado manual' : getManualCloudSaveTechnicalMessage(result, getManualCloudSaveFailureStage(result));
-      const status = result?.ok
-        ? 'guardado_correcto'
-        : (message === 'No se guardó para evitar sobrescritura peligrosa.' ? 'guardado_bloqueado' : 'guardado_fallido');
-      configState.message = message;
-      configState.messageType = result?.ok ? 'success' : 'error';
-      recordManualCloudSaveResult(status, message, result?.ok ? {
-        lastSyncErrorAt: '',
-        lastSyncErrorMessage: 'Sin error de guardado manual',
-        lastSyncErrorOperation: 'guardado_manual',
-        lastCloudWriteAt: cleanText(result.lastCloudWriteAt || result.lastSyncAt) || nowIso(),
-        pendingLocalChanges: false,
-        pendingLocalChangesCount: 0
-      } : {
-        lastSyncErrorAt: nowIso(),
-        lastSyncErrorMessage: technicalMessage,
-        lastSyncErrorOperation: 'guardado_manual'
-      });
-      renderRoute({ preserveScroll: true });
-      return { ...(isPlainObject(result) ? result : {}), message };
-    } catch (error) {
-      const timeout = isOperationTimeoutError(error);
-      const result = {
-        ok: false,
-        code: cleanText(error?.code || (timeout ? 'app/manual-save-timeout' : 'firebase/firestore-error')),
-        stage: timeout ? 'timeout_guardado_manual' : 'error_desconocido',
-        message: timeout ? FIRESTORE_TIMEOUT_MANUAL_SAVE_MESSAGE : 'No se pudo completar el guardado en la nube. Revisa permisos o conexión. Se conservaron los datos locales.',
-        error
-      };
-      const message = getManualCloudSaveMessage(result);
-      const technicalMessage = getManualCloudSaveTechnicalMessage(result, result.stage);
-      markLocalChangesPending('guardar_datos_manual_fallido');
-      recordCloudSyncError('escritura_guardado_manual', technicalMessage, 'error_sincronizacion');
-      recordManualCloudSaveResult('guardado_fallido', message, { lastSyncErrorAt: nowIso(), lastSyncErrorMessage: technicalMessage, lastSyncErrorOperation: 'guardado_manual' });
-      configState.message = message;
-      configState.messageType = 'error';
-      renderRoute({ preserveScroll: true });
-      return { ...result, message };
-    } finally {
-      cloudOperationState.isManualSaving = false;
-      if (button) button.disabled = false;
-      renderRoute({ preserveScroll: true });
-    }
-  }
-
-  async function handleCloudPendingUpload(button = null) {
-    if (!requireRolePermission('updateData', configState, { preserveScroll: true })) return null;
-    if (cloudOperationState.isManualSaving || cloudOperationState.isWriting || cloudOperationState.isReading || cloudOperationState.isHydrating) {
-      configState.message = 'Hay una operación de nube en curso. No se subirán pendientes para evitar cruces peligrosos.';
-      configState.messageType = 'error';
-      renderRoute({ preserveScroll: true });
-      return { ok: false, blocked: true, code: 'cloud/upload-pending-busy', message: configState.message };
-    }
-    if (!isCloudActiveForCriticalSave()) {
-      configState.message = 'Nube no activa. No hay escritura pendiente hacia Firestore.';
-      configState.messageType = 'success';
-      renderRoute({ preserveScroll: true });
-      return { ok: true, localOnly: true };
-    }
-    if (button) button.disabled = true;
-    configState.message = 'Subiendo cambios pendientes a Firestore...';
-    configState.messageType = 'success';
-    renderRoute({ preserveScroll: true });
-    try {
-      const result = await flushCloudSnapshotSync('subir_pendientes_configuracion');
-      configState.message = result?.ok
-        ? 'Cambios pendientes sincronizados con nube.'
-        : 'Guardado localmente. Pendiente de sincronizar con nube.';
-      configState.messageType = result?.ok ? 'success' : 'error';
-      renderRoute({ preserveScroll: true });
-      return result;
-    } catch (error) {
-      const message = cleanText(error?.message || 'No se pudieron subir los cambios pendientes.');
-      markLocalChangesPending('subir_pendientes_configuracion');
-      recordCloudSyncError('escritura', message, 'error_sincronizacion');
-      configState.message = 'Guardado localmente. Pendiente de sincronizar con nube.';
-      configState.messageType = 'error';
-      renderRoute({ preserveScroll: true });
-      return { ok: false, message };
     }
   }
 
   async function handleCloudDataRefresh(button = null) {
     if (!requireRolePermission('updateData', configState, { preserveScroll: true })) return null;
     if (cloudOperationState.isReading) return { ok: false, message: 'Ya hay una actualización de nube en curso.' };
-    if (cloudOperationState.isWriting || cloudOperationState.isManualSaving) {
-      configState.message = 'Ya hay un guardado en nube en curso. No se actualizará para evitar cruces peligrosos.';
-      configState.messageType = 'error';
-      renderRoute({ preserveScroll: true });
-      return { ok: false, blocked: true, message: configState.message };
-    }
     if (button) button.disabled = true;
     configState.message = 'Actualizando datos desde Firestore...';
     configState.messageType = 'success';
     renderRoute({ preserveScroll: true });
     try {
-      const result = await activateAndLoadCloudOperation({ activateIfReady: false, render: false, renderProgress: true });
+      const result = await activateAndLoadCloudOperation({ activateIfReady: false, render: false });
       const message = cleanText(result?.message || '');
       configState.message = result?.ok
         ? 'Datos actualizados correctamente.'
-        : (result?.blocked
-          ? (message || 'No se pudo confirmar seguridad de actualización. Se conservaron datos locales.')
-          : `${message === FIRESTORE_TIMEOUT_REFRESH_MESSAGE ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : (message || 'No se pudieron actualizar los datos.')} La actualización desde nube no se completó. Se conservaron los datos locales.`);
+        : (message === FIRESTORE_TIMEOUT_REFRESH_MESSAGE ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : (message || 'No se pudieron actualizar los datos.'));
       configState.messageType = result?.ok ? 'success' : 'error';
       renderRoute({ preserveScroll: true });
       return result;
     } catch (error) {
       cloudOperationState.isReading = false;
-      configState.message = `${isOperationTimeoutError(error) ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : (cleanText(error?.message) || 'No se pudieron actualizar los datos.')} La actualización desde nube no se completó. Se conservaron los datos locales.`;
-      recordCloudSyncError('lectura', configState.message, isOperationTimeoutError(error) ? 'lectura_incompleta' : 'error_sincronizacion');
+      configState.message = isOperationTimeoutError(error) ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : (cleanText(error?.message) || 'No se pudieron actualizar los datos.');
       configState.messageType = 'error';
       renderRoute({ preserveScroll: true });
       return { ok: false, message: configState.message };
@@ -8784,7 +7684,7 @@ Notas importantes:
         renderRoute({ preserveScroll: true });
         return;
       }
-      const result = await activateAndLoadCloudOperation({ activateIfReady: false, render: false, renderProgress: true });
+      const result = await activateAndLoadCloudOperation({ activateIfReady: false, render: false });
       configState.message = result.ok ? 'Nube activa. Firestore queda como fuente principal.' : (result.message || 'Nube activada, pero no se pudo refrescar datos.');
       configState.messageType = result.ok ? 'success' : 'error';
     } catch (error) {
@@ -9050,6 +7950,8 @@ Notas importantes:
   }
 
   let appData = loadData();
+  ensureSessionChangeQueue();
+  sessionChangeTrackingReady = true;
   reconcileWorkPeriodSelectionAfterDataChange();
   syncCasaFiltersWithActiveWorkPeriod({ force: true });
   let appDeviceIdentity = loadDeviceIdentity();
@@ -9697,10 +8599,7 @@ Notas importantes:
     }
     renderRoute({ preserveScroll: true });
     try {
-      const result = await withOperationTimeout(
-        () => KSAFirebaseAdapter.readOnlineDiagnostic(),
-        { message: 'Tiempo de espera agotado al revisar conteos en nube.', code: 'app/diagnostic-counts-timeout' }
-      );
+      const result = await KSAFirebaseAdapter.readOnlineDiagnostic();
       applyOnlineDiagnosticReadResult(result);
       if (!opts.silent) {
         configState.message = result.message || (result.ok ? 'Lectura correcta.' : 'Error de conexión.');
@@ -9709,7 +8608,7 @@ Notas importantes:
       renderRoute({ preserveScroll: true });
       return result;
     } catch (error) {
-      const message = isOperationTimeoutError(error) ? 'Tiempo de espera agotado al revisar conteos en nube.' : 'Error de conexión.';
+      const message = 'Error de conexión.';
       applyOnlineDiagnosticReadResult({ ok: false, message, code: cleanText(error?.code || 'diagnostic/error') });
       if (!opts.silent) {
         configState.message = message;
@@ -9759,8 +8658,20 @@ Notas importantes:
   }
 
   function scheduleOnlineDiagnosticAutoRead() {
-    // Etapa 1 sincronización segura: no leer Firestore automáticamente al entrar a Configuración.
-    // Los conteos nube se revisan manualmente para evitar que una conexión lenta bloquee la entrada.
+    if (!isConfigRoute(getRoute())) return;
+    if (onlineDiagnosticState.isReading || onlineDiagnosticState.isWriting) return;
+    const status = getPreparedUsersStatus();
+    const authStatus = getPreparedAuthStatus();
+    const signedUser = authStatus.authMode === 'firebase' ? authStatus.user : null;
+    const uid = cleanText(signedUser?.uid || signedUser?.email || '');
+    if (!uid || !status.firebaseConfigured || !status.cloudActive || !canCurrentRole('onlineDiagnostic')) return;
+    if (onlineDiagnosticState.autoRequestedForUid === uid && Object.keys(onlineDiagnosticState.counts || {}).length) return;
+    onlineDiagnosticState.autoRequestedForUid = uid;
+    window.setTimeout(() => {
+      if (isConfigRoute(getRoute()) && !onlineDiagnosticState.isReading && !onlineDiagnosticState.isWriting) {
+        handleOnlineDiagnosticRead(null, { silent: true });
+      }
+    }, 350);
   }
 
   async function handleFirestoreVerify(button = null) {
@@ -9842,22 +8753,11 @@ Notas importantes:
     return candidate.slice(0, 900) || `doc_${Date.now().toString(36)}`;
   }
 
-  function isLikelyFirestoreSpecialValue(value) {
-    if (!value || typeof value !== 'object') return false;
-    const constructorName = cleanText(value?.constructor?.name || '');
-    if (/FieldValue|Timestamp|GeoPoint|DocumentReference|Bytes|VectorValue/i.test(constructorName)) return true;
-    const methodName = cleanText(value?._methodName || value?.methodName || value?.type || '');
-    if (/serverTimestamp|arrayUnion|arrayRemove|increment|deleteField|Timestamp/i.test(methodName)) return true;
-    if (typeof value.isEqual === 'function' && (value?._delegate || value?._methodName || constructorName)) return true;
-    return false;
-  }
-
   function stripUndefinedForFirestore(value) {
     if (Array.isArray(value)) {
       return value.map(stripUndefinedForFirestore).filter((item) => item !== undefined);
     }
     if (value && typeof value === 'object') {
-      if (isLikelyFirestoreSpecialValue(value)) return value;
       if (value instanceof Date) return value.toISOString();
       const cleaned = {};
       Object.entries(value).forEach(([key, item]) => {
@@ -10939,10 +9839,6 @@ Notas importantes:
       : null;
     const preserveScroll = Boolean(restoreSnapshot) || (!explicitReset && isConfigScreen && wasConfigScreen && options?.preserveScroll !== false);
 
-    if (isConfigScreen && !wasConfigScreen) {
-      resetConfigAccordionVisualState();
-    }
-
     if (previousRoute === 'proveedores' && route !== 'proveedores') {
       resetProveedoresTransientState();
     }
@@ -10953,12 +9849,6 @@ Notas importantes:
       resetFacturasTransientState();
       facturasState.page = 1;
       facturasState.search = '';
-      facturasState.globalOpen = false;
-      facturasState.globalPage = 1;
-      facturasState.globalSearch = '';
-      facturasState.globalCliente = '';
-      facturasState.globalSucursal = '';
-      facturasState.globalEstado = '';
     }
     if (route === 'facturas' && previousRoute && previousRoute !== 'facturas') {
       resetFacturasPagedView();
@@ -11887,6 +10777,11 @@ Notas importantes:
         ...(isPlainObject(normalized.metadata) ? normalized.metadata : {}),
         updatedAt: nowIso()
       };
+      trackSessionChangesFromAuxStorage(NOTES_STORAGE_KEY, normalized, [
+        { key: 'notas', moduleKey: 'notasModulo.notas', moduleLabel: 'Notas / pendientes' },
+        { key: 'pendientes', moduleKey: 'notasModulo.pendientes', moduleLabel: 'Notas / pendientes' },
+        { key: 'recordatorios', moduleKey: 'notasModulo.recordatorios', moduleLabel: 'Notas / pendientes' }
+      ]);
       window.localStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify(normalized));
       scheduleCloudSnapshotSync('saveNotasData');
       return normalized;
@@ -12089,31 +10984,14 @@ Notas importantes:
       fecha,
       estado: normalizeFacturaEstado(raw.estado),
       monto: Number.isNaN(amount) ? 0 : Math.max(0, amount),
-      subtotal: Number.isNaN(parseMoney(raw.subtotal ?? raw.montoSubtotal ?? 0)) ? 0 : Math.max(0, parseMoney(raw.subtotal ?? raw.montoSubtotal ?? 0)),
-      descuento: Number.isNaN(parseMoney(raw.descuento ?? raw.descuentoFactura ?? 0)) ? 0 : Math.max(0, parseMoney(raw.descuento ?? raw.descuentoFactura ?? 0)),
-      totalFacturaRelacionada: Number.isNaN(parseMoney(raw.totalFacturaRelacionada ?? raw.totalFactura ?? raw.total ?? raw.monto ?? 0)) ? 0 : Math.max(0, parseMoney(raw.totalFacturaRelacionada ?? raw.totalFactura ?? raw.total ?? raw.monto ?? 0)),
-      pendienteMonto: readFacturaPendingFlag(raw, !(hasFacturaExplicitValue(raw.monto) || hasFacturaExplicitValue(raw.total) || hasFacturaExplicitValue(raw.subtotal) || hasFacturaExplicitValue(raw.totalFacturaRelacionada))),
       observaciones: cleanText(raw.observaciones || raw.observacion || raw.nota || raw.descripcion),
       origen: cleanText(raw.origen || raw.source) || 'manual',
-      documentoTipo: cleanText(raw.documentoTipo || raw.tipoDocumento || raw.parentType || raw.sourceType),
       ventaId: cleanText(raw.ventaId || raw.ocId || raw.documentoId),
       ventaDocumento: cleanText(raw.ventaDocumento || raw.numeroDocumento || raw.oc || raw.ventaRef || raw.documentoVenta),
-      compraProveedorId: cleanText(raw.compraProveedorId || raw.compraId || raw.proveedorCompraId || raw.documentoCompraId),
-      compraDocumento: cleanText(raw.compraDocumento || raw.compraReferencia || raw.facturaReferenciaCompra || raw.documentoCompra || raw.referenciaCompra),
-      proveedorId: cleanText(raw.proveedorId || raw.supplierId || raw.proveedorRef),
-      proveedorNombre: cleanText(raw.proveedorNombre || raw.nombreProveedor || raw.proveedor || raw.supplierName),
       clienteId: cleanText(raw.clienteId || raw.clientId || raw.clienteRef),
       clienteNombre: cleanText(raw.clienteNombre || raw.nombreCliente || raw.cliente || raw.clientName),
       sucursalId: cleanText(raw.sucursalId || raw.branchId || raw.sucursalRef),
       sucursalNombre: cleanText(raw.sucursalNombre || raw.nombreSucursal || raw.sucursal || raw.branchName),
-      ajustesLigados: Array.isArray(raw.ajustesLigados) ? raw.ajustesLigados.map((item) => ({
-        id: cleanText(item?.id),
-        fecha: toDateInputValue(item?.fecha || '') || '',
-        tipo: cleanText(item?.tipo),
-        monto: Number.isNaN(parseMoney(item?.monto)) ? 0 : Math.max(0, parseMoney(item?.monto)),
-        facturaAfectadaId: cleanText(item?.facturaAfectadaId),
-        facturaAfectadaNumero: cleanFacturaVentaNumero(item?.facturaAfectadaNumero || '')
-      })).filter((item) => item.id || item.facturaAfectadaId || item.facturaAfectadaNumero) : [],
       periodo: periodInfo.periodo,
       autoPagada: Boolean(raw.autoPagada),
       autoPagadaAt: Boolean(raw.autoPagada) ? cleanText(raw.autoPagadaAt) : '',
@@ -12168,6 +11046,9 @@ Notas importantes:
       const normalized = normalizeFacturasData(data);
       normalized.facturas = sortFacturasModulo(normalized.facturas);
       normalized.metadata.updatedAt = nowIso();
+      trackSessionChangesFromAuxStorage(FACTURAS_STORAGE_KEY, normalized, [
+        { key: 'facturas', moduleKey: 'facturasModulo', moduleLabel: 'Facturas' }
+      ]);
       localStorage.setItem(FACTURAS_STORAGE_KEY, JSON.stringify(normalized));
       scheduleCloudSnapshotSync('saveFacturasData');
       return normalized;
@@ -12268,7 +11149,6 @@ Notas importantes:
       const key = normalizeFacturaModuloNoKey(numero);
       if (!numero || result.has(key)) return;
       result.set(key, {
-        ...factura,
         numero,
         direct: true,
         generatedByGap: false,
@@ -12305,10 +11185,6 @@ Notas importantes:
           if (numero && !result.has(key)) {
             result.set(key, {
               numero,
-              subtotal: 0,
-              descuento: 0,
-              total: 0,
-              pendienteMonto: true,
               direct: false,
               generatedByGap: true,
               sourceIndex: index + 0.5
@@ -12333,263 +11209,85 @@ Notas importantes:
     };
   }
 
-  function normalizeFacturaModuloOrigin(record) {
-    const factura = normalizeFacturaModuloRecord(record);
-    if (factura.compraProveedorId || factura.proveedorId || factura.origen === 'proveedores') return 'proveedores';
-    if (factura.ventaId || factura.clienteId || factura.origen === 'ventas' || factura.origen === 'salto de consecutivo') return factura.origen === 'salto de consecutivo' ? 'salto de consecutivo' : 'ventas';
-    return factura.origen || 'manual';
-  }
-
-  function getFacturaModuloParentDocument(record) {
-    const factura = normalizeFacturaModuloRecord(record);
-    if (normalizeFacturaModuloOrigin(factura) === 'proveedores') return factura.compraDocumento || factura.ventaDocumento || factura.no || '';
-    return factura.ventaDocumento || factura.compraDocumento || '';
-  }
-
-  function getFacturaModuloPartyDisplay(record) {
-    const factura = normalizeFacturaModuloRecord(record);
-    if (normalizeFacturaModuloOrigin(factura) === 'proveedores') {
-      const proveedor = factura.proveedorId ? getCatalogRecordById('proveedores', factura.proveedorId) : null;
-      return cleanText(factura.proveedorNombre || proveedor?.nombre || '');
-    }
-    return getFacturaClienteDisplay(factura);
-  }
-
-  function getFacturaModuloSecondaryDisplay(record) {
-    const factura = normalizeFacturaModuloRecord(record);
-    if (normalizeFacturaModuloOrigin(factura) === 'proveedores') return getFacturaModuloParentDocument(factura);
-    return getFacturaSucursalDisplay(factura);
-  }
-
-  function getFacturaModuloAmountLabel(record) {
-    const factura = normalizeFacturaModuloRecord(record);
-    if (normalizeFacturaModuloOrigin(factura) === 'proveedores') return formatMoney(factura.monto || factura.totalFacturaRelacionada || 0);
-    return formatMoney(factura.totalFacturaRelacionada || factura.monto || factura.total || 0);
-  }
-
-  function buildFacturaAjustesPayload(ajustesSource, factura) {
-    const target = factura || {};
-    const targetId = cleanText(target.id);
-    const targetNo = cleanFacturaVentaNumero(target.numero || target.no || target.facturaAfectadaNumero || '');
-    const normalizer = target.monto !== undefined && target.subtotal === undefined ? normalizeCompraProveedorAjustesList : normalizeVentaAjustesList;
-    const ajustes = normalizer(ajustesSource).filter((ajuste) => {
-      if (!ajuste.activo) return false;
-      if (!hasAjusteFacturaSnapshot(ajuste)) return false;
-      const ajusteId = cleanText(ajuste.facturaAfectadaId);
-      const ajusteNo = cleanFacturaVentaNumero(ajuste.facturaAfectadaNumero || '');
-      return Boolean((targetId && ajusteId && ajusteId === targetId) || (targetNo && ajusteNo && normalizeFacturaModuloNoKey(ajusteNo) === normalizeFacturaModuloNoKey(targetNo)));
-    });
-    return ajustes.map((ajuste) => ({
-      id: ajuste.id,
-      fecha: ajuste.fecha,
-      tipo: ajuste.tipo,
-      monto: ajuste.monto,
-      facturaAfectadaId: ajuste.facturaAfectadaId,
-      facturaAfectadaNumero: ajuste.facturaAfectadaNumero
-    }));
-  }
-
-  function getFacturaModuloAjustesInfo(record) {
-    const factura = normalizeFacturaModuloRecord(record);
-    let ajustes = Array.isArray(factura.ajustesLigados) ? factura.ajustesLigados : [];
-    const origin = normalizeFacturaModuloOrigin(factura);
-    if (origin === 'ventas' && factura.ventaId) {
-      const venta = (Array.isArray(appData.ventas) ? appData.ventas : []).map((item) => normalizeVentaRecord(item)).find((item) => item.id === factura.ventaId);
-      if (venta) {
-        const facturaVenta = normalizeFacturasVentaList(venta.facturas).find((item) => normalizeFacturaModuloNoKey(item.numero) === normalizeFacturaModuloNoKey(factura.no));
-        ajustes = buildFacturaAjustesPayload(venta.ajustes, facturaVenta || { id: '', numero: factura.no, subtotal: factura.subtotal });
-      }
-    } else if (origin === 'proveedores' && factura.compraProveedorId) {
-      const compra = (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : []).map((item) => normalizeCompraProveedorRecord(item)).find((item) => item.id === factura.compraProveedorId);
-      if (compra) {
-        const facturaProveedor = normalizeFacturasProveedorList(compra.facturasRelacionadas).find((item) => normalizeFacturaModuloNoKey(item.numero) === normalizeFacturaModuloNoKey(factura.no));
-        ajustes = buildFacturaAjustesPayload(compra.ajustes, facturaProveedor || { id: '', numero: factura.no, monto: factura.monto });
-      }
-    }
-    const active = (Array.isArray(ajustes) ? ajustes : []).filter((ajuste) => cleanText(ajuste.id) || Number(ajuste.monto) > 0 || cleanText(ajuste.tipo));
-    return {
-      count: active.length,
-      has: active.length > 0,
-      label: active.length ? active.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo || 'Ajuste'} · ${formatMoney(ajuste.monto || 0)}${ajuste.facturaAfectadaNumero ? ` · Fac. ${ajuste.facturaAfectadaNumero}` : ''}`).join(' | ') : 'Sin ajustes ligados'
-    };
-  }
-
-  function findExistingFacturaModuloIndex(records, payload, options = {}) {
-    const source = Array.isArray(records) ? records : [];
-    const target = normalizeFacturaModuloRecord(payload);
-    const targetNoKey = normalizeFacturaModuloNoKey(target.no);
-    const targetOrigin = normalizeFacturaModuloOrigin(target);
-    const parentId = targetOrigin === 'proveedores' ? target.compraProveedorId : target.ventaId;
-    const exactIndex = source.findIndex((record) => {
-      const factura = normalizeFacturaModuloRecord(record);
-      if (normalizeFacturaModuloNoKey(factura.no) !== targetNoKey) return false;
-      if (targetOrigin === 'proveedores') return factura.compraProveedorId && factura.compraProveedorId === parentId;
-      if (targetOrigin === 'ventas' || targetOrigin === 'salto de consecutivo') return factura.ventaId && factura.ventaId === parentId;
-      return false;
-    });
-    if (exactIndex >= 0) return exactIndex;
-    if (options.allowLegacyNoMatch) {
-      return source.findIndex((record) => {
-        const factura = normalizeFacturaModuloRecord(record);
-        if (normalizeFacturaModuloNoKey(factura.no) !== targetNoKey) return false;
-        const facturaOrigin = normalizeFacturaModuloOrigin(factura);
-        if (targetOrigin === 'proveedores') return !factura.compraProveedorId && facturaOrigin !== 'ventas' && facturaOrigin !== 'salto de consecutivo';
-        return !factura.ventaId && facturaOrigin !== 'proveedores';
-      });
-    }
-    return -1;
-  }
-
-  function upsertFacturasModuloRecords(nextRecords, options = {}) {
-    const data = getFacturasData();
-    const source = Array.isArray(data.facturas) ? data.facturas.map((record) => normalizeFacturaModuloRecord(record)) : [];
-    const timestamp = nowIso();
-    let created = 0;
-    let updated = 0;
-    let skipped = 0;
-    (Array.isArray(nextRecords) ? nextRecords : []).map(normalizeFacturaModuloRecord).forEach((payload) => {
-      if (!payload.no) {
-        skipped += 1;
-        return;
-      }
-      const existingIndex = findExistingFacturaModuloIndex(source, payload, { allowLegacyNoMatch: true });
-      if (existingIndex >= 0) {
-        const existing = normalizeFacturaModuloRecord(source[existingIndex]);
-        source[existingIndex] = normalizeFacturaModuloRecord({
-          ...existing,
-          ...payload,
-          id: existing.id || payload.id,
-          estado: existing.origen === 'manual' && payload.origen !== 'manual' ? payload.estado : (existing.estado || payload.estado),
-          createdAt: existing.createdAt || payload.createdAt,
-          updatedAt: timestamp
-        });
-        updated += 1;
-        return;
-      }
-      source.unshift(normalizeFacturaModuloRecord({ ...payload, createdAt: payload.createdAt || timestamp, updatedAt: timestamp }));
-      created += 1;
-    });
-    if (created || updated) saveFacturasData({ ...data, facturas: source });
-    return { created, updated, skipped };
-  }
-
   function syncVentaFacturasToFacturasModulo(ventaRecord) {
     const venta = normalizeVentaRecord(ventaRecord);
     const expanded = expandFacturasVentaConsecutivos(venta.facturas);
     if (!expanded.items.length) {
-      return { created: 0, updated: 0, directCreated: 0, gapCreated: 0, skipped: 0, generatedCount: 0, omittedBySafety: 0 };
+      return { created: 0, directCreated: 0, gapCreated: 0, skipped: 0, generatedCount: 0, omittedBySafety: 0 };
     }
 
+    const data = getFacturasData();
+    const existingKeys = new Set((data.facturas || []).map((record) => normalizeFacturaModuloNoKey(normalizeFacturaModuloRecord(record).no)).filter(Boolean));
     const timestamp = nowIso();
+    const createdRecords = [];
     const cliente = venta.clienteId ? getCatalogRecordById('clientes', venta.clienteId) : null;
     const sucursal = venta.sucursalId ? getCatalogRecordById('sucursales', venta.sucursalId) : null;
-    const records = [];
+    let skipped = 0;
 
     expanded.items.forEach((item) => {
-      if (!item.numero) return;
+      const key = normalizeFacturaModuloNoKey(item.numero);
+      if (!item.numero || existingKeys.has(key)) {
+        skipped += 1;
+        return;
+      }
       const fromGap = Boolean(item.generatedByGap);
-      const ajustesLigados = fromGap ? [] : buildFacturaAjustesPayload(venta.ajustes, item);
-      records.push(normalizeFacturaModuloRecord({
-        id: cleanText(item.moduloId) || cleanText(item.id && !String(item.id).startsWith('factura') ? item.id : '') || generateId('facturaModulo'),
+      const record = normalizeFacturaModuloRecord({
+        id: generateId('facturaModulo'),
         no: item.numero,
         fecha: venta.fechaOc || todayInputValue(),
         estado: fromGap ? 'Otro' : 'Enviada',
-        monto: fromGap ? 0 : Math.max(0, Number(item.total) || 0),
-        subtotal: fromGap ? 0 : Math.max(0, Number(item.subtotal) || 0),
-        descuento: fromGap ? 0 : Math.max(0, Number(item.descuento) || 0),
-        totalFacturaRelacionada: fromGap ? 0 : Math.max(0, Number(item.total) || 0),
-        pendienteMonto: fromGap ? true : Boolean(item.pendienteMonto),
+        monto: 0,
         observaciones: fromGap ? 'Generada automáticamente por salto de consecutivo. Pendiente de clasificar.' : '',
         origen: fromGap ? 'salto de consecutivo' : 'ventas',
-        documentoTipo: fromGap ? 'Salto consecutivo' : 'Venta / OC',
         ventaId: venta.id,
         ventaDocumento: venta.numeroDocumento,
         clienteId: venta.clienteId,
-        clienteNombre: venta.clienteNombre || cliente?.nombre || '',
+        clienteNombre: cliente?.nombre || '',
         sucursalId: venta.sucursalId,
-        sucursalNombre: venta.sucursalNombre || sucursal?.nombre || '',
-        ajustesLigados,
+        sucursalNombre: sucursal?.nombre || '',
         createdAt: timestamp,
         updatedAt: timestamp
-      }));
+      });
+      createdRecords.push(record);
+      existingKeys.add(key);
     });
 
-    const result = upsertFacturasModuloRecords(records, { source: 'ventas' });
+    if (createdRecords.length) {
+      data.facturas = [...createdRecords, ...(data.facturas || [])];
+      saveFacturasData(data);
+    }
+
     return {
-      ...result,
-      directCreated: records.filter((record) => record.origen === 'ventas').length && result.created ? Math.min(result.created, records.filter((record) => record.origen === 'ventas').length) : 0,
-      gapCreated: records.filter((record) => record.origen === 'salto de consecutivo').length && result.created ? Math.min(result.created, records.filter((record) => record.origen === 'salto de consecutivo').length) : 0,
+      created: createdRecords.length,
+      directCreated: createdRecords.filter((record) => record.origen === 'ventas').length,
+      gapCreated: createdRecords.filter((record) => record.origen === 'salto de consecutivo').length,
+      skipped,
       generatedCount: expanded.generatedCount,
       omittedBySafety: expanded.omittedBySafety
     };
   }
 
-  function syncCompraFacturasToFacturasModulo(compraRecord) {
-    const compra = normalizeCompraProveedorRecord(compraRecord);
-    const facturas = normalizeFacturasProveedorList(compra.facturasRelacionadas);
-    if (!facturas.length) return { created: 0, updated: 0, skipped: 0 };
-
-    const timestamp = nowIso();
-    const proveedor = compra.proveedorId ? getCatalogRecordById('proveedores', compra.proveedorId) : null;
-    const records = facturas.map((factura) => normalizeFacturaModuloRecord({
-      id: generateId('facturaModulo'),
-      no: factura.numero,
-      fecha: compra.fechaCompra || todayInputValue(),
-      estado: 'Enviada',
-      monto: Math.max(0, Number(factura.monto) || 0),
-      subtotal: Math.max(0, Number(factura.monto) || 0),
-      descuento: 0,
-      totalFacturaRelacionada: Math.max(0, Number(factura.monto) || 0),
-      pendienteMonto: Boolean(factura.pendienteMonto),
-      observaciones: '',
-      origen: 'proveedores',
-      documentoTipo: 'Proveedor / Compra',
-      compraProveedorId: compra.id,
-      compraDocumento: compra.facturaReferencia || getCompraProveedorReferenciaCompacta(compra),
-      proveedorId: compra.proveedorId,
-      proveedorNombre: compra.proveedorNombre || proveedor?.nombre || '',
-      ajustesLigados: buildFacturaAjustesPayload(compra.ajustes, factura),
-      createdAt: timestamp,
-      updatedAt: timestamp
-    }));
-
-    return upsertFacturasModuloRecords(records, { source: 'proveedores' });
-  }
-
   function formatVentaFacturasSyncMessage(result) {
-    if (!result || (!result.created && !result.updated && !result.skipped && !result.omittedBySafety)) return '';
+    if (!result || (!result.created && !result.skipped && !result.omittedBySafety)) return '';
     const parts = [];
     if (result.created) {
       parts.push(`Facturas sincronizadas: ${result.created}`);
       if (result.gapCreated) parts.push(`intermedias: ${result.gapCreated}`);
     }
-    if (result.updated) parts.push(`actualizadas: ${result.updated}`);
-    if (result.skipped) parts.push(`omitidas: ${result.skipped}`);
+    if (result.skipped) parts.push(`sin duplicar existentes: ${result.skipped}`);
     if (result.omittedBySafety) parts.push(`salto demasiado grande omitido por seguridad: ${result.omittedBySafety}`);
-    return parts.length ? `${parts.join(' · ')}.` : '';
-  }
-
-  function formatCompraFacturasSyncMessage(result) {
-    if (!result || (!result.created && !result.updated && !result.skipped)) return '';
-    const parts = [];
-    if (result.created) parts.push(`Facturas de proveedor sincronizadas: ${result.created}`);
-    if (result.updated) parts.push(`actualizadas: ${result.updated}`);
-    if (result.skipped) parts.push(`omitidas: ${result.skipped}`);
     return parts.length ? `${parts.join(' · ')}.` : '';
   }
 
   function getFacturaOrigenLabel(record) {
     const factura = normalizeFacturaModuloRecord(record);
-    if (factura.origen === 'proveedores' || factura.compraProveedorId) {
-      return `Origen: Proveedores / Compras${factura.compraDocumento ? ` · ${factura.compraDocumento}` : ''}`;
-    }
     if (factura.origen === 'ventas') {
       return `Origen: Ventas / OC${factura.ventaDocumento ? ` · ${factura.ventaDocumento}` : ''}`;
     }
     if (factura.origen === 'salto de consecutivo') {
       return `Origen: salto de consecutivo${factura.ventaDocumento ? ` · ${factura.ventaDocumento}` : ''}`;
     }
-    return factura.origen === 'manual' ? 'Origen: Manual' : '';
+    return '';
   }
 
   function setFacturasMessage(message, type = 'success') {
@@ -12831,402 +11529,6 @@ Notas importantes:
       .filter((item) => normalizeKeyForCompare(item.record.no).includes(query));
   }
 
-  function getFacturaReliableDateValue(raw) {
-    const source = isPlainObject(raw) ? raw : {};
-    return toDateInputValue(source.fecha || source.fechaFactura || source.fechaEmision || source.issued || '');
-  }
-
-  function getFacturasGlobalSortLabel(record) {
-    const factura = normalizeFacturaModuloRecord(record);
-    return cleanText(getFacturaModuloPartyDisplay(factura) || getFacturaSucursalDisplay(factura) || factura.clienteNombre || factura.proveedorNombre || factura.sucursalNombre || '');
-  }
-
-  function compareFacturasGlobalItems(a, b) {
-    const byNo = compareFacturaNaturalNo(b?.record?.no, a?.record?.no);
-    if (byNo !== 0) return byNo;
-
-    if (a?.hasReliableDate && b?.hasReliableDate) {
-      const byDate = String(b.reliableDate).localeCompare(String(a.reliableDate));
-      if (byDate !== 0) return byDate;
-    } else if (a?.hasReliableDate !== b?.hasReliableDate) {
-      return a?.hasReliableDate ? -1 : 1;
-    }
-
-    const byParty = getFacturasGlobalSortLabel(a?.record).localeCompare(getFacturasGlobalSortLabel(b?.record), 'es-NI', {
-      numeric: true,
-      sensitivity: 'base'
-    });
-    if (byParty !== 0) return byParty;
-
-    return (Number(a?.sourceIndex) || 0) - (Number(b?.sourceIndex) || 0);
-  }
-
-  function getFacturasGlobalItems(data = getFacturasData()) {
-    const source = normalizeFacturasData(data);
-    return (source.facturas || [])
-      .map((raw, index) => {
-        const reliableDate = getFacturaReliableDateValue(raw);
-        return {
-          record: normalizeFacturaModuloRecord(raw),
-          sourceIndex: index,
-          reliableDate,
-          hasReliableDate: Boolean(reliableDate)
-        };
-      })
-      .sort(compareFacturasGlobalItems);
-  }
-
-  function normalizeFacturaGlobalSearchValue(value) {
-    return normalizeKeyForCompare(value);
-  }
-
-  function normalizeFacturaGlobalLooseSearchValue(value) {
-    return normalizeFacturaGlobalSearchValue(value).replace(/[^a-z0-9]/gi, '');
-  }
-
-  function normalizeFacturaGlobalNumericSearchValue(value) {
-    return cleanText(value).replace(/\D+/g, '').replace(/^0+(?=\d)/, '');
-  }
-
-  function getFacturaGlobalPartyFilterPayload(record) {
-    const factura = normalizeFacturaModuloRecord(record);
-    const origin = normalizeFacturaModuloOrigin(factura);
-    if (origin === 'proveedores') {
-      const proveedor = factura.proveedorId ? getCatalogRecordById('proveedores', factura.proveedorId) : null;
-      const label = cleanText(factura.proveedorNombre || proveedor?.nombre || '');
-      const key = cleanText(factura.proveedorId) || (label ? normalizeKeyForCompare(label) : '');
-      return key && label ? { value: `proveedor:${key}`, label } : { value: '', label: '' };
-    }
-    const cliente = factura.clienteId ? getCatalogRecordById('clientes', factura.clienteId) : null;
-    const label = cleanText(factura.clienteNombre || cliente?.nombre || '');
-    const key = cleanText(factura.clienteId) || (label ? normalizeKeyForCompare(label) : '');
-    return key && label ? { value: `cliente:${key}`, label } : { value: '', label: '' };
-  }
-
-  function getFacturaGlobalSucursalFilterPayload(record) {
-    const factura = normalizeFacturaModuloRecord(record);
-    const label = getFacturaSucursalDisplay(factura);
-    const key = cleanText(factura.sucursalId) || (label ? normalizeKeyForCompare(label) : '');
-    return key && label ? { value: `sucursal:${key}`, label } : { value: '', label: '' };
-  }
-
-  function getFacturasGlobalFilters() {
-    return {
-      search: cleanText(facturasState.globalSearch),
-      searchKey: normalizeFacturaGlobalSearchValue(facturasState.globalSearch),
-      searchLooseKey: normalizeFacturaGlobalLooseSearchValue(facturasState.globalSearch),
-      searchNumericKey: normalizeFacturaGlobalNumericSearchValue(facturasState.globalSearch),
-      cliente: cleanText(facturasState.globalCliente),
-      sucursal: cleanText(facturasState.globalSucursal),
-      estado: cleanText(facturasState.globalEstado)
-    };
-  }
-
-  function facturaGlobalItemMatchesFilters(item, filters = getFacturasGlobalFilters()) {
-    const factura = normalizeFacturaModuloRecord(item?.record || item);
-    if (filters.searchKey) {
-      const noKey = normalizeFacturaGlobalSearchValue(factura.no);
-      const noLooseKey = normalizeFacturaGlobalLooseSearchValue(factura.no);
-      const noNumericKey = normalizeFacturaGlobalNumericSearchValue(factura.no);
-      const matchesSearch = noKey.includes(filters.searchKey)
-        || (filters.searchLooseKey && noLooseKey.includes(filters.searchLooseKey))
-        || (filters.searchNumericKey && noNumericKey.includes(filters.searchNumericKey));
-      if (!matchesSearch) return false;
-    }
-    if (filters.cliente && getFacturaGlobalPartyFilterPayload(factura).value !== filters.cliente) return false;
-    if (filters.sucursal && getFacturaGlobalSucursalFilterPayload(factura).value !== filters.sucursal) return false;
-    if (filters.estado && normalizeFacturaEstado(factura.estado) !== filters.estado) return false;
-    return true;
-  }
-
-  function getFacturasGlobalFilterOptions(items = getFacturasGlobalItems()) {
-    const partyMap = new Map();
-    const sucursalMap = new Map();
-    const estadoSet = new Set();
-    (Array.isArray(items) ? items : []).forEach((item) => {
-      const factura = normalizeFacturaModuloRecord(item?.record || item);
-      const party = getFacturaGlobalPartyFilterPayload(factura);
-      if (party.value && party.label && !partyMap.has(party.value)) partyMap.set(party.value, party.label);
-      const sucursal = getFacturaGlobalSucursalFilterPayload(factura);
-      if (sucursal.value && sucursal.label && !sucursalMap.has(sucursal.value)) sucursalMap.set(sucursal.value, sucursal.label);
-      const estado = normalizeFacturaEstado(factura.estado);
-      if (estado) estadoSet.add(estado);
-    });
-    const toOptions = (map) => Array.from(map.entries())
-      .map(([value, label]) => ({ value, label }))
-      .sort((a, b) => compareCatalogDisplayText(a.label, b.label));
-    const estados = [
-      ...FACTURA_ESTADO_OPTIONS.filter((estado) => estadoSet.has(estado)),
-      ...Array.from(estadoSet).filter((estado) => !FACTURA_ESTADO_OPTIONS.includes(estado)).sort(compareCatalogDisplayText)
-    ].map((estado) => ({ value: estado, label: estado }));
-    return {
-      clientes: toOptions(partyMap),
-      sucursales: toOptions(sucursalMap),
-      estados
-    };
-  }
-
-  function getFacturasGlobalFilteredItems(items = getFacturasGlobalItems(), filters = getFacturasGlobalFilters()) {
-    return (Array.isArray(items) ? items : []).filter((item) => facturaGlobalItemMatchesFilters(item, filters));
-  }
-
-  function getFacturasGlobalPagePayload(data = getFacturasData()) {
-    const items = getFacturasGlobalItems(data);
-    const filters = getFacturasGlobalFilters();
-    const filteredItems = getFacturasGlobalFilteredItems(items, filters);
-    const totalPages = Math.max(1, Math.ceil(filteredItems.length / FACTURAS_PAGE_SIZE));
-    facturasState.globalPage = Math.min(Math.max(1, Number.parseInt(facturasState.globalPage, 10) || 1), totalPages);
-    const start = (facturasState.globalPage - 1) * FACTURAS_PAGE_SIZE;
-    return {
-      items,
-      filteredItems,
-      filters,
-      filterOptions: getFacturasGlobalFilterOptions(items),
-      totalPages,
-      totalRecords: filteredItems.length,
-      totalAllRecords: items.length,
-      page: facturasState.globalPage,
-      pagedItems: filteredItems.slice(start, start + FACTURAS_PAGE_SIZE)
-    };
-  }
-
-  function renderFacturasGlobalModal(data = getFacturasData()) {
-    const payload = getFacturasGlobalPagePayload(data);
-    const body = renderFacturasGlobalModalBody(payload);
-    const modalId = getFacturasGlobalModalId();
-    return `
-      <div class="modal-backdrop facturas-global-backdrop" data-modal-backdrop="${escapeHtml(modalId)}" role="presentation">
-        <section class="edit-modal facturas-global-modal" role="dialog" aria-modal="true" aria-labelledby="${escapeHtml(modalId)}-title">
-          <header class="edit-modal-header facturas-global-modal-header">
-            <div>
-              <span class="eyebrow mini">Consulta general</span>
-              <h2 id="${escapeHtml(modalId)}-title">Global de Facturas</h2>
-              <p>Todas las facturas registradas, sin importar período. La paginación de esta ventana es independiente.</p>
-            </div>
-            <button type="button" class="modal-close" data-modal-close="${escapeHtml(modalId)}" aria-label="Cerrar Global de Facturas">×</button>
-          </header>
-          <div class="edit-modal-body facturas-global-modal-body">
-            ${body}
-          </div>
-        </section>
-      </div>
-    `;
-  }
-
-  function renderFacturasGlobalFilterOptions(options = [], selectedValue = '', emptyLabel = 'Todos') {
-    const selected = cleanText(selectedValue);
-    const safeOptions = Array.isArray(options) ? options : [];
-    return [
-      `<option value="">${escapeHtml(emptyLabel)}</option>`,
-      ...safeOptions.map((option) => {
-        const value = cleanText(option?.value);
-        const label = cleanText(option?.label) || value;
-        return `<option value="${escapeHtml(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(label)}</option>`;
-      })
-    ].join('');
-  }
-
-  function renderFacturasGlobalFilters(info) {
-    const filters = isPlainObject(info?.filters) ? info.filters : getFacturasGlobalFilters();
-    const options = isPlainObject(info?.filterOptions) ? info.filterOptions : getFacturasGlobalFilterOptions();
-    return `
-      <form class="facturas-global-filters" data-factura-global-filters aria-label="Filtros Global de Facturas">
-        <label class="form-field facturas-global-search-field">
-          <span>Buscar factura</span>
-          <input type="search" name="globalSearch" value="${escapeHtml(filters.search || '')}" placeholder="Número de factura" autocomplete="off" inputmode="search" data-factura-global-search />
-        </label>
-        <label class="form-field">
-          <span>Cliente / Proveedor</span>
-          <select name="globalCliente" data-factura-global-filter="cliente">
-            ${renderFacturasGlobalFilterOptions(options.clientes, filters.cliente, 'Todos')}
-          </select>
-        </label>
-        <label class="form-field">
-          <span>Sucursal</span>
-          <select name="globalSucursal" data-factura-global-filter="sucursal">
-            ${renderFacturasGlobalFilterOptions(options.sucursales, filters.sucursal, 'Todas')}
-          </select>
-        </label>
-        <label class="form-field">
-          <span>Estado</span>
-          <select name="globalEstado" data-factura-global-filter="estado">
-            ${renderFacturasGlobalFilterOptions(options.estados, filters.estado, 'Todos')}
-          </select>
-        </label>
-        <button type="button" class="secondary-action compact-action facturas-global-clear" data-factura-global-clear>Limpiar</button>
-      </form>
-    `;
-  }
-
-  function renderFacturasGlobalModalBody(payload) {
-    const info = isPlainObject(payload) ? payload : getFacturasGlobalPagePayload();
-    const totalRecords = Number.parseInt(info.totalRecords, 10) || 0;
-    const totalAllRecords = Number.parseInt(info.totalAllRecords, 10) || totalRecords;
-    const page = Math.max(1, Number.parseInt(info.page, 10) || 1);
-    const totalPages = Math.max(1, Number.parseInt(info.totalPages, 10) || 1);
-    const pagedItems = Array.isArray(info.pagedItems) ? info.pagedItems : [];
-    const hasFilters = Boolean(cleanText(info.filters?.search) || cleanText(info.filters?.cliente) || cleanText(info.filters?.sucursal) || cleanText(info.filters?.estado));
-    const emptyMessage = totalAllRecords ? 'No hay facturas que coincidan con los filtros.' : 'No hay facturas registradas.';
-    return `
-      <div class="facturas-global-toolbar" aria-label="Resumen Global de Facturas">
-        <div class="status-grid compact facturas-global-status-grid">
-          <div class="status-item"><strong>Resultado</strong><span>${totalRecords}</span><small>${hasFilters ? `de ${totalAllRecords}` : 'Global'}</small></div>
-          <div class="status-item"><strong>Página global</strong><span>${page}/${totalPages}</span></div>
-          <div class="status-item"><strong>Por página</strong><span>${FACTURAS_PAGE_SIZE}</span></div>
-        </div>
-        ${renderFacturasGlobalFilters(info)}
-      </div>
-      ${totalRecords ? renderOperationalTableShell({
-        shellClass: 'facturas-global-table',
-        wrapClass: 'facturas-table-wrap facturas-global-table-wrap',
-        ariaLabel: 'Global de Facturas',
-        tableClass: 'operational-table-facturas facturas-global-operational-table',
-        headers: '<th>No.</th><th>Fecha</th><th>Período</th><th>Cliente / Proveedor</th><th>Sucursal</th><th>Estado</th><th>Monto / total</th><th>Origen</th>',
-        rows: pagedItems.map((item) => renderFacturaGlobalRow(item)).join('')
-      }) : `<p class="muted-text compact-note facturas-global-empty">${escapeHtml(emptyMessage)}</p>`}
-      ${renderFacturasGlobalPagination(totalRecords, page, totalPages)}
-    `;
-  }
-
-  function renderFacturaGlobalRow(item) {
-    const payload = isPlainObject(item) && item.record ? item : { record: item, hasReliableDate: true };
-    const factura = normalizeFacturaModuloRecord(payload.record);
-    const periodInfo = payload.hasReliableDate ? getFacturaPeriodInfoFromDate(factura.fecha) : null;
-    const partyLabel = getFacturaModuloPartyDisplay(factura) || '—';
-    const sucursalLabel = getFacturaSucursalDisplay(factura) || '—';
-    const origenLabel = getFacturaOrigenLabel(factura) || 'Manual';
-    const dateLabel = payload.hasReliableDate ? formatDate(factura.fecha) : '—';
-    const periodLabel = periodInfo?.label || '—';
-    const amountLabel = getFacturaModuloAmountLabel(factura) || formatMoney(factura.monto || 0);
-    return `
-      <tr>
-        <td><span class="compact-primary critical-value-doc" title="${escapeHtml(factura.no || '—')}">${escapeHtml(factura.no || '—')}</span></td>
-        <td><span class="critical-value-date" title="${escapeHtml(dateLabel)}">${escapeHtml(dateLabel)}</span></td>
-        <td><span title="${escapeHtml(periodLabel)}">${escapeHtml(periodLabel)}</span></td>
-        <td><span title="${escapeHtml(partyLabel)}">${escapeHtml(partyLabel)}</span></td>
-        <td><span title="${escapeHtml(sucursalLabel)}">${escapeHtml(sucursalLabel)}</span></td>
-        <td><span class="state-pill ${getEstadoClass(factura.estado)} critical-value-state" title="${escapeHtml(factura.estado || '—')}">${escapeHtml(factura.estado || '—')}</span></td>
-        <td class="amount-cell"><span class="critical-value-money" title="${escapeHtml(amountLabel)}">${escapeHtml(amountLabel)}</span></td>
-        <td><small title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel)}</small></td>
-      </tr>
-    `;
-  }
-
-  function renderFacturasGlobalPagination(totalRecords, page, totalPages) {
-    const count = Number.parseInt(totalRecords, 10) || 0;
-    const current = Math.max(1, Number.parseInt(page, 10) || 1);
-    const pages = Math.max(1, Number.parseInt(totalPages, 10) || 1);
-    if (count <= FACTURAS_PAGE_SIZE) {
-      return `<div class="pagination-row facturas-pagination facturas-global-pagination"><span>Página 1 de 1</span></div>`;
-    }
-    return `
-      <div class="pagination-row facturas-pagination facturas-global-pagination" aria-label="Paginación Global de Facturas">
-        <button type="button" class="secondary-action compact-action" data-factura-global-page="prev" ${current <= 1 ? 'disabled' : ''} title="Página global anterior">Anterior</button>
-        <span>Página ${current} de ${pages}</span>
-        <button type="button" class="secondary-action compact-action" data-factura-global-page="next" ${current >= pages ? 'disabled' : ''} title="Página global siguiente">Siguiente</button>
-      </div>
-    `;
-  }
-
-  function openFacturasGlobalModal() {
-    facturasState.globalOpen = true;
-    facturasState.globalPage = 1;
-    facturasState.message = null;
-    renderRoute({ preserveScroll: true });
-  }
-
-  function closeFacturasGlobalModal() {
-    facturasState.globalOpen = false;
-    facturasState.globalPage = 1;
-    renderRoute({ preserveScroll: true });
-  }
-
-  function updateFacturasGlobalFilters(form, options = {}) {
-    const formData = new FormData(form);
-    const focusName = cleanText(options.focusName);
-    const cursor = Number.parseInt(options.cursor, 10);
-    facturasState.globalSearch = cleanText(formData.get('globalSearch'));
-    facturasState.globalCliente = cleanText(formData.get('globalCliente'));
-    facturasState.globalSucursal = cleanText(formData.get('globalSucursal'));
-    facturasState.globalEstado = cleanText(formData.get('globalEstado'));
-    facturasState.globalPage = 1;
-    facturasState.globalOpen = true;
-    facturasState.message = null;
-    renderRoute({ preserveScroll: true });
-    if (focusName) {
-      requestAnimationFrame(() => {
-        const field = viewRoot.querySelector(`[name="${focusName}"]`);
-        if (!field) return;
-        try {
-          field.focus({ preventScroll: true });
-        } catch (error) {
-          field.focus();
-        }
-        if (Number.isFinite(cursor) && typeof field.setSelectionRange === 'function') {
-          field.setSelectionRange(cursor, cursor);
-        }
-      });
-    }
-    scheduleFacturasGlobalModalScrollTop();
-  }
-
-  function clearFacturasGlobalFilters() {
-    facturasState.globalSearch = '';
-    facturasState.globalCliente = '';
-    facturasState.globalSucursal = '';
-    facturasState.globalEstado = '';
-    facturasState.globalPage = 1;
-    facturasState.globalOpen = true;
-    renderRoute({ preserveScroll: true });
-    scheduleFacturasGlobalModalScrollTop();
-  }
-
-  function scrollFacturasGlobalModalToTop() {
-    if (!viewRoot) return;
-    const selectors = [
-      '.facturas-global-modal-body',
-      '.facturas-global-table-wrap',
-      '.facturas-global-modal [data-operational-table-scroll]'
-    ];
-    const targets = selectors
-      .flatMap((selector) => Array.from(viewRoot.querySelectorAll(selector)))
-      .filter((element, index, list) => element && list.indexOf(element) === index);
-    targets.forEach((element) => {
-      try {
-        element.scrollTo({ top: 0, behavior: 'auto' });
-      } catch (error) {
-        element.scrollTop = 0;
-      }
-    });
-  }
-
-  function scheduleFacturasGlobalModalScrollTop() {
-    const schedule = window.requestAnimationFrame || ((callback) => window.setTimeout(callback, 0));
-    const run = () => scrollFacturasGlobalModalToTop();
-    schedule(() => {
-      run();
-      schedule(run);
-      window.setTimeout(run, 90);
-      window.setTimeout(run, 240);
-    });
-  }
-
-  function changeFacturasGlobalPage(direction) {
-    const payload = getFacturasGlobalPagePayload(getFacturasData());
-    const currentPage = Math.min(Math.max(1, Number.parseInt(facturasState.globalPage, 10) || 1), payload.totalPages);
-    const target = cleanText(direction);
-    if (target === 'first') {
-      facturasState.globalPage = 1;
-    } else if (target === 'last') {
-      facturasState.globalPage = payload.totalPages;
-    } else {
-      facturasState.globalPage = target === 'prev' ? Math.max(1, currentPage - 1) : Math.min(payload.totalPages, currentPage + 1);
-    }
-    facturasState.globalOpen = true;
-    renderRoute({ preserveScroll: true });
-    scheduleFacturasGlobalModalScrollTop();
-  }
-
   function clampFacturasPageForCurrentPeriod(data = getFacturasData(), periodInfo = getCurrentFacturasPeriodInfo()) {
     const base = getFacturasSearchBase(data, periodInfo);
     const totalPages = Math.max(1, Math.ceil(base.records.length / FACTURAS_PAGE_SIZE));
@@ -13238,12 +11540,6 @@ Notas importantes:
     facturasState.page = 1;
     facturasState.search = '';
     facturasState.editingId = null;
-    facturasState.globalOpen = false;
-    facturasState.globalPage = 1;
-    facturasState.globalSearch = '';
-    facturasState.globalCliente = '';
-    facturasState.globalSucursal = '';
-    facturasState.globalEstado = '';
   }
 
   function renderFacturas() {
@@ -13290,7 +11586,6 @@ Notas importantes:
         ${renderFacturasPeriodoList(periodInfo, pagedRecords, periodRecords.length, totalPages, { closed: currentPeriodClosed })}
         ${renderFacturasHistorico(historyGroups)}
         ${safeEditingRecord ? renderEditModal(getFacturasModalId(), 'Editar factura', 'Actualiza la factura sin salir del listado ni saltar al formulario principal.', renderFacturaForm(safeEditingRecord, 'edit')) : ''}
-        ${facturasState.globalOpen ? renderFacturasGlobalModal(data) : ''}
       </section>
     `;
   }
@@ -13389,10 +11684,7 @@ Notas importantes:
             <span class="eyebrow mini">Buscar</span>
             <h2>Búsqueda por No. de factura</h2>
           </div>
-          <div class="record-actions compact-row-actions facturas-search-title-actions">
-            <span class="badge">${escapeHtml(scopeLabel)}</span>
-            <button type="button" class="secondary-action compact-action facturas-global-open" data-factura-global-open title="Abrir Global de Facturas">GLOBAL</button>
-          </div>
+          <span class="badge">${escapeHtml(scopeLabel)}</span>
         </div>
         <form class="compact-search-row" data-factura-search-form>
           <label class="form-field compact-search-field">
@@ -13426,7 +11718,7 @@ Notas importantes:
         wrapClass: 'facturas-table-wrap',
         ariaLabel: 'Resultados de búsqueda de facturas',
         tableClass: 'operational-table-facturas',
-        headers: '<th>No.</th><th>Período</th><th>Página</th><th>Fecha</th><th>Origen</th><th>Documento madre</th><th>Cliente / Proveedor</th><th>Subtotal</th><th>Descuento</th><th>Total / Monto</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
+        headers: '<th>No.</th><th>Período</th><th>Página</th><th>Fecha</th><th>Cliente</th><th>Sucursal</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones>',
         rows
       })}
     `;
@@ -13437,9 +11729,8 @@ Notas importantes:
     const factura = normalizeFacturaModuloRecord(item.record);
     const periodInfo = getFacturaPeriodInfoFromDate(factura.fecha);
     const origenLabel = getFacturaOrigenLabel(factura);
-    const partyLabel = getFacturaModuloPartyDisplay(factura);
-    const documentLabel = getFacturaModuloParentDocument(factura);
-    const ajustesInfo = getFacturaModuloAjustesInfo(factura);
+    const clienteNombre = getFacturaClienteDisplay(factura);
+    const sucursalNombre = getFacturaSucursalDisplay(factura);
     const closedPeriod = isFacturaPeriodClosed(factura.periodo);
     const readonly = Boolean(closedPeriod || item.scopeClosed);
     const page = Math.max(1, Number.parseInt(item.page, 10) || 1);
@@ -13452,18 +11743,14 @@ Notas importantes:
         </div>`;
     return `
       <tr>
-        <td><span class="compact-primary" title="${escapeHtml(factura.no)}">${escapeHtml(factura.no || '—')}</span></td>
+        <td><span class="compact-primary" title="${escapeHtml(factura.no)}">${escapeHtml(factura.no || '—')}</span>${origenLabel ? `<small class="factura-origin-label" title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel)}</small>` : ''}</td>
         <td><span>${escapeHtml(periodInfo.label)}</span></td>
         <td><span class="badge subtle">Página ${page}</span></td>
         <td><span>${escapeHtml(formatDate(factura.fecha))}</span></td>
-        <td><small title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel || 'Manual')}</small></td>
-        <td><span title="${escapeHtml(documentLabel || 'Sin documento madre')}">${escapeHtml(documentLabel || '—')}</span></td>
-        <td><span title="${escapeHtml(partyLabel || 'Sin cliente/proveedor')}">${escapeHtml(partyLabel || '—')}</span></td>
-        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.subtotal || 0))}</span></td>
-        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.descuento || 0))}</span></td>
-        <td class="amount-cell"><span>${escapeHtml(getFacturaModuloAmountLabel(factura))}</span></td>
-        <td><small title="${escapeHtml(ajustesInfo.label)}">${ajustesInfo.has ? `Sí (${ajustesInfo.count})` : 'No'}</small></td>
+        <td><span title="${escapeHtml(clienteNombre || 'Sin cliente')}">${escapeHtml(clienteNombre || '—')}</span></td>
+        <td><span title="${escapeHtml(sucursalNombre || 'Sin sucursal')}">${escapeHtml(sucursalNombre || '—')}</span></td>
         <td><span class="state-pill ${getEstadoClass(factura.estado)}">${escapeHtml(factura.estado)}</span></td>
+        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.monto || 0))}</span></td>
         <td><small title="${escapeHtml(factura.observaciones)}">${escapeHtml(factura.observaciones || '—')}</small></td>
         <td>${actions}</td>
       </tr>
@@ -13489,7 +11776,7 @@ Notas importantes:
           wrapClass: 'facturas-table-wrap',
           ariaLabel: `Listado de facturas de ${periodInfo.label}`,
           tableClass: 'operational-table-facturas',
-          headers: '<th>No.</th><th>Fecha</th><th>Origen</th><th>Documento madre</th><th>Cliente / Proveedor</th><th>Subtotal</th><th>Descuento</th><th>Total / Monto</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
+          headers: '<th>No.</th><th>Fecha</th><th>Cliente</th><th>Sucursal</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones>',
           rows: records.map((record) => renderFacturaRow(record)).join('')
         }) : `<p class="muted-text compact-note">${escapeHtml(emptyText)}</p>`}
         ${pagination}
@@ -13571,7 +11858,7 @@ Notas importantes:
               wrapClass: 'facturas-table-wrap',
               ariaLabel: `Histórico de facturas de ${group.label}`,
               tableClass: 'operational-table-facturas',
-              headers: '<th>No.</th><th>Fecha</th><th>Origen</th><th>Documento madre</th><th>Cliente / Proveedor</th><th>Subtotal</th><th>Descuento</th><th>Total / Monto</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
+              headers: '<th>No.</th><th>Fecha</th><th>Cliente</th><th>Sucursal</th><th>Estado</th><th>Monto</th><th>Observaciones</th><th>Acciones>',
               rows: pagedRecords.map((record) => renderFacturaRow(record, { readonly: true })).join('')
             }) : '<p class="muted-text compact-note">No hay facturas en este período histórico.</p>'}
             ${renderFacturasPagination(group.records.length, totalPages, { scope: 'history', periodo: group.periodo })}
@@ -13585,9 +11872,8 @@ Notas importantes:
     const factura = normalizeFacturaModuloRecord(record);
     const periodInfo = getFacturaPeriodInfoFromDate(factura.fecha);
     const origenLabel = getFacturaOrigenLabel(factura);
-    const partyLabel = getFacturaModuloPartyDisplay(factura);
-    const documentLabel = getFacturaModuloParentDocument(factura);
-    const ajustesInfo = getFacturaModuloAjustesInfo(factura);
+    const clienteNombre = getFacturaClienteDisplay(factura);
+    const sucursalNombre = getFacturaSucursalDisplay(factura);
     const closedPeriod = isFacturaPeriodClosed(factura.periodo);
     const readonly = Boolean(options.readonly || closedPeriod);
     const actions = readonly
@@ -13601,14 +11887,10 @@ Notas importantes:
         <td><span class="compact-primary" title="${escapeHtml(factura.no)}">${escapeHtml(factura.no || '—')}</span>${origenLabel ? `<small class="factura-origin-label" title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel)}</small>` : ''}</td>
         ${options.includePeriod ? `<td><span>${escapeHtml(periodInfo.label)}</span></td>` : ''}
         <td><span>${escapeHtml(formatDate(factura.fecha))}</span></td>
-        <td><small title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel || 'Manual')}</small></td>
-        <td><span title="${escapeHtml(documentLabel || 'Sin documento madre')}">${escapeHtml(documentLabel || '—')}</span></td>
-        <td><span title="${escapeHtml(partyLabel || 'Sin cliente/proveedor')}">${escapeHtml(partyLabel || '—')}</span></td>
-        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.subtotal || 0))}</span></td>
-        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.descuento || 0))}</span></td>
-        <td class="amount-cell"><span>${escapeHtml(getFacturaModuloAmountLabel(factura))}</span></td>
-        <td><small title="${escapeHtml(ajustesInfo.label)}">${ajustesInfo.has ? `Sí (${ajustesInfo.count})` : 'No'}</small></td>
+        <td><span title="${escapeHtml(clienteNombre || 'Sin cliente')}">${escapeHtml(clienteNombre || '—')}</span></td>
+        <td><span title="${escapeHtml(sucursalNombre || 'Sin sucursal')}">${escapeHtml(sucursalNombre || '—')}</span></td>
         <td><span class="state-pill ${getEstadoClass(factura.estado)}">${escapeHtml(factura.estado)}</span></td>
+        <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.monto || 0))}</span></td>
         <td><small title="${escapeHtml(factura.observaciones)}">${escapeHtml(factura.observaciones || '—')}</small></td>
         <td>${actions}</td>
       </tr>
@@ -13648,7 +11930,7 @@ Notas importantes:
     clearFacturaForm({ resetCapture: true });
   }
 
-  async function saveFacturaRecord(form) {
+  function saveFacturaRecord(form) {
     const formData = new FormData(form);
     const isCreateMode = isFacturaCreateForm(form);
     const no = cleanText(formData.get('no'));
@@ -13726,7 +12008,6 @@ Notas importantes:
     }
     clampFacturasPageForCurrentPeriod(data);
     setFacturasMessage(existing ? 'Factura actualizada correctamente.' : 'Factura agregada correctamente.');
-    await confirmCriticalCloudSave(facturasState, { operation: 'facturas' });
     renderRoute({ preserveScroll: true });
   }
 
@@ -13747,7 +12028,7 @@ Notas importantes:
     renderRoute({ preserveScroll: true });
   }
 
-  async function deleteFacturaRecord(id) {
+  function deleteFacturaRecord(id) {
     const record = findFacturaModuloById(id);
     if (!record) {
       setFacturasMessage('No se encontró la factura para borrar.', 'error');
@@ -13763,7 +12044,6 @@ Notas importantes:
     const totalPages = Math.max(1, Math.ceil(periodRecords.length / FACTURAS_PAGE_SIZE));
     facturasState.page = Math.min(Math.max(1, facturasState.page), totalPages);
     setFacturasMessage('Factura borrada correctamente. Sin drama, sin tocar saldos.');
-    await confirmCriticalCloudSave(facturasState, { operation: 'facturas_borrar' });
     renderRoute({ preserveScroll: true });
   }
 
@@ -14623,7 +12903,7 @@ Notas importantes:
     renderRoute();
   }
 
-  async function saveNotaGeneralRecord(form) {
+  function saveNotaGeneralRecord(form) {
     const formData = new FormData(form);
     const timestamp = nowIso();
     const data = getNotasData();
@@ -14653,11 +12933,10 @@ Notas importantes:
     saveNotasData(data);
     clearNotasForms();
     setNotasMessage(completed ? 'Nota general guardada en Histórico.' : 'Nota general guardada.');
-    await confirmCriticalCloudSave(notasState, { operation: 'notas' });
     renderRoute();
   }
 
-  async function savePendienteRecord(form) {
+  function savePendienteRecord(form) {
     const formData = new FormData(form);
     const timestamp = nowIso();
     const data = getNotasData();
@@ -14692,11 +12971,10 @@ Notas importantes:
     saveNotasData(data);
     clearNotasForms();
     setNotasMessage('Pendiente de registrar guardado sin afectar Gastos ni Resumen. Así sí: apunte es apunte.');
-    await confirmCriticalCloudSave(notasState, { operation: 'notas_pendiente' });
     renderRoute();
   }
 
-  async function saveRecordatorioRecord(form) {
+  function saveRecordatorioRecord(form) {
     const formData = new FormData(form);
     const timestamp = nowIso();
     const data = getNotasData();
@@ -14735,7 +13013,6 @@ Notas importantes:
     saveNotasData(data);
     clearNotasForms();
     setNotasMessage(completed ? 'Recordatorio guardado en Histórico.' : 'Recordatorio guardado.');
-    await confirmCriticalCloudSave(notasState, { operation: 'notas_recordatorio' });
     renderRoute();
   }
 
@@ -14767,7 +13044,7 @@ Notas importantes:
     renderRoute();
   }
 
-  async function completeNotaRecord(type, id) {
+  function completeNotaRecord(type, id) {
     const data = getNotasData();
     const timestamp = nowIso();
     if (type === 'nota') {
@@ -14778,22 +13055,20 @@ Notas importantes:
     saveNotasData(data);
     clearNotasForms();
     setNotasMessage('Registro marcado como cumplido y enviado al Histórico.');
-    await confirmCriticalCloudSave(notasState, { operation: 'notas_cumplido' });
     renderRoute();
   }
 
-  async function completeRecordatorioRecord(id) {
+  function completeRecordatorioRecord(id) {
     const data = getNotasData();
     const timestamp = nowIso();
     data.recordatorios = data.recordatorios.map((record) => record.id === id ? normalizeRecordatorioRecord({ ...record, estado: 'Cumplido', completed: true, completedAt: record.completedAt || timestamp, updatedAt: timestamp }) : record);
     saveNotasData(data);
     clearNotasForms();
     setNotasMessage('Recordatorio marcado como cumplido y enviado al Histórico.');
-    await confirmCriticalCloudSave(notasState, { operation: 'notas_recordatorio_cumplido' });
     renderRoute();
   }
 
-  async function deleteNotaRecord(type, id) {
+  function deleteNotaRecord(type, id) {
     const label = type === 'pendiente' ? 'este pendiente' : 'esta nota';
     if (!window.confirm(`¿Borrar ${label}? Esta acción no toca datos de negocio.`)) return;
     const data = getNotasData();
@@ -14802,18 +13077,16 @@ Notas importantes:
     saveNotasData(data);
     clearNotasForms();
     setNotasMessage('Registro borrado definitivamente del módulo Notas.');
-    await confirmCriticalCloudSave(notasState, { operation: 'notas_borrar' });
     renderRoute();
   }
 
-  async function deleteRecordatorioRecord(id) {
+  function deleteRecordatorioRecord(id) {
     if (!window.confirm('¿Borrar este recordatorio? Esta acción no toca datos de negocio.')) return;
     const data = getNotasData();
     data.recordatorios = data.recordatorios.filter((record) => record.id !== id);
     saveNotasData(data);
     clearNotasForms();
     setNotasMessage('Recordatorio borrado definitivamente.');
-    await confirmCriticalCloudSave(notasState, { operation: 'notas_recordatorio_borrar' });
     renderRoute();
   }
 
@@ -17554,7 +15827,7 @@ Notas importantes:
     return '';
   }
 
-  async function saveBdatosCreate(form) {
+  function saveBdatosCreate(form) {
     if (!canCurrentRole('editCatalogs')) {
       bdatosState.message = ADMIN_RESTRICTED_MESSAGE;
       bdatosState.messageType = 'error';
@@ -17594,11 +15867,10 @@ Notas importantes:
       detail: buildActivityDetail(['Artículo agregado', record.codigo, record.descripcion, formatMoney(record.precio)]),
       source: 'local'
     });
-    await confirmCriticalCloudSave(bdatosState, { operation: 'bdatos' });
     renderRoute({ preserveScroll: true });
   }
 
-  async function saveBdatosEdit(form) {
+  function saveBdatosEdit(form) {
     if (!canCurrentRole('editCatalogs')) {
       bdatosState.message = ADMIN_RESTRICTED_MESSAGE;
       bdatosState.messageType = 'error';
@@ -17647,7 +15919,6 @@ Notas importantes:
       detail: buildActivityDetail(['Artículo actualizado', updated.codigo, updated.descripcion, formatMoney(updated.precio)]),
       source: 'local'
     });
-    await confirmCriticalCloudSave(bdatosState, { operation: 'bdatos' });
     renderRoute({ preserveScroll: true });
   }
 
@@ -17665,7 +15936,7 @@ Notas importantes:
     renderRoute({ preserveScroll: true });
   }
 
-  async function deleteBdatosRecord(recordId) {
+  function deleteBdatosRecord(recordId) {
     if (!canCurrentRole('editCatalogs')) {
       bdatosState.message = ADMIN_RESTRICTED_MESSAGE;
       bdatosState.messageType = 'error';
@@ -17693,7 +15964,6 @@ Notas importantes:
       detail: buildActivityDetail(['Artículo borrado', record.codigo, record.descripcion]),
       source: 'local'
     });
-    await confirmCriticalCloudSave(bdatosState, { operation: 'bdatos_borrar' });
     renderRoute({ preserveScroll: true });
   }
 
@@ -18223,7 +16493,6 @@ Notas importantes:
   function getGastoModalId() { return 'gasto'; }
   function getCasaModalId() { return 'casa'; }
   function getFacturasModalId() { return 'factura'; }
-  function getFacturasGlobalModalId() { return 'facturas-global'; }
 
 
   function renderVentas() {
@@ -18274,39 +16543,43 @@ Notas importantes:
           <article class="metric-card"><span>Anuladas</span><strong>${totals.anuladas}</strong></article>
         </section>
 
-        <div class="ventas-layout operational-fullwidth-stack">
-          <article class="panel-card venta-form-card">
-            <div class="section-title-row">
-              <div>
-                <span class="eyebrow mini">Nueva OC</span>
-                <h2>Crear Venta / OC</h2>
+        <div class="ventas-layout">
+          <div class="ventas-left-column">
+            <article class="panel-card venta-form-card">
+              <div class="section-title-row">
+                <div>
+                  <span class="eyebrow mini">Nueva OC</span>
+                  <h2>Crear venta / OC</h2>
+                </div>
               </div>
-            </div>
-            <p class="muted-text">La venta se calcula como Subtotal - Descuento = Total. Los ajustes posteriores siguen ligados a la OC y no son cobros.</p>
-            ${renderVentaForm(null, clientesActivos, sucursalesActivas, missingCatalogs, ventasState.quickCapture)}
-          </article>
+              <p class="muted-text">La venta se calcula como Subtotal - Descuento = Total. Los ajustes posteriores siguen ligados a la OC y no son cobros.</p>
+              ${renderVentaForm(null, clientesActivos, sucursalesActivas, missingCatalogs, ventasState.quickCapture)}
+            </article>
+          </div>
 
-          <article class="panel-card venta-ajuste-card">
-            <div class="section-title-row">
-              <div>
-                <span class="eyebrow mini">Ajustes / notas</span>
-                <h2>Ajuste</h2>
+          <div class="ventas-right-column">
+            <article class="panel-card venta-list-card">
+              <div class="section-title-row">
+                <div>
+                  <span class="eyebrow mini">Listado</span>
+                  <h2>OC registradas</h2>
+                </div>
+                <div class="count-pill">${ventas.length} registros</div>
               </div>
-            </div>
-            <p class="muted-text">Reduce el saldo de una OC existente por quebrado, faltante, devolución o nota, sin crear cobro, caja ni banco. Aquí se descuenta mercadería; no aparece dinero fantasma.</p>
-            ${renderVentaAjusteForm(ventasAjustables)}
-          </article>
+              ${renderVentasList(ventas)}
+            </article>
 
-          <article class="panel-card venta-list-card">
-            <div class="section-title-row">
-              <div>
-                <span class="eyebrow mini">Listado</span>
-                <h2>OC registradas</h2>
+            <article class="panel-card venta-ajuste-card">
+              <div class="section-title-row">
+                <div>
+                  <span class="eyebrow mini">Ajustes / notas</span>
+                  <h2>Registrar ajuste</h2>
+                </div>
               </div>
-              <div class="count-pill">${ventas.length} registros</div>
-            </div>
-            ${renderVentasList(ventas)}
-          </article>
+              <p class="muted-text">Reduce el saldo de una OC existente por quebrado, faltante, devolución o nota, sin crear cobro, caja ni banco. Aquí se descuenta mercadería; no aparece dinero fantasma.</p>
+              ${renderVentaAjusteForm(ventasAjustables)}
+            </article>
+          </div>
         </div>
         ${editingRecord ? renderEditModal(getVentaModalId(), 'Editar venta / OC', 'La edición se guarda sobre la OC actual, mantiene ajustes/notas y recalcula saldo real.', renderVentaForm(editingRecord, clientesActivos, sucursalesActivas, missingCatalogs)) : ''}
       </section>
@@ -18380,13 +16653,6 @@ Notas importantes:
           <label class="form-field">
             <span>Monto ajuste C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
             <input type="number" name="monto" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-ajuste-monto />
-          </label>
-          <label class="form-field">
-            <span>Factura afectada</span>
-            <select name="facturaAfectada" data-ajuste-venta-factura>
-              ${renderAjusteFacturaOptions(selectedVenta?.facturas || [])}
-            </select>
-            <small>Opcional: si no aplica, queda como ajuste general de la OC.</small>
           </label>
         </div>
         <div class="formula-card ajuste-preview" aria-live="polite" data-ajuste-venta-preview>
@@ -18519,8 +16785,9 @@ Notas importantes:
 
   function renderFacturasVentaBlock(record) {
     const facturas = normalizeFacturasVentaList(record?.facturas || []);
+    const facturasText = formatFacturasVentaInput(facturas);
     return `
-        <section class="facturas-block facturas-venta-block" data-facturas-block>
+        <section class="facturas-block" data-facturas-block>
           <input type="hidden" name="facturasJson" data-facturas-json value="${escapeHtml(JSON.stringify(facturas))}" />
           <div class="facturas-head">
             <div>
@@ -18529,128 +16796,16 @@ Notas importantes:
             </div>
             <span class="count-pill" data-facturas-count>${facturas.length} factura${facturas.length === 1 ? '' : 's'}</span>
           </div>
-          <p class="muted-text compact-note">Cada factura desglosa la misma OC. El Total se calcula solo: Subtotal - Descuento. No crea cobros ni ventas adicionales.</p>
-          <div class="facturas-editor-shell" data-facturas-editor-shell>
-            <div class="facturas-grid facturas-venta-grid" role="table" aria-label="Facturas de la OC">
-              <div class="facturas-grid-row facturas-grid-head" role="row">
-                <span role="columnheader">Factura</span>
-                <span role="columnheader">Subtotal</span>
-                <span role="columnheader">Descuento</span>
-                <span role="columnheader">Total</span>
-                <span role="columnheader" class="sr-only">Quitar</span>
-              </div>
-              <div data-facturas-rows>
-                ${renderVentaFacturaEditorRows(facturas)}
-              </div>
-              <div class="facturas-grid-row facturas-add-row" role="row">
-                <button type="button" class="factura-add-button" data-factura-add aria-label="Agregar factura">+</button>
-              </div>
-            </div>
-          </div>
-          ${renderVentaFacturasCuadreSummary(record, facturas)}
+          <p class="muted-text compact-note">Captura varios números de factura para esta misma OC. Al guardar, se crearán en el módulo Facturas con la Fecha OC.</p>
+          <label class="form-field facturas-mass-field">
+            <span>Números de factura</span>
+            <textarea name="facturasTexto" data-facturas-mass rows="3" placeholder="001245, 001246, 001247" autocomplete="off">${escapeHtml(facturasText)}</textarea>
+          </label>
+          <p class="compact-note">Separa varias facturas por coma, punto y coma o salto de línea. Si hay saltos claros, Facturas completará los consecutivos intermedios.</p>
+          <div class="facturas-preview" data-facturas-preview>${facturas.length ? `Facturas detectadas: ${escapeHtml(formatFacturasVentaResumen(facturas))}` : 'Facturas detectadas: ninguna'}</div>
           <p class="compact-note facturas-message" data-factura-message aria-live="polite"></p>
         </section>
     `;
-  }
-
-  function renderVentaFacturaEditorRows(facturas) {
-    const rows = normalizeFacturasVentaList(facturas);
-    return rows.map((factura, index) => renderVentaFacturaEditorRow(factura, index)).join('');
-  }
-
-  function renderVentaFacturaEditorRow(factura, index = 0) {
-    const normalized = normalizeFacturaVentaRecord(factura) || { id: generateId('factura'), numero: '', subtotal: 0, descuento: 0, total: 0, pendienteMonto: true };
-    const subtotalValue = normalized.pendienteMonto && !normalized.subtotal ? '' : formatNumberInput(normalized.subtotal);
-    const descuentoValue = normalized.pendienteMonto && !normalized.descuento ? '' : formatNumberInput(normalized.descuento);
-    const totalValue = normalized.pendienteMonto ? '' : formatNumberInput(normalized.total);
-    return `
-      <div class="facturas-grid-row factura-edit-row ${normalized.pendienteMonto ? 'is-pending' : ''} ${isFacturaVentaInvalid(normalized) ? 'is-invalid' : ''}" role="row" data-factura-row data-factura-id="${escapeHtml(normalized.id)}">
-        <label class="factura-cell factura-number-cell">
-          <span>Factura</span>
-          <input type="text" data-factura-numero value="${escapeHtml(normalized.numero || '')}" placeholder="No. factura" autocomplete="off" aria-label="Factura ${index + 1}" />
-        </label>
-        <label class="factura-cell factura-money-cell">
-          <span>Subtotal</span>
-          <input type="number" data-factura-subtotal value="${escapeHtml(subtotalValue)}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" aria-label="Subtotal factura ${index + 1}" />
-        </label>
-        <label class="factura-cell factura-money-cell">
-          <span>Descuento</span>
-          <input type="number" data-factura-descuento value="${escapeHtml(descuentoValue)}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" aria-label="Descuento factura ${index + 1}" />
-        </label>
-        <label class="factura-cell factura-money-cell factura-total-cell">
-          <span>Total</span>
-          <input type="number" data-factura-total value="${escapeHtml(totalValue)}" readonly tabindex="-1" placeholder="0.00" aria-label="Total factura ${index + 1}" />
-        </label>
-        <button type="button" class="danger-action compact factura-remove-button" data-factura-remove aria-label="Quitar factura">×</button>
-      </div>
-    `;
-  }
-
-  function renderVentaFacturasCuadreSummary(record, facturas) {
-    const cuadre = getVentaFacturasCuadreData({ ...(record || {}), facturas });
-    return `
-      <div class="facturas-cuadre-card" data-facturas-cuadre>
-        <div class="facturas-cuadre-title">
-          <strong>Cuadre de facturas</strong>
-          <span data-facturas-cuadre-status>${getVentaFacturasCuadreStatusText(cuadre, facturas)}</span>
-        </div>
-        <div class="facturas-cuadre-grid">
-          ${renderFacturaCuadreLine('Subtotal OC', cuadre.subtotalOc, 'data-facturas-oc-subtotal')}
-          ${renderFacturaCuadreLine('Suma Subtotal Facturas', cuadre.subtotalFacturas, 'data-facturas-sum-subtotal')}
-          ${renderFacturaCuadreLine('Diferencia', cuadre.diferenciaSubtotal, 'data-facturas-diff-subtotal', true)}
-          ${renderFacturaCuadreLine('Descuento OC', cuadre.descuentoOc, 'data-facturas-oc-descuento')}
-          ${renderFacturaCuadreLine('Suma Descuento Facturas', cuadre.descuentoFacturas, 'data-facturas-sum-descuento')}
-          ${renderFacturaCuadreLine('Diferencia', cuadre.diferenciaDescuento, 'data-facturas-diff-descuento', true)}
-          ${renderFacturaCuadreLine('Total OC', cuadre.totalOc, 'data-facturas-oc-total')}
-          ${renderFacturaCuadreLine('Suma Total Facturas', cuadre.totalFacturas, 'data-facturas-sum-total')}
-          ${renderFacturaCuadreLine('Diferencia', cuadre.diferenciaTotal, 'data-facturas-diff-total', true)}
-        </div>
-      </div>
-    `;
-  }
-
-  function renderFacturaCuadreLine(label, value, dataAttr, isDifference = false) {
-    const balancedClass = isDifference ? (isMoneyDifferenceBalanced(value) ? ' is-balanced' : ' is-unbalanced') : '';
-    const display = isDifference ? formatMoneyDifference(value) : formatMoney(value);
-    return `<div class="facturas-cuadre-item${balancedClass}"><span>${escapeHtml(label)}</span><strong ${dataAttr}>${escapeHtml(display)}</strong></div>`;
-  }
-
-  function getVentaFacturasCuadreData(record) {
-    const source = isPlainObject(record) ? record : {};
-    const subtotalOc = parseMoney(source.subtotal ?? source.montoOc ?? 0);
-    const descuentoOc = parseMoney(source.descuento ?? 0);
-    const totalOc = roundMoney((Number.isNaN(subtotalOc) ? 0 : subtotalOc) - (Number.isNaN(descuentoOc) ? 0 : descuentoOc));
-    const metrics = getVentaFacturasMetrics(source.facturas || []);
-    return {
-      subtotalOc: Number.isNaN(subtotalOc) ? 0 : subtotalOc,
-      descuentoOc: Number.isNaN(descuentoOc) ? 0 : descuentoOc,
-      totalOc,
-      subtotalFacturas: metrics.subtotal,
-      descuentoFacturas: metrics.descuento,
-      totalFacturas: metrics.total,
-      diferenciaSubtotal: roundMoney(metrics.subtotal - (Number.isNaN(subtotalOc) ? 0 : subtotalOc)),
-      diferenciaDescuento: roundMoney(metrics.descuento - (Number.isNaN(descuentoOc) ? 0 : descuentoOc)),
-      diferenciaTotal: roundMoney(metrics.total - totalOc),
-      pendientesMonto: metrics.pendientesMonto,
-      invalidas: metrics.invalidas,
-      cantidad: metrics.cantidad
-    };
-  }
-
-  function isVentaFacturasCuadreBalanced(record) {
-    const cuadre = getVentaFacturasCuadreData(record);
-    return isMoneyDifferenceBalanced(cuadre.diferenciaSubtotal)
-      && isMoneyDifferenceBalanced(cuadre.diferenciaDescuento)
-      && isMoneyDifferenceBalanced(cuadre.diferenciaTotal);
-  }
-
-  function getVentaFacturasCuadreStatusText(cuadre, facturas = []) {
-    const list = normalizeFacturasVentaList(facturas);
-    if (!list.length) return 'Sin facturas';
-    if (cuadre.invalidas) return 'Revisar descuentos';
-    if (cuadre.pendientesMonto) return 'Facturas pendientes de completar monto';
-    if (isMoneyDifferenceBalanced(cuadre.diferenciaSubtotal) && isMoneyDifferenceBalanced(cuadre.diferenciaDescuento) && isMoneyDifferenceBalanced(cuadre.diferenciaTotal)) return 'Cuadrado';
-    return 'Descuadrado';
   }
 
   function renderFacturasVentaEditorList(facturas) {
@@ -18687,10 +16842,7 @@ Notas importantes:
     return `
       <div class="facturas-display-list">
         ${list.map((factura) => `
-          <span class="factura-chip ${factura.pendienteMonto ? 'is-pending' : ''}">
-            <strong>${escapeHtml(factura.numero)}</strong>
-            <small>${factura.pendienteMonto ? 'monto pendiente' : escapeHtml(formatMoney(factura.total))}</small>
-          </span>
+          <span class="factura-chip"><strong>${escapeHtml(factura.numero)}</strong></span>
         `).join('')}
       </div>
     `;
@@ -19052,7 +17204,7 @@ Notas importantes:
             <strong>Ajustes:</strong>
             ${ajustes.map((ajuste) => `
               <span class="ajuste-chip ${ajuste.activo ? '' : 'is-inactive'}">
-                ${escapeHtml(formatDate(ajuste.fecha))} — ${escapeHtml(ajuste.tipo)} — ${ajuste.activo ? '-' : ''}${escapeHtml(formatMoney(ajuste.monto))} — ${escapeHtml(formatAjusteFacturaLabel(ajuste))}${ajuste.observacion ? ` — ${escapeHtml(ajuste.observacion)}` : ''}
+                ${escapeHtml(formatDate(ajuste.fecha))} — ${escapeHtml(ajuste.tipo)} — ${ajuste.activo ? '-' : ''}${escapeHtml(formatMoney(ajuste.monto))}${ajuste.observacion ? ` — ${escapeHtml(ajuste.observacion)}` : ''}
                 ${ajuste.activo && canCurrentRole('annulMovements') ? `<button type="button" class="mini-inline-action" data-ajuste-venta-delete="${escapeHtml(record.id)}" data-ajuste-id="${escapeHtml(ajuste.id)}">Eliminar</button>` : ''}
               </span>
             `).join('')}
@@ -19064,7 +17216,7 @@ Notas importantes:
 
   function formatVentaAjustesExport(ajustesSource) {
     const ajustes = normalizeVentaAjustesList(ajustesSource).filter((ajuste) => ajuste.activo);
-    return ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)} · ${formatAjusteFacturaLabel(ajuste)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`).join(' | ');
+    return ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`).join(' | ');
   }
 
   function getVentasOrdenadas(options = {}) {
@@ -19176,7 +17328,7 @@ Notas importantes:
     };
   }
 
-  function validateVentaRecord(record, existingRecord = null) {
+  function validateVentaRecord(record) {
     if (!record.numeroDocumento) return 'El número OC es obligatorio.';
     if (!record.clienteId || !getActiveCatalogRecords('clientes').some((cliente) => cliente.id === record.clienteId)) return 'Selecciona un cliente activo desde Catálogos.';
     if (!record.sucursalId || !getActiveCatalogRecords('sucursales').some((sucursal) => sucursal.id === record.sucursalId)) return 'Selecciona una sucursal activa desde Catálogos.';
@@ -19195,46 +17347,7 @@ Notas importantes:
     if (record.ventaNetaOriginal < 0) return 'El Total no puede ser negativo. Revisa Subtotal y Descuento.';
     if (record.descuento > record.subtotal) return 'Descuento no puede superar el Subtotal.';
     if (record.totalCobrado > record.ventaNetaAjustada) return 'El total ajustado no puede quedar menor que el total ya cobrado.';
-
-    const facturas = normalizeFacturasVentaList(record.facturas);
-    const existingFacturas = normalizeFacturasVentaList(existingRecord?.facturas || []);
-    const legacyPendingUntouched = Boolean(existingRecord)
-      && existingFacturas.length > 0
-      && existingFacturas.every((factura) => factura.pendienteMonto)
-      && facturas.length > 0
-      && facturas.every((factura) => factura.pendienteMonto);
-
-    if (!facturas.length) return 'Ingresa al menos una factura para cuadrar la OC.';
-    if (facturas.some((factura) => !factura.numero)) return 'Cada factura debe tener número.';
-    if (facturas.some((factura) => isFacturaVentaInvalid(factura))) return 'Revisa facturas: subtotal y descuento deben ser positivos, y descuento no puede superar subtotal.';
-    if (facturas.some((factura) => factura.pendienteMonto)) {
-      if (legacyPendingUntouched) return '';
-      return 'Completa Subtotal y Descuento de todas las facturas para validar el cuadre.';
-    }
-    if (!isVentaFacturasCuadreBalanced(record)) return 'Las facturas no cuadran con la OC. Revisa subtotal, descuento y total.';
     return '';
-  }
-
-  function readVentaFacturaRow(row) {
-    const numero = cleanFacturaVentaNumero(row?.querySelector?.('[data-factura-numero]')?.value || '');
-    const subtotalInfo = getFacturaMoneyInputInfo(row?.querySelector?.('[data-factura-subtotal]')?.value || '');
-    const descuentoInfo = getFacturaMoneyInputInfo(row?.querySelector?.('[data-factura-descuento]')?.value || '');
-    if (!numero && !subtotalInfo.hasValue && !descuentoInfo.hasValue) return null;
-    const payload = {
-      id: cleanText(row?.dataset?.facturaId) || generateId('factura'),
-      numero,
-      pendienteMonto: !(subtotalInfo.hasValue || descuentoInfo.hasValue)
-    };
-    if (subtotalInfo.hasValue) payload.subtotal = subtotalInfo.value;
-    if (descuentoInfo.hasValue) payload.descuento = descuentoInfo.value;
-    if (subtotalInfo.invalid || descuentoInfo.invalid) payload.invalida = true;
-    return normalizeFacturaVentaRecord(payload);
-  }
-
-  function readVentaFacturaRowsFromBlock(block) {
-    const rows = Array.from(block?.querySelectorAll?.('[data-factura-row]') || []);
-    if (!rows.length) return [];
-    return normalizeFacturasVentaList(rows.map((row) => readVentaFacturaRow(row)).filter(Boolean));
   }
 
   function syncFacturaRowsToHidden(form) {
@@ -19242,26 +17355,14 @@ Notas importantes:
     if (!block) return [];
     const hidden = block.querySelector('[data-facturas-json]');
     const massInput = block.querySelector('[data-facturas-mass]');
-    const existing = normalizeFacturasVentaList(hidden?.value || []);
-    const rowList = readVentaFacturaRowsFromBlock(block);
-    const hasEditor = Boolean(block.querySelector('[data-facturas-rows]'));
-    const typed = hasEditor ? rowList : (massInput ? normalizeFacturasVentaList(massInput.value) : existing);
-    const list = mergeFacturasVentaWithExisting(typed, existing);
+    const source = massInput ? massInput.value : (hidden?.value || '');
+    const list = normalizeFacturasVentaList(source);
     if (hidden) hidden.value = JSON.stringify(list);
     return list;
   }
 
   function validatePendingFacturaInputs(form) {
-    const facturas = syncFacturaRowsToHidden(form);
-    const rows = Array.from(form?.querySelectorAll?.('[data-factura-row]') || []);
-    const incomplete = rows.some((row) => {
-      const numero = cleanFacturaVentaNumero(row.querySelector('[data-factura-numero]')?.value || '');
-      const subtotal = getFacturaMoneyInputInfo(row.querySelector('[data-factura-subtotal]')?.value || '');
-      const descuento = getFacturaMoneyInputInfo(row.querySelector('[data-factura-descuento]')?.value || '');
-      return (subtotal.hasValue || descuento.hasValue) && !numero;
-    });
-    if (incomplete) return 'Hay una fila de factura con monto pero sin número.';
-    if (facturas.some((factura) => isFacturaVentaInvalid(factura))) return 'Revisa facturas: descuento no puede superar subtotal y los montos no pueden ser negativos.';
+    syncFacturaRowsToHidden(form);
     return '';
   }
 
@@ -19314,32 +17415,18 @@ Notas importantes:
     ventasState.selectedAjusteVentaId = '';
   }
 
-  function buildVentaAjusteFromForm(form, ventaRecord = null) {
+  function buildVentaAjusteFromForm(form) {
     const formData = new FormData(form);
-    const facturaSelection = decodeAjusteFacturaOptionValue(formData.get('facturaAfectada'));
-    const facturaMatch = ventaRecord
-      ? findAjusteFacturaInList(ventaRecord.facturas, { facturaAfectadaId: facturaSelection.id, facturaAfectadaNumero: facturaSelection.numero }, normalizeFacturasVentaList)
-      : null;
     return normalizeVentaAjusteRecord({
       id: generateId('ajusteCliente'),
       fecha: toDateInputValue(formData.get('fecha')),
       tipo: cleanText(formData.get('tipo')),
       monto: parseMoney(formData.get('monto')),
       observacion: cleanText(formData.get('observacion')),
-      facturaAfectadaId: cleanText(facturaMatch?.id || facturaSelection.id),
-      facturaAfectadaNumero: cleanFacturaVentaNumero(facturaMatch?.numero || facturaSelection.numero),
       activo: true,
       createdAt: nowIso(),
       updatedAt: nowIso()
     });
-  }
-
-  function validateAjusteFacturaReferencia(facturas, ajuste, normalizer, parentLabel) {
-    if (!hasAjusteFacturaSnapshot(ajuste)) return '';
-    const list = normalizer(facturas);
-    if (!list.length) return `${parentLabel} no tiene facturas registradas; usa ajuste general al documento madre.`;
-    if (!findAjusteFacturaInList(list, ajuste, normalizer)) return `La factura afectada seleccionada no pertenece a ${parentLabel}.`;
-    return '';
   }
 
   function validateVentaAjusteRecord(venta, ajuste, clienteId) {
@@ -19349,18 +17436,16 @@ Notas importantes:
     if (!VENTA_AJUSTE_TYPES.includes(ajuste.tipo)) return 'Selecciona un tipo de ajuste válido.';
     if (Number.isNaN(parseMoney(ajuste.monto)) || ajuste.monto <= 0) return 'El monto del ajuste debe ser mayor que cero.';
     if (ajuste.monto > venta.saldoPorCobrar) return `El ajuste no puede superar el saldo lógico disponible de ${formatMoney(venta.saldoPorCobrar)}. Si ya se cobró de más, registra la corrección fuera de cobros para no crear banco falso.`;
-    const facturaError = validateAjusteFacturaReferencia(venta.facturas, ajuste, normalizeFacturasVentaList, 'esta OC');
-    if (facturaError) return facturaError;
     return '';
   }
 
-  async function saveVentaAjusteRecord(form) {
+  function saveVentaAjusteRecord(form) {
     const formData = new FormData(form);
     const ventaId = cleanText(formData.get('ventaId'));
     const clienteId = cleanText(formData.get('clienteId'));
     const ventas = Array.isArray(appData.ventas) ? appData.ventas : [];
     const venta = ventas.map((record) => normalizeVentaRecord(record)).find((record) => record.id === ventaId);
-    const ajuste = buildVentaAjusteFromForm(form, venta);
+    const ajuste = buildVentaAjusteFromForm(form);
     const validationError = validateVentaAjusteRecord(venta, ajuste, clienteId);
 
     if (validationError) {
@@ -19384,10 +17469,9 @@ Notas importantes:
     });
 
     const savedVenta = appData.ventas.find((record) => record.id === ventaId);
-    if (savedVenta) syncVentaFacturasToFacturasModulo(savedVenta);
     ventasState.selectedAjusteVentaId = ventaId;
     openAccordionGroupForRecord('ventas', savedVenta || venta);
-    ventasState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${venta.numeroDocumento} (${getAjusteFacturaActivityPart(ajuste)}). Saldo recalculado sin crear cobro.`;
+    ventasState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${venta.numeroDocumento}. Saldo recalculado sin crear cobro.`;
     ventasState.messageType = 'success';
     saveData(appData);
     registerActivity({
@@ -19396,10 +17480,9 @@ Notas importantes:
       entityType: 'Ajuste cliente',
       entityRef: venta.numeroDocumento,
       amount: ajuste.monto,
-      detail: buildActivityDetail(['Ajuste cliente registrado', venta.numeroDocumento, getAjusteFacturaActivityPart(ajuste), ajuste.tipo, formatMoney(ajuste.monto)]),
+      detail: buildActivityDetail(['Ajuste cliente registrado', venta.numeroDocumento, ajuste.tipo, formatMoney(ajuste.monto)]),
       source: 'local'
     });
-    await confirmCriticalCloudSave(ventasState, { operation: 'ventas_ajuste' });
     renderRoute();
   }
 
@@ -19412,7 +17495,7 @@ Notas importantes:
     renderRoute({ preserveScroll: true });
   }
 
-  async function deleteVentaAjuste(ventaId, ajusteId) {
+  function deleteVentaAjuste(ventaId, ajusteId) {
     if (!canCurrentRole('annulMovements')) {
       ventasState.message = ADMIN_RESTRICTED_MESSAGE;
       ventasState.messageType = 'error';
@@ -19438,20 +17521,17 @@ Notas importantes:
     });
 
     const savedVenta = appData.ventas.find((record) => record.id === ventaId);
-    if (savedVenta) syncVentaFacturasToFacturasModulo(savedVenta);
     ventasState.selectedAjusteVentaId = ventaId;
     openAccordionGroupForRecord('ventas', savedVenta || venta);
     ventasState.message = `Ajuste eliminado de ${venta.numeroDocumento}. Saldo recalculado.`;
     ventasState.messageType = 'success';
     saveData(appData);
-    await confirmCriticalCloudSave(ventasState, { operation: 'ventas_ajuste_borrar' });
     renderRoute();
   }
 
   function setupVentaAjusteForm(form) {
     const clientSelect = form.querySelector('[data-ajuste-client]');
     const ventaSelect = form.querySelector('[data-ajuste-venta]');
-    const facturaSelect = form.querySelector('[data-ajuste-venta-factura]');
     const preview = form.querySelector('[data-ajuste-venta-preview]');
     if (!clientSelect || !ventaSelect) return;
 
@@ -19460,7 +17540,6 @@ Notas importantes:
       const ventas = Array.isArray(appData.ventas) ? appData.ventas : [];
       const venta = ventas.map((record) => normalizeVentaRecord(record)).find((record) => record.id === ventaId);
       if (preview && venta) preview.innerHTML = renderVentaAjustePreview(venta);
-      syncAjusteFacturaSelectOptions(facturaSelect, venta?.facturas || [], normalizeFacturasVentaList);
       ventasState.selectedAjusteVentaId = ventaId;
     };
 
@@ -19489,7 +17568,7 @@ Notas importantes:
     syncVentaOptions();
   }
 
-  async function saveVentaRecord(form) {
+  function saveVentaRecord(form) {
     const existingId = cleanText(new FormData(form).get('id'));
     const records = Array.isArray(appData.ventas) ? appData.ventas : [];
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
@@ -19502,7 +17581,7 @@ Notas importantes:
       return;
     }
     const newRecord = buildVentaFromForm(form, existingRecord);
-    const validationError = validateVentaRecord(newRecord, existingRecord);
+    const validationError = validateVentaRecord(newRecord);
 
     if (validationError) {
       ventasState.quickCapture = existingRecord ? null : buildVentaDraftFromForm(form);
@@ -19546,7 +17625,6 @@ Notas importantes:
       detail: buildActivityDetail([existingRecord ? 'OC editada' : 'OC creada', newRecord.numeroDocumento, formatMoney(newRecord.ventaNetaAjustada || newRecord.total || newRecord.ventaNetaOriginal)]),
       source: 'local'
     });
-    await confirmCriticalCloudSave(ventasState, { operation: 'ventas_oc' });
     renderRoute();
   }
 
@@ -19559,7 +17637,7 @@ Notas importantes:
     renderRoute();
   }
 
-  async function toggleVentaRecord(recordId) {
+  function toggleVentaRecord(recordId) {
     if (!canCurrentRole('annulMovements')) {
       ventasState.message = ADMIN_RESTRICTED_MESSAGE;
       ventasState.messageType = 'error';
@@ -19587,7 +17665,6 @@ Notas importantes:
     ventasState.message = `OC ${record.numeroDocumento || ''} quedó ${shouldActivate ? 'reactivada' : 'anulada'}.${autoGastoMessage ? ` ${autoGastoMessage}` : ''}`;
     ventasState.messageType = 'success';
     saveData(appData);
-    await confirmCriticalCloudSave(ventasState, { operation: 'ventas_toggle' });
     renderRoute();
   }
 
@@ -19622,11 +17699,11 @@ Notas importantes:
     const block = form.querySelector('[data-facturas-block]');
     if (!block) return;
     const hidden = block.querySelector('[data-facturas-json]');
-    const rowsNode = block.querySelector('[data-facturas-rows]');
-    const addButton = block.querySelector('[data-factura-add]');
+    const massInput = block.querySelector('[data-facturas-mass]');
     const countNode = block.querySelector('[data-facturas-count]');
+    const previewNode = block.querySelector('[data-facturas-preview]');
     const messageNode = block.querySelector('[data-factura-message]');
-    if (!rowsNode) return;
+    if (!massInput) return;
 
     const showMessage = (message, isError = false) => {
       if (!messageNode) return;
@@ -19634,104 +17711,27 @@ Notas importantes:
       messageNode.classList.toggle('is-error', Boolean(isError));
     };
 
-    const createRow = (factura = {}) => {
-      const temp = document.createElement('div');
-      temp.innerHTML = renderVentaFacturaEditorRow(factura).trim();
-      const row = temp.firstElementChild;
-      rowsNode.appendChild(row);
-      bindRow(row);
-      return row;
-    };
-
-    const updateRow = (row) => {
-      const subtotalInfo = getFacturaMoneyInputInfo(row.querySelector('[data-factura-subtotal]')?.value || '');
-      const descuentoInfo = getFacturaMoneyInputInfo(row.querySelector('[data-factura-descuento]')?.value || '');
-      const totalInput = row.querySelector('[data-factura-total]');
-      const hasAmounts = subtotalInfo.hasValue || descuentoInfo.hasValue;
-      const subtotal = subtotalInfo.hasValue && !Number.isNaN(subtotalInfo.value) ? subtotalInfo.value : 0;
-      const descuento = descuentoInfo.hasValue && !Number.isNaN(descuentoInfo.value) ? descuentoInfo.value : 0;
-      const total = roundMoney(subtotal - descuento);
-      if (totalInput) totalInput.value = hasAmounts ? formatNumberInput(total) : '';
-      const invalid = subtotalInfo.invalid || descuentoInfo.invalid || (hasAmounts && (descuento > subtotal || total < 0));
-      row.classList.toggle('is-invalid', invalid);
-      row.classList.toggle('is-pending', !hasAmounts);
-    };
-
-    const updateCuadre = (list) => {
-      const formData = new FormData(form);
-      const record = {
-        subtotal: formData.get('subtotal') ?? formData.get('montoOc'),
-        montoOc: formData.get('subtotal') ?? formData.get('montoOc'),
-        descuento: formData.get('descuento'),
-        facturas: list
-      };
-      const cuadre = getVentaFacturasCuadreData(record);
-      const updates = [
-        ['[data-facturas-oc-subtotal]', formatMoney(cuadre.subtotalOc), false, 0],
-        ['[data-facturas-sum-subtotal]', formatMoney(cuadre.subtotalFacturas), false, 0],
-        ['[data-facturas-diff-subtotal]', formatMoneyDifference(cuadre.diferenciaSubtotal), true, cuadre.diferenciaSubtotal],
-        ['[data-facturas-oc-descuento]', formatMoney(cuadre.descuentoOc), false, 0],
-        ['[data-facturas-sum-descuento]', formatMoney(cuadre.descuentoFacturas), false, 0],
-        ['[data-facturas-diff-descuento]', formatMoneyDifference(cuadre.diferenciaDescuento), true, cuadre.diferenciaDescuento],
-        ['[data-facturas-oc-total]', formatMoney(cuadre.totalOc), false, 0],
-        ['[data-facturas-sum-total]', formatMoney(cuadre.totalFacturas), false, 0],
-        ['[data-facturas-diff-total]', formatMoneyDifference(cuadre.diferenciaTotal), true, cuadre.diferenciaTotal]
-      ];
-      updates.forEach(([selector, value, isDiff, diff]) => {
-        const node = block.querySelector(selector);
-        if (!node) return;
-        node.textContent = value;
-        if (isDiff) {
-          node.closest('.facturas-cuadre-item')?.classList.toggle('is-balanced', isMoneyDifferenceBalanced(diff));
-          node.closest('.facturas-cuadre-item')?.classList.toggle('is-unbalanced', !isMoneyDifferenceBalanced(diff));
-        }
-      });
-      const status = block.querySelector('[data-facturas-cuadre-status]');
-      if (status) status.textContent = getVentaFacturasCuadreStatusText(cuadre, list);
-    };
-
     const sync = () => {
-      Array.from(rowsNode.querySelectorAll('[data-factura-row]')).forEach(updateRow);
-      const list = syncFacturaRowsToHidden(form);
+      const list = normalizeFacturasVentaList(massInput.value);
       if (hidden) hidden.value = JSON.stringify(list);
       if (countNode) countNode.textContent = `${list.length} factura${list.length === 1 ? '' : 's'}`;
-      updateCuadre(list);
+      if (previewNode) previewNode.textContent = list.length ? `Facturas detectadas: ${formatFacturasVentaResumen(list)}` : 'Facturas detectadas: ninguna';
       return list;
     };
 
-    function bindRow(row) {
-      row.querySelectorAll('input').forEach((input) => {
-        input.addEventListener('input', () => {
-          sync();
-          showMessage('', false);
-        });
-        input.addEventListener('blur', () => {
-          if (input.matches('[data-factura-subtotal], [data-factura-descuento]')) {
-            const info = getFacturaMoneyInputInfo(input.value);
-            input.value = info.hasValue && !Number.isNaN(info.value) ? formatNumberInput(info.value) : '';
-          }
-          sync();
-        });
-      });
-      row.querySelector('[data-factura-remove]')?.addEventListener('click', () => {
-        row.remove();
-        sync();
-      });
-      updateRow(row);
-    }
-
-    Array.from(rowsNode.querySelectorAll('[data-factura-row]')).forEach(bindRow);
-    addButton?.addEventListener('click', () => {
-      const row = createRow({ id: generateId('factura'), numero: '', pendienteMonto: true });
-      sync();
-      row.querySelector('[data-factura-numero]')?.focus();
-    });
-
-    form.querySelectorAll('[data-venta-calc]').forEach((input) => {
-      input.addEventListener('input', () => sync());
-    });
-
+    const current = normalizeFacturasVentaList(hidden?.value || []);
+    massInput.value = formatFacturasVentaInput(current);
     sync();
+
+    massInput.addEventListener('input', () => {
+      sync();
+      showMessage('', false);
+    });
+    massInput.addEventListener('blur', () => {
+      const list = sync();
+      massInput.value = formatFacturasVentaInput(list);
+      sync();
+    });
   }
 
   function setupVentaLogisticaForm(form) {
@@ -20720,7 +18720,7 @@ Notas importantes:
     return '';
   }
 
-  async function saveCobroRecord(form) {
+  function saveCobroRecord(form) {
     const existingId = cleanText(new FormData(form).get('id'));
     const records = Array.isArray(appData.cobros) ? appData.cobros : [];
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
@@ -20796,7 +18796,6 @@ Notas importantes:
       ]),
       source: 'local'
     });
-    await confirmCriticalCloudSave(cobrosState, { operation: 'cobros' });
     renderRoute();
   }
 
@@ -20823,7 +18822,7 @@ Notas importantes:
     renderRoute();
   }
 
-  async function annulCobroRecord(cobroId) {
+  function annulCobroRecord(cobroId) {
     if (!canCurrentRole('annulMovements')) {
       cobrosState.message = ADMIN_RESTRICTED_MESSAGE;
       cobrosState.messageType = 'error';
@@ -20845,7 +18844,6 @@ Notas importantes:
     cobrosState.message = `Cobro de ${formatMoney(cobro.montoCobrado)} anulado y OC recalculada.${facturaSync.reverted ? ` Facturas auto-pagadas revertidas: ${facturaSync.reverted}.` : ''}`;
     cobrosState.messageType = 'success';
     saveData(appData);
-    await confirmCriticalCloudSave(cobrosState, { operation: 'cobros_anular' });
     renderRoute();
   }
 
@@ -21030,34 +19028,36 @@ Notas importantes:
           <article class="metric-card"><span>Anuladas</span><strong>${totals.anuladas}</strong></article>
         </section>
 
-        <div class="compras-layout operational-fullwidth-stack">
-          <article class="panel-card compra-form-card">
-            <div class="section-title-row">
-              <div>
-                <span class="eyebrow mini">Nueva deuda</span>
-                <h2>Crear compra</h2>
+        <div class="compras-layout">
+          <div class="compras-form-stack">
+            <article class="panel-card compra-form-card">
+              <div class="section-title-row">
+                <div>
+                  <span class="eyebrow mini">Nueva deuda</span>
+                  <h2>Crear compra / deuda</h2>
+                </div>
               </div>
-            </div>
-            <p class="muted-text">Los pagos a proveedor se registran en su propio módulo; aquí queda la deuda/factura base con su saldo actualizado.</p>
-            ${renderCompraProveedorForm(null, proveedoresActivos, missingProviders, proveedoresState.quickCapture)}
-          </article>
+              <p class="muted-text">Los pagos a proveedor se registran en su propio módulo; aquí queda la deuda/factura base con su saldo actualizado.</p>
+              ${renderCompraProveedorForm(null, proveedoresActivos, missingProviders, proveedoresState.quickCapture)}
+            </article>
 
-          <article class="panel-card compra-ajuste-card">
-            <div class="section-title-row">
-              <div>
-                <span class="eyebrow mini">Ajustes / notas</span>
-                <h2>Ajuste</h2>
+            <article class="panel-card compra-ajuste-card">
+              <div class="section-title-row">
+                <div>
+                  <span class="eyebrow mini">Ajustes / notas</span>
+                  <h2>Registrar ajuste</h2>
+                </div>
               </div>
-            </div>
-            <p class="muted-text">Reduce el saldo de una factura existente sin crear pago, caja ni banco. Aquí se descuenta el faltante; el dinero no se teletransporta.</p>
-            ${renderProveedorAjusteForm(comprasAjustables)}
-          </article>
+              <p class="muted-text">Reduce el saldo de una factura existente sin crear pago, caja ni banco. Aquí se descuenta el faltante; el dinero no se teletransporta.</p>
+              ${renderProveedorAjusteForm(comprasAjustables)}
+            </article>
+          </div>
 
           <article class="panel-card compra-list-card">
             <div class="section-title-row">
               <div>
                 <span class="eyebrow mini">Listado</span>
-                <h2>Compras registradas</h2>
+                <h2>Compras / deudas registradas</h2>
               </div>
               <div class="count-pill">${compras.length} registros</div>
             </div>
@@ -21133,13 +19133,6 @@ Notas importantes:
             <span>Monto ajuste C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
             <input type="number" name="monto" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-ajuste-monto />
           </label>
-          <label class="form-field">
-            <span>Factura afectada</span>
-            <select name="facturaAfectada" data-ajuste-proveedor-factura>
-              ${renderAjusteFacturaOptions(selectedCompra?.facturasRelacionadas || [], '', normalizeFacturasProveedorList)}
-            </select>
-            <small>Opcional: si no aplica, queda como ajuste general de la compra.</small>
-          </label>
         </div>
         <div class="formula-card ajuste-preview" aria-live="polite" data-ajuste-preview>
           ${renderAjustePreview(selectedCompra)}
@@ -21183,17 +19176,15 @@ Notas importantes:
     const fechaVencimiento = isContado
       ? fechaCompra
       : (record?.fechaVencimiento || toDateInputValue(draft.fechaVencimiento) || addDaysToDate(fechaCompra, Number(diasCredito) || 0) || fechaCompra);
-    const facturasSource = record || draft;
-    const facturasProveedorPreview = normalizeFacturasProveedorList(facturasSource?.facturasRelacionadas || []);
-    const hasFacturaMontoPreview = facturasProveedorPreview.some((factura) => !factura.pendienteMonto);
-    const totalCompraValue = hasFacturaMontoPreview ? sumaMontosFacturas(facturasProveedorPreview) : (record ? record.totalCompra : draft.totalCompra);
-    const previewSource = record || { totalCompra: totalCompraValue || 0, totalPagado: 0 };
-    const calculations = getCompraProveedorCalculations({ ...previewSource, totalCompra: totalCompraValue || previewSource.totalCompra || 0 });
+    const previewSource = record || { totalCompra: draft.totalCompra || 0, totalPagado: 0 };
+    const calculations = getCompraProveedorCalculations(previewSource);
     const facturaReferencia = record?.facturaReferencia || cleanText(draft.facturaReferencia);
+    const totalCompraValue = record ? record.totalCompra : draft.totalCompra;
+    const facturasSource = record || draft;
     const observacion = record?.observacion || cleanText(draft.observacion);
 
     return `
-      <form class="compra-form" data-compra-form data-current-pagado="${escapeHtml(record?.totalPagado || 0)}" data-current-ajustes="${escapeHtml(JSON.stringify(record?.ajustes || []))}" data-existing-compra="${record ? '1' : '0'}" data-legacy-total-compra="${escapeHtml(record?.totalCompra || 0)}" novalidate>
+      <form class="compra-form" data-compra-form data-current-pagado="${escapeHtml(record?.totalPagado || 0)}" data-current-ajustes="${escapeHtml(JSON.stringify(record?.ajustes || []))}" novalidate>
         <input type="hidden" name="id" value="${escapeHtml(record?.id || '')}" />
         <div class="form-grid">
           <label class="form-field">
@@ -21218,7 +19209,10 @@ Notas importantes:
           </label>
           <label class="form-field compra-total-field">
             <span>Total compra/deuda C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="totalCompra" value="${escapeHtml(formatNumberInput(totalCompraValue))}" min="0" step="0.01" inputmode="decimal" placeholder="Calculado desde facturas" required readonly data-compra-calc data-compra-total-input />
+            <div class="input-action-row compra-total-action-row">
+              <input type="number" name="totalCompra" value="${escapeHtml(formatNumberInput(totalCompraValue))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-compra-calc data-compra-total-input />
+              <button type="button" class="secondary-action compact" data-compra-calculator-open>Calcular</button>
+            </div>
           </label>
         </div>
 
@@ -21246,6 +19240,7 @@ Notas importantes:
           <button type="submit" class="card-action" ${missingProviders ? 'disabled' : ''}>${record ? 'Guardar cambios' : 'Guardar compra/deuda'}</button>
           <button type="button" class="secondary-action" data-compra-clear>${record ? 'Cancelar' : 'Limpiar'}</button>
         </div>
+        ${renderCompraTotalCalculatorModal()}
       </form>
     `;
   }
@@ -21254,6 +19249,7 @@ Notas importantes:
     const legacyReferencia = cleanText(record?.facturaReferencia);
     const storedFacturas = normalizeFacturasProveedorList(record?.facturasRelacionadas || []);
     const facturas = storedFacturas.length ? storedFacturas : normalizeFacturasProveedorList(legacyReferencia ? legacyReferencia : []);
+    const facturasText = formatFacturasProveedorInput(facturas);
     return `
         <section class="facturas-block facturas-proveedor-block" data-facturas-proveedor-block>
           <input type="hidden" name="facturasRelacionadasJson" data-facturas-proveedor-json value="${escapeHtml(JSON.stringify(facturas))}" />
@@ -21264,47 +19260,48 @@ Notas importantes:
             </div>
             <span class="count-pill" data-facturas-proveedor-count>${facturas.length} factura${facturas.length === 1 ? '' : 's'}</span>
           </div>
-          <p class="muted-text compact-note">Una compra madre puede tener una o varias facturas. La suma de montos calcula el Total compra; no crea pagos ni saldos por factura.</p>
-          <div class="facturas-editor-shell" data-facturas-proveedor-editor-shell>
-            <div class="facturas-grid facturas-proveedor-grid" role="table" aria-label="Facturas relacionadas de proveedor">
-              <div class="facturas-grid-row facturas-grid-head" role="row">
-                <span role="columnheader">Factura</span>
-                <span role="columnheader">Monto</span>
-                <span role="columnheader" class="sr-only">Quitar</span>
-              </div>
-              <div data-facturas-proveedor-rows>
-                ${renderCompraFacturaEditorRows(facturas)}
-              </div>
-              <div class="facturas-grid-row facturas-add-row" role="row">
-                <button type="button" class="factura-add-button" data-factura-proveedor-add aria-label="Agregar factura relacionada">+</button>
-              </div>
-            </div>
-          </div>
+          <p class="muted-text compact-note">Captura una o varias facturas que respaldan esta misma compra/deuda. Son referencia documental: sin monto individual y sin crear pagos.</p>
+          <label class="form-field facturas-mass-field">
+            <span>Números de factura</span>
+            <textarea name="facturasRelacionadasTexto" data-facturas-proveedor-mass rows="3" placeholder="000145, 000146, 000147" autocomplete="off" inputmode="numeric">${escapeHtml(facturasText)}</textarea>
+          </label>
+          <p class="compact-note">Separa varias facturas por espacio, coma, punto, punto y coma o salto de línea. Se conservan ceros iniciales.</p>
           <div class="facturas-preview" data-facturas-proveedor-preview>${facturas.length ? `Facturas detectadas: ${escapeHtml(formatFacturasProveedorResumen(facturas))}` : 'Facturas detectadas: ninguna'}</div>
           <p class="compact-note facturas-message" data-facturas-proveedor-message aria-live="polite"></p>
         </section>
     `;
   }
 
-  function renderCompraFacturaEditorRows(facturas) {
-    const rows = normalizeFacturasProveedorList(facturas);
-    return rows.map((factura, index) => renderCompraFacturaEditorRow(factura, index)).join('');
-  }
-
-  function renderCompraFacturaEditorRow(factura, index = 0) {
-    const normalized = normalizeFacturaProveedorRecord(factura) || { id: generateId('facturaProveedor'), numero: '', monto: 0, pendienteMonto: true };
-    const montoValue = normalized.pendienteMonto && !normalized.monto ? '' : formatNumberInput(normalized.monto);
+  function renderCompraTotalCalculatorModal() {
     return `
-      <div class="facturas-grid-row factura-edit-row ${normalized.pendienteMonto ? 'is-pending' : ''} ${isFacturaProveedorInvalid(normalized) ? 'is-invalid' : ''}" role="row" data-factura-proveedor-row data-factura-id="${escapeHtml(normalized.id)}">
-        <label class="factura-cell factura-number-cell">
-          <span>Factura</span>
-          <input type="text" data-factura-proveedor-numero value="${escapeHtml(normalized.numero || '')}" placeholder="No. factura" autocomplete="off" aria-label="Factura relacionada ${index + 1}" />
-        </label>
-        <label class="factura-cell factura-money-cell">
-          <span>Monto</span>
-          <input type="number" data-factura-proveedor-monto value="${escapeHtml(montoValue)}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" aria-label="Monto factura relacionada ${index + 1}" />
-        </label>
-        <button type="button" class="danger-action compact factura-remove-button" data-factura-proveedor-remove aria-label="Quitar factura relacionada">×</button>
+      <div class="modal-backdrop compra-calculator-backdrop is-hidden" data-compra-calculator-modal role="presentation">
+        <section class="edit-modal compra-calculator-modal" role="dialog" aria-modal="true" aria-labelledby="compra-calculator-title">
+          <header class="edit-modal-header">
+            <div>
+              <span class="eyebrow mini">Auxiliar</span>
+              <h2 id="compra-calculator-title">Calculadora de Total compra</h2>
+              <p>Suma montos de facturas y usa el resultado sin guardar la compra todavía.</p>
+            </div>
+            <button type="button" class="modal-close" data-compra-calculator-close aria-label="Cerrar calculadora">×</button>
+          </header>
+          <div class="edit-modal-body compra-calculator-body">
+            <div class="calculator-lines" data-compra-calculator-rows></div>
+            <div class="record-actions calculator-line-actions">
+              <button type="button" class="secondary-action compact" data-compra-calculator-add>Agregar línea</button>
+              <button type="button" class="secondary-action compact" data-compra-calculator-clear>Limpiar</button>
+            </div>
+            <div class="formula-card compra-calculator-total" aria-live="polite">
+              <strong>Total calculado</strong>
+              ${renderFormulaSummaryGrid([
+                ['Suma', formatMoney(0), 'data-compra-calculator-total']
+              ], 'calculator-summary-grid')}
+            </div>
+            <div class="form-actions">
+              <button type="button" class="card-action" data-compra-calculator-use>Usar total</button>
+              <button type="button" class="secondary-action" data-compra-calculator-cancel>Cancelar</button>
+            </div>
+          </div>
+        </section>
       </div>
     `;
   }
@@ -21464,7 +19461,7 @@ Notas importantes:
             <strong>Ajustes:</strong>
             ${ajustes.map((ajuste) => `
               <span class="ajuste-chip ${ajuste.activo ? '' : 'is-inactive'}">
-                ${escapeHtml(formatDate(ajuste.fecha))} — ${escapeHtml(ajuste.tipo)} — ${ajuste.activo ? '-' : ''}${escapeHtml(formatMoney(ajuste.monto))} — ${escapeHtml(formatAjusteFacturaLabel(ajuste))}${ajuste.observacion ? ` — ${escapeHtml(ajuste.observacion)}` : ''}
+                ${escapeHtml(formatDate(ajuste.fecha))} — ${escapeHtml(ajuste.tipo)} — ${ajuste.activo ? '-' : ''}${escapeHtml(formatMoney(ajuste.monto))}${ajuste.observacion ? ` — ${escapeHtml(ajuste.observacion)}` : ''}
                 ${ajuste.activo && canCurrentRole('annulMovements') ? `<button type="button" class="mini-inline-action" data-ajuste-delete="${escapeHtml(record.id)}" data-ajuste-id="${escapeHtml(ajuste.id)}">Eliminar</button>` : ''}
               </span>
             `).join('')}
@@ -21476,7 +19473,7 @@ Notas importantes:
 
   function formatCompraAjustesExport(ajustesSource) {
     const ajustes = normalizeCompraProveedorAjustesList(ajustesSource).filter((ajuste) => ajuste.activo);
-    return ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)} · ${formatAjusteFacturaLabel(ajuste)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`).join(' | ');
+    return ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)}${ajuste.observacion ? ` · ${ajuste.observacion}` : ''}`).join(' | ');
   }
 
   function getComprasProveedoresOrdenadas(options = {}) {
@@ -21510,9 +19507,8 @@ Notas importantes:
   }
 
   function buildCompraProveedorFromForm(form, existingRecord) {
-    const timestamp = nowIso();
-    const facturasRelacionadas = syncCompraFacturasRelacionadasToHidden(form);
     const formData = new FormData(form);
+    const timestamp = nowIso();
     const proveedorId = cleanText(formData.get('proveedorId'));
     const proveedor = getCatalogRecordById('proveedores', proveedorId);
     const fechaCompra = toDateInputValue(formData.get('fechaCompra'));
@@ -21528,10 +19524,9 @@ Notas importantes:
     const metodoPagoContado = metodoPagoContadoId ? findPaymentMethodByValue(metodoPagoContadoId) : null;
     const bancoPagoContadoId = isContado ? cleanText(formData.get('bancoPagoContadoId')) : '';
     const bancoPagoContado = bancoPagoContadoId ? getCatalogRecordById('cuentasBancos', bancoPagoContadoId) : null;
+    const totalCompra = parseMoney(formData.get('totalCompra'));
+    const facturasRelacionadas = syncCompraFacturasRelacionadasToHidden(form);
     const facturaReferencia = getCompraProveedorFacturaReferenciaValue(facturasRelacionadas, formData.get('facturaReferencia') || existingRecord?.facturaReferencia || '');
-    const facturasStats = getCompraFacturasMontoStats(facturasRelacionadas);
-    const preserveLegacyTotal = Boolean(existingRecord) && facturasStats.pendientes > 0 && facturasStats.completas === 0;
-    const totalCompra = preserveLegacyTotal ? parseMoney(existingRecord?.totalCompra || 0) : facturasStats.total;
     const manualPagado = existingRecord?.id ? calculateManualPagadoForCompra(existingRecord.id, appData.pagosProveedores) : 0;
     const expectedPagado = isContado ? (Number.isNaN(totalCompra) ? 0 : totalCompra) : manualPagado;
     const base = {
@@ -21591,25 +19586,13 @@ Notas importantes:
 
   function validateCompraProveedorRecord(record, existingRecord = null) {
     if (!record.proveedorId || !getActiveCatalogRecords('proveedores').some((proveedor) => proveedor.id === record.proveedorId)) return 'Selecciona un proveedor activo desde Catálogos.';
-    const facturas = normalizeFacturasProveedorList(record.facturasRelacionadas);
-    const stats = getCompraFacturasMontoStats(facturas);
-    const legacyPendingUntouched = Boolean(existingRecord)
-      && facturas.length > 0
-      && stats.pendientes > 0
-      && stats.completas === 0
-      && parseMoney(existingRecord.totalCompra) > 0;
-    if (!facturas.length) return 'Ingresa al menos una factura relacionada con monto.';
-    if (facturas.some((factura) => !factura.numero)) return 'Cada factura relacionada debe tener número.';
-    if (facturas.some((factura) => isFacturaProveedorInvalid(factura))) return 'Revisa facturas relacionadas: los montos deben ser números positivos o cero.';
-    if (stats.pendientes > 0 && !legacyPendingUntouched) return 'Completa el monto de todas las facturas relacionadas para calcular Total compra.';
-    if (!legacyPendingUntouched && stats.completas < 1) return 'Ingresa al menos una factura relacionada con monto válido.';
+    if (!normalizeFacturasProveedorList(record.facturasRelacionadas).length) return 'Ingresa al menos una factura relacionada.';
     if (!record.fechaCompra) return 'La fecha de compra es obligatoria.';
     if (!record.fechaVencimiento) return 'La fecha de vencimiento es obligatoria.';
     if (Number.isNaN(parsePositiveInteger(record.diasCredito))) return 'Días de crédito debe ser cero o un número entero positivo.';
     if (record.condicionPagoSnapshot === 'Contado' && Number(record.diasCredito) !== 0) return 'En compras de contado, días de crédito debe ser 0.';
     if (record.condicionPagoSnapshot === 'Contado' && record.fechaVencimiento !== record.fechaCompra) return 'En compras de contado, el vencimiento debe ser igual a la fecha de compra.';
     if (Number.isNaN(parseMoney(record.totalCompra)) || record.totalCompra <= 0) return 'Total compra/deuda debe ser un número mayor que cero.';
-    if (!legacyPendingUntouched && !isMoneyDifferenceBalanced(roundMoney(record.totalCompra - stats.total))) return 'Total compra debe coincidir con la suma de facturas relacionadas.';
     if (Number.isNaN(parseMoney(record.totalPagado)) || record.totalPagado < 0) return 'Pagado no puede ser negativo.';
     if (record.saldoPorPagar < 0) return 'El saldo por pagar no puede ser negativo.';
     const contadoError = validateCompraContadoPayment(record, existingRecord);
@@ -21617,60 +19600,14 @@ Notas importantes:
     return '';
   }
 
-  function getCompraFacturasMontoStats(facturas) {
-    return normalizeFacturasProveedorList(facturas).reduce((totals, factura) => {
-      totals.cantidad += 1;
-      totals.total = roundMoney(totals.total + factura.monto);
-      if (factura.pendienteMonto) totals.pendientes += 1;
-      else totals.completas += 1;
-      if (isFacturaProveedorInvalid(factura)) totals.invalidas += 1;
-      return totals;
-    }, { cantidad: 0, total: 0, pendientes: 0, completas: 0, invalidas: 0 });
-  }
-
-  function readCompraFacturaProveedorRow(row) {
-    const numero = cleanFacturaVentaNumero(row?.querySelector?.('[data-factura-proveedor-numero]')?.value || '');
-    const montoInfo = getFacturaMoneyInputInfo(row?.querySelector?.('[data-factura-proveedor-monto]')?.value || '');
-    if (!numero && !montoInfo.hasValue) return null;
-    const payload = {
-      id: cleanText(row?.dataset?.facturaId) || generateId('facturaProveedor'),
-      numero,
-      pendienteMonto: !montoInfo.hasValue
-    };
-    if (montoInfo.hasValue) payload.monto = montoInfo.value;
-    if (montoInfo.invalid) payload.invalida = true;
-    return normalizeFacturaProveedorRecord(payload);
-  }
-
-  function readCompraFacturasProveedorRowsFromBlock(block) {
-    const rows = Array.from(block?.querySelectorAll?.('[data-factura-proveedor-row]') || []);
-    if (!rows.length) return [];
-    return normalizeFacturasProveedorList(rows.map((row) => readCompraFacturaProveedorRow(row)).filter(Boolean));
-  }
-
-  function updateCompraTotalInputFromFacturas(form, facturas = null) {
-    const list = facturas || syncCompraFacturasRelacionadasToHidden(form, { skipTotalUpdate: true });
-    const stats = getCompraFacturasMontoStats(list);
-    const totalInput = form?.querySelector?.('[data-compra-total-input]');
-    const preserveLegacyTotal = form?.dataset?.existingCompra === '1' && stats.pendientes > 0 && stats.completas === 0;
-    const legacyTotal = parseMoney(form?.dataset?.legacyTotalCompra || 0);
-    const total = preserveLegacyTotal ? legacyTotal : stats.total;
-    if (totalInput) totalInput.value = formatNumberInput(total);
-    return total;
-  }
-
-  function syncCompraFacturasRelacionadasToHidden(form, options = {}) {
+  function syncCompraFacturasRelacionadasToHidden(form) {
     const block = form?.querySelector?.('[data-facturas-proveedor-block]');
     if (!block) return [];
     const hidden = block.querySelector('[data-facturas-proveedor-json]');
     const massInput = block.querySelector('[data-facturas-proveedor-mass]');
-    const existing = normalizeFacturasProveedorList(hidden?.value || []);
-    const rowList = readCompraFacturasProveedorRowsFromBlock(block);
-    const hasEditor = Boolean(block.querySelector('[data-facturas-proveedor-rows]'));
-    const typed = hasEditor ? rowList : (massInput ? normalizeFacturasProveedorList(massInput.value) : existing);
-    const list = mergeFacturasProveedorWithExisting(typed, existing);
+    const source = massInput ? massInput.value : (hidden?.value || '');
+    const list = normalizeFacturasProveedorList(source);
     if (hidden) hidden.value = JSON.stringify(list);
-    if (!options.skipTotalUpdate) updateCompraTotalInputFromFacturas(form, list);
     return list;
   }
 
@@ -21682,14 +19619,13 @@ Notas importantes:
     const fechaCompra = toDateInputValue(formData.get('fechaCompra')) || todayInputValue();
     const diasCredito = isContado ? 0 : parsePositiveInteger(formData.get('diasCredito'));
     const facturasRelacionadas = syncCompraFacturasRelacionadasToHidden(form);
-    const totalCompra = updateCompraTotalInputFromFacturas(form, facturasRelacionadas);
     return {
       proveedorId,
       facturaReferencia: getCompraProveedorFacturaReferenciaValue(facturasRelacionadas, formData.get('facturaReferencia')),
       fechaCompra,
       diasCredito: Number.isNaN(diasCredito) ? 0 : diasCredito,
       fechaVencimiento: isContado ? fechaCompra : (toDateInputValue(formData.get('fechaVencimiento')) || addDaysToDate(fechaCompra, Number.isNaN(diasCredito) ? 0 : diasCredito) || fechaCompra),
-      totalCompra: formatNumberInput(totalCompra),
+      totalCompra: cleanText(formData.get('totalCompra')),
       facturasRelacionadas,
       condicionPagoSnapshot: terms.condicionPago,
       metodoPagoContadoId: isContado ? cleanText(formData.get('metodoPagoContadoId')) : '',
@@ -21699,7 +19635,7 @@ Notas importantes:
     };
   }
 
-  async function saveCompraProveedorRecord(form) {
+  function saveCompraProveedorRecord(form) {
     const existingId = cleanText(new FormData(form).get('id'));
     const records = Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [];
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
@@ -21737,10 +19673,6 @@ Notas importantes:
       proveedoresState.message = `Compra/deuda ${compraRefLabel} actualizada; pago automático anterior quedó anulado.`;
     }
 
-    const facturasSyncResult = syncCompraFacturasToFacturasModulo(newRecord);
-    const facturasSyncMessage = formatCompraFacturasSyncMessage(facturasSyncResult);
-    if (facturasSyncMessage) proveedoresState.message = `${proveedoresState.message} ${facturasSyncMessage}`;
-
     proveedoresState.editingId = null;
     const savedRecord = appData.comprasProveedores.find((record) => record.id === newRecord.id) || newRecord;
     openAccordionGroupForRecord('compras', savedRecord);
@@ -21767,7 +19699,6 @@ Notas importantes:
         source: 'sistema'
       });
     }
-    await confirmCriticalCloudSave(proveedoresState, { operation: 'proveedores_compras' });
     renderRoute();
   }
 
@@ -21781,7 +19712,7 @@ Notas importantes:
     renderRoute();
   }
 
-  async function toggleCompraProveedorRecord(recordId) {
+  function toggleCompraProveedorRecord(recordId) {
     if (!canCurrentRole('annulMovements')) {
       proveedoresState.message = ADMIN_RESTRICTED_MESSAGE;
       proveedoresState.messageType = 'error';
@@ -21809,7 +19740,6 @@ Notas importantes:
     if (syncResult.action === 'created' || syncResult.action === 'updated') proveedoresState.message += ' Pago automático relacionado sincronizado.';
     proveedoresState.messageType = 'success';
     saveData(appData);
-    await confirmCriticalCloudSave(proveedoresState, { operation: 'proveedores_toggle' });
     renderRoute();
   }
 
@@ -21840,20 +19770,14 @@ Notas importantes:
     renderRoute();
   }
 
-  function buildProveedorAjusteFromForm(form, compraRecord = null) {
+  function buildProveedorAjusteFromForm(form) {
     const formData = new FormData(form);
-    const facturaSelection = decodeAjusteFacturaOptionValue(formData.get('facturaAfectada'));
-    const facturaMatch = compraRecord
-      ? findAjusteFacturaInList(compraRecord.facturasRelacionadas, { facturaAfectadaId: facturaSelection.id, facturaAfectadaNumero: facturaSelection.numero }, normalizeFacturasProveedorList)
-      : null;
     return normalizeCompraProveedorAjusteRecord({
       id: generateId('ajusteProveedor'),
       fecha: toDateInputValue(formData.get('fecha')),
       tipo: cleanText(formData.get('tipo')),
       monto: parseMoney(formData.get('monto')),
       observacion: cleanText(formData.get('observacion')),
-      facturaAfectadaId: cleanText(facturaMatch?.id || facturaSelection.id),
-      facturaAfectadaNumero: cleanFacturaVentaNumero(facturaMatch?.numero || facturaSelection.numero),
       activo: true,
       createdAt: nowIso(),
       updatedAt: nowIso()
@@ -21867,18 +19791,16 @@ Notas importantes:
     if (!COMPRA_AJUSTE_TYPES.includes(ajuste.tipo)) return 'Selecciona un tipo de ajuste válido.';
     if (Number.isNaN(parseMoney(ajuste.monto)) || ajuste.monto <= 0) return 'El monto del ajuste debe ser mayor que cero.';
     if (ajuste.monto > compra.saldoPorPagar) return `El ajuste no puede superar el saldo lógico disponible de ${formatMoney(compra.saldoPorPagar)}. Si ya se pagó de más, registra la corrección fuera de pagos para no crear caja falsa.`;
-    const facturaError = validateAjusteFacturaReferencia(compra.facturasRelacionadas, ajuste, normalizeFacturasProveedorList, 'esta compra');
-    if (facturaError) return facturaError;
     return '';
   }
 
-  async function saveProveedorAjusteRecord(form) {
+  function saveProveedorAjusteRecord(form) {
     const formData = new FormData(form);
     const compraProveedorId = cleanText(formData.get('compraProveedorId'));
     const proveedorId = cleanText(formData.get('proveedorId'));
     const compras = Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [];
     const compra = compras.map((record) => normalizeCompraProveedorRecord(record)).find((record) => record.id === compraProveedorId);
-    const ajuste = buildProveedorAjusteFromForm(form, compra);
+    const ajuste = buildProveedorAjusteFromForm(form);
     const validationError = validateProveedorAjusteRecord(compra, ajuste, proveedorId);
 
     if (validationError) {
@@ -21903,10 +19825,9 @@ Notas importantes:
 
     const savedCompra = appData.comprasProveedores.find((record) => record.id === compraProveedorId);
     const syncResult = savedCompra ? syncAutoPagoCompraContado(savedCompra) : { action: 'none' };
-    if (savedCompra) syncCompraFacturasToFacturasModulo(savedCompra);
     proveedoresState.selectedAjusteCompraId = compraProveedorId;
     openAccordionGroupForRecord('compras', savedCompra || compra);
-    proveedoresState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${compra.facturaReferencia} (${getAjusteFacturaActivityPart(ajuste)}). Saldo recalculado sin crear pago.`;
+    proveedoresState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${compra.facturaReferencia}. Saldo recalculado sin crear pago.`;
     if (syncResult.action === 'updated') proveedoresState.message += ' Pago automático de contado sincronizado defensivamente.';
     proveedoresState.messageType = 'success';
     saveData(appData);
@@ -21916,10 +19837,9 @@ Notas importantes:
       entityType: 'Ajuste proveedor',
       entityRef: compra.facturaReferencia,
       amount: ajuste.monto,
-      detail: buildActivityDetail(['Ajuste proveedor registrado', compra.facturaReferencia, getAjusteFacturaActivityPart(ajuste), ajuste.tipo, formatMoney(ajuste.monto)]),
+      detail: buildActivityDetail(['Ajuste proveedor registrado', compra.facturaReferencia, ajuste.tipo, formatMoney(ajuste.monto)]),
       source: 'local'
     });
-    await confirmCriticalCloudSave(proveedoresState, { operation: 'proveedores_ajuste' });
     renderRoute();
   }
 
@@ -21932,7 +19852,7 @@ Notas importantes:
     renderRoute({ preserveScroll: true });
   }
 
-  async function deleteCompraProveedorAjuste(compraProveedorId, ajusteId) {
+  function deleteCompraProveedorAjuste(compraProveedorId, ajusteId) {
     if (!canCurrentRole('annulMovements')) {
       proveedoresState.message = ADMIN_RESTRICTED_MESSAGE;
       proveedoresState.messageType = 'error';
@@ -21959,20 +19879,17 @@ Notas importantes:
 
     const savedCompra = appData.comprasProveedores.find((record) => record.id === compraProveedorId);
     syncAutoPagoCompraContado(savedCompra || compra);
-    if (savedCompra) syncCompraFacturasToFacturasModulo(savedCompra);
     proveedoresState.selectedAjusteCompraId = compraProveedorId;
     openAccordionGroupForRecord('compras', savedCompra || compra);
     proveedoresState.message = `Ajuste eliminado de ${compra.facturaReferencia}. Saldo recalculado.`;
     proveedoresState.messageType = 'success';
     saveData(appData);
-    await confirmCriticalCloudSave(proveedoresState, { operation: 'proveedores_ajuste_borrar' });
     renderRoute();
   }
 
   function setupProveedorAjusteForm(form) {
     const providerSelect = form.querySelector('[data-ajuste-provider]');
     const compraSelect = form.querySelector('[data-ajuste-compra]');
-    const facturaSelect = form.querySelector('[data-ajuste-proveedor-factura]');
     const preview = form.querySelector('[data-ajuste-preview]');
     if (!providerSelect || !compraSelect) return;
 
@@ -21981,7 +19898,6 @@ Notas importantes:
       const compras = Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [];
       const compra = compras.map((record) => normalizeCompraProveedorRecord(record)).find((record) => record.id === compraId);
       if (preview && compra) preview.innerHTML = renderAjustePreview(compra);
-      syncAjusteFacturaSelectOptions(facturaSelect, compra?.facturasRelacionadas || [], normalizeFacturasProveedorList);
       proveedoresState.selectedAjusteCompraId = compraId;
     };
 
@@ -22014,6 +19930,7 @@ Notas importantes:
     updateCompraProveedorPreviewFromForm(form, false);
     setupCompraContadoPaymentBlock(form);
     setupCompraFacturasRelacionadasForm(form);
+    setupCompraTotalCalculator(form);
 
     form.querySelectorAll('[data-compra-calc]').forEach((input) => {
       input.addEventListener('input', () => updateCompraProveedorPreviewFromForm(form, false));
@@ -22031,12 +19948,12 @@ Notas importantes:
   function setupCompraFacturasRelacionadasForm(form) {
     const block = form.querySelector('[data-facturas-proveedor-block]');
     if (!block) return;
-    const rowsNode = block.querySelector('[data-facturas-proveedor-rows]');
-    const addButton = block.querySelector('[data-factura-proveedor-add]');
+    const hidden = block.querySelector('[data-facturas-proveedor-json]');
+    const massInput = block.querySelector('[data-facturas-proveedor-mass]');
     const countNode = block.querySelector('[data-facturas-proveedor-count]');
     const previewNode = block.querySelector('[data-facturas-proveedor-preview]');
     const messageNode = block.querySelector('[data-facturas-proveedor-message]');
-    if (!rowsNode) return;
+    if (!massInput) return;
 
     const showMessage = (message, isError = false) => {
       if (!messageNode) return;
@@ -22044,63 +19961,129 @@ Notas importantes:
       messageNode.classList.toggle('is-error', Boolean(isError));
     };
 
-    const createRow = (factura = {}) => {
-      const temp = document.createElement('div');
-      temp.innerHTML = renderCompraFacturaEditorRow(factura).trim();
-      const row = temp.firstElementChild;
-      rowsNode.appendChild(row);
-      bindRow(row);
-      return row;
-    };
-
-    const updateRow = (row) => {
-      const montoInfo = getFacturaMoneyInputInfo(row.querySelector('[data-factura-proveedor-monto]')?.value || '');
-      row.classList.toggle('is-invalid', montoInfo.invalid);
-      row.classList.toggle('is-pending', !montoInfo.hasValue);
-    };
-
     const sync = () => {
-      Array.from(rowsNode.querySelectorAll('[data-factura-proveedor-row]')).forEach(updateRow);
-      const list = syncCompraFacturasRelacionadasToHidden(form);
-      const stats = getCompraFacturasMontoStats(list);
+      const list = normalizeFacturasProveedorList(massInput.value);
+      if (hidden) hidden.value = JSON.stringify(list);
       if (countNode) countNode.textContent = `${list.length} factura${list.length === 1 ? '' : 's'}`;
-      if (previewNode) {
-        const totalText = stats.completas || stats.pendientes ? ` · Total facturas: ${formatMoney(updateCompraTotalInputFromFacturas(form, list))}` : '';
-        previewNode.textContent = list.length ? `Facturas detectadas: ${formatFacturasProveedorResumen(list)}${totalText}` : 'Facturas detectadas: ninguna';
-      }
-      updateCompraProveedorPreviewFromForm(form, false);
+      if (previewNode) previewNode.textContent = list.length ? `Facturas detectadas: ${formatFacturasProveedorResumen(list)}` : 'Facturas detectadas: ninguna';
       return list;
     };
 
-    function bindRow(row) {
-      row.querySelectorAll('input').forEach((input) => {
-        input.addEventListener('input', () => {
-          sync();
-          showMessage('', false);
-        });
-        input.addEventListener('blur', () => {
-          if (input.matches('[data-factura-proveedor-monto]')) {
-            const info = getFacturaMoneyInputInfo(input.value);
-            input.value = info.hasValue && !Number.isNaN(info.value) ? formatNumberInput(info.value) : '';
-          }
-          sync();
-        });
-      });
-      row.querySelector('[data-factura-proveedor-remove]')?.addEventListener('click', () => {
-        row.remove();
-        sync();
-      });
-      updateRow(row);
-    }
+    const current = normalizeFacturasProveedorList(hidden?.value || []);
+    massInput.value = formatFacturasProveedorInput(current);
+    sync();
 
-    Array.from(rowsNode.querySelectorAll('[data-factura-proveedor-row]')).forEach(bindRow);
-    addButton?.addEventListener('click', () => {
-      const row = createRow({ id: generateId('facturaProveedor'), numero: '', pendienteMonto: true });
+    massInput.addEventListener('input', () => {
       sync();
-      row.querySelector('[data-factura-proveedor-numero]')?.focus();
+      showMessage('', false);
+    });
+    massInput.addEventListener('blur', () => {
+      const list = sync();
+      massInput.value = formatFacturasProveedorInput(list);
+      sync();
+    });
+  }
+
+  function setupCompraTotalCalculator(form) {
+    const openButton = form.querySelector('[data-compra-calculator-open]');
+    const modal = form.querySelector('[data-compra-calculator-modal]');
+    const rowsNode = form.querySelector('[data-compra-calculator-rows]');
+    const totalNode = form.querySelector('[data-compra-calculator-total]');
+    const totalInput = form.querySelector('[data-compra-total-input]');
+    if (!openButton || !modal || !rowsNode || !totalInput) return;
+
+    const getValues = () => Array.from(rowsNode.querySelectorAll('[data-compra-calculator-input]')).map((input) => input.value);
+
+    const calculateTotal = () => getValues().reduce((sum, value) => {
+      const amount = parseMoney(value);
+      return roundMoney(sum + (Number.isNaN(amount) ? 0 : amount));
+    }, 0);
+
+    const updateTotal = () => {
+      const total = calculateTotal();
+      if (totalNode) totalNode.textContent = formatMoney(total);
+      return total;
+    };
+
+    const renumberRows = () => {
+      rowsNode.querySelectorAll('[data-compra-calculator-row]').forEach((row, index) => {
+        const label = row.querySelector('[data-compra-calculator-label]');
+        if (label) label.textContent = `Monto ${index + 1}`;
+        const removeButton = row.querySelector('[data-compra-calculator-remove]');
+        if (removeButton) removeButton.disabled = rowsNode.querySelectorAll('[data-compra-calculator-row]').length <= 1;
+      });
+    };
+
+    const addRow = (value = '') => {
+      const row = document.createElement('div');
+      row.className = 'calculator-line-row';
+      row.setAttribute('data-compra-calculator-row', '1');
+      row.innerHTML = `
+        <label class="form-field calculator-line-field">
+          <span data-compra-calculator-label>Monto</span>
+          <input type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" data-compra-calculator-input />
+        </label>
+        <button type="button" class="danger-action compact" data-compra-calculator-remove>Quitar</button>
+      `;
+      const input = row.querySelector('[data-compra-calculator-input]');
+      input.value = cleanText(value);
+      input.addEventListener('input', updateTotal);
+      row.querySelector('[data-compra-calculator-remove]')?.addEventListener('click', () => {
+        if (rowsNode.querySelectorAll('[data-compra-calculator-row]').length <= 1) {
+          input.value = '';
+          updateTotal();
+          return;
+        }
+        row.remove();
+        renumberRows();
+        updateTotal();
+      });
+      rowsNode.appendChild(row);
+      renumberRows();
+      updateTotal();
+      return input;
+    };
+
+    const resetRows = (values = ['', '']) => {
+      rowsNode.innerHTML = '';
+      const safeValues = Array.isArray(values) && values.length ? values : [''];
+      safeValues.forEach((value) => addRow(value));
+      renumberRows();
+      updateTotal();
+    };
+
+    const closeModal = () => {
+      modal.classList.add('is-hidden');
+    };
+
+    openButton.addEventListener('click', () => {
+      const currentRows = getValues().filter((value) => cleanText(value));
+      resetRows(currentRows.length ? currentRows : ['', '']);
+      modal.classList.remove('is-hidden');
+      rowsNode.querySelector('[data-compra-calculator-input]')?.focus();
     });
 
-    sync();
+    form.querySelector('[data-compra-calculator-add]')?.addEventListener('click', () => {
+      const input = addRow('');
+      input.focus();
+    });
+
+    form.querySelector('[data-compra-calculator-clear]')?.addEventListener('click', () => resetRows(['', '']));
+    form.querySelector('[data-compra-calculator-cancel]')?.addEventListener('click', closeModal);
+    form.querySelector('[data-compra-calculator-close]')?.addEventListener('click', closeModal);
+    modal.addEventListener('click', (event) => {
+      if (event.target === modal) closeModal();
+    });
+
+    form.querySelector('[data-compra-calculator-use]')?.addEventListener('click', () => {
+      const total = updateTotal();
+      totalInput.value = formatNumberInput(total);
+      totalInput.dispatchEvent(new Event('input', { bubbles: true }));
+      updateCompraProveedorPreviewFromForm(form, false);
+      closeModal();
+    });
+
+    resetRows(['', '']);
   }
 
   function applyCompraPaymentTermsSuggestion(form) {
@@ -22620,7 +20603,7 @@ Notas importantes:
     return '';
   }
 
-  async function savePagoProveedorRecord(form) {
+  function savePagoProveedorRecord(form) {
     const existingId = cleanText(new FormData(form).get('id'));
     const records = Array.isArray(appData.pagosProveedores) ? appData.pagosProveedores : [];
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
@@ -22671,7 +20654,6 @@ Notas importantes:
       detail: buildActivityDetail([existingRecord ? 'Pago editado' : 'Pago registrado', newRecord.facturaReferencia, formatMoney(newRecord.montoPagado)]),
       source: 'local'
     });
-    await confirmCriticalCloudSave(pagosState, { operation: 'pagos' });
     renderRoute();
   }
 
@@ -22698,7 +20680,7 @@ Notas importantes:
     renderRoute();
   }
 
-  async function annulPagoProveedorRecord(pagoId) {
+  function annulPagoProveedorRecord(pagoId) {
     if (!canCurrentRole('annulMovements')) {
       pagosState.message = ADMIN_RESTRICTED_MESSAGE;
       pagosState.messageType = 'error';
@@ -22719,7 +20701,6 @@ Notas importantes:
     pagosState.message = `Pago de ${formatMoney(pago.montoPagado)} anulado y factura/referencia recalculada.`;
     pagosState.messageType = 'success';
     saveData(appData);
-    await confirmCriticalCloudSave(pagosState, { operation: 'pagos_anular' });
     renderRoute();
   }
 
@@ -23040,7 +21021,7 @@ Notas importantes:
     return '';
   }
 
-  async function saveGastoRecord(form) {
+  function saveGastoRecord(form) {
     const existingId = cleanText(new FormData(form).get('id'));
     const records = Array.isArray(appData.gastos) ? appData.gastos : [];
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
@@ -23085,7 +21066,6 @@ Notas importantes:
       detail: buildActivityDetail([existingRecord ? 'Gasto editado' : 'Gasto registrado', newRecord.tipoGastoNombre || 'Gasto', formatMoney(newRecord.monto)]),
       source: 'local'
     });
-    await confirmCriticalCloudSave(gastosState, { operation: 'gastos' });
     renderRoute();
   }
 
@@ -23105,7 +21085,7 @@ Notas importantes:
     renderRoute();
   }
 
-  async function annulGastoRecord(recordId) {
+  function annulGastoRecord(recordId) {
     if (!canCurrentRole('annulMovements')) {
       gastosState.message = ADMIN_RESTRICTED_MESSAGE;
       gastosState.messageType = 'error';
@@ -23125,7 +21105,6 @@ Notas importantes:
     gastosState.message = `Gasto de ${formatMoney(record.monto)} anulado. Queda visible y no sumará en reportes futuros.`;
     gastosState.messageType = 'success';
     saveData(appData);
-    await confirmCriticalCloudSave(gastosState, { operation: 'gastos_anular' });
     renderRoute();
   }
 
@@ -23652,7 +21631,7 @@ Notas importantes:
     return '';
   }
 
-  async function saveCasaGastoRecord(form) {
+  function saveCasaGastoRecord(form) {
     const existingId = cleanText(new FormData(form).get('id'));
     const records = Array.isArray(appData.casaGastos) ? appData.casaGastos : [];
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
@@ -23687,7 +21666,6 @@ Notas importantes:
       detail: buildActivityDetail([existingRecord ? 'Gasto Casa editado' : 'Gasto Casa registrado', newRecord.categoriaCasaNombre || 'Casa', formatMoney(newRecord.monto)]),
       source: 'local'
     });
-    await confirmCriticalCloudSave(casaState, { operation: 'casa' });
     renderRoute();
   }
 
@@ -23700,7 +21678,7 @@ Notas importantes:
     renderRoute();
   }
 
-  async function deleteCasaGastoRecord(recordId) {
+  function deleteCasaGastoRecord(recordId) {
     const records = Array.isArray(appData.casaGastos) ? appData.casaGastos : [];
     const record = records.find((item) => item.id === recordId);
     if (!record) return;
@@ -23711,7 +21689,6 @@ Notas importantes:
     casaState.message = `Gasto Casa eliminado: ${formatMoney(record.monto)}.`;
     casaState.messageType = 'success';
     saveData(appData);
-    await confirmCriticalCloudSave(casaState, { operation: 'casa_borrar' });
     renderRoute();
   }
 
@@ -23841,24 +21818,9 @@ Notas importantes:
     const authStatus = getPreparedAuthStatus();
     const firebaseStatus = getKSAFirebaseStatusSafe();
     const runtimeStatus = getCloudRuntimeStatusSafe();
-    const syncMeta = getCloudSyncDiagnosticsSnapshot();
     const cloudActive = Boolean(cloudOperationState.active || runtimeStatus.cloudActive || firebaseStatus.cloudActive || mode === 'cloud_active');
     const cloudReady = Boolean(runtimeStatus.cloudDataReady || firebaseStatus.cloudDataReady || runtimeStatus.datosMigrados || mode === 'cloud_ready' || cloudActive);
-    const lastCloudReadAt = syncMeta.lastCloudReadAt || runtimeStatus.lastCloudReadAt || '';
-    const lastCloudWriteAt = syncMeta.lastCloudWriteAt || runtimeStatus.lastCloudWriteAt || '';
-    const lastSyncAttemptAt = syncMeta.lastSyncAttemptAt || cloudOperationState.lastSyncAt || runtimeStatus.lastSyncAt || '';
-    const lastSyncErrorMessage = syncMeta.lastSyncErrorMessage || cloudOperationState.lastError || runtimeStatus.lastSyncError || '';
-    const lastSyncErrorAt = syncMeta.lastSyncErrorAt || runtimeStatus.lastSyncErrorAt || '';
-    const hasRecentError = isCloudSyncErrorRecent(syncMeta) || Boolean(lastSyncErrorMessage && !lastCloudReadAt && !lastCloudWriteAt);
-    const lastProtectionAt = syncMeta.lastProtectionAt || '';
-    const protectionIsRecent = Boolean(lastProtectionAt && (!lastCloudReadAt || String(lastProtectionAt) > String(lastCloudReadAt)));
-    const protectionStatusKey = cleanText(syncMeta.lastProtectionStatus || syncMeta.lastCloudStatus || 'proteccion_anti_perdida') || 'proteccion_anti_perdida';
-    const realStatusKey = protectionIsRecent
-      ? (syncMeta.pendingLocalChanges ? 'pendiente_sincronizar' : protectionStatusKey)
-      : (hasRecentError
-        ? (syncMeta.lastCloudStatus === 'lectura_incompleta' ? 'lectura_incompleta' : 'error_sincronizacion')
-        : (syncMeta.pendingLocalChanges ? 'pendiente_sincronizar' : (cloudActive && (lastCloudReadAt || lastCloudWriteAt) ? 'sincronizado' : (cloudActive ? 'nube_no_confirmada' : 'local_controlado'))));
-    const lastSyncAt = lastSyncAttemptAt || lastCloudReadAt || lastCloudWriteAt || '';
+    const lastSyncAt = cloudOperationState.lastSyncAt || runtimeStatus.lastSyncAt || runtimeStatus.lastCloudReadAt || runtimeStatus.lastCloudWriteAt || '';
 
     return {
       ...info,
@@ -23869,33 +21831,7 @@ Notas importantes:
       badgeClass: cloudActive ? 'is-cloud' : info.badgeClass,
       message: cloudActive ? 'Firestore está activo como fuente principal. JSON queda como respaldo auxiliar.' : info.message,
       lastCheck: nowIso(),
-      cloudActive,
-      cloudReady,
       lastSyncAt,
-      lastCloudReadAt,
-      lastCloudWriteAt,
-      lastSyncAttemptAt,
-      lastSyncErrorAt,
-      lastSyncErrorMessage,
-      lastSyncErrorOperation: syncMeta.lastSyncErrorOperation,
-      lastProtectionAt: syncMeta.lastProtectionAt,
-      lastProtectionReason: syncMeta.lastProtectionReason,
-      lastProtectionMessage: syncMeta.lastProtectionMessage,
-      lastProtectionStatus: syncMeta.lastProtectionStatus,
-      lastManualRefreshAt: syncMeta.lastManualRefreshAt,
-      lastManualRefreshStatus: syncMeta.lastManualRefreshStatus,
-      lastManualRefreshMessage: syncMeta.lastManualRefreshMessage,
-      lastManualRefreshModules: Array.isArray(syncMeta.lastManualRefreshModules) ? syncMeta.lastManualRefreshModules.map(normalizeCloudRefreshModuleResult) : [],
-      lastManualSaveAt: syncMeta.lastManualSaveAt,
-      lastManualSaveStatus: syncMeta.lastManualSaveStatus,
-      lastManualSaveMessage: syncMeta.lastManualSaveMessage,
-      isRefreshingCloud: Boolean(cloudOperationState.isReading),
-      isSavingCloud: Boolean(cloudOperationState.isManualSaving),
-      pendingLocalChanges: syncMeta.pendingLocalChanges,
-      pendingLocalChangesCount: syncMeta.pendingLocalChangesCount,
-      realStatus: getCloudStatusLabel(realStatusKey),
-      realStatusKey,
-      realStatusMessage: syncMeta.lastStatusMessage,
       diagnosticsOk: diagnostics?.ok === true,
       localRecords,
       access: authStatus.accessLabel,
@@ -23910,162 +21846,40 @@ Notas importantes:
       projectId: firebaseStatus.projectId || cleanText(getRawKSAFirebaseConfig().projectId),
       sourcePrincipal: cloudActive ? 'Firestore' : 'Local controlado',
       datosMigrados: cloudReady ? 'Sí' : 'No',
-      canRefreshCloud: Boolean(authStatus.authMode === 'firebase' && authStatus.user?.email && cloudReady && !cloudOperationState.isReading && !cloudOperationState.isManualSaving)
+      canRefreshCloud: Boolean(authStatus.authMode === 'firebase' && authStatus.user?.email && cloudReady && !cloudOperationState.isReading)
     };
-  }
-
-  function renderSyncCountRows(items = []) {
-    const list = Array.isArray(items) ? items : [];
-    const rows = list.map((item) => {
-      const rawValue = item?.value;
-      const numeric = Number(rawValue);
-      const display = Number.isFinite(numeric) ? String(numeric) : cleanText(rawValue || 'No disponible');
-      return `
-        <tr class="compact-record-row">
-          <td><span class="compact-primary">${escapeHtml(item?.label || 'Módulo')}</span></td>
-          <td class="amount-cell"><span>${escapeHtml(display || 'No disponible')}</span></td>
-        </tr>
-      `;
-    }).join('');
-    return rows || '<tr class="compact-record-row"><td><span class="compact-primary">Sin datos</span></td><td class="amount-cell"><span>0</span></td></tr>';
-  }
-
-  function renderLocalSyncCountsTable() {
-    return renderOperationalTableShell({
-      shellClass: 'sync-local-counts-scroll-shell',
-      wrapClass: 'sync-local-counts-table-wrap',
-      ariaLabel: 'Conteos locales por módulo',
-      tableClass: 'sync-local-counts-table',
-      headers: '<th>Módulo</th><th class="amount-cell">Local</th>',
-      rows: renderSyncCountRows(getLocalSyncCounts())
-    });
-  }
-
-  function renderCloudRefreshModuleRows(items = []) {
-    const list = (Array.isArray(items) ? items : []).map(normalizeCloudRefreshModuleResult);
-    const rows = list.map((item) => {
-      const countText = Number.isFinite(Number(item.count)) ? String(Number(item.count)) : '0';
-      const durationText = item.durationMs > 0 ? `${Math.round(item.durationMs / 100) / 10}s` : '—';
-      const messageText = item.message || item.statusLabel || getCloudRefreshModuleStatusLabel(item.status);
-      return `
-        <tr class="compact-record-row">
-          <td><span class="compact-primary">${escapeHtml(item.label || 'Módulo')}</span><small>${escapeHtml(item.key || '')}</small></td>
-          <td><span>${escapeHtml(item.statusLabel || getCloudRefreshModuleStatusLabel(item.status))}</span></td>
-          <td class="amount-cell"><span>${escapeHtml(countText)}</span></td>
-          <td><span>${escapeHtml(durationText)}</span></td>
-          <td><span>${escapeHtml(messageText)}</span><small>${escapeHtml(item.code || '')}</small></td>
-        </tr>
-      `;
-    }).join('');
-    return rows || '<tr class="compact-record-row"><td colspan="5"><span class="compact-primary">Sin actualización manual registrada</span><small>Al usar Actualizar datos se mostrará el resultado por módulo.</small></td></tr>';
-  }
-
-  function renderCloudRefreshModulesTable(items = []) {
-    return renderOperationalTableShell({
-      shellClass: 'sync-module-results-scroll-shell',
-      wrapClass: 'sync-module-results-table-wrap',
-      ariaLabel: 'Resultado de actualización por módulo',
-      tableClass: 'sync-module-results-table',
-      headers: '<th>Módulo</th><th>Estado</th><th class="amount-cell">Registros</th><th>Tiempo</th><th>Detalle</th>',
-      rows: renderCloudRefreshModuleRows(items)
-    });
-  }
-
-  function formatSyncDateOrEmpty(value, emptyText = 'Sin lectura registrada') {
-    const clean = cleanText(value);
-    return clean ? formatDateTime(clean) : emptyText;
   }
 
   function renderDataSyncStatusCard(options = {}) {
     const opts = isPlainObject(options) ? options : {};
     const info = getDataSyncStatusInfo();
-    const errorText = info.lastSyncErrorMessage
-      ? `${info.lastSyncErrorMessage}${info.lastSyncErrorAt ? ` · ${formatDateTime(info.lastSyncErrorAt)}` : ''}`
-      : 'Sin errores recientes';
-    const pendingText = info.pendingLocalChanges
-      ? (Number.isFinite(Number(info.pendingLocalChangesCount)) ? `Sí · ${Number(info.pendingLocalChangesCount)} registro(s) estimado(s)` : 'Sí · No determinado')
-      : 'No';
-    const statusBadgeClass = info.realStatusKey === 'sincronizado'
-      ? 'is-cloud'
-      : (info.realStatusKey === 'error_sincronizacion' || info.realStatusKey === 'lectura_incompleta' || info.realStatusKey === 'proteccion_anti_perdida' || info.realStatusKey === 'nube_no_confirmada' ? 'is-warning' : 'is-pending');
-    const warningHtml = (info.realStatusKey === 'lectura_incompleta' || info.realStatusKey === 'error_sincronizacion')
-      ? '<div class="form-message is-error" role="alert">La actualización desde nube no se completó. Se conservaron los datos locales.</div>'
-      : (info.lastProtectionAt ? `<div class="form-message is-error" role="alert">${escapeHtml(info.lastProtectionMessage || 'No se pudo confirmar seguridad de actualización. Se conservaron datos locales.')}</div>` : '');
-    const protectionText = info.lastProtectionAt
-      ? `${info.lastProtectionMessage || 'Protección anti-pérdida aplicada.'} · ${formatDateTime(info.lastProtectionAt)}`
-      : 'Sin bloqueo anti-pérdida registrado';
-    const manualRefreshStatus = info.isRefreshingCloud ? 'Actualizando…' : (info.lastManualRefreshStatus ? getCloudStatusLabel(info.lastManualRefreshStatus) : 'Sin actualización manual');
-    const manualRefreshMessage = info.isRefreshingCloud
-      ? (cloudOperationState.refreshMessage || summarizeCloudRefreshModules(info.lastManualRefreshModules))
-      : (info.lastManualRefreshMessage || summarizeCloudRefreshModules(info.lastManualRefreshModules));
-    const refreshButtonLabel = info.isRefreshingCloud ? 'Actualizando…' : 'Actualizar datos';
-    const saveButtonLabel = info.isSavingCloud ? 'Guardando…' : 'Guardar datos';
-    const manualSaveStatus = info.lastManualSaveStatus ? getCloudStatusLabel(info.lastManualSaveStatus) : 'Sin guardado manual';
-    const manualSaveMessage = info.isSavingCloud
-      ? (cloudOperationState.manualSaveMessage || info.lastManualSaveMessage || 'Guardando datos locales actuales en Firestore…')
-      : (info.lastManualSaveMessage || 'Al usar Guardar datos se mostrará la confirmación de escritura en nube.');
-    const canShowManualSave = Boolean(info.cloudActive || info.isSavingCloud);
-    const saveDisabled = info.isSavingCloud || info.isRefreshingCloud;
-    const refreshDisabled = info.isRefreshingCloud || info.isSavingCloud;
-    const syncActionsHtml = (!opts.hideCloudRefresh && (info.canRefreshCloud || info.isRefreshingCloud || canShowManualSave)) ? `
-          <div class="sync-action-row">
-            ${canShowManualSave ? `<button type="button" class="card-action compact" data-cloud-manual-save ${saveDisabled ? 'disabled' : ''}>${escapeHtml(saveButtonLabel)}</button>` : ''}
-            ${(info.canRefreshCloud || info.isRefreshingCloud) ? `<button type="button" class="secondary-action compact" data-cloud-refresh ${refreshDisabled ? 'disabled' : ''}>${escapeHtml(refreshButtonLabel)}</button>` : ''}
-            ${info.cloudActive ? `<button type="button" class="secondary-action compact" data-cloud-upload-pending ${(saveDisabled || refreshDisabled) ? 'disabled' : ''}>Subir pendientes</button>` : ''}
-          </div>` : '';
     return `
       <article class="panel-card config-card full-span data-sync-status-card">
         <div class="section-title-row">
           <div>
-            <span class="eyebrow mini">Sincronización segura</span>
-            <h2>Estado real de nube/local</h2>
+            <span class="eyebrow mini">Sincronización</span>
+            <h2>Estado de datos</h2>
           </div>
-          <span class="sync-mode-badge ${escapeHtml(statusBadgeClass)}">${escapeHtml(info.realStatus)}</span>
+          <span class="sync-mode-badge ${escapeHtml(info.badgeClass)}">${escapeHtml(info.estado)}</span>
         </div>
         <p class="notice">${escapeHtml(info.message)}</p>
-        ${warningHtml}
         <div class="import-summary-grid compact-summary data-sync-grid">
-          <div class="status-item"><strong>Modo de datos actual</strong><span>${escapeHtml(info.cloudActive ? 'Nube activa' : info.estado)}</span></div>
+          <div class="status-item"><strong>Modo de datos</strong><span>${escapeHtml(info.estado)}</span></div>
           <div class="status-item"><strong>Fuente de datos</strong><span>${escapeHtml(info.fuente)}</span></div>
-          <div class="status-item"><strong>Estado real</strong><span>${escapeHtml(info.realStatus)}</span><small>${escapeHtml(info.realStatusMessage || 'Diagnóstico local/nube separado.')}</small></div>
-          <div class="status-item"><strong>Última lectura desde Firestore</strong><span>${escapeHtml(formatSyncDateOrEmpty(info.lastCloudReadAt, 'Sin lectura registrada'))}</span></div>
-          <div class="status-item"><strong>Última escritura exitosa en Firestore</strong><span>${escapeHtml(formatSyncDateOrEmpty(info.lastCloudWriteAt, 'Sin escritura confirmada'))}</span></div>
-          <div class="status-item"><strong>Último intento de sincronización</strong><span>${escapeHtml(formatSyncDateOrEmpty(info.lastSyncAttemptAt, 'Sin intento registrado'))}</span></div>
-          <div class="status-item"><strong>Resultado última actualización manual</strong><span>${escapeHtml(manualRefreshStatus)}</span><small>${escapeHtml(manualRefreshMessage)}</small></div>
-          <div class="status-item"><strong>Resultado último guardado manual</strong><span>${escapeHtml(manualSaveStatus)}</span><small>${escapeHtml(manualSaveMessage)}</small></div>
-          <div class="status-item"><strong>Último intento de guardado</strong><span>${escapeHtml(formatSyncDateOrEmpty(info.lastManualSaveAt, 'Sin intento registrado'))}</span></div>
-          <div class="status-item"><strong>Último error de escritura/sincronización</strong><span>${escapeHtml(errorText)}</span><small>${escapeHtml(info.lastSyncErrorOperation || '')}</small></div>
-          <div class="status-item"><strong>Última protección anti-pérdida</strong><span>${escapeHtml(protectionText)}</span><small>${escapeHtml(info.lastProtectionReason || '')}</small></div>
-          <div class="status-item"><strong>Cambios pendientes</strong><span>${escapeHtml(pendingText)}</span></div>
           <div class="status-item"><strong>Firebase</strong><span>${escapeHtml(info.firebase)}</span></div>
           <div class="status-item"><strong>Auth</strong><span>${escapeHtml(info.firebaseAuth || 'Pendiente')}</span></div>
           <div class="status-item"><strong>Firestore</strong><span>${escapeHtml(info.firestore || 'Pendiente')}</span></div>
           <div class="status-item"><strong>Workspace</strong><span>${escapeHtml(info.workspace || 'ksa_practika')}</span></div>
           <div class="status-item"><strong>Acceso</strong><span>${escapeHtml(info.access || 'Modo local')}</span></div>
-          <div class="status-item"><strong>Última comprobación visual</strong><span>${escapeHtml(formatDateTime(info.lastCheck))}</span></div>
+          <div class="status-item"><strong>Última comprobación</strong><span>${escapeHtml(formatDateTime(info.lastCheck))}</span></div>
           <div class="status-item"><strong>Nube</strong><span>${escapeHtml(info.nube)}</span></div>
           <div class="status-item"><strong>Proyecto</strong><span>${escapeHtml(info.projectName || 'ksakpk')}</span></div>
           <div class="status-item"><strong>Fuente principal</strong><span>${escapeHtml(info.sourcePrincipal || 'Local controlado')}</span></div>
           <div class="status-item"><strong>Datos migrados</strong><span>${escapeHtml(info.datosMigrados || 'No')}</span></div>
-          ${syncActionsHtml}
-        </div>
-        <div class="sync-counts-block sync-module-results-block">
-          <div class="compact-title-row">
-            <div>
-              <span class="eyebrow mini">Actualización manual</span>
-              <h3>Resultado por módulo</h3>
-            </div>
-          </div>
-          ${renderCloudRefreshModulesTable(info.lastManualRefreshModules)}
-        </div>
-        <div class="sync-counts-block">
-          <div class="compact-title-row">
-            <div>
-              <span class="eyebrow mini">Base local</span>
-              <h3>Conteos locales por módulo</h3>
-            </div>
-          </div>
-          ${renderLocalSyncCountsTable()}
+          <div class="status-item"><strong>Última sincronización</strong><span>${escapeHtml(info.lastSyncAt ? formatDateTime(info.lastSyncAt) : '—')}</span></div>
+          <div class="status-item"><strong>Cambios de sesión pendientes</strong><span data-session-change-count>${escapeHtml(String(getSessionChangePendingCount()))}</span></div>
+          ${Number.isFinite(info.localRecords) ? `<div class="status-item"><strong>Conteos locales</strong><span>${escapeHtml(String(info.localRecords))}</span><small>Solo informativo</small></div>` : ''}
+          ${!opts.hideCloudRefresh && info.canRefreshCloud ? '<button type="button" class="secondary-action compact" data-cloud-refresh>Actualizar datos</button>' : ''}
         </div>
       </article>
     `;
@@ -24199,15 +22013,11 @@ Notas importantes:
     const counts = isPlainObject(countsInput) ? countsInput : {};
     const rows = ONLINE_DIAGNOSTIC_COLLECTIONS.map((item) => {
       const hasValue = Object.prototype.hasOwnProperty.call(counts, item.key);
-      const rawValue = hasValue ? counts[item.key] : null;
-      const value = Number(rawValue);
-      const display = hasValue
-        ? (Number.isFinite(value) ? String(value) : cleanText(rawValue || 'No disponible'))
-        : 'No revisado';
+      const value = hasValue ? Number(counts[item.key]) : null;
       return `
         <tr class="compact-record-row">
           <td><span class="compact-primary">${escapeHtml(item.label)}</span></td>
-          <td class="amount-cell"><span>${escapeHtml(display || 'No disponible')}</span></td>
+          <td class="amount-cell"><span>${escapeHtml(hasValue && Number.isFinite(value) ? String(value) : '—')}</span></td>
         </tr>
       `;
     }).join('');
@@ -24253,11 +22063,11 @@ Notas importantes:
         <div class="compact-title-row">
           <div>
             <span class="eyebrow mini">Firestore seguro</span>
-            <h3>Conteos nube y diagnóstico online</h3>
+            <h3>Diagnóstico online</h3>
           </div>
           <span class="sync-mode-badge ${escapeHtml(readBadgeClass)}">${escapeHtml(readStatus)}</span>
         </div>
-        <p class="notice">Validación segura de Firestore. Los conteos nube son lectura no destructiva: no reemplazan datos locales ni escriben en módulos operativos.</p>
+        <p class="notice">Validación liviana de Firestore. Solo lee datos y la prueba de escritura usa metadata/diagnostico; los módulos operativos ni se despeinan.</p>
         <div class="import-summary-grid compact-summary online-diagnostic-grid">
           <div class="status-item"><strong>Usuario actual</strong><span>${escapeHtml(signedUser?.displayName || signedUser?.email || status.currentUser || '—')}</span></div>
           <div class="status-item"><strong>Correo actual</strong><span>${escapeHtml(signedUser?.email || status.currentUser || '—')}</span></div>
@@ -24268,12 +22078,12 @@ Notas importantes:
           <div class="status-item"><strong>Modo de datos</strong><span>${escapeHtml(dataMode)}</span></div>
           <div class="status-item"><strong>Fuente principal</strong><span>${escapeHtml(sourcePrincipal)}</span></div>
           <div class="status-item"><strong>Importación inicial</strong><span>${escapeHtml(importCompleted ? 'Completada' : 'Pendiente')}</span></div>
-          <div class="status-item"><strong>Última revisión de conteos nube</strong><span>${escapeHtml(lastSyncAt ? formatDateTime(lastSyncAt) : '—')}</span></div>
+          <div class="status-item"><strong>Última sincronización</strong><span>${escapeHtml(lastSyncAt ? formatDateTime(lastSyncAt) : '—')}</span></div>
           <div class="status-item"><strong>Estado de lectura Firestore</strong><span>${escapeHtml(readStatus)}</span></div>
           <div class="status-item"><strong>Estado de escritura de diagnóstico</strong><span>${escapeHtml(writeStatus)}</span></div>
         </div>
         <div class="config-actions-row online-diagnostic-actions">
-          <button type="button" class="secondary-action compact" data-online-diagnostic-read ${canRead ? '' : 'disabled'}>Revisar conteos en nube</button>
+          <button type="button" class="secondary-action compact" data-online-diagnostic-read ${canRead ? '' : 'disabled'}>Probar lectura Firestore</button>
           <button type="button" class="card-action compact" data-online-diagnostic-write ${canWrite ? '' : 'disabled'}>Probar escritura de diagnóstico</button>
           <small>La escritura se limita a workspaces/ksa_practika/metadata/diagnostico.</small>
         </div>
@@ -24632,65 +22442,14 @@ Notas importantes:
   }
 
 
-  function normalizeConfigAccordionKey(key) {
-    return cleanText(key)
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-  }
-
-  function getConfigOpenAccordionSet() {
-    if (!Array.isArray(configState.openAccordions)) {
-      configState.openAccordions = [];
-    }
-    const keys = configState.openAccordions
-      .map((key) => normalizeConfigAccordionKey(key))
-      .filter(Boolean);
-    const uniqueKeys = Array.from(new Set(keys));
-    if (uniqueKeys.length !== configState.openAccordions.length) {
-      configState.openAccordions = uniqueKeys;
-    }
-    return new Set(uniqueKeys);
-  }
-
-  function isConfigAccordionOpen(key, fallbackOpen = false) {
-    const cleanKey = normalizeConfigAccordionKey(key);
-    if (!cleanKey) return Boolean(fallbackOpen);
-    const openSet = getConfigOpenAccordionSet();
-    if (Array.isArray(configState.openAccordions)) {
-      return openSet.has(cleanKey);
-    }
-    return Boolean(fallbackOpen);
-  }
-
-  function resetConfigAccordionVisualState() {
-    configState.openAccordions = [];
-  }
-
-  function syncConfigAccordionState(details) {
-    const cleanKey = normalizeConfigAccordionKey(details?.dataset?.configAccordion);
-    if (!cleanKey) return;
-    const openSet = getConfigOpenAccordionSet();
-    if (details.open) {
-      openSet.add(cleanKey);
-    } else {
-      openSet.delete(cleanKey);
-    }
-    configState.openAccordions = Array.from(openSet);
-  }
-
-  function renderConfigAccordionItem({ key = '', title, eyebrow = 'Configuración', badgeText = '', badgeClass = '', open = false, body = '' } = {}) {
+  function renderConfigAccordionItem({ title, eyebrow = 'Configuración', badgeText = '', badgeClass = '', open = false, body = '' } = {}) {
     const safeTitle = escapeHtml(title || 'Módulo');
     const safeEyebrow = escapeHtml(eyebrow || 'Configuración');
-    const cleanKey = normalizeConfigAccordionKey(key || title || 'modulo');
-    const shouldOpen = isConfigAccordionOpen(cleanKey, open);
     const badge = badgeText
       ? `<span class="entity-accordion-count config-accordion-badge ${escapeHtml(badgeClass || '')}">${escapeHtml(badgeText)}</span>`
       : '';
     return `
-      <details class="config-accordion-item entity-accordion-item" data-config-accordion="${escapeHtml(cleanKey)}" ${shouldOpen ? 'open' : ''}>
+      <details class="config-accordion-item entity-accordion-item" ${open ? 'open' : ''}>
         <summary class="config-accordion-toggle entity-accordion-toggle">
           <span class="config-accordion-chevron entity-accordion-chevron" aria-hidden="true"></span>
           <span class="entity-accordion-name config-accordion-name">
@@ -24720,9 +22479,10 @@ Notas importantes:
     const canImport = canCurrentRole('importJson') && !jsonImportLockedByCloud;
     const canConfig = canCurrentRole('changeConfig');
     const canRefreshData = canCurrentRole('updateData');
-    const topRefreshEnabled = Boolean(dataSyncInfo.canRefreshCloud && canRefreshData && !dataSyncInfo.isRefreshingCloud && !dataSyncInfo.isSavingCloud);
-    const topRefreshLabel = dataSyncInfo.isRefreshingCloud ? 'Actualizando…' : 'Actualizar datos';
+    const topRefreshEnabled = Boolean(dataSyncInfo.canRefreshCloud && canRefreshData && !cloudOperationState.isWriting && !onlineDiagnosticState.isWriting);
+    const topSaveEnabled = Boolean(canRefreshData && !cloudOperationState.isWriting && !onlineDiagnosticState.isWriting);
     const lastDataRefreshAt = dataSyncInfo.lastSyncAt || usersStatus.lastSyncAt || '';
+    const sessionPendingChanges = getSessionChangePendingCount();
     const modeOptions = getOperationalRecordCount() > 0
       ? `
         <label class="form-field">
@@ -24888,7 +22648,10 @@ Notas importantes:
               <span class="eyebrow mini">Estado rápido</span>
               <h2>Datos en línea</h2>
             </div>
-            <button type="button" class="card-action config-top-refresh" data-cloud-refresh ${topRefreshEnabled ? '' : 'disabled'}>${escapeHtml(topRefreshLabel)}</button>
+            <div class="config-top-actions">
+              <button type="button" class="secondary-action config-top-save" data-cloud-session-save ${topSaveEnabled ? '' : 'disabled'}>Guardar datos</button>
+              <button type="button" class="card-action config-top-refresh" data-cloud-refresh ${topRefreshEnabled ? '' : 'disabled'}>Actualizar datos</button>
+            </div>
           </div>
           <div class="import-summary-grid compact-summary config-top-status-grid">
             <div class="status-item"><strong>Estado de nube</strong><span>${escapeHtml(dataSyncInfo.estado)}</span></div>
@@ -24898,8 +22661,9 @@ Notas importantes:
             <div class="status-item"><strong>Usuario actual</strong><span>${escapeHtml(usersStatus.currentUser || '—')}</span></div>
             <div class="status-item"><strong>Rol actual</strong><span>${escapeHtml(usersStatus.currentRole || currentRole.label)}</span></div>
             <div class="status-item"><strong>Última actualización de datos</strong><span>${escapeHtml(lastDataRefreshAt ? formatDateTime(lastDataRefreshAt) : '—')}</span></div>
+            <div class="status-item"><strong>Cambios de sesión pendientes</strong><span data-session-change-count>${escapeHtml(String(sessionPendingChanges))}</span></div>
           </div>
-          <p class="compact-note">El botón refresca datos desde Firestore cuando la nube está activa. No importa JSON, no duplica registros y no altera consecutivos.</p>
+          <p class="compact-note">Guardar datos sube solo cambios de esta sesión a Firestore. Actualizar datos trae información desde la nube; no importa JSON ni altera consecutivos.</p>
         </article>
 
         ${configState.message ? `<div class="form-message ${configState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(configState.message)}</div>` : ''}
@@ -24907,22 +22671,20 @@ Notas importantes:
 
         <div class="config-accordion-list entity-accordion-list">
           ${renderConfigAccordionItem({
-            key: CONFIG_ACCORDION_DEFAULT_KEY,
             title: 'Datos y sincronización',
             eyebrow: 'Configuración',
             badgeText: dataSyncInfo.estado,
             badgeClass: dataSyncInfo.badgeClass,
-            open: false,
+            open: true,
             body: `
               ${generalConfigCard}
-              ${renderDataSyncStatusCard({ hideCloudRefresh: false })}
+              ${renderDataSyncStatusCard({ hideCloudRefresh: true })}
               ${firestoreToolsHtml}
               ${renderDeviceIdentityCard(config)}
             `
           })}
 
           ${renderConfigAccordionItem({
-            key: 'usuarios',
             title: 'Usuarios',
             eyebrow: 'Acceso',
             badgeText: usersStatus.currentRole || currentRole.label,
@@ -24931,7 +22693,6 @@ Notas importantes:
           })}
 
           ${renderConfigAccordionItem({
-            key: 'respaldo-json-auxiliar',
             title: 'Respaldo JSON auxiliar',
             eyebrow: 'Respaldo',
             badgeText: jsonAuxInfo.jsonTipo,
@@ -24940,7 +22701,6 @@ Notas importantes:
           })}
 
           ${renderConfigAccordionItem({
-            key: 'importacion-recuperacion',
             title: 'Importación y recuperación',
             eyebrow: 'Herramientas delicadas',
             badgeText: jsonImportLockedByCloud ? 'Bloqueado con nube activa' : 'Validado manual',
@@ -24949,7 +22709,6 @@ Notas importantes:
           })}
 
           ${renderConfigAccordionItem({
-            key: 'sistema-pwa',
             title: 'Sistema / PWA',
             eyebrow: 'Aplicación',
             badgeText: APP_VERSION,
@@ -27315,82 +25074,6 @@ Notas importantes:
     return { name: 'Resumen', rows, cols: [34, 18, 18, 16, 18, 14, 18, 18] };
   }
 
-  function formatVentaAjustesForFactura(venta, factura) {
-    const target = normalizeFacturaVentaRecord(factura) || factura || {};
-    const ajustes = normalizeVentaAjustesList(venta?.ajustes || []).filter((ajuste) => {
-      if (!ajuste.activo || !hasAjusteFacturaSnapshot(ajuste)) return false;
-      const ajusteId = cleanText(ajuste.facturaAfectadaId);
-      const ajusteNo = normalizeFacturaModuloNoKey(ajuste.facturaAfectadaNumero);
-      const targetId = cleanText(target.id);
-      const targetNo = normalizeFacturaModuloNoKey(target.numero || target.no || '');
-      return Boolean((targetId && ajusteId && targetId === ajusteId) || (targetNo && ajusteNo && targetNo === ajusteNo));
-    });
-    return ajustes.length ? ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)}`).join(' | ') : '';
-  }
-
-  function formatCompraAjustesForFactura(compra, factura) {
-    const target = normalizeFacturaProveedorRecord(factura) || factura || {};
-    const ajustes = normalizeCompraProveedorAjustesList(compra?.ajustes || []).filter((ajuste) => {
-      if (!ajuste.activo || !hasAjusteFacturaSnapshot(ajuste)) return false;
-      const ajusteId = cleanText(ajuste.facturaAfectadaId);
-      const ajusteNo = normalizeFacturaModuloNoKey(ajuste.facturaAfectadaNumero);
-      const targetId = cleanText(target.id);
-      const targetNo = normalizeFacturaModuloNoKey(target.numero || target.no || '');
-      return Boolean((targetId && ajusteId && targetId === ajusteId) || (targetNo && ajusteNo && targetNo === ajusteNo));
-    });
-    return ajustes.length ? ajustes.map((ajuste) => `${formatDate(ajuste.fecha)} · ${ajuste.tipo} · ${formatMoney(ajuste.monto)}`).join(' | ') : '';
-  }
-
-  function pushVentasFacturasDetalleRows(rows, ventasExport) {
-    rows.push([], [xlsxSubtitle('Detalle de facturas de Ventas / OC')]);
-    rows.push(xlsxHeaderRow(['OC', 'Cliente', 'Factura', 'Subtotal factura', 'Descuento factura', 'Total factura', 'Ajuste ligado', 'Factura afectada en ajustes']));
-    const ventas = Array.isArray(ventasExport) ? ventasExport : [];
-    let added = 0;
-    ventas.forEach((venta) => {
-      const facturas = normalizeFacturasVentaList(venta.facturas);
-      const cliente = getCatalogRecordById('clientes', venta.clienteId);
-      facturas.forEach((factura) => {
-        const ajustes = formatVentaAjustesForFactura(venta, factura);
-        rows.push([
-          xlsxText(venta.numeroDocumento),
-          xlsxText(venta.clienteNombre || cliente?.nombre || ''),
-          xlsxText(factura.numero),
-          xlsxMoney(factura.subtotal || 0),
-          xlsxMoney(factura.descuento || 0),
-          xlsxMoney(factura.total || 0),
-          xlsxText(ajustes || 'No'),
-          xlsxText(ajustes ? factura.numero : '')
-        ]);
-        added += 1;
-      });
-    });
-    if (!added) rows.push([xlsxText('Sin facturas con monto registradas en ventas para este período.')]);
-  }
-
-  function pushProveedoresFacturasDetalleRows(rows, comprasExport) {
-    rows.push([], [xlsxSubtitle('Detalle de facturas de Proveedores / Compras')]);
-    rows.push(xlsxHeaderRow(['Proveedor', 'Compra / referencia', 'Factura', 'Monto factura', 'Ajuste ligado', 'Factura afectada en ajustes']));
-    const compras = Array.isArray(comprasExport) ? comprasExport : [];
-    let added = 0;
-    compras.forEach((compra) => {
-      const facturas = normalizeFacturasProveedorList(compra.facturasRelacionadas);
-      const proveedor = getCatalogRecordById('proveedores', compra.proveedorId);
-      facturas.forEach((factura) => {
-        const ajustes = formatCompraAjustesForFactura(compra, factura);
-        rows.push([
-          xlsxText(compra.proveedorNombre || proveedor?.nombre || ''),
-          xlsxText(compra.facturaReferencia || getCompraProveedorReferenciaCompacta(compra)),
-          xlsxText(factura.numero),
-          xlsxMoney(factura.monto || 0),
-          xlsxText(ajustes || 'No'),
-          xlsxText(ajustes ? factura.numero : '')
-        ]);
-        added += 1;
-      });
-    });
-    if (!added) rows.push([xlsxText('Sin facturas con monto registradas en proveedores para este período.')]);
-  }
-
   function buildVentasSheet(summary) {
     const rows = [
       [xlsxTitle('Ventas / OC')],
@@ -27429,7 +25112,6 @@ Notas importantes:
         xlsxText(venta.observacion)
       ]);
     });
-    pushVentasFacturasDetalleRows(rows, ventasExport);
     return { name: 'Ventas', rows, cols: [14, 16, 24, 24, 18, 30, 14, 20, 16, 16, 16, 18, 14, 14, 14, 14, 16, 16, 16, 12, 14, 38, 32] };
   }
 
@@ -27493,7 +25175,6 @@ Notas importantes:
         xlsxText(compra.observacion)
       ]);
     });
-    pushProveedoresFacturasDetalleRows(rows, comprasExport);
     return { name: 'Proveedores', rows, cols: [16, 28, 22, 16, 18, 14, 18, 16, 16, 12, 14, 38, 34] };
   }
 
@@ -28799,7 +26480,7 @@ ${rowsXml}
     return '';
   }
 
-  async function saveCatalogRecord(form) {
+  function saveCatalogRecord(form) {
     if (!canCurrentRole('editCatalogs')) {
       catalogState.message = ADMIN_RESTRICTED_MESSAGE;
       catalogState.messageType = 'error';
@@ -28833,7 +26514,6 @@ ${rowsXml}
     catalogState.editingId = null;
     catalogState.messageType = 'success';
     saveData(appData);
-    await confirmCriticalCloudSave(catalogState, { operation: 'catalogos' });
     renderRoute();
   }
 
@@ -28863,7 +26543,7 @@ ${rowsXml}
     renderRoute();
   }
 
-  async function toggleCatalogRecord(recordId) {
+  function toggleCatalogRecord(recordId) {
     if (!canCurrentRole('editCatalogs')) {
       catalogState.message = ADMIN_RESTRICTED_MESSAGE;
       catalogState.messageType = 'error';
@@ -28881,7 +26561,6 @@ ${rowsXml}
       catalogState.message = `${record.nombre} eliminado de Categorías Casa.`;
       catalogState.messageType = 'success';
       saveData(appData);
-      await confirmCriticalCloudSave(catalogState, { operation: 'catalogos_borrar' });
       renderRoute();
       return;
     }
@@ -28910,7 +26589,6 @@ ${rowsXml}
       : `${record.nombre} quedó ${shouldActivate ? 'activo' : 'inactivo'}.`;
     catalogState.messageType = 'success';
     saveData(appData);
-    await confirmCriticalCloudSave(catalogState, { operation: 'catalogos_toggle' });
     renderRoute();
   }
 
@@ -28948,7 +26626,6 @@ ${rowsXml}
     else if (id === getGastoModalId()) clearGastoForm();
     else if (id === getCasaModalId()) clearCasaForm();
     else if (id === getFacturasModalId()) clearFacturaForm();
-    else if (id === getFacturasGlobalModalId()) closeFacturasGlobalModal();
     else if (id === getNotasModalId()) {
       notasState.detailType = '';
       notasState.detailId = '';
@@ -29030,32 +26707,6 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-factura-search-clear]').forEach((button) => {
       button.addEventListener('click', clearFacturasSearch);
-    });
-
-    viewRoot.querySelectorAll('[data-factura-global-open]').forEach((button) => {
-      button.addEventListener('click', openFacturasGlobalModal);
-    });
-
-    viewRoot.querySelectorAll('[data-factura-global-page]').forEach((button) => {
-      button.addEventListener('click', () => changeFacturasGlobalPage(button.dataset.facturaGlobalPage));
-    });
-
-    viewRoot.querySelectorAll('[data-factura-global-filters]').forEach((form) => {
-      form.addEventListener('submit', (event) => {
-        event.preventDefault();
-        const field = form.querySelector('[data-factura-global-search]');
-        updateFacturasGlobalFilters(form, { focusName: field?.name || '', cursor: field?.selectionStart });
-      });
-      form.querySelectorAll('[data-factura-global-search]').forEach((field) => {
-        field.addEventListener('input', () => updateFacturasGlobalFilters(form, { focusName: field.name, cursor: field.selectionStart }));
-      });
-      form.querySelectorAll('[data-factura-global-filter]').forEach((field) => {
-        field.addEventListener('change', () => updateFacturasGlobalFilters(form));
-      });
-    });
-
-    viewRoot.querySelectorAll('[data-factura-global-clear]').forEach((button) => {
-      button.addEventListener('click', clearFacturasGlobalFilters);
     });
 
     viewRoot.querySelectorAll('[data-factura-page]').forEach((button) => {
@@ -29556,16 +27207,12 @@ ${rowsXml}
       button.addEventListener('click', () => handleCloudOperationActivate(button));
     });
 
-    viewRoot.querySelectorAll('[data-cloud-manual-save]').forEach((button) => {
-      button.addEventListener('click', () => handleCloudManualSave(button));
+    viewRoot.querySelectorAll('[data-cloud-session-save]').forEach((button) => {
+      button.addEventListener('click', () => handleSessionCloudSave(button));
     });
 
     viewRoot.querySelectorAll('[data-cloud-refresh]').forEach((button) => {
       button.addEventListener('click', () => handleCloudDataRefresh(button));
-    });
-
-    viewRoot.querySelectorAll('[data-cloud-upload-pending]').forEach((button) => {
-      button.addEventListener('click', () => handleCloudPendingUpload(button));
     });
 
     viewRoot.querySelectorAll('[data-online-diagnostic-read]').forEach((button) => {
@@ -29617,24 +27264,12 @@ ${rowsXml}
       button.addEventListener('click', () => resetCloudInitialImportState('Vista de importación inicial limpiada.'));
     });
 
-    viewRoot.querySelectorAll('[data-config-accordion]').forEach((details) => {
-      details.addEventListener('toggle', () => syncConfigAccordionState(details));
-    });
-
     viewRoot.querySelectorAll('[data-pwa-check-update]').forEach((button) => {
-      button.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        checkForPwaUpdate();
-      });
+      button.addEventListener('click', checkForPwaUpdate);
     });
 
     viewRoot.querySelectorAll('[data-pwa-apply-update]').forEach((button) => {
-      button.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        applyPwaUpdate();
-      });
+      button.addEventListener('click', applyPwaUpdate);
     });
 
     viewRoot.querySelectorAll('[data-json-export]').forEach((button) => {

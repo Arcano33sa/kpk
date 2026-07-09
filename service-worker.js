@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_37_post12_syncsegura_ajustefinal3_guardarporbloques';
+const CACHE_VERSION = 'v0_18_20_post12_firebaseonline_guardar_sesion_etapa2';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
