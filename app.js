@@ -14000,6 +14000,11 @@ Notas importantes:
     const proveedoresActivos = getActiveCatalogRecords('proveedores');
     const metodosActivos = getActiveCatalogRecords('metodosPago');
     const yearOptions = getResumenYearOptions();
+    const totalGastosPorTipo = summary.gastosPorTipo.reduce((total, item) => total + Number(item.total || 0), 0);
+    const totalVentaPorSucursal = summary.ventaPorSucursal.reduce((total, item) => total + Number(item.totalVendido || 0), 0);
+    const totalSaldosPorProveedor = summary.saldosPorProveedor.reduce((total, item) => total + Number(item.saldoPorPagar || 0), 0);
+    const totalClientesMora = summary.clientesMora.reduce((total, item) => total + Number(item.saldoPendiente || 0), 0);
+    const totalProveedoresMora = summary.proveedoresMora.reduce((total, item) => total + Number(item.saldoPendiente || 0), 0);
 
     return `
       <section class="hero resumen-hero">
@@ -14137,7 +14142,7 @@ Notas importantes:
           <article class="panel-card resumen-panel">
             <div class="section-title-row">
               <div><span class="eyebrow mini">Gastos</span><h2>Gastos por tipo</h2></div>
-              <div class="count-pill">${summary.gastosPorTipo.length} tipos</div>
+              <div class="count-pill">${escapeHtml(formatMoney(totalGastosPorTipo))} · ${summary.gastosPorTipo.length} tipos</div>
             </div>
             ${renderResumenGastosPorTipo(summary.gastosPorTipo)}
           </article>
@@ -14145,7 +14150,7 @@ Notas importantes:
           <article class="panel-card resumen-panel">
             <div class="section-title-row">
               <div><span class="eyebrow mini">Ventas</span><h2>Venta por sucursal</h2></div>
-              <div class="count-pill">${summary.ventaPorSucursal.length} sucursales</div>
+              <div class="count-pill">${escapeHtml(formatMoney(totalVentaPorSucursal))} · ${summary.ventaPorSucursal.length} sucursales</div>
             </div>
             ${renderResumenVentaPorSucursal(summary.ventaPorSucursal)}
           </article>
@@ -14162,7 +14167,7 @@ Notas importantes:
         <section class="panel-card resumen-panel">
           <div class="section-title-row">
             <div><span class="eyebrow mini">Proveedores</span><h2>Saldos por proveedor</h2></div>
-            <div class="count-pill">Cartera general</div>
+            <div class="count-pill">${escapeHtml(formatMoney(totalSaldosPorProveedor))} · Cartera general</div>
           </div>
           ${renderResumenSaldosProveedor(summary.saldosPorProveedor)}
         </section>
@@ -14171,7 +14176,7 @@ Notas importantes:
           <article class="panel-card resumen-panel">
             <div class="section-title-row">
               <div><span class="eyebrow mini">Clientes</span><h2>Clientes en mora</h2></div>
-              <div class="count-pill">${summary.clientesMora.length} documentos</div>
+              <div class="count-pill">${escapeHtml(formatMoney(totalClientesMora))} · ${summary.clientesMora.length} documentos</div>
             </div>
             ${renderResumenClientesMora(summary.clientesMora)}
           </article>
@@ -14179,7 +14184,7 @@ Notas importantes:
           <article class="panel-card resumen-panel">
             <div class="section-title-row">
               <div><span class="eyebrow mini">Proveedores</span><h2>Proveedores en mora</h2></div>
-              <div class="count-pill">${summary.proveedoresMora.length} documentos</div>
+              <div class="count-pill">${escapeHtml(formatMoney(totalProveedoresMora))} · ${summary.proveedoresMora.length} documentos</div>
             </div>
             ${renderResumenProveedoresMora(summary.proveedoresMora)}
           </article>

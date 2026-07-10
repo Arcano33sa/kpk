@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_36_post12_casa_credito_fix_pendientes_listado';
+const CACHE_VERSION = 'v0_18_37_post12_resumen_totales_bloques';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

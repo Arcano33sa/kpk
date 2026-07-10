@@ -11396,3 +11396,15 @@ body,
     min-width: 720px;
   }
 }
+
+/* Resumen — totales visibles en encabezados compactos */
+.resumen-panel > .section-title-row {
+  flex-wrap: wrap;
+}
+
+.resumen-panel > .section-title-row .count-pill {
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
