@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_37_post12_resumen_totales_bloques';
+const CACHE_VERSION = 'v0_18_41_post12_facturas_clientes_etapa4';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

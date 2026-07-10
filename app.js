@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.36-post12-casa-credito-fix-pendientes-listado';
+  const APP_VERSION = '0.18.41-post12-facturas-clientes-etapa4-blindaje-final';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -14,6 +14,7 @@
   const JSON_IMPORT_HISTORY_STORAGE_KEY = 'KSA_PRACTIKA_JSON_IMPORT_HISTORY_v1';
   const NOTES_STORAGE_KEY = 'ksa_notas_v1';
   const FACTURAS_STORAGE_KEY = 'ksa_facturas_v1';
+  const FACTURAS_CLIENTES_CLEANUP_MIGRATION_ID = 'facturas_clientes_cleanup_v1';
   const WORK_PERIOD_STORAGE_KEY = 'KSA_PRACTIKA_WORK_PERIOD_v1';
   const AUTH_LOCAL_SESSION_STORAGE_KEY = 'KSA_PRACTIKA_AUTH_LOCAL_SESSION_v1';
   const JSON_IMPORT_HISTORY_MAX_ENTRIES = 80;
@@ -2861,6 +2862,7 @@ Notas importantes:
     try {
       const result = await KSAFirebaseAdapter.saveSessionChangesToCloud(pending);
       if (result?.ok) {
+        confirmFacturasCleanupCloudChanges(result.confirmedChanges || pending);
         clearConfirmedSessionChanges(result.confirmedChanges || pending);
         configState.message = SESSION_SAVE_MESSAGES.success;
         configState.messageType = 'success';
@@ -4274,7 +4276,7 @@ Notas importantes:
     const collectionKeys = FIRESTORE_COLLECTION_CONTRACTS.map((item) => item.key);
     return Object.freeze({
       name: 'KSAFirestoreContract',
-      stage: 'Bloque D - Etapa 4/4',
+      stage: 'Facturas Clientes - Etapa 4/4',
       status: 'workspace_preparation',
       firebaseConnected: false,
       firestoreActive: false,
@@ -4660,7 +4662,7 @@ Notas importantes:
       if (!configured) {
         return Object.freeze({
           name: 'KSAFirebaseAdapter',
-          stage: 'Bloque D - Etapa 4/4',
+          stage: 'Facturas Clientes - Etapa 4/4',
           mode: cloudActive ? 'cloud_active' : 'local',
           dataMode: cloudActive ? 'Nube activa' : 'Local',
           projectName,
@@ -4711,7 +4713,7 @@ Notas importantes:
       if (hasInitError) {
         return Object.freeze({
           name: 'KSAFirebaseAdapter',
-          stage: 'Bloque D - Etapa 4/4',
+          stage: 'Facturas Clientes - Etapa 4/4',
           mode: cloudActive ? 'cloud_active' : 'local',
           dataMode: cloudActive ? 'Nube activa' : 'Local',
           projectName,
@@ -4761,7 +4763,7 @@ Notas importantes:
       const ready = runtimeInitialized && Boolean(state.firebaseApp || runtime?.firebaseApp) && Boolean(state.auth || runtime?.auth) && Boolean(state.firestore || runtime?.firestore || runtime?.db);
       return Object.freeze({
         name: 'KSAFirebaseAdapter',
-        stage: 'Bloque D - Etapa 4/4',
+        stage: 'Facturas Clientes - Etapa 4/4',
         mode: 'local',
         dataMode: 'Local',
         projectName,
@@ -5453,7 +5455,7 @@ Notas importantes:
           message: 'Datos leídos desde Firestore.',
           snapshot: normalized,
           notasModulo: rebuildNotasDataFromCloud(notasRecords.filter((record) => !isCloudDeletedRecord(record))),
-          facturasModulo: normalizeFacturasData({ facturas: facturasRecords.filter((record) => !isCloudDeletedRecord(record)) }),
+          facturasModulo: buildFacturasClientesCloudSnapshot(facturasRecords),
           bitacora: bitacoraRecords.map((entry) => normalizeActivityEntry(entry)),
           consecutivos,
           metadata: snapshot.metadata,
@@ -5614,7 +5616,7 @@ Notas importantes:
           });
         }
 
-        const facturasData = normalizeFacturasData(payload.facturasModulo || cloneFacturasModuleData());
+        const facturasData = sanitizeFacturasClientesData(payload.facturasModulo || cloneFacturasModuleData(), { mark: false });
         for (const rawRecord of facturasData.facturas) {
           const record = normalizeFacturaModuloRecord(rawRecord);
           const docId = getCloudDocumentId(record, 'factura');
@@ -6260,7 +6262,7 @@ Notas importantes:
       if (!result.ok) {
         return { ...result, action: 'readCloudCollection', collectionKey: key, records: [] };
       }
-      if (key === 'facturasModulo') return { ok: true, action: 'readCloudCollection', collectionKey: key, records: normalizeFacturasData(result.facturasModulo).facturas };
+      if (key === 'facturasModulo') return { ok: true, action: 'readCloudCollection', collectionKey: key, records: getFacturasClienteRecords(result.facturasModulo) };
       if (key === 'notasModulo') return { ok: true, action: 'readCloudCollection', collectionKey: key, records: buildCloudNotasRecords(result.notasModulo) };
       if (key === 'metadata') return { ok: true, action: 'readCloudCollection', collectionKey: key, records: [result.metadata || {}] };
       if (key === 'consecutivos') return { ok: true, action: 'readCloudCollection', collectionKey: key, records: [result.consecutivos || {}] };
@@ -6986,7 +6988,7 @@ Notas importantes:
 
     return Object.freeze({
       name: 'KSAFirebaseAdapter',
-      stage: 'Bloque D - Etapa 4/4',
+      stage: 'Facturas Clientes - Etapa 4/4',
       configGlobalName: KSA_FIREBASE_CONFIG_GLOBAL,
       runtimeGlobalName: KSA_FIREBASE_RUNTIME_GLOBAL,
       configFile: 'firebase-config.js',
@@ -7799,7 +7801,7 @@ Notas importantes:
       };
       saveData(appData);
       if (result.notasModulo) saveNotasData(result.notasModulo);
-      if (result.facturasModulo) saveFacturasData(result.facturasModulo);
+      if (result.facturasModulo) absorbCloudFacturasCleanupResult(result.facturasModulo);
       if (Array.isArray(result.bitacora)) {
         appActivityLog = result.bitacora.map((entry) => normalizeActivityEntry(entry));
         saveActivityLog(appActivityLog);
@@ -8110,7 +8112,7 @@ Notas importantes:
       appData = normalized;
       saveData(appData);
       if (incomingNotas && writeOptions.includeAuxiliary !== false) saveNotasData(incomingNotas);
-      if (incomingFacturas && writeOptions.includeAuxiliary !== false) saveFacturasData(incomingFacturas);
+      if (incomingFacturas && writeOptions.includeAuxiliary !== false) saveFacturasData(sanitizeFacturasClientesData(incomingFacturas, { mark: false }));
       if (writeOptions.render === true && typeof renderRoute === 'function') renderRoute();
       return {
         ok: true,
@@ -8130,7 +8132,7 @@ Notas importantes:
 
     return Object.freeze({
       name: 'KSADataLayer',
-      stage: 'Bloque D - Etapa 4/4',
+      stage: 'Facturas Clientes - Etapa 4/4',
       modes: MODES,
       collectionKeys: COLLECTION_KEYS,
       firestoreContract: getKSAFirestoreContract(),
@@ -8168,6 +8170,7 @@ Notas importantes:
   }
 
   let appData = loadData();
+  runFacturasProveedorCleanupMigration({ showMessage: true });
   reconcileWorkPeriodSelectionAfterDataChange();
   syncCasaFiltersWithActiveWorkPeriod({ force: true });
   let appDeviceIdentity = loadDeviceIdentity();
@@ -8455,7 +8458,7 @@ Notas importantes:
   function createKSAAuthLayer() {
     return Object.freeze({
       name: 'KSAAuthLayer',
-      stage: 'Bloque D - Etapa 4/4',
+      stage: 'Facturas Clientes - Etapa 4/4',
       getStatus: getPreparedAuthStatus,
       signIn: (email, password) => KSAFirebaseAdapter.signIn(email, password),
       signOut: () => KSAFirebaseAdapter.signOut(),
@@ -8471,7 +8474,7 @@ Notas importantes:
     const firebaseStatus = getKSAFirebaseStatusSafe();
     return Object.freeze({
       name: 'KSAUsersLayer',
-      stage: 'Bloque D - Etapa 4/4',
+      stage: 'Facturas Clientes - Etapa 4/4',
       mode: cloudOperationState.active ? 'cloud_active' : 'local_controlado',
       firebaseAuthStatus: firebaseStatus.authReady ? 'active' : 'preparing',
       databaseStatus: cloudOperationState.active ? 'firestore' : 'local_controlado',
@@ -9081,7 +9084,7 @@ Notas importantes:
     });
     (snapshot.comprasProveedores || []).forEach((record) => warn(record.proveedorId && !proveedores.has(record.proveedorId), `Compra ${record.id || 'sin ID'} refiere proveedorId no encontrado: ${record.proveedorId}.`));
     (snapshot.casaGastos || []).forEach((record) => warn(record.categoriaCasaId && !categoriasCasa.has(record.categoriaCasaId), `Casa ${record.id || 'sin ID'} refiere categoriaCasaId no encontrada: ${record.categoriaCasaId}.`));
-    normalizeFacturasData(snapshot.facturasModulo || {}).facturas.forEach((record) => {
+    getFacturasClienteRecords(snapshot.facturasModulo || {}).forEach((record) => {
       warn(record.ventaId && !ventas.has(record.ventaId), `Factura ${record.id || record.no || 'sin ID'} refiere ventaId no encontrado: ${record.ventaId}.`);
       warn(record.clienteId && !clientes.has(record.clienteId), `Factura ${record.id || record.no || 'sin ID'} refiere clienteId no encontrado: ${record.clienteId}.`);
       warn(record.sucursalId && !sucursales.has(record.sucursalId), `Factura ${record.id || record.no || 'sin ID'} refiere sucursalId no encontrado: ${record.sucursalId}.`);
@@ -9159,7 +9162,7 @@ Notas importantes:
       const stableId = cleanText(record.id) || `recordatorio_${index + 1}`;
       addCloudImportRecord(records, duplicates, 'notasModulo', 'Recordatorios', ['workspaces', workspaceId, 'notasModulo', `recordatorio_${stableId}`], { ...record, tipoRegistro: 'recordatorio' }, stableId);
     });
-    normalizeFacturasData(snapshot.facturasModulo || {}).facturas.forEach((record, index) => {
+    getFacturasClienteRecords(snapshot.facturasModulo || {}).forEach((record, index) => {
       const stableId = cleanText(record.id) || cleanText(record.no) || `factura_${index + 1}`;
       addCloudImportRecord(records, duplicates, 'facturasModulo', 'Facturas', ['workspaces', workspaceId, 'facturasModulo', stableId], record, stableId);
     });
@@ -9222,7 +9225,7 @@ Notas importantes:
     inspectList('Notas', notas.notas);
     inspectList('Pendientes', notas.pendientes);
     inspectList('Recordatorios', notas.recordatorios);
-    inspectList('Facturas', normalizeFacturasData(snapshot?.facturasModulo || {}).facturas, (record) => record?.id || record?.no);
+    inspectList('Facturas', getFacturasClienteRecords(snapshot?.facturasModulo || {}), (record) => record?.id || record?.no);
     return warnings;
   }
 
@@ -10361,7 +10364,7 @@ Notas importantes:
   function getFacturasModuloPeriodsForWorkSelector() {
     try {
       const facturasData = getFacturasData();
-      return (Array.isArray(facturasData.facturas) ? facturasData.facturas : [])
+      return getFacturasClienteRecords(facturasData)
         .map((record) => normalizeFacturaModuloRecord(record))
         .map((record) => normalizeWorkPeriodKey(record.periodo) || normalizeWorkPeriodKey(getPeriodFromOriginDate(record.fecha)?.periodo))
         .filter(Boolean);
@@ -11092,31 +11095,35 @@ Notas importantes:
 
 
   function countFacturasModuleRecords(data = getFacturasData()) {
-    return normalizeFacturasData(data).facturas.length;
+    return getFacturasClienteRecords(normalizeFacturasData(data)).length;
   }
 
   function cloneFacturasModuleData(data = getFacturasData()) {
-    return normalizeFacturasData(JSON.parse(JSON.stringify(normalizeFacturasData(data))));
+    return sanitizeFacturasClientesData(JSON.parse(JSON.stringify(normalizeFacturasData(data))), { mark: false });
   }
 
   function getFacturasBackupFromSource(source) {
     const raw = isPlainObject(source) ? source : {};
     const candidate = raw.facturasModulo || raw.moduloFacturas || raw.facturasModule || raw.invoicesModule;
-    if (isPlainObject(candidate)) return normalizeFacturasData(candidate);
+    if (isPlainObject(candidate)) return sanitizeFacturasClientesData(candidate, { mark: false });
     const nestedFacturas = isPlainObject(raw.facturas) && Array.isArray(raw.facturas.facturas) ? raw.facturas : null;
-    if (nestedFacturas) return normalizeFacturasData(nestedFacturas);
+    if (nestedFacturas) return sanitizeFacturasClientesData(nestedFacturas, { mark: false });
     return null;
   }
 
   function mergeFacturasModuleData(currentData, incomingData, options = {}) {
-    const current = normalizeFacturasData(currentData);
-    const incoming = normalizeFacturasData(incomingData);
+    const current = sanitizeFacturasClientesData(currentData, { mark: false });
+    const incoming = sanitizeFacturasClientesData(incomingData, { mark: false });
     const ventaIdMap = options.ventaIdMap instanceof Map ? options.ventaIdMap : new Map();
     const clienteIdMap = options.clienteIdMap instanceof Map ? options.clienteIdMap : new Map();
     const sucursalIdMap = options.sucursalIdMap instanceof Map ? options.sucursalIdMap : new Map();
     const merged = Array.isArray(current.facturas) ? current.facturas.map(normalizeFacturaModuloRecord) : [];
     const existingIds = new Set(merged.map((record) => cleanText(record.id)).filter(Boolean));
-    const existingNos = new Set(merged.map((record) => normalizeFacturaModuloNoKey(record.no)).filter(Boolean));
+    const existingNosByScope = new Set(merged.map((record) => {
+      const noKey = normalizeFacturaModuloNoKey(record.no);
+      if (!noKey) return '';
+      return `${isFacturaCliente(record) ? 'clientes' : 'proveedores'}|${noKey}`;
+    }).filter(Boolean));
     let added = 0;
     let skipped = 0;
 
@@ -11131,13 +11138,14 @@ Notas importantes:
       });
       const idKey = cleanText(remapped.id);
       const noKey = normalizeFacturaModuloNoKey(remapped.no);
-      if ((idKey && existingIds.has(idKey)) || (noKey && existingNos.has(noKey))) {
+      const scopedNoKey = noKey ? `${isFacturaCliente(remapped) ? 'clientes' : 'proveedores'}|${noKey}` : '';
+      if ((idKey && existingIds.has(idKey)) || (scopedNoKey && existingNosByScope.has(scopedNoKey))) {
         skipped += 1;
         return;
       }
       merged.unshift(remapped);
       if (idKey) existingIds.add(idKey);
-      if (noKey) existingNos.add(noKey);
+      if (scopedNoKey) existingNosByScope.add(scopedNoKey);
       added += 1;
     });
 
@@ -11228,7 +11236,10 @@ Notas importantes:
       pendienteMonto: readFacturaPendingFlag(raw, !(hasFacturaExplicitValue(raw.monto) || hasFacturaExplicitValue(raw.total) || hasFacturaExplicitValue(raw.subtotal) || hasFacturaExplicitValue(raw.totalFacturaRelacionada))),
       observaciones: cleanText(raw.observaciones || raw.observacion || raw.nota || raw.descripcion),
       origen: cleanText(raw.origen || raw.source) || 'manual',
+      moduloOrigen: cleanText(raw.moduloOrigen || raw.sourceModule || raw.modulo || raw.module),
       documentoTipo: cleanText(raw.documentoTipo || raw.tipoDocumento || raw.parentType || raw.sourceType),
+      registroTipo: cleanText(raw.registroTipo || raw.tipo || raw.clase || raw.category),
+      facturaRelacionada: cleanText(raw.facturaRelacionada || raw.relatedInvoice || raw.facturaProveedor || raw.supplierInvoice),
       ventaId: cleanText(raw.ventaId || raw.ocId || raw.documentoId),
       ventaDocumento: cleanText(raw.ventaDocumento || raw.numeroDocumento || raw.oc || raw.ventaRef || raw.documentoVenta),
       compraProveedorId: cleanText(raw.compraProveedorId || raw.compraId || raw.proveedorCompraId || raw.documentoCompraId),
@@ -11256,6 +11267,315 @@ Notas importantes:
       createdAt: cleanText(raw.createdAt) || timestamp,
       updatedAt: cleanText(raw.updatedAt) || cleanText(raw.createdAt) || timestamp
     };
+  }
+
+
+  function isFacturaCliente(record) {
+    const raw = isPlainObject(record) ? record : {};
+    const factura = normalizeFacturaModuloRecord(raw);
+
+    const explicitProviderRelation = Boolean(
+      cleanText(raw.compraProveedorId || raw.compraId || raw.proveedorCompraId || raw.documentoCompraId || raw.compraProveedorRef)
+      || cleanText(raw.compraDocumento || raw.compraReferencia || raw.facturaReferenciaCompra || raw.documentoCompra || raw.referenciaCompra)
+      || cleanText(raw.proveedorId || raw.supplierId || raw.proveedorRef)
+      || cleanText(raw.proveedorNombre || raw.nombreProveedor || raw.proveedor || raw.supplierName)
+      || factura.compraProveedorId
+      || factura.compraDocumento
+      || factura.proveedorId
+      || factura.proveedorNombre
+    );
+    if (explicitProviderRelation) return false;
+
+    const classifierValues = [
+      raw.origen,
+      raw.source,
+      raw.moduloOrigen,
+      raw.sourceModule,
+      raw.modulo,
+      raw.module,
+      raw.documentoTipo,
+      raw.tipoDocumento,
+      raw.parentType,
+      raw.sourceType,
+      raw.registroTipo,
+      raw.tipo,
+      raw.clase,
+      raw.category,
+      factura.origen,
+      factura.moduloOrigen,
+      factura.documentoTipo,
+      factura.registroTipo
+    ]
+      .map((value) => normalizeKeyForCompare(value))
+      .filter(Boolean);
+
+    const hasProviderClassifier = classifierValues.some((value) => (
+      /(^|\b)(proveedor|proveedores|supplier|suppliers)(\b|$)/u.test(value)
+      || /(^|\b)(compra|compras)(\b|$)/u.test(value)
+    ));
+    if (hasProviderClassifier) return false;
+
+    const relatedInvoiceMarker = normalizeKeyForCompare(
+      raw.facturaRelacionada
+      || raw.relatedInvoice
+      || raw.facturaProveedor
+      || raw.supplierInvoice
+      || factura.facturaRelacionada
+    );
+    if (relatedInvoiceMarker) return false;
+
+    // Ventas, saltos derivados de Ventas y capturas manuales pertenecen al
+    // módulo de facturas emitidas a clientes. La ausencia de número nunca se
+    // usa para clasificar el origen, y una coincidencia numérica con proveedor
+    // no invalida una factura propia.
+    return true;
+  }
+
+  function getFacturaProveedorCopyEvidence(record) {
+    const raw = isPlainObject(record) ? record : {};
+    const factura = normalizeFacturaModuloRecord(raw);
+    const classifierValues = [
+      raw.origen,
+      raw.source,
+      raw.moduloOrigen,
+      raw.sourceModule,
+      raw.modulo,
+      raw.module,
+      raw.documentoTipo,
+      raw.tipoDocumento,
+      raw.parentType,
+      raw.sourceType,
+      raw.registroTipo,
+      raw.tipo,
+      raw.clase,
+      raw.category,
+      factura.origen,
+      factura.moduloOrigen,
+      factura.documentoTipo,
+      factura.registroTipo
+    ].map((value) => normalizeKeyForCompare(value)).filter(Boolean);
+    const syncValues = [
+      raw.syncSource,
+      raw.syncOrigen,
+      raw.sincronizadoDesde,
+      raw.creadoPor,
+      raw.generatedBy,
+      raw._cloudSync?.source,
+      raw._sync?.source,
+      raw.metadata?.source,
+      raw.metadata?.syncSource
+    ].map((value) => normalizeKeyForCompare(value)).filter(Boolean);
+    const hasProviderClassifier = classifierValues.some((value) => (
+      /(^|\b)(proveedor|proveedores|supplier|suppliers)(\b|$)/u.test(value)
+      || /(^|\b)(compra|compras)(\b|$)/u.test(value)
+    ));
+    const hasExplicitSyncMarker = syncValues.some((value) => (
+      value.includes('synccomprafacturastofacturasmodulo')
+      || value.includes('factura proveedor')
+      || value.includes('facturas proveedor')
+      || value.includes('proveedor')
+      || value.includes('compra')
+    )) || raw.sincronizadoDesdeCompra === true
+      || raw.syncCompraFacturas === true
+      || raw.esCopiaProveedor === true
+      || raw.copiaFacturaProveedor === true;
+    const compraId = cleanText(raw.compraProveedorId || raw.compraId || raw.proveedorCompraId || raw.documentoCompraId || raw.compraProveedorRef || factura.compraProveedorId);
+    const proveedor = cleanText(raw.proveedorId || raw.supplierId || raw.proveedorRef || raw.proveedorNombre || raw.nombreProveedor || raw.proveedor || raw.supplierName || factura.proveedorId || factura.proveedorNombre);
+    const relatedInvoice = cleanText(raw.facturaRelacionada || raw.relatedInvoice || raw.facturaProveedor || raw.supplierInvoice || factura.facturaRelacionada);
+    const compraDocumento = cleanText(raw.compraDocumento || raw.compraReferencia || raw.facturaReferenciaCompra || raw.documentoCompra || raw.referenciaCompra || factura.compraDocumento);
+    return {
+      hasProviderClassifier,
+      hasExplicitSyncMarker,
+      hasCompraId: Boolean(compraId),
+      hasProveedor: Boolean(proveedor),
+      hasRelatedInvoice: Boolean(relatedInvoice),
+      hasCompraDocumento: Boolean(compraDocumento)
+    };
+  }
+
+  function isDefiniteProveedorFacturaCopy(record) {
+    const evidence = getFacturaProveedorCopyEvidence(record);
+    const providerRelations = Number(evidence.hasCompraId) + Number(evidence.hasProveedor) + Number(evidence.hasRelatedInvoice) + Number(evidence.hasCompraDocumento);
+    if (evidence.hasExplicitSyncMarker && (evidence.hasCompraId || evidence.hasProveedor || evidence.hasProviderClassifier)) return true;
+    if (evidence.hasCompraId && (evidence.hasProveedor || evidence.hasRelatedInvoice || evidence.hasCompraDocumento || evidence.hasProviderClassifier)) return true;
+    if (evidence.hasProviderClassifier && providerRelations >= 1) return true;
+    return false;
+  }
+
+  function getFacturasCleanupMigrationMeta(data = getFacturasData()) {
+    const normalized = normalizeFacturasData(data);
+    const meta = isPlainObject(normalized.metadata?.facturasClientesCleanup)
+      ? normalized.metadata.facturasClientesCleanup
+      : {};
+    return {
+      id: cleanText(meta.id) || FACTURAS_CLIENTES_CLEANUP_MIGRATION_ID,
+      completedAt: cleanText(meta.completedAt),
+      cloudConfirmedAt: cleanText(meta.cloudConfirmedAt),
+      removedCount: Number(meta.removedCount) || 0,
+      pendingCloudDeleteIds: Array.isArray(meta.pendingCloudDeleteIds)
+        ? Array.from(new Set(meta.pendingCloudDeleteIds.map(cleanText).filter(Boolean)))
+        : [],
+      lastDetectedAt: cleanText(meta.lastDetectedAt),
+      noCopiesFound: meta.noCopiesFound === true
+    };
+  }
+
+  function buildFacturasClientesCloudSnapshot(records = []) {
+    const activeRecords = (Array.isArray(records) ? records : []).filter((record) => !isCloudDeletedRecord(record));
+    const removed = activeRecords.filter((record) => isDefiniteProveedorFacturaCopy(record));
+    const excluded = activeRecords.filter((record) => !isFacturaCliente(record));
+    const kept = activeRecords.filter((record) => isFacturaCliente(record));
+    return sanitizeFacturasClientesData({
+      facturas: kept,
+      metadata: {
+        cloudProviderCopyIds: removed.map((record) => cleanText(record.id)).filter(Boolean),
+        cloudProviderCopiesDetectedAt: removed.length ? nowIso() : '',
+        cloudExternalRecordsExcluded: excluded.length
+      }
+    }, { mark: false });
+  }
+
+  function mergeFacturasCleanupMetadata(data, extraIds = []) {
+    const normalized = normalizeFacturasData(data);
+    const current = getFacturasCleanupMigrationMeta(getFacturasData());
+    const cloudIds = Array.isArray(normalized.metadata?.cloudProviderCopyIds)
+      ? normalized.metadata.cloudProviderCopyIds.map(cleanText).filter(Boolean)
+      : [];
+    const pendingCloudDeleteIds = Array.from(new Set([
+      ...current.pendingCloudDeleteIds,
+      ...cloudIds,
+      ...(Array.isArray(extraIds) ? extraIds.map(cleanText).filter(Boolean) : [])
+    ]));
+    normalized.metadata = {
+      ...normalized.metadata,
+      facturasClientesCleanup: {
+        ...current,
+        id: FACTURAS_CLIENTES_CLEANUP_MIGRATION_ID,
+        pendingCloudDeleteIds,
+        cloudConfirmedAt: pendingCloudDeleteIds.length ? '' : current.cloudConfirmedAt,
+        lastDetectedAt: cloudIds.length ? nowIso() : current.lastDetectedAt
+      }
+    };
+    delete normalized.metadata.cloudProviderCopyIds;
+    delete normalized.metadata.cloudProviderCopiesDetectedAt;
+    return normalized;
+  }
+
+  function registerPendingFacturasCleanupDeletes(data = getFacturasData()) {
+    const meta = getFacturasCleanupMigrationMeta(data);
+    if (!meta.pendingCloudDeleteIds.length) return 0;
+    registerSessionChangesFromIds('Facturas', 'eliminar', meta.pendingCloudDeleteIds, { sourceModule: 'Migración Facturas Clientes' });
+    return meta.pendingCloudDeleteIds.length;
+  }
+
+  function runFacturasProveedorCleanupMigration(options = {}) {
+    const opts = isPlainObject(options) ? options : {};
+    const data = getFacturasData();
+    const records = Array.isArray(data.facturas) ? data.facturas : [];
+    const removed = records.filter((record) => isDefiniteProveedorFacturaCopy(record));
+    const kept = records.filter((record) => !isDefiniteProveedorFacturaCopy(record));
+    const previous = getFacturasCleanupMigrationMeta(data);
+    const removedIds = removed.map((record) => cleanText(record.id)).filter(Boolean);
+    const pendingCloudDeleteIds = Array.from(new Set([...previous.pendingCloudDeleteIds, ...removedIds]));
+    const firstCompletion = !previous.completedAt;
+    const timestamp = nowIso();
+    const next = normalizeFacturasData({
+      ...data,
+      facturas: kept,
+      metadata: {
+        ...data.metadata,
+        facturasClientesCleanup: {
+          ...previous,
+          id: FACTURAS_CLIENTES_CLEANUP_MIGRATION_ID,
+          completedAt: previous.completedAt || timestamp,
+          lastDetectedAt: removed.length ? timestamp : previous.lastDetectedAt,
+          removedCount: previous.removedCount + removed.length,
+          pendingCloudDeleteIds,
+          cloudConfirmedAt: pendingCloudDeleteIds.length ? '' : previous.cloudConfirmedAt,
+          noCopiesFound: firstCompletion && removed.length === 0
+        }
+      }
+    });
+    if (removed.length || firstCompletion || pendingCloudDeleteIds.length) saveFacturasData(next);
+    if (pendingCloudDeleteIds.length) registerPendingFacturasCleanupDeletes(next);
+    if (opts.showMessage !== false && firstCompletion) {
+      setFacturasMessage(
+        removed.length
+          ? `Limpieza de Facturas completada: ${removed.length} ${removed.length === 1 ? 'copia de proveedor retirada' : 'copias de proveedor retiradas'}.`
+          : 'Limpieza de Facturas completada: no se encontraron copias de proveedor.',
+        'success'
+      );
+    }
+    return { removed: removed.length, removedIds, pending: pendingCloudDeleteIds.length, completed: true };
+  }
+
+  function absorbCloudFacturasCleanupResult(data) {
+    const normalized = normalizeFacturasData(data);
+    const cloudIds = Array.isArray(normalized.metadata?.cloudProviderCopyIds)
+      ? normalized.metadata.cloudProviderCopyIds.map(cleanText).filter(Boolean)
+      : [];
+    const merged = mergeFacturasCleanupMetadata(normalized, cloudIds);
+    saveFacturasData(merged);
+    if (cloudIds.length) {
+      registerPendingFacturasCleanupDeletes(merged);
+      const currentMessage = cleanText(facturasState.message);
+      if (!currentMessage.includes('Limpieza de Facturas completada')) {
+        setFacturasMessage(`Limpieza de Facturas completada: ${cloudIds.length} ${cloudIds.length === 1 ? 'copia de proveedor retirada' : 'copias de proveedor retiradas'}.`, 'success');
+      }
+    }
+    return merged;
+  }
+
+  function confirmFacturasCleanupCloudChanges(changes = []) {
+    const confirmedDeleteIds = new Set((Array.isArray(changes) ? changes : [])
+      .filter((change) => normalizeSessionChangeModuleKey(change?.module || change?.modulo) === 'facturas')
+      .filter((change) => normalizeSessionChangeOperation(change?.operation || change?.operacion) === 'eliminar')
+      .map((change) => cleanText(change?.recordId || change?.idRegistro || change?.id))
+      .filter(Boolean));
+    if (!confirmedDeleteIds.size) return 0;
+    const data = getFacturasData();
+    const meta = getFacturasCleanupMigrationMeta(data);
+    const pendingCloudDeleteIds = meta.pendingCloudDeleteIds.filter((id) => !confirmedDeleteIds.has(id));
+    const confirmedCount = meta.pendingCloudDeleteIds.length - pendingCloudDeleteIds.length;
+    if (!confirmedCount) return 0;
+    saveFacturasData({
+      ...data,
+      metadata: {
+        ...data.metadata,
+        facturasClientesCleanup: {
+          ...meta,
+          pendingCloudDeleteIds,
+          cloudConfirmedAt: pendingCloudDeleteIds.length ? '' : nowIso()
+        }
+      }
+    });
+    return confirmedCount;
+  }
+
+  function sanitizeFacturasClientesData(data, options = {}) {
+    const normalized = normalizeFacturasData(data);
+    const source = Array.isArray(normalized.facturas) ? normalized.facturas : [];
+    const facturas = source.filter((record) => isFacturaCliente(record)).map(normalizeFacturaModuloRecord);
+    const excluded = source.filter((record) => !isFacturaCliente(record));
+    const opts = isPlainObject(options) ? options : {};
+    return normalizeFacturasData({
+      ...normalized,
+      facturas,
+      metadata: {
+        ...normalized.metadata,
+        clientesOnly: true,
+        clientesOnlyVersion: 1,
+        lastClientesOnlyAt: opts.mark === false ? cleanText(normalized.metadata?.lastClientesOnlyAt) : nowIso(),
+        excludedExternalCount: excluded.length
+      }
+    });
+  }
+
+  function getFacturasClienteRecords(dataOrRecords = getFacturasData()) {
+    const source = Array.isArray(dataOrRecords)
+      ? dataOrRecords
+      : (Array.isArray(dataOrRecords?.facturas) ? dataOrRecords.facturas : []);
+    return source.filter((record) => isFacturaCliente(record)).map(normalizeFacturaModuloRecord);
   }
 
   function createInitialFacturasData() {
@@ -11298,7 +11618,7 @@ Notas importantes:
 
   function saveFacturasData(data) {
     try {
-      const normalized = normalizeFacturasData(data);
+      const normalized = sanitizeFacturasClientesData(data);
       normalized.facturas = sortFacturasModulo(normalized.facturas);
       normalized.metadata.updatedAt = nowIso();
       localStorage.setItem(FACTURAS_STORAGE_KEY, JSON.stringify(normalized));
@@ -11306,7 +11626,7 @@ Notas importantes:
       return normalized;
     } catch (error) {
       console.error('KSA PRÁCTIKA: no se pudo guardar el módulo Facturas.', error);
-      return normalizeFacturasData(data);
+      return sanitizeFacturasClientesData(data, { mark: false });
     }
   }
 
@@ -11314,8 +11634,7 @@ Notas importantes:
     try {
       const raw = localStorage.getItem(FACTURAS_STORAGE_KEY);
       const normalized = raw ? normalizeFacturasData(JSON.parse(raw)) : createInitialFacturasData();
-      saveFacturasData(normalized);
-      return normalized;
+      return saveFacturasData(normalized);
     } catch (error) {
       console.warn('KSA PRÁCTIKA: no se pudo leer el almacenamiento propio de Facturas.', error);
       const initial = createInitialFacturasData();
@@ -11582,6 +11901,10 @@ Notas importantes:
     let skipped = 0;
     const affectedIds = [];
     (Array.isArray(nextRecords) ? nextRecords : []).map(normalizeFacturaModuloRecord).forEach((payload) => {
+      if (!isFacturaCliente(payload)) {
+        skipped += 1;
+        return;
+      }
       if (!payload.no) {
         skipped += 1;
         return;
@@ -11661,36 +11984,11 @@ Notas importantes:
     };
   }
 
-  function syncCompraFacturasToFacturasModulo(compraRecord) {
-    const compra = normalizeCompraProveedorRecord(compraRecord);
-    const facturas = normalizeFacturasProveedorList(compra.facturasRelacionadas);
-    if (!facturas.length) return { created: 0, updated: 0, skipped: 0 };
-
-    const timestamp = nowIso();
-    const proveedor = compra.proveedorId ? getCatalogRecordById('proveedores', compra.proveedorId) : null;
-    const records = facturas.map((factura) => normalizeFacturaModuloRecord({
-      id: generateId('facturaModulo'),
-      no: factura.numero,
-      fecha: compra.fechaCompra || todayInputValue(),
-      estado: 'Enviada',
-      monto: Math.max(0, Number(factura.monto) || 0),
-      subtotal: Math.max(0, Number(factura.monto) || 0),
-      descuento: 0,
-      totalFacturaRelacionada: Math.max(0, Number(factura.monto) || 0),
-      pendienteMonto: Boolean(factura.pendienteMonto),
-      observaciones: '',
-      origen: 'proveedores',
-      documentoTipo: 'Proveedor / Compra',
-      compraProveedorId: compra.id,
-      compraDocumento: compra.facturaReferencia || getCompraProveedorReferenciaCompacta(compra),
-      proveedorId: compra.proveedorId,
-      proveedorNombre: compra.proveedorNombre || proveedor?.nombre || '',
-      ajustesLigados: buildFacturaAjustesPayload(compra.ajustes, factura),
-      createdAt: timestamp,
-      updatedAt: timestamp
-    }));
-
-    return upsertFacturasModuloRecords(records, { source: 'proveedores' });
+  function syncCompraFacturasToFacturasModulo() {
+    // Etapa 1/4: las facturas relacionadas de proveedores permanecen únicamente
+    // dentro de la compra. Se conserva la función como blindaje defensivo para
+    // evitar que cualquier llamada heredada cree o actualice registros en Facturas.
+    return { created: 0, updated: 0, skipped: 0, affectedIds: [], disabled: true };
   }
 
   function formatVentaFacturasSyncMessage(result) {
@@ -11706,20 +12004,13 @@ Notas importantes:
     return parts.length ? `${parts.join(' · ')}.` : '';
   }
 
-  function formatCompraFacturasSyncMessage(result) {
-    if (!result || (!result.created && !result.updated && !result.skipped)) return '';
-    const parts = [];
-    if (result.created) parts.push(`Facturas de proveedor sincronizadas: ${result.created}`);
-    if (result.updated) parts.push(`actualizadas: ${result.updated}`);
-    if (result.skipped) parts.push(`omitidas: ${result.skipped}`);
-    return parts.length ? `${parts.join(' · ')}.` : '';
+  function formatCompraFacturasSyncMessage() {
+    return '';
   }
 
   function getFacturaOrigenLabel(record) {
     const factura = normalizeFacturaModuloRecord(record);
-    if (factura.origen === 'proveedores' || factura.compraProveedorId) {
-      return `Origen: Proveedores / Compras${factura.compraDocumento ? ` · ${factura.compraDocumento}` : ''}`;
-    }
+    if (!isFacturaCliente(factura)) return '';
     if (factura.origen === 'ventas') {
       return `Origen: Ventas / OC${factura.ventaDocumento ? ` · ${factura.ventaDocumento}` : ''}`;
     }
@@ -11748,12 +12039,12 @@ Notas importantes:
 
   function getFacturasForPeriod(periodo, data = getFacturasData()) {
     const key = cleanText(periodo);
-    return sortFacturasModulo((data.facturas || []).filter((record) => normalizeFacturaModuloRecord(record).periodo === key));
+    return sortFacturasModulo(getFacturasClienteRecords(data).filter((record) => record.periodo === key));
   }
 
   function buildFacturasSummary(records) {
     const summary = FACTURA_ESTADO_OPTIONS.reduce((acc, estado) => ({ ...acc, [estado]: 0 }), {});
-    const normalized = (Array.isArray(records) ? records : []).map(normalizeFacturaModuloRecord);
+    const normalized = getFacturasClienteRecords(Array.isArray(records) ? records : []);
     normalized.forEach((record) => {
       summary[record.estado] = (summary[record.estado] || 0) + 1;
     });
@@ -11766,7 +12057,7 @@ Notas importantes:
 
   function findFacturaModuloById(id, data = getFacturasData()) {
     const target = cleanText(id);
-    return (data.facturas || []).map(normalizeFacturaModuloRecord).find((record) => record.id === target) || null;
+    return getFacturasClienteRecords(data).find((record) => record.id === target) || null;
   }
 
   function sortFacturaCatalogByName(records = []) {
@@ -11975,7 +12266,7 @@ Notas importantes:
 
   function getFacturasGlobalSortLabel(record) {
     const factura = normalizeFacturaModuloRecord(record);
-    return cleanText(getFacturaModuloPartyDisplay(factura) || getFacturaSucursalDisplay(factura) || factura.clienteNombre || factura.proveedorNombre || factura.sucursalNombre || '');
+    return cleanText(getFacturaModuloPartyDisplay(factura) || getFacturaSucursalDisplay(factura) || factura.clienteNombre || factura.sucursalNombre || '');
   }
 
   function compareFacturasGlobalItems(a, b) {
@@ -12000,7 +12291,7 @@ Notas importantes:
 
   function getFacturasGlobalItems(data = getFacturasData()) {
     const source = normalizeFacturasData(data);
-    return (source.facturas || [])
+    return getFacturasClienteRecords(source)
       .map((raw, index) => {
         const reliableDate = getFacturaReliableDateValue(raw);
         return {
@@ -12027,13 +12318,7 @@ Notas importantes:
 
   function getFacturaGlobalPartyFilterPayload(record) {
     const factura = normalizeFacturaModuloRecord(record);
-    const origin = normalizeFacturaModuloOrigin(factura);
-    if (origin === 'proveedores') {
-      const proveedor = factura.proveedorId ? getCatalogRecordById('proveedores', factura.proveedorId) : null;
-      const label = cleanText(factura.proveedorNombre || proveedor?.nombre || '');
-      const key = cleanText(factura.proveedorId) || (label ? normalizeKeyForCompare(label) : '');
-      return key && label ? { value: `proveedor:${key}`, label } : { value: '', label: '' };
-    }
+    if (!isFacturaCliente(factura)) return { value: '', label: '' };
     const cliente = factura.clienteId ? getCatalogRecordById('clientes', factura.clienteId) : null;
     const label = cleanText(factura.clienteNombre || cliente?.nombre || '');
     const key = cleanText(factura.clienteId) || (label ? normalizeKeyForCompare(label) : '');
@@ -12061,6 +12346,7 @@ Notas importantes:
 
   function facturaGlobalItemMatchesFilters(item, filters = getFacturasGlobalFilters()) {
     const factura = normalizeFacturaModuloRecord(item?.record || item);
+    if (!isFacturaCliente(factura)) return false;
     if (filters.searchKey) {
       const noKey = normalizeFacturaGlobalSearchValue(factura.no);
       const noLooseKey = normalizeFacturaGlobalLooseSearchValue(factura.no);
@@ -12138,7 +12424,7 @@ Notas importantes:
             <div>
               <span class="eyebrow mini">Consulta general</span>
               <h2 id="${escapeHtml(modalId)}-title">Global de Facturas</h2>
-              <p>Todas las facturas registradas, sin importar período. La paginación de esta ventana es independiente.</p>
+              <p>Todas las facturas emitidas a clientes, sin importar período. La paginación de esta ventana es independiente.</p>
             </div>
             <button type="button" class="modal-close" data-modal-close="${escapeHtml(modalId)}" aria-label="Cerrar Global de Facturas">×</button>
           </header>
@@ -12173,7 +12459,7 @@ Notas importantes:
           <input type="search" name="globalSearch" value="${escapeHtml(filters.search || '')}" placeholder="Número de factura" autocomplete="off" inputmode="search" data-factura-global-search />
         </label>
         <label class="form-field">
-          <span>Cliente / Proveedor</span>
+          <span>Cliente</span>
           <select name="globalCliente" data-factura-global-filter="cliente">
             ${renderFacturasGlobalFilterOptions(options.clientes, filters.cliente, 'Todos')}
           </select>
@@ -12203,7 +12489,7 @@ Notas importantes:
     const totalPages = Math.max(1, Number.parseInt(info.totalPages, 10) || 1);
     const pagedItems = Array.isArray(info.pagedItems) ? info.pagedItems : [];
     const hasFilters = Boolean(cleanText(info.filters?.search) || cleanText(info.filters?.cliente) || cleanText(info.filters?.sucursal) || cleanText(info.filters?.estado));
-    const emptyMessage = totalAllRecords ? 'No hay facturas que coincidan con los filtros.' : 'No hay facturas registradas.';
+    const emptyMessage = totalAllRecords ? 'No hay facturas de clientes que coincidan con los filtros.' : 'No hay facturas emitidas a clientes.';
     return `
       <div class="facturas-global-toolbar" aria-label="Resumen Global de Facturas">
         <div class="status-grid compact facturas-global-status-grid">
@@ -12218,7 +12504,7 @@ Notas importantes:
         wrapClass: 'facturas-table-wrap facturas-global-table-wrap',
         ariaLabel: 'Global de Facturas',
         tableClass: 'operational-table-facturas facturas-global-operational-table',
-        headers: '<th>No.</th><th>Fecha</th><th>Período</th><th>Cliente / Proveedor</th><th>Sucursal</th><th>Estado</th><th>Monto / total</th><th>Origen</th>',
+        headers: '<th>No.</th><th>Fecha</th><th>Período</th><th>Cliente</th><th>Sucursal</th><th>Estado</th><th>Total</th><th>Origen</th>',
         rows: pagedItems.map((item) => renderFacturaGlobalRow(item)).join('')
       }) : `<p class="muted-text compact-note facturas-global-empty">${escapeHtml(emptyMessage)}</p>`}
       ${renderFacturasGlobalPagination(totalRecords, page, totalPages)}
@@ -12228,6 +12514,7 @@ Notas importantes:
   function renderFacturaGlobalRow(item) {
     const payload = isPlainObject(item) && item.record ? item : { record: item, hasReliableDate: true };
     const factura = normalizeFacturaModuloRecord(payload.record);
+    if (!isFacturaCliente(factura)) return '';
     const periodInfo = payload.hasReliableDate ? getFacturaPeriodInfoFromDate(factura.fecha) : null;
     const partyLabel = getFacturaModuloPartyDisplay(factura) || '—';
     const sucursalLabel = getFacturaSucursalDisplay(factura) || '—';
@@ -12408,7 +12695,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Facturas</h1>
-          <p class="lead">Control documental por período, con búsqueda global por número, CRUD manual, creación automática desde Ventas / OC y actualización documental desde Cobros completos. Aquí se ordena el papel sin tocar saldos, retenciones ni cierres.</p>
+          <p class="lead">Control documental exclusivo de facturas emitidas a clientes, con búsqueda global por número, captura manual, creación desde Ventas / OC y actualización documental desde Cobros completos.</p>
         </div>
         <aside class="hero-status" aria-label="Estado del módulo Facturas">
           <div class="status-grid compact">
@@ -12510,7 +12797,7 @@ Notas importantes:
             <textarea name="observaciones" rows="3" placeholder="Obligatorio si Estado = Otro">${escapeHtml(current.observaciones || '')}</textarea>
           </label>
         </div>
-        <p class="compact-note muted-text">Las facturas pueden ser manuales o venir desde Ventas / OC. Editarlas aquí no modifica Cobros, saldos, Resumen, Excel ni cierres.</p>
+        <p class="compact-note muted-text">Las facturas emitidas a clientes pueden registrarse manualmente o venir desde Ventas / OC. Editarlas aquí no modifica Cobros, saldos, Resumen, Excel ni cierres.</p>
       </form>
     `;
   }
@@ -12548,7 +12835,7 @@ Notas importantes:
 
   function renderFacturasSearchResults(results) {
     const records = Array.isArray(results) ? results : [];
-    if (!records.length) return '<p class="muted-text compact-note">No se encontraron facturas con ese número en la vista actual.</p>';
+    if (!records.length) return '<p class="muted-text compact-note">No se encontraron facturas de clientes con ese número en la vista actual.</p>';
     const uniquePages = [...new Set(records.map((item) => item.page).filter(Boolean))];
     const pageText = uniquePages.length === 1
       ? `Factura encontrada en página ${uniquePages[0]}.`
@@ -12563,7 +12850,7 @@ Notas importantes:
         wrapClass: 'facturas-table-wrap',
         ariaLabel: 'Resultados de búsqueda de facturas',
         tableClass: 'operational-table-facturas',
-        headers: '<th>No.</th><th>Período</th><th>Página</th><th>Fecha</th><th>Origen</th><th>Documento madre</th><th>Cliente / Proveedor</th><th>Subtotal</th><th>Descuento</th><th>Total / Monto</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
+        headers: '<th>No.</th><th>Período</th><th>Página</th><th>Fecha</th><th>Origen</th><th>Venta / OC</th><th>Cliente</th><th>Subtotal</th><th>Descuento</th><th>Total</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
         rows
       })}
     `;
@@ -12572,6 +12859,7 @@ Notas importantes:
   function renderFacturaSearchResultRow(result) {
     const item = isPlainObject(result) ? result : { record: result, page: 1, scopeLabel: '' };
     const factura = normalizeFacturaModuloRecord(item.record);
+    if (!isFacturaCliente(factura)) return '';
     const periodInfo = getFacturaPeriodInfoFromDate(factura.fecha);
     const origenLabel = getFacturaOrigenLabel(factura);
     const partyLabel = getFacturaModuloPartyDisplay(factura);
@@ -12595,7 +12883,7 @@ Notas importantes:
         <td><span>${escapeHtml(formatDate(factura.fecha))}</span></td>
         <td><small title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel || 'Manual')}</small></td>
         <td><span title="${escapeHtml(documentLabel || 'Sin documento madre')}">${escapeHtml(documentLabel || '—')}</span></td>
-        <td><span title="${escapeHtml(partyLabel || 'Sin cliente/proveedor')}">${escapeHtml(partyLabel || '—')}</span></td>
+        <td><span title="${escapeHtml(partyLabel || 'Sin cliente')}">${escapeHtml(partyLabel || '—')}</span></td>
         <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.subtotal || 0))}</span></td>
         <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.descuento || 0))}</span></td>
         <td class="amount-cell"><span>${escapeHtml(getFacturaModuloAmountLabel(factura))}</span></td>
@@ -12626,7 +12914,7 @@ Notas importantes:
           wrapClass: 'facturas-table-wrap',
           ariaLabel: `Listado de facturas de ${periodInfo.label}`,
           tableClass: 'operational-table-facturas',
-          headers: '<th>No.</th><th>Fecha</th><th>Origen</th><th>Documento madre</th><th>Cliente / Proveedor</th><th>Subtotal</th><th>Descuento</th><th>Total / Monto</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
+          headers: '<th>No.</th><th>Fecha</th><th>Origen</th><th>Venta / OC</th><th>Cliente</th><th>Subtotal</th><th>Descuento</th><th>Total</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
           rows: records.map((record) => renderFacturaRow(record)).join('')
         }) : `<p class="muted-text compact-note">${escapeHtml(emptyText)}</p>`}
         ${pagination}
@@ -12643,7 +12931,7 @@ Notas importantes:
   function buildFacturasHistoryGroups(data = getFacturasData()) {
     const closed = new Map(getCierresMensuales().map((cierre) => [cleanText(cierre.periodo), cierre]));
     const grouped = new Map();
-    sortFacturasModulo(data.facturas || []).forEach((record) => {
+    sortFacturasModulo(getFacturasClienteRecords(data)).forEach((record) => {
       const factura = normalizeFacturaModuloRecord(record);
       if (!closed.has(factura.periodo)) return;
       const current = grouped.get(factura.periodo) || [];
@@ -12708,7 +12996,7 @@ Notas importantes:
               wrapClass: 'facturas-table-wrap',
               ariaLabel: `Histórico de facturas de ${group.label}`,
               tableClass: 'operational-table-facturas',
-              headers: '<th>No.</th><th>Fecha</th><th>Origen</th><th>Documento madre</th><th>Cliente / Proveedor</th><th>Subtotal</th><th>Descuento</th><th>Total / Monto</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
+              headers: '<th>No.</th><th>Fecha</th><th>Origen</th><th>Venta / OC</th><th>Cliente</th><th>Subtotal</th><th>Descuento</th><th>Total</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
               rows: pagedRecords.map((record) => renderFacturaRow(record, { readonly: true })).join('')
             }) : '<p class="muted-text compact-note">No hay facturas en este período histórico.</p>'}
             ${renderFacturasPagination(group.records.length, totalPages, { scope: 'history', periodo: group.periodo })}
@@ -12720,6 +13008,7 @@ Notas importantes:
 
   function renderFacturaRow(record, options = {}) {
     const factura = normalizeFacturaModuloRecord(record);
+    if (!isFacturaCliente(factura)) return '';
     const periodInfo = getFacturaPeriodInfoFromDate(factura.fecha);
     const origenLabel = getFacturaOrigenLabel(factura);
     const partyLabel = getFacturaModuloPartyDisplay(factura);
@@ -12740,7 +13029,7 @@ Notas importantes:
         <td><span>${escapeHtml(formatDate(factura.fecha))}</span></td>
         <td><small title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel || 'Manual')}</small></td>
         <td><span title="${escapeHtml(documentLabel || 'Sin documento madre')}">${escapeHtml(documentLabel || '—')}</span></td>
-        <td><span title="${escapeHtml(partyLabel || 'Sin cliente/proveedor')}">${escapeHtml(partyLabel || '—')}</span></td>
+        <td><span title="${escapeHtml(partyLabel || 'Sin cliente')}">${escapeHtml(partyLabel || '—')}</span></td>
         <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.subtotal || 0))}</span></td>
         <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.descuento || 0))}</span></td>
         <td class="amount-cell"><span>${escapeHtml(getFacturaModuloAmountLabel(factura))}</span></td>
@@ -20898,11 +21187,6 @@ Notas importantes:
       proveedoresState.message = `Compra/deuda ${compraRefLabel} actualizada; pago automático anterior quedó anulado.`;
     }
 
-    const facturasSyncResult = syncCompraFacturasToFacturasModulo(newRecord);
-    registerFacturasSyncSessionChanges(facturasSyncResult, existingRecord ? 'editar' : 'crear', 'Proveedores / Compras');
-    const facturasSyncMessage = formatCompraFacturasSyncMessage(facturasSyncResult);
-    if (facturasSyncMessage) proveedoresState.message = `${proveedoresState.message} ${facturasSyncMessage}`;
-
     proveedoresState.editingId = null;
     const savedRecord = appData.comprasProveedores.find((record) => record.id === newRecord.id) || newRecord;
     openAccordionGroupForRecord('compras', savedRecord);
@@ -21077,10 +21361,6 @@ Notas importantes:
 
     const savedCompra = appData.comprasProveedores.find((record) => record.id === compraProveedorId);
     const syncResult = savedCompra ? syncAutoPagoCompraContado(savedCompra) : { action: 'none' };
-    if (savedCompra) {
-      const facturasSyncResult = syncCompraFacturasToFacturasModulo(savedCompra);
-      registerFacturasSyncSessionChanges(facturasSyncResult, 'editar', 'Proveedores / Compras');
-    }
     proveedoresState.selectedAjusteCompraId = compraProveedorId;
     openAccordionGroupForRecord('compras', savedCompra || compra);
     proveedoresState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${compra.facturaReferencia} (${getAjusteFacturaActivityPart(ajuste)}). Saldo recalculado sin crear pago.`;
@@ -21139,10 +21419,6 @@ Notas importantes:
 
     const savedCompra = appData.comprasProveedores.find((record) => record.id === compraProveedorId);
     syncAutoPagoCompraContado(savedCompra || compra);
-    if (savedCompra) {
-      const facturasSyncResult = syncCompraFacturasToFacturasModulo(savedCompra);
-      registerFacturasSyncSessionChanges(facturasSyncResult, 'editar', 'Proveedores / Compras');
-    }
     proveedoresState.selectedAjusteCompraId = compraProveedorId;
     openAccordionGroupForRecord('compras', savedCompra || compra);
     proveedoresState.message = `Ajuste eliminado de ${compra.facturaReferencia}. Saldo recalculado.`;
@@ -24649,7 +24925,7 @@ Notas importantes:
       ? opts.activityEntries.map((entry) => normalizeActivityEntry(entry)).slice(0, ACTIVITY_LOG_MAX_ENTRIES)
       : getRecentActivityEntries(ACTIVITY_LOG_MAX_ENTRIES);
     const notasModulo = opts.notasModulo ? normalizeNotasData(opts.notasModulo) : cloneNotasModuleData();
-    const facturasModulo = opts.facturasModulo ? normalizeFacturasData(opts.facturasModulo) : cloneFacturasModuleData();
+    const facturasModulo = opts.facturasModulo ? sanitizeFacturasClientesData(opts.facturasModulo, { mark: false }) : cloneFacturasModuleData();
     const workPeriodInfo = getWorkPeriodBackupInfo();
     snapshot.notasModulo = notasModulo;
     snapshot.facturasModulo = facturasModulo;
