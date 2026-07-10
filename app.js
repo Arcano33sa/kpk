@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.41-post12-facturas-clientes-etapa4-blindaje-final';
+  const APP_VERSION = '0.18.42-post12-facturas-clientes-ajuste-orden-descendente';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -12029,11 +12029,21 @@ Notas importantes:
     return (Array.isArray(records) ? records : [])
       .map(normalizeFacturaModuloRecord)
       .sort((a, b) => {
-        const byNo = compareFacturaNaturalNo(a.no, b.no);
-        if (byNo !== 0) return byNo;
-        const byDate = String(a.fecha).localeCompare(String(b.fecha));
+        const aNo = cleanFacturaVentaNumero(a.no);
+        const bNo = cleanFacturaVentaNumero(b.no);
+        if (!aNo && !bNo) {
+          // Continúa con fecha/actualización para registros heredados sin número.
+        } else if (!aNo) {
+          return 1;
+        } else if (!bNo) {
+          return -1;
+        } else {
+          const byNo = compareFacturaNaturalNo(bNo, aNo);
+          if (byNo !== 0) return byNo;
+        }
+        const byDate = String(b.fecha).localeCompare(String(a.fecha));
         if (byDate !== 0) return byDate;
-        return String(a.updatedAt || '').localeCompare(String(b.updatedAt || ''));
+        return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
       });
   }
 
