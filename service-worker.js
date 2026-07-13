@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_43_post12_facturas_clientes_fix_guardar_datos_migracion';
+const CACHE_VERSION = 'v0_18_48_sync_incremental_etapa5_hardening_final';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

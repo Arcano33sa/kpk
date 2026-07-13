@@ -11408,3 +11408,44 @@ body,
   text-align: center;
   overflow-wrap: anywhere;
 }
+
+/* Sincronización Inteligente — Etapa 5/5: respaldo administrativo controlado */
+.sync-admin-recovery-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px dashed rgba(185, 135, 43, 0.42);
+  border-radius: 14px;
+  background: rgba(255, 248, 234, 0.72);
+}
+
+.sync-admin-recovery-actions > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sync-admin-recovery-actions strong,
+.sync-admin-recovery-actions small {
+  overflow-wrap: anywhere;
+}
+
+.sync-full-action {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+@media (max-width: 680px) {
+  .sync-admin-recovery-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sync-full-action {
+    width: 100%;
+    white-space: normal;
+  }
+}

@@ -98,3 +98,14 @@ Bloque A / Etapa 3/6: se agregó una pantalla de acceso preparada para Firebase 
 - Se agregó `GUIA_JSON_AUXILIAR_NUBE_KSA_PRACTIKA.txt`.
 - Consecutivo JSON permanece separado de Excel Consulta y Excel Cierre; no avanza si se cancela o falla la exportación.
 - Cache PWA actualizado a 0.18.16.
+
+## Sincronización Inteligente — Etapa 5/5 — Hardening final
+- “Actualizar datos” usa metadata y sincronización incremental por defecto; si no existen cambios muestra “Los datos ya están actualizados.” sin descargar colecciones.
+- Eliminado el fallback automático a sincronización completa durante actualizaciones normales. Si la metadata no permite una fusión incremental segura, la app informa el bloqueo y no descarga toda la base silenciosamente.
+- También se eliminó la lectura completa automática de módulos individuales cuando falta cursor, falla la consulta `syncUpdatedAt` o una revisión no devuelve delta; esos casos quedan bloqueados para diagnóstico/recuperación administrativa.
+- La sincronización completa queda controlada por motivo: primer uso, migración, importación, diagnóstico o recuperación; la acción manual visible es exclusiva del Administrador y exige confirmación.
+- El inicio de sesión y el arranque usan incremental cuando el equipo ya posee una base válida; solo el primer uso sin línea base permite una carga completa inicial.
+- Los mensajes informan registros aplicados, módulos afectados y conflictos protegidos. Se mantienen cola de cambios, tombstones, limpieza de Facturas, IDs, consecutivos, JSON y fusión segura.
+- La lectura completa incluye Bdatos, catálogos, Ventas, Cobros, Compras, Pagos, Gastos, Casa, Facturas, Notas, cierres, exportaciones, bitácora, configuración y consecutivos.
+- Cache PWA actualizado a 0.18.48.
+
