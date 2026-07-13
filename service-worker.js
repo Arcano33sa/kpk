@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_49_sync_incremental_etapa5_notas_scope_fix';
+const CACHE_VERSION = 'v0_18_50_sync_incremental_baseline_firestore_fix';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
