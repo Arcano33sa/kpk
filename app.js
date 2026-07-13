@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.48-sync-incremental-etapa5-hardening-final';
+  const APP_VERSION = '0.18.49-sync-incremental-etapa5-notas-scope-fix';
   const SCHEMA_VERSION = '1.0.0';
   const SYNC_CONTRACT_VERSION = '1.2.0';
   const SYNC_CONTRACT_STAGE = 'Sincronización Inteligente - Etapa 5/5';
@@ -5413,6 +5413,28 @@ Notas importantes:
     };
   }
 
+  // Utilidades compartidas por Firebase y por la aplicación local para mantener
+  // Notas, Pendientes y Recordatorios en un único contrato de sincronización.
+  function buildCloudNotasRecords(notasData) {
+    const normalized = normalizeNotasData(notasData || {});
+    return [
+      ...normalized.notas.map((record) => ({ ...record, tipoRegistro: 'nota', _docPrefix: 'nota' })),
+      ...normalized.pendientes.map((record) => ({ ...record, tipoRegistro: 'pendiente', _docPrefix: 'pendiente' })),
+      ...normalized.recordatorios.map((record) => ({ ...record, tipoRegistro: 'recordatorio', _docPrefix: 'recordatorio' }))
+    ];
+  }
+
+  function rebuildNotasDataFromCloud(records = []) {
+    const buckets = { notas: [], pendientes: [], recordatorios: [] };
+    (Array.isArray(records) ? records : []).forEach((record) => {
+      const rawType = cleanText(record.tipoRegistro || record.tipo || record.kind || record._docPrefix).toLowerCase();
+      if (rawType.includes('pendiente')) buckets.pendientes.push(record);
+      else if (rawType.includes('recordatorio')) buckets.recordatorios.push(record);
+      else buckets.notas.push(record);
+    });
+    return normalizeNotasData(buckets);
+  }
+
   function createKSAFirebaseAdapter() {
     const state = {
       initialized: false,
@@ -6109,26 +6131,6 @@ Notas importantes:
           syncedAt
         }
       });
-    }
-
-    function buildCloudNotasRecords(notasData) {
-      const normalized = normalizeNotasData(notasData || {});
-      return [
-        ...normalized.notas.map((record) => ({ ...record, tipoRegistro: 'nota', _docPrefix: 'nota' })),
-        ...normalized.pendientes.map((record) => ({ ...record, tipoRegistro: 'pendiente', _docPrefix: 'pendiente' })),
-        ...normalized.recordatorios.map((record) => ({ ...record, tipoRegistro: 'recordatorio', _docPrefix: 'recordatorio' }))
-      ];
-    }
-
-    function rebuildNotasDataFromCloud(records = []) {
-      const buckets = { notas: [], pendientes: [], recordatorios: [] };
-      (Array.isArray(records) ? records : []).forEach((record) => {
-        const rawType = cleanText(record.tipoRegistro || record.tipo || record.kind || record._docPrefix).toLowerCase();
-        if (rawType.includes('pendiente')) buckets.pendientes.push(record);
-        else if (rawType.includes('recordatorio')) buckets.recordatorios.push(record);
-        else buckets.notas.push(record);
-      });
-      return normalizeNotasData(buckets);
     }
 
     function buildCloudSnapshotPayload(dataInput = null) {
