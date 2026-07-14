@@ -1,0 +1,35 @@
+KSA PRÁCTIKA — SINCRONIZACIÓN INTELIGENTE
+REPARACIÓN 2/2 — HARDENING FINAL
+Fecha de validación: 13/07/2026 14:36 (America/Managua)
+Versión: 0.18.52-sync-incremental-hardening-final
+Contrato incremental conservado: 1.2.2
+
+RESULTADO LOCAL
+- Sintaxis app.js: APROBADA.
+- Sintaxis service-worker.js: APROBADA.
+- Sintaxis firebase-config.js: APROBADA.
+- Pruebas ejecutables sobre las funciones reales de cursores/revisiones: 16/16 APROBADAS.
+- Comprobaciones estructurales, mensajes, códigos, JSON, Bdatos y PWA: 65/65 APROBADAS.
+- Baseline válido y detección de cursor faltante: APROBADOS.
+- Revisión general sin adelanto durante aplicación parcial: APROBADA.
+- Revisión y cursor de módulo fallido sin adelanto: APROBADOS.
+- Cursores de módulos aplicados actualizados únicamente después de lectura correcta: APROBADOS.
+- Auditoría de documentos antiguos sin syncUpdatedAt: APROBADA.
+- Auditoría y conteo de tombstones: APROBADOS.
+- Sin fallback automático a descarga completa desde Actualizar datos: CONFIRMADO POR CÓDIGO.
+- Bdatos incluido en escritura completa, lectura/aplicación incremental y fusión: CONFIRMADO.
+- Importación JSON invalida metadata incremental incompatible: CONFIRMADO.
+- Service Worker, cache y referencias de assets actualizados/versionados: APROBADOS.
+- Diagnóstico por módulo con scroll horizontal interno: CONFIRMADO.
+
+LIMITACIONES DEL ENTORNO DE PRUEBA
+- No se realizó una prueba autenticada contra el Firestore real del usuario porque este entorno no dispone de una sesión Firebase Auth válida ni de credenciales interactivas del proyecto.
+- No se afirma haber probado dos dispositivos reales, Safari, iPad, móvil o PWA instalada contra Firestore.
+- Chromium del entorno bloqueó la navegación HTTP local con ERR_BLOCKED_BY_ADMINISTRATOR; por ello las validaciones responsive/PWA fueron estructurales y de código, no una sesión visual autenticada.
+
+PRUEBAS QUE DEBEN CONFIRMARSE EN EL ENTORNO REAL
+1. Sincronización completa administrativa y confirmación del baseline en Firestore.
+2. Reinicio de la PWA y Actualizar datos sin cambios: “Los datos ya están actualizados.”
+3. Cambios desde dos dispositivos por módulo.
+4. Tombstones, conflictos protegidos, pérdida de red, timeout y permisos insuficientes.
+5. Carga de la versión nueva en Chrome, Safari y PWA instalada.

@@ -1,20 +1,23 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_50_sync_incremental_baseline_firestore_fix';
+const CACHE_VERSION = 'v0_18_52_sync_incremental_hardening_final';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
+const ASSET_VERSION = '0.18.52-sync-incremental-hardening-final';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css',
-  './app.js',
-  './firebase-config.js',
+  `./styles.css?v=${ASSET_VERSION}`,
+  `./app.js?v=${ASSET_VERSION}`,
+  `./firebase-config.js?v=${ASSET_VERSION}`,
   './FIRESTORE_RULES_KSA_PRACTIKA.rules',
   './GUIA_APLICAR_REGLAS_FIRESTORE.txt',
   './GUIA_JSON_AUXILIAR_NUBE_KSA_PRACTIKA.txt',
-  './vendor/jszip.min.js',
-  './manifest.webmanifest',
+  `./vendor/jszip.min.js?v=${ASSET_VERSION}`,
+  `./manifest.webmanifest?v=${ASSET_VERSION}`,
+  `./assets/icon-192.svg?v=${ASSET_VERSION}`,
   './assets/icon-192.svg',
   './assets/icon-512.svg',
+  `./assets/ksa-logo.png?v=${ASSET_VERSION}`,
   './assets/ksa-logo.png'
 ];
 
