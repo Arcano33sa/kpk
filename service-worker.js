@@ -1,23 +1,20 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_62_sync_incremental_reparacion_definitiva_hardening_final';
+const CACHE_VERSION = 'v0_18_47_seguimiento_etapa4_hardening_final';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
-const ASSET_VERSION = '0.18.62-sync-incremental-reparacion-definitiva-hardening-final';
 const APP_SHELL = [
   './',
   './index.html',
-  `./styles.css?v=${ASSET_VERSION}`,
-  `./app.js?v=${ASSET_VERSION}`,
-  `./firebase-config.js?v=${ASSET_VERSION}`,
+  './styles.css',
+  './app.js',
+  './firebase-config.js',
   './FIRESTORE_RULES_KSA_PRACTIKA.rules',
   './GUIA_APLICAR_REGLAS_FIRESTORE.txt',
   './GUIA_JSON_AUXILIAR_NUBE_KSA_PRACTIKA.txt',
-  `./vendor/jszip.min.js?v=${ASSET_VERSION}`,
-  `./manifest.webmanifest?v=${ASSET_VERSION}`,
-  `./assets/icon-192.svg?v=${ASSET_VERSION}`,
+  './vendor/jszip.min.js',
+  './manifest.webmanifest',
   './assets/icon-192.svg',
   './assets/icon-512.svg',
-  `./assets/ksa-logo.png?v=${ASSET_VERSION}`,
   './assets/ksa-logo.png'
 ];
 
@@ -55,19 +52,9 @@ self.addEventListener('fetch', (event) => {
 
   if (request.mode === 'navigate') {
     event.respondWith(
-      caches.match('./index.html').then((cachedShell) => {
-        const networkRefresh = fetch(request).then((response) => {
-          if (response && response.ok) {
-            caches.open(CACHE_NAME).then((cache) => cache.put('./index.html', response.clone())).catch(() => undefined);
-          }
-          return response;
-        });
-        if (cachedShell) {
-          networkRefresh.catch(() => undefined);
-          return cachedShell;
-        }
-        return networkRefresh.catch(() => caches.match('./index.html'));
-      })
+      fetch(request)
+        .then((response) => response)
+        .catch(() => caches.match('./index.html'))
     );
     return;
   }
