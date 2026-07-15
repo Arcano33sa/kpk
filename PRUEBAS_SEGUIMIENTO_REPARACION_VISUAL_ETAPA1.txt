@@ -1,0 +1,44 @@
+KSA PRÁCTIKA — Seguimiento — Reparación visual — Etapa 1/2
+Fecha y hora de validación: 14/07/2026 22:09
+
+ALCANCE APLICADO
+- Redistribución exclusiva para Desktop/MacBook desde 981 px.
+- Plantilla única de siete columnas compartida por encabezado y filas.
+- Sucursal flexible moderada, sin absorber el ancho disponible.
+- Última llamada, días y último pedido con ancho suficiente y una sola línea.
+- Registrar llamada e Histórico conservados como columnas independientes.
+- Acciones centradas, con separación física y sin superposición.
+- Semáforo compactado visualmente sin alterar estado, fechas ni lógica.
+- Responsive de iPad/móvil conservado sin cambios funcionales.
+- Resumen no rediseñado ni alterado.
+
+VALIDACIONES
+1. Chromium/CDP 1440 x 900:
+   - bodyScrollWidth = clientWidth = 1440.
+   - tabla sin scroll horizontal interno.
+   - encabezados y filas alineados en las siete columnas.
+   - Nunca llamada visible completa.
+   - separación Registrar llamada / Histórico: 8.34 px.
+2. Chromium/CDP 1024 x 900:
+   - bodyScrollWidth = clientWidth = 1024.
+   - tabla sin scroll horizontal interno.
+   - encabezados y filas alineados en las siete columnas.
+   - Nunca llamada visible completa.
+   - separación Registrar llamada / Histórico: 6.08 px.
+3. node --check app.js: OK.
+4. node --check service-worker.js: OK.
+5. manifest.webmanifest JSON: OK.
+6. HTML parse básico: OK.
+7. Control de alcance:
+   - app.js solo cambió APP_VERSION.
+   - index.html solo cambió versionado de recursos.
+   - service-worker.js solo cambió versión/cache.
+   - styles.css conserva la base y agrega únicamente la reparación visual Desktop/MacBook.
+8. PWA:
+   - APP_VERSION 0.18.57-seguimiento-reparacion-visual-desktop-macbook.
+   - caché v0_18_57_seguimiento_reparacion_visual_desktop_macbook.
+   - CSS/JS/manifest/iconos/logo con referencias versionadas.
+9. Firestore, sincronización, JSON, ventas, cierres y datos operativos: sin cambios.
+
+RESULTADO
+Smoke test técnico y visual: APROBADO.

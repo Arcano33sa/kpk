@@ -12714,3 +12714,558 @@ body,
   }
 }
 
+
+/* Seguimiento — Reparación visual Etapa 1/2 · Desktop y MacBook */
+@media (min-width: 981px) {
+  .seguimiento-client-table {
+    overflow-x: hidden;
+    scrollbar-gutter: auto;
+  }
+
+  .seguimiento-branch-grid {
+    grid-template-columns:
+      minmax(7.35rem, 0.9fr)
+      minmax(7.6rem, 1.05fr)
+      minmax(7.45rem, 0.92fr)
+      minmax(6rem, 0.72fr)
+      minmax(7rem, 0.86fr)
+      minmax(7.15rem, 0.88fr)
+      minmax(7.35rem, 0.9fr);
+    gap: clamp(0.38rem, 0.58vw, 0.68rem);
+    width: 100%;
+    min-width: 0;
+  }
+
+  .seguimiento-branch-body,
+  .seguimiento-branch-entry {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .seguimiento-branch-head,
+  .seguimiento-branch-row {
+    padding-inline: clamp(0.62rem, 0.8vw, 0.82rem);
+  }
+
+  .seguimiento-branch-head {
+    font-size: 0.66rem;
+    line-height: 1.15;
+  }
+
+  .seguimiento-branch-head > span {
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: normal;
+    text-overflow: clip;
+  }
+
+  .seguimiento-branch-head > span:nth-child(3),
+  .seguimiento-branch-head > span:nth-child(4),
+  .seguimiento-branch-head > span:nth-child(5),
+  .seguimiento-branch-head > span:nth-child(6),
+  .seguimiento-branch-head > span:nth-child(7) {
+    text-align: center;
+  }
+
+  .seguimiento-branch-row > div:nth-child(1),
+  .seguimiento-branch-row > div:nth-child(3),
+  .seguimiento-branch-row > div:nth-child(4),
+  .seguimiento-branch-row > div:nth-child(5),
+  .seguimiento-branch-row > div:nth-child(6),
+  .seguimiento-branch-row > div:nth-child(7) {
+    overflow: hidden;
+    text-overflow: clip;
+  }
+
+  .seguimiento-branch-row > div:nth-child(3),
+  .seguimiento-branch-row > div:nth-child(4),
+  .seguimiento-branch-row > div:nth-child(5) {
+    text-align: center;
+  }
+
+  .seguimiento-light {
+    gap: 0.34rem;
+    font-size: 0.72rem;
+    line-height: 1.15;
+  }
+
+  .seguimiento-light i {
+    width: 0.68rem;
+    height: 0.68rem;
+    flex-basis: 0.68rem;
+  }
+
+  .seguimiento-sucursal-cell strong {
+    font-size: 0.88rem;
+    font-weight: 800;
+  }
+
+  .seguimiento-branch-row .seguimiento-nowrap {
+    display: inline-block;
+    max-width: 100%;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: nowrap;
+  }
+
+  .seguimiento-action-cell,
+  .seguimiento-history-action-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+  }
+
+  .icon-action.seguimiento-call-action {
+    flex: 0 0 2.5rem;
+  }
+
+  .secondary-action.compact.seguimiento-history-action {
+    width: auto;
+    min-width: 6.6rem;
+    max-width: 100%;
+    padding-inline: 0.5rem;
+  }
+}
+
+/* Seguimiento — Reparación visual Etapa 2/2 · responsive integral y hardening final */
+.seguimiento-shell,
+.seguimiento-toolbar,
+.seguimiento-list-panel,
+.seguimiento-history-panel,
+.seguimiento-client-groups,
+.seguimiento-client-group,
+.seguimiento-client-table,
+.seguimiento-branch-body,
+.seguimiento-branch-entry,
+.seguimiento-history-inline,
+.resumen-seguimiento-panel,
+.resumen-seguimiento-table,
+.resumen-seguimiento-body {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+
+.seguimiento-branch-head,
+.seguimiento-branch-row,
+.resumen-seguimiento-head,
+.resumen-seguimiento-row {
+  align-items: center;
+}
+
+.seguimiento-branch-head > span,
+.seguimiento-branch-row > div,
+.resumen-seguimiento-head > span,
+.resumen-seguimiento-row > div {
+  min-width: 0;
+}
+
+.seguimiento-branch-row .seguimiento-nowrap,
+.resumen-seguimiento-row .seguimiento-nowrap,
+.seguimiento-history-line time,
+.seguimiento-history-action,
+.seguimiento-call-action {
+  white-space: nowrap;
+}
+
+.seguimiento-history-inline,
+.seguimiento-history-lines,
+.seguimiento-history-line {
+  max-width: 100%;
+}
+
+.seguimiento-history-line span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Desktop y MacBook: conservar la reparación de la Etapa 1 y completar Resumen. */
+@media (min-width: 981px) {
+  .seguimiento-client-table,
+  .resumen-seguimiento-table {
+    overflow-x: hidden;
+    scrollbar-gutter: auto;
+  }
+
+  .resumen-seguimiento-grid {
+    grid-template-columns:
+      minmax(6.7rem, 0.82fr)
+      minmax(8rem, 1.16fr)
+      minmax(7.6rem, 1.08fr)
+      minmax(7.2rem, 0.9fr)
+      minmax(6rem, 0.7fr)
+      minmax(7.2rem, 0.88fr)
+      minmax(3.2rem, 0.36fr);
+    gap: clamp(0.38rem, 0.58vw, 0.68rem);
+    width: 100%;
+    min-width: 0;
+  }
+
+  .resumen-seguimiento-body,
+  .resumen-seguimiento-row {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .resumen-seguimiento-head,
+  .resumen-seguimiento-row {
+    padding-inline: clamp(0.62rem, 0.8vw, 0.82rem);
+  }
+
+  .resumen-seguimiento-head {
+    font-size: 0.66rem;
+    line-height: 1.15;
+  }
+
+  .resumen-seguimiento-head > span {
+    white-space: normal;
+    overflow-wrap: normal;
+    text-overflow: clip;
+  }
+
+  .resumen-seguimiento-head > span:nth-child(n+4),
+  .resumen-seguimiento-row > div:nth-child(n+4) {
+    text-align: center;
+  }
+
+  .resumen-seguimiento-row > div {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+/* iPad horizontal, iPad vertical y Split View: siempre filas con encabezados. */
+@media (min-width: 561px) and (max-width: 980px) {
+  .seguimiento-client-table,
+  .resumen-seguimiento-table {
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-gutter: stable;
+  }
+
+  .seguimiento-branch-grid {
+    grid-template-columns:
+      minmax(5.5rem, 0.78fr)
+      minmax(6.7rem, 1.15fr)
+      minmax(6.35rem, 0.94fr)
+      minmax(4.55rem, 0.64fr)
+      minmax(6.35rem, 0.9fr)
+      minmax(3.05rem, 0.42fr)
+      minmax(4.55rem, 0.6fr);
+    gap: 0.28rem;
+    width: 100%;
+    min-width: 37.2rem;
+  }
+
+  .resumen-seguimiento-grid {
+    grid-template-columns:
+      minmax(5.5rem, 0.78fr)
+      minmax(6.3rem, 1.08fr)
+      minmax(6.3rem, 1.08fr)
+      minmax(6.35rem, 0.94fr)
+      minmax(4.55rem, 0.64fr)
+      minmax(6.35rem, 0.9fr)
+      minmax(3.05rem, 0.42fr);
+    gap: 0.28rem;
+    width: 100%;
+    min-width: 39.1rem;
+  }
+
+  .seguimiento-branch-body,
+  .seguimiento-branch-entry {
+    width: 100%;
+    min-width: 37.2rem;
+  }
+
+  .resumen-seguimiento-body,
+  .resumen-seguimiento-row {
+    width: 100%;
+    min-width: 39.1rem;
+  }
+
+  .seguimiento-branch-head,
+  .resumen-seguimiento-head {
+    display: grid;
+    padding: 0.48rem 0.5rem;
+    font-size: 0.61rem;
+    line-height: 1.12;
+  }
+
+  .seguimiento-branch-row,
+  .resumen-seguimiento-row {
+    display: grid;
+    padding: 0.54rem 0.5rem;
+    border-radius: 0;
+    font-size: 0.73rem;
+  }
+
+  .seguimiento-branch-row > div,
+  .resumen-seguimiento-row > div {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .seguimiento-branch-row > div::before,
+  .resumen-seguimiento-row > div::before {
+    content: none !important;
+    display: none !important;
+  }
+
+  .seguimiento-branch-head > span:nth-child(n+3),
+  .seguimiento-branch-row > div:nth-child(n+3),
+  .resumen-seguimiento-head > span:nth-child(n+4),
+  .resumen-seguimiento-row > div:nth-child(n+4) {
+    text-align: center;
+  }
+
+  .seguimiento-branch-head > span:nth-child(6),
+  .seguimiento-branch-head > span:nth-child(7),
+  .resumen-seguimiento-head > span:nth-child(7) {
+    font-size: 0;
+  }
+
+  .seguimiento-branch-head > span:nth-child(6)::after {
+    content: 'Llamar';
+    font-size: 0.61rem;
+  }
+
+  .seguimiento-branch-head > span:nth-child(7)::after {
+    content: 'Hist.';
+    font-size: 0.61rem;
+  }
+
+  .resumen-seguimiento-head > span:nth-child(7)::after {
+    content: 'Abrir';
+    font-size: 0.61rem;
+  }
+
+  .seguimiento-action-cell,
+  .seguimiento-history-action-cell {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .icon-action.seguimiento-call-action {
+    width: 2.4rem;
+    height: 2.4rem;
+    min-width: 2.4rem;
+    min-height: 2.4rem;
+  }
+
+  .secondary-action.compact.seguimiento-history-action {
+    width: 4.3rem;
+    min-width: 4.3rem;
+    max-width: 4.3rem;
+    min-height: 2.4rem;
+    padding: 0.34rem 0.38rem;
+    gap: 0.18rem;
+  }
+
+  .seguimiento-history-action > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .seguimiento-history-action strong {
+    min-width: 1.15rem;
+    padding-inline: 0.2rem;
+  }
+
+  .seguimiento-history-inline .seguimiento-history-line {
+    grid-template-columns: 6.5rem minmax(0, 1fr);
+    gap: 0.48rem;
+    padding: 0.42rem 0.48rem;
+    font-size: 0.72rem;
+  }
+}
+
+/* Split View estrecho: conservar las siete columnas, compactando semáforo y acciones. */
+@media (min-width: 561px) and (max-width: 760px) {
+  .seguimiento-branch-grid {
+    grid-template-columns:
+      2.25rem
+      minmax(6rem, 1fr)
+      6rem
+      3.4rem
+      6rem
+      2.75rem
+      3.85rem;
+    gap: 0.22rem;
+    min-width: 32.1rem;
+  }
+
+  .resumen-seguimiento-grid {
+    grid-template-columns:
+      2.25rem
+      minmax(5.5rem, 1fr)
+      minmax(5.5rem, 1fr)
+      6rem
+      3.4rem
+      6rem
+      2.75rem;
+    gap: 0.22rem;
+    min-width: 33rem;
+  }
+
+  .seguimiento-branch-body,
+  .seguimiento-branch-entry {
+    min-width: 32.1rem;
+  }
+
+  .resumen-seguimiento-body,
+  .resumen-seguimiento-row {
+    min-width: 33rem;
+  }
+
+  .seguimiento-branch-head > span:nth-child(1),
+  .seguimiento-branch-head > span:nth-child(4),
+  .resumen-seguimiento-head > span:nth-child(1),
+  .resumen-seguimiento-head > span:nth-child(5) {
+    font-size: 0;
+  }
+
+  .seguimiento-branch-head > span:nth-child(1)::after,
+  .resumen-seguimiento-head > span:nth-child(1)::after {
+    content: '●';
+    font-size: 0.72rem;
+  }
+
+  .seguimiento-branch-head > span:nth-child(4)::after,
+  .resumen-seguimiento-head > span:nth-child(5)::after {
+    content: 'Días';
+    font-size: 0.57rem;
+  }
+
+  .seguimiento-light {
+    justify-content: center;
+  }
+
+  .seguimiento-light > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .seguimiento-light i {
+    width: 0.78rem;
+    height: 0.78rem;
+    flex-basis: 0.78rem;
+  }
+
+  .seguimiento-branch-head,
+  .resumen-seguimiento-head {
+    font-size: 0.57rem;
+  }
+
+  .seguimiento-branch-row,
+  .resumen-seguimiento-row {
+    font-size: 0.69rem;
+  }
+
+  .icon-action.seguimiento-call-action {
+    width: 2.3rem;
+    height: 2.3rem;
+    min-width: 2.3rem;
+    min-height: 2.3rem;
+  }
+
+  .secondary-action.compact.seguimiento-history-action {
+    width: 3.65rem;
+    min-width: 3.65rem;
+    max-width: 3.65rem;
+    min-height: 2.3rem;
+  }
+}
+
+/* Móvil real: fila compacta de cuatro columnas, nunca tarjetas altas. */
+@media (max-width: 560px) {
+  .seguimiento-client-table,
+  .resumen-seguimiento-table {
+    overflow-x: hidden;
+    scrollbar-gutter: auto;
+  }
+
+  .seguimiento-branch-head,
+  .seguimiento-branch-row,
+  .resumen-seguimiento-head,
+  .resumen-seguimiento-row {
+    display: grid !important;
+    border-radius: 0;
+  }
+
+  .seguimiento-branch-row > div::before,
+  .resumen-seguimiento-row > div::before {
+    content: none !important;
+    display: none !important;
+  }
+
+  .seguimiento-branch-entry,
+  .seguimiento-branch-body,
+  .resumen-seguimiento-body {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .seguimiento-branch-head,
+  .seguimiento-branch-row {
+    grid-template-columns: 2.15rem minmax(0, 1fr) 3.15rem 5.55rem;
+    gap: 0.3rem;
+  }
+
+  .resumen-seguimiento-head,
+  .resumen-seguimiento-row {
+    grid-template-columns: 2.15rem minmax(0, 1fr) 3.15rem 2.55rem;
+    gap: 0.06rem 0.3rem;
+  }
+
+  .seguimiento-history-inline .seguimiento-history-line {
+    grid-template-columns: 6.05rem minmax(0, 1fr);
+    gap: 0.4rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .icon-action.seguimiento-call-action {
+    width: 2.25rem;
+    height: 2.25rem;
+    min-width: 2.25rem;
+    min-height: 2.25rem;
+  }
+
+  .secondary-action.compact.seguimiento-history-action {
+    width: 2.65rem;
+    min-width: 2.65rem;
+    max-width: 2.65rem;
+    min-height: 2.25rem;
+    padding-inline: 0.24rem;
+  }
+
+  .seguimiento-history-action strong {
+    min-width: 1.05rem;
+    font-size: 0.66rem;
+  }
+
+  .seguimiento-history-inline .seguimiento-history-line {
+    grid-template-columns: 5.8rem minmax(0, 1fr);
+    font-size: 0.69rem;
+  }
+}

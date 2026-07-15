@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.56-seguimiento-responsive-hardening-final';
+  const APP_VERSION = '0.18.58-seguimiento-reparacion-visual-responsive-hardening-final';
   const SCHEMA_VERSION = '1.0.0';
   const SYNC_CONTRACT_VERSION = '1.2.2';
   const SYNC_CONTRACT_STAGE = 'Seguimiento - Etapa 2/2 Integración final';
