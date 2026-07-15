@@ -1,8 +1,8 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_61_sync_incremental_reparacion_definitiva_baseline_local_first';
+const CACHE_VERSION = 'v0_18_62_sync_incremental_reparacion_definitiva_hardening_final';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
-const ASSET_VERSION = '0.18.61-sync-incremental-reparacion-definitiva-baseline-local-first';
+const ASSET_VERSION = '0.18.62-sync-incremental-reparacion-definitiva-hardening-final';
 const APP_SHELL = [
   './',
   './index.html',
@@ -55,9 +55,19 @@ self.addEventListener('fetch', (event) => {
 
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request)
-        .then((response) => response)
-        .catch(() => caches.match('./index.html'))
+      caches.match('./index.html').then((cachedShell) => {
+        const networkRefresh = fetch(request).then((response) => {
+          if (response && response.ok) {
+            caches.open(CACHE_NAME).then((cache) => cache.put('./index.html', response.clone())).catch(() => undefined);
+          }
+          return response;
+        });
+        if (cachedShell) {
+          networkRefresh.catch(() => undefined);
+          return cachedShell;
+        }
+        return networkRefresh.catch(() => caches.match('./index.html'));
+      })
     );
     return;
   }

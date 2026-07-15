@@ -145,3 +145,13 @@ La vista principal agrupa por Cliente mediante encabezados compactos desplegable
 - Los diagnósticos diferencian baseline ausente, confirmación pendiente, contrato incompatible, revisión o cursor faltante, conflicto activo, error local y error remoto.
 - Se mantienen intactos la lógica de negocio, Seguimiento, tombstones, Firestore, `firebaseConfig` y el responsive aprobado.
 - La versión PWA se actualizó a `0.18.61-sync-incremental-reparacion-definitiva-baseline-local-first`.
+
+## Sincronización incremental — Reparación definitiva — Etapa 2/2
+
+- La carga local inmediata queda consolidada: la interfaz y los datos locales se muestran antes de iniciar Firebase.
+- Se agregó un espejo local verificado del baseline confirmado para recuperar metadata válida tras una relectura local incompleta, sin restaurar metadata invalidada explícitamente por importaciones JSON.
+- Una sincronización completa nueva ya no desconfirma un baseline anterior sano mientras la nueva confirmación permanece pendiente o falla por una causa transitoria.
+- Los baseline parcialmente válidos conservan disponibles los módulos sanos y aíslan únicamente los módulos con cursor o revisión incompleta.
+- La navegación de la PWA usa primero el shell almacenado en caché y refresca la red después, evitando que una conexión lenta bloquee la apertura.
+- Se mantienen protegidos conflictos activos por registro, conflictos huérfanos/históricos, tombstones, Seguimiento, JSON, Firestore, datos locales y diseño responsive.
+- La versión PWA se actualizó a `0.18.62-sync-incremental-reparacion-definitiva-hardening-final`.

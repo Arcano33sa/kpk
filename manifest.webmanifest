@@ -1,7 +1,7 @@
 {
   "name": "KSA PRÁCTIKA",
   "short_name": "KSA",
-  "description": "Control operativo de OC, cobros, proveedores, pagos, gastos, Seguimiento, Casa y sincronización incremental con carga local inmediata, baseline persistente y conflictos protegidos por registro.",
+  "description": "Control operativo de OC, cobros, proveedores, pagos, gastos, Seguimiento, Casa y sincronización incremental con carga local inmediata, baseline persistente, recuperación local segura, conflictos protegidos por registro y PWA local-first.",
   "start_url": "./index.html#home",
   "scope": "./",
   "display": "standalone",

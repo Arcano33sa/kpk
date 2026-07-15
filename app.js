@@ -2,10 +2,10 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.61-sync-incremental-reparacion-definitiva-baseline-local-first';
+  const APP_VERSION = '0.18.62-sync-incremental-reparacion-definitiva-hardening-final';
   const SCHEMA_VERSION = '1.0.0';
   const SYNC_CONTRACT_VERSION = '1.2.3';
-  const SYNC_CONTRACT_STAGE = 'Sincronización incremental - Reparación definitiva Etapa 1/2';
+  const SYNC_CONTRACT_STAGE = 'Sincronización incremental - Reparación definitiva Etapa 2/2';
   const SYNC_INCREMENTAL_DOWNLOAD_ENABLED = true;
   const SYNC_INCREMENTAL_CURSOR_OVERLAP_MS = 10 * 60 * 1000;
   const SYNC_FULL_ALLOWED_REASONS = Object.freeze([
@@ -72,6 +72,7 @@
   ]);
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const SYNC_CONFLICT_STORAGE_KEY = 'KSA_PRACTIKA_SYNC_CONFLICTS_v1';
+  const SYNC_BASELINE_MIRROR_STORAGE_KEY = 'KSA_PRACTIKA_SYNC_BASELINE_MIRROR_v1';
   const SYNC_CONFLICT_MAX_ENTRIES = 120;
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
   const ACTIVITY_LOG_STORAGE_KEY = 'KSA_PRACTIKA_ACTIVITY_LOG_v1';
@@ -3384,6 +3385,122 @@ Notas importantes:
     };
   }
 
+
+  function buildConfirmedBaselineMirrorPayload(metadata = {}) {
+    const raw = isPlainObject(metadata) ? metadata : {};
+    const validation = getIncrementalBaselineValidation(raw, { scope: 'local' });
+    if (!validation.ok && !validation.partiallyValid) return null;
+    const savedAt = nowIso();
+    return {
+      version: 1,
+      savedAt,
+      confirmationId: cleanText(validation.confirmationId),
+      contractVersion: cleanText(validation.contractVersion || raw?.syncContract?.version),
+      sourceFullReadAt: cleanText(raw?.incrementalBaseline?.sourceFullReadAt || raw?.lastFullCloudReadAt || raw?.syncState?.lastFullSyncAt),
+      metadata: {
+        syncRevisionMetadataAvailable: true,
+        syncContract: normalizeSyncContractMetadata(raw.syncContract),
+        syncState: normalizeSyncStateMetadata(raw.syncState),
+        incrementalCursorAudit: normalizeIncrementalCursorAudit(raw.incrementalCursorAudit, raw),
+        incrementalBaseline: clonePlainObject(raw.incrementalBaseline, {}),
+        lastIncrementalBaselineAt: cleanText(raw.lastIncrementalBaselineAt || validation.baselineAt),
+        lastIncrementalBaselineConfirmationId: cleanText(raw.lastIncrementalBaselineConfirmationId || validation.confirmationId),
+        lastIncrementalBaselineStatus: 'ready',
+        lastIncrementalBaselineConfirmedAt: cleanText(raw.lastIncrementalBaselineConfirmedAt || validation.baselineAt || savedAt),
+        lastFullCloudReadAt: cleanText(raw.lastFullCloudReadAt || raw?.incrementalBaseline?.sourceFullReadAt || raw?.syncState?.lastFullSyncAt),
+        syncUpdatedAt: cleanText(raw.syncUpdatedAt),
+        mirrorSavedAt: savedAt
+      }
+    };
+  }
+
+  function persistConfirmedBaselineMirror(metadata = {}) {
+    const payload = buildConfirmedBaselineMirrorPayload(metadata);
+    if (!payload) return { ok: false, skipped: true, code: 'app/baseline-mirror-not-confirmed' };
+    try {
+      localStorage.setItem(SYNC_BASELINE_MIRROR_STORAGE_KEY, JSON.stringify(payload));
+      const reread = JSON.parse(localStorage.getItem(SYNC_BASELINE_MIRROR_STORAGE_KEY) || 'null');
+      const validation = getIncrementalBaselineValidation(reread?.metadata, { scope: 'local' });
+      if ((!validation.ok && !validation.partiallyValid) || cleanText(validation.confirmationId) !== cleanText(payload.confirmationId)) {
+        throw new Error('La relectura del espejo de baseline no coincidió con la confirmación guardada.');
+      }
+      return { ok: true, code: 'app/baseline-mirror-persisted', payload, validation };
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo guardar el espejo local del baseline.', error);
+      return { ok: false, code: 'app/baseline-mirror-persist-failed', message: cleanText(error?.message), error };
+    }
+  }
+
+  function readConfirmedBaselineMirror() {
+    try {
+      const raw = localStorage.getItem(SYNC_BASELINE_MIRROR_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!isPlainObject(parsed) || !isPlainObject(parsed.metadata)) return null;
+      const validation = getIncrementalBaselineValidation(parsed.metadata, { scope: 'local' });
+      if (!validation.ok && !validation.partiallyValid) return null;
+      return { ...parsed, validation };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function clearConfirmedBaselineMirror(reason = '') {
+    try {
+      localStorage.removeItem(SYNC_BASELINE_MIRROR_STORAGE_KEY);
+      return { ok: true, code: 'app/baseline-mirror-cleared', reason: cleanText(reason) };
+    } catch (error) {
+      return { ok: false, code: 'app/baseline-mirror-clear-failed', reason: cleanText(reason), error };
+    }
+  }
+
+  function restoreConfirmedBaselineFromMirror(data = {}) {
+    const source = isPlainObject(data) ? data : {};
+    const currentMetadata = isPlainObject(source.metadata) ? source.metadata : {};
+    const currentValidation = getIncrementalBaselineValidation(currentMetadata, { scope: 'local' });
+    if (currentValidation.ok || currentValidation.partiallyValid) {
+      return { data: source, restored: false, reason: 'already_confirmed', validation: currentValidation };
+    }
+    if (cleanText(currentMetadata.incrementalMetadataInvalidatedAt)) {
+      clearConfirmedBaselineMirror('metadata_invalidated');
+      return { data: source, restored: false, reason: 'explicitly_invalidated', validation: currentValidation };
+    }
+    const mirror = readConfirmedBaselineMirror();
+    if (!mirror) return { data: source, restored: false, reason: 'mirror_missing', validation: currentValidation };
+    const currentConfirmationId = cleanText(currentMetadata.lastIncrementalBaselineConfirmationId || currentMetadata?.incrementalBaseline?.confirmationId);
+    const mirrorConfirmationId = cleanText(mirror.confirmationId || mirror?.metadata?.lastIncrementalBaselineConfirmationId || mirror?.metadata?.incrementalBaseline?.confirmationId);
+    const currentFullReadAt = cleanText(currentMetadata.lastFullCloudReadAt || currentMetadata?.incrementalBaseline?.sourceFullReadAt || currentMetadata?.syncState?.lastFullSyncAt);
+    const mirrorFullReadAt = cleanText(mirror.sourceFullReadAt || mirror?.metadata?.lastFullCloudReadAt || mirror?.metadata?.incrementalBaseline?.sourceFullReadAt || mirror?.metadata?.syncState?.lastFullSyncAt);
+    const sameConfirmation = Boolean(currentConfirmationId && mirrorConfirmationId && currentConfirmationId === mirrorConfirmationId);
+    const sameFullSnapshot = Boolean(currentFullReadAt && mirrorFullReadAt && currentFullReadAt === mirrorFullReadAt);
+    if (!sameConfirmation && !sameFullSnapshot) {
+      return { data: source, restored: false, reason: 'mirror_identity_mismatch', validation: currentValidation, mirrorValidation: mirror.validation };
+    }
+    const recoveredAt = nowIso();
+    const recoveredMetadata = sanitizeLocalIncrementalMetadata({
+      ...currentMetadata,
+      ...clonePlainObject(mirror.metadata, {}),
+      appName: APP_NAME,
+      appVersion: APP_VERSION,
+      schemaVersion: SCHEMA_VERSION,
+      lastIncrementalBaselineRecoveredAt: recoveredAt,
+      lastIncrementalBaselineRecoverySource: 'local_mirror',
+      lastIncrementalBaselineError: '',
+      lastIncrementalBaselineErrorAt: ''
+    });
+    const recoveredValidation = getIncrementalBaselineValidation(recoveredMetadata, { scope: 'local' });
+    if (!recoveredValidation.ok && !recoveredValidation.partiallyValid) {
+      return { data: source, restored: false, reason: 'mirror_recovery_validation_failed', validation: currentValidation, mirrorValidation: mirror.validation };
+    }
+    return {
+      data: { ...source, metadata: recoveredMetadata },
+      restored: true,
+      reason: 'mirror_identity_confirmed',
+      validation: recoveredValidation,
+      mirrorValidation: mirror.validation
+    };
+  }
+
   function getBaselineBlockingMessage(localValidation = {}, remoteValidation = {}) {
     const local = isPlainObject(localValidation) ? localValidation : {};
     const remote = isPlainObject(remoteValidation) ? remoteValidation : {};
@@ -3746,7 +3863,7 @@ Notas importantes:
       cloudRevisionPorModulo: cloudRevisions,
       localContract: comparison.localContract,
       cloudContract: comparison.cloudContract,
-      localBaselineConfirmed: localValidation.ok,
+      localBaselineConfirmed: localValidation.ok || localValidation.partiallyValid,
       cloudBaselineAvailable: cloudValidation.ok,
       localBaselineCode: localValidation.code,
       cloudBaselineCode: cloudValidation.code,
@@ -8033,7 +8150,7 @@ Notas importantes:
         };
         const incrementalValidation = getIncrementalBaselineValidation(metadata, { scope: 'remote' });
         const remoteBaselineObservation = buildRemoteBaselineObservation(metadata, incrementalValidation);
-        metadata.syncRevisionMetadataAvailable = incrementalValidation.ok;
+        metadata.syncRevisionMetadataAvailable = incrementalValidation.ok || incrementalValidation.partiallyValid;
         metadata.incrementalBaselineValidationCode = incrementalValidation.code;
         metadata.incrementalBaselineDiagnosticCode = incrementalValidation.diagnosticCode;
         const ready = isCloudReadyMetadata(metadata);
@@ -11070,7 +11187,9 @@ Notas importantes:
         return initial;
       }
       const parsed = JSON.parse(raw);
-      const normalized = applyInitialBdatosSeedIfNeeded(normalizeData(parsed), parsed);
+      let normalized = applyInitialBdatosSeedIfNeeded(normalizeData(parsed), parsed);
+      const baselineRecovery = restoreConfirmedBaselineFromMirror(normalized);
+      normalized = baselineRecovery.data;
       saveData(normalized);
       return normalized;
     } catch (error) {
@@ -11097,6 +11216,12 @@ Notas importantes:
       });
       const serialized = JSON.stringify(data);
       localStorage.setItem(STORAGE_KEY, serialized);
+      const savedBaselineValidation = getIncrementalBaselineValidation(data.metadata, { scope: 'local' });
+      if (savedBaselineValidation.ok || savedBaselineValidation.partiallyValid) {
+        persistConfirmedBaselineMirror(data.metadata);
+      } else if (cleanText(data.metadata?.incrementalMetadataInvalidatedAt)) {
+        clearConfirmedBaselineMirror('incremental_metadata_invalidated');
+      }
       if (opts.verifyBaseline === true) {
         const storedRaw = localStorage.getItem(STORAGE_KEY);
         if (!storedRaw) {
@@ -11696,27 +11821,58 @@ Notas importantes:
       applyCloudConsecutivosMirror(result.consecutivos || {});
 
       stats.blockedModules = Array.from(blockedModules);
-      nextData.metadata = sanitizeLocalIncrementalMetadata({
+      const fullReadAt = result.fullReadCompletedAt || result.lastSyncAt || nowIso();
+      const baselineAttemptAt = nowIso();
+      const previousBaselineValidation = getIncrementalBaselineValidation(previousMetadata, { scope: 'local' });
+      const preservePreviousBaseline = previousBaselineValidation.ok || previousBaselineValidation.partiallyValid;
+      const fullBaselineAttemptMetadata = {
         ...previousMetadata,
         fuentePrincipal: 'firestore',
         cloudActive: true,
         cloudDataReady: true,
+        pendingConflictModules: Array.from(blockedModules),
+        syncConflictsPending: getSyncConflictCount(),
+        incrementalAlignmentStatus: blockedModules.size ? 'protected_conflicts' : (stats.protectedLocal > 0 ? 'pending_local_changes' : 'pending_confirmation'),
+        lastCloudHydratedAt: baselineAttemptAt,
+        lastFullCloudReadAt: fullReadAt,
+        lastFullBaselineAttemptAt: baselineAttemptAt,
+        lastFullBaselineAttemptStatus: 'pending_confirmation',
+        lastFullBaselineAttemptError: '',
+        lastFullBaselineAttemptErrorAt: '',
+        pendingFullBaselineCandidate: {
+          ...(isPlainObject(previousMetadata.pendingFullBaselineCandidate) ? previousMetadata.pendingFullBaselineCandidate : {}),
+          status: 'pending_confirmation',
+          sourceFullReadAt: fullReadAt,
+          updatedAt: baselineAttemptAt,
+          contractVersion: SYNC_CONTRACT_VERSION
+        }
+      };
+      nextData.metadata = sanitizeLocalIncrementalMetadata(preservePreviousBaseline ? {
+        ...fullBaselineAttemptMetadata,
+        syncRevisionMetadataAvailable: true,
+        syncContract: normalizeSyncContractMetadata(previousMetadata.syncContract),
+        syncState: normalizeSyncStateMetadata(previousMetadata.syncState),
+        incrementalCursorAudit: normalizeIncrementalCursorAudit(previousMetadata.incrementalCursorAudit, previousMetadata),
+        incrementalBaseline: {
+          ...(isPlainObject(previousMetadata.incrementalBaseline) ? previousMetadata.incrementalBaseline : {}),
+          status: 'ready'
+        },
+        lastIncrementalBaselineStatus: 'ready',
+        lastIncrementalBaselineAt: cleanText(previousMetadata.lastIncrementalBaselineAt || previousBaselineValidation.baselineAt),
+        lastIncrementalBaselineConfirmationId: cleanText(previousMetadata.lastIncrementalBaselineConfirmationId || previousBaselineValidation.confirmationId)
+      } : {
+        ...fullBaselineAttemptMetadata,
         syncRevisionMetadataAvailable: false,
         syncContract: normalizeSyncContractMetadata(previousMetadata.syncContract),
         syncState: normalizeSyncStateMetadata(previousMetadata.syncState),
         incrementalBaseline: {
           ...(isPlainObject(previousMetadata.incrementalBaseline) ? previousMetadata.incrementalBaseline : {}),
           status: 'pending_confirmation',
-          sourceFullReadAt: result.fullReadCompletedAt || result.lastSyncAt || nowIso(),
-          updatedAt: nowIso(),
+          sourceFullReadAt: fullReadAt,
+          updatedAt: baselineAttemptAt,
           contractVersion: SYNC_CONTRACT_VERSION
         },
-        lastIncrementalBaselineStatus: 'pending_confirmation',
-        pendingConflictModules: Array.from(blockedModules),
-        syncConflictsPending: getSyncConflictCount(),
-        incrementalAlignmentStatus: blockedModules.size ? 'protected_conflicts' : (stats.protectedLocal > 0 ? 'pending_local_changes' : 'pending_confirmation'),
-        lastCloudHydratedAt: nowIso(),
-        lastFullCloudReadAt: result.fullReadCompletedAt || result.lastSyncAt || nowIso()
+        lastIncrementalBaselineStatus: 'pending_confirmation'
       });
       appData = normalizeData(nextData);
       saveData(appData);
@@ -12081,7 +12237,38 @@ Notas importantes:
                 : (diagnosticCode === BASELINE_DIAGNOSTIC_CODES.LOCAL_PERSISTENCE_ERROR
                   ? 'Firestore confirmó el baseline, pero no se pudo persistir localmente.'
                   : 'La Sincronización completa descargó los datos, pero Firestore no confirmó la escritura del baseline.');
-              appData.metadata = appendIncrementalDiagnosticMetadata(sanitizeLocalIncrementalMetadata({
+              const previousBaselineValidation = getIncrementalBaselineValidation(localMetadataBeforeBaseline, { scope: 'local' });
+              const preserveConfirmedBaseline = previousBaselineValidation.ok || previousBaselineValidation.partiallyValid;
+              const baselineAttemptError = cleanText(baselineResult?.message || failureMessage);
+              const baselineFailureMetadata = preserveConfirmedBaseline ? {
+                ...(isPlainObject(localMetadataBeforeBaseline) ? localMetadataBeforeBaseline : {}),
+                syncRevisionMetadataAvailable: true,
+                syncContract: normalizeSyncContractMetadata(localMetadataBeforeBaseline.syncContract),
+                syncState: normalizeSyncStateMetadata(localMetadataBeforeBaseline.syncState),
+                incrementalCursorAudit: normalizeIncrementalCursorAudit(localMetadataBeforeBaseline.incrementalCursorAudit, localMetadataBeforeBaseline),
+                incrementalBaseline: {
+                  ...(isPlainObject(localMetadataBeforeBaseline.incrementalBaseline) ? localMetadataBeforeBaseline.incrementalBaseline : {}),
+                  status: 'ready'
+                },
+                lastIncrementalBaselineStatus: 'ready',
+                lastIncrementalBaselineAt: cleanText(localMetadataBeforeBaseline.lastIncrementalBaselineAt || previousBaselineValidation.baselineAt),
+                lastIncrementalBaselineConfirmationId: cleanText(localMetadataBeforeBaseline.lastIncrementalBaselineConfirmationId || previousBaselineValidation.confirmationId),
+                lastIncrementalBaselineError: baselineAttemptError,
+                lastIncrementalBaselineErrorAt: diagnostic.at,
+                lastFullBaselineAttemptAt: diagnostic.at,
+                lastFullBaselineAttemptStatus: 'error',
+                lastFullBaselineAttemptError: baselineAttemptError,
+                lastFullBaselineAttemptErrorAt: diagnostic.at,
+                pendingFullBaselineCandidate: {
+                  ...(isPlainObject(localMetadataBeforeBaseline.pendingFullBaselineCandidate) ? localMetadataBeforeBaseline.pendingFullBaselineCandidate : {}),
+                  status: 'error',
+                  updatedAt: diagnostic.at,
+                  error: baselineAttemptError,
+                  contractVersion: SYNC_CONTRACT_VERSION
+                },
+                incrementalAlignmentStatus: cleanText(baselineResult?.code) === 'cloud/incremental-protected-conflicts' ? 'protected_conflicts' : cleanText(localMetadataBeforeBaseline.incrementalAlignmentStatus || 'aligned'),
+                lastRemoteBaselineObservation: buildRemoteBaselineObservation(baselineResult?.cloudMetadata || result.sourceMetadata || {}, baselineResult?.cloudValidation)
+              } : {
                 ...(isPlainObject(localMetadataBeforeBaseline) ? localMetadataBeforeBaseline : {}),
                 syncRevisionMetadataAvailable: false,
                 syncContract: normalizeSyncContractMetadata(localMetadataBeforeBaseline.syncContract),
@@ -12093,19 +12280,27 @@ Notas importantes:
                   contractVersion: SYNC_CONTRACT_VERSION
                 },
                 lastIncrementalBaselineStatus: 'error',
-                lastIncrementalBaselineError: cleanText(baselineResult?.message || failureMessage),
+                lastIncrementalBaselineError: baselineAttemptError,
                 lastIncrementalBaselineErrorAt: diagnostic.at,
+                lastFullBaselineAttemptAt: diagnostic.at,
+                lastFullBaselineAttemptStatus: 'error',
+                lastFullBaselineAttemptError: baselineAttemptError,
+                lastFullBaselineAttemptErrorAt: diagnostic.at,
                 incrementalAlignmentStatus: cleanText(baselineResult?.code) === 'cloud/incremental-protected-conflicts' ? 'protected_conflicts' : 'baseline_unconfirmed',
                 lastRemoteBaselineObservation: buildRemoteBaselineObservation(baselineResult?.cloudMetadata || result.sourceMetadata || {}, baselineResult?.cloudValidation)
-              }), diagnostic);
+              };
+              appData.metadata = appendIncrementalDiagnosticMetadata(sanitizeLocalIncrementalMetadata(baselineFailureMetadata), diagnostic);
               saveData(appData);
               result.ok = false;
               result.fullDownloadApplied = true;
               result.baselineCreated = false;
+              result.previousBaselinePreserved = preserveConfirmedBaseline;
               result.code = cleanText(baselineResult?.code || 'cloud/incremental-baseline-write-failed');
               result.diagnosticCode = diagnosticCode;
               result.diagnostic = diagnostic;
-              result.message = failureMessage;
+              result.message = preserveConfirmedBaseline
+                ? `${failureMessage} Se conservó el baseline confirmado anterior.`
+                : failureMessage;
               cloudOperationState.lastError = `${diagnosticCode} · ${result.code} · ${cleanText(baselineResult?.message || 'No se pudo confirmar el baseline incremental.')}`;
               cloudOperationState.message = result.message;
             }
@@ -12795,6 +12990,7 @@ Notas importantes:
     window.KSASyncSmoke = Object.freeze({
       storageKey: STORAGE_KEY,
       conflictStorageKey: SYNC_CONFLICT_STORAGE_KEY,
+      baselineMirrorStorageKey: SYNC_BASELINE_MIRROR_STORAGE_KEY,
       requiredModules: [...SYNC_AUDIT_MODULE_KEYS],
       contractVersion: SYNC_CONTRACT_VERSION,
       getAppSnapshot: () => clonePlainObject(appData, {}),
@@ -12807,8 +13003,14 @@ Notas importantes:
       getBaselineMessage: (localValidation = {}, remoteValidation = {}) => getBaselineBlockingMessage(localValidation, remoteValidation),
       compareMetadata: (localMetadata = {}, remoteMetadata = {}) => compareSyncMetadataRevisions(localMetadata, remoteMetadata),
       persistConfirmedBaseline: (metadata, options = {}) => persistConfirmedIncrementalBaselineLocally(metadata, options),
+      getBaselineMirror: () => readConfirmedBaselineMirror(),
+      persistBaselineMirror: (metadata) => persistConfirmedBaselineMirror(metadata),
+      restoreBaselineFromMirror: (data = {}) => restoreConfirmedBaselineFromMirror(data),
+      clearBaselineMirror: (reason = 'smoke') => clearConfirmedBaselineMirror(reason),
       sanitizeMetadata: (metadata) => sanitizeLocalIncrementalMetadata(metadata),
       mergeIncrementalRecords: (localRecords = [], remoteRecords = [], moduleKey = 'ventas') => mergeIncrementalCloudRecords(localRecords, remoteRecords, (record) => clonePlainObject(record, {}), moduleKey, { cloudMetadata: appData?.metadata || {} }),
+      applyFullSnapshot: (result = {}) => applyCloudSnapshotToRuntime(result),
+      applyIncrementalResult: (result = {}) => applyCloudIncrementalToRuntime(result),
       getConflictStats: () => getSyncConflictRegistryStats(),
       getActiveConflicts: (moduleKey = '') => getActiveSyncConflicts(moduleKey),
       reconcileConflicts: (options = {}) => reconcileSyncConflictRegistryStatuses(options),
@@ -29009,11 +29211,11 @@ Notas importantes:
       syncConflictCount: getSyncConflictCount(),
       baselineStatus: baselineStatus === 'ready' ? 'Listo' : (baselineStatus === 'error' ? 'Error' : 'Pendiente'),
       baselineAt,
-      baselineLocalConfirmed: localBaselineValidation.ok,
+      baselineLocalConfirmed: localBaselineValidation.ok || localBaselineValidation.partiallyValid,
       baselineCloudAvailable: remoteBaselineObservation.ok === true,
       baselineLocalCode: cleanText(localBaselineValidation.diagnosticCode || localBaselineValidation.code),
       baselineCloudCode: cleanText(remoteBaselineObservation.diagnosticCode || remoteBaselineObservation.code || 'NO_VERIFICADO'),
-      baselineLocalState: localBaselineValidation.ok ? 'Confirmado' : 'No confirmado',
+      baselineLocalState: localBaselineValidation.ok ? 'Confirmado' : (localBaselineValidation.partiallyValid ? 'Confirmado parcial' : 'No confirmado'),
       baselineRemoteState: remoteBaselineObservation.ok === true ? 'Confirmado' : (remoteBaselineObservation.observedAt ? 'No confirmado' : 'No verificado'),
       baselineConfirmationAt,
       baselineRevisionGeneral: normalizeSyncRevision(localBaselineValidation.revisionGeneral, 0),
@@ -30995,6 +31197,7 @@ Notas importantes:
 
   function invalidateIncrementalMetadataAfterJsonOperation(metadata = {}, options = {}) {
     const raw = isPlainObject(metadata) ? metadata : {};
+    clearConfirmedBaselineMirror('json_operation');
     const opts = isPlainObject(options) ? options : {};
     const timestamp = cleanText(opts.timestamp) || nowIso();
     const currentState = normalizeSyncStateMetadata(raw.syncState);
