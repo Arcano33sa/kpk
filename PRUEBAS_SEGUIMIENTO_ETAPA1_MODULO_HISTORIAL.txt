@@ -1,0 +1,28 @@
+KSA PRÁCTIKA — SEGUIMIENTO — ETAPA 1/2
+Versión: 0.18.53-seguimiento-etapa1-modulo-historial
+Fecha de prueba: 14/07/2026 20:44 (America/Managua)
+
+RESULTADO GENERAL: APROBADO
+
+VALIDACIONES FUNCIONALES
+1. Menú principal: Seguimiento aparece entre Gastos y Casa.
+2. Navegación superior: Seguimiento aparece entre Gastos y Casa.
+3. Ícono: teléfono ☎ visible en menú y navegación.
+4. Catálogos: solo clientes activos y sucursales activas ligadas por clienteId.
+5. Vista principal: una fila compacta por combinación Cliente + Sucursal activa.
+6. Sucursales sin llamadas: visibles en rojo con “Nunca llamada” y sin días falsos.
+7. Primera llamada: guarda fecha local, nota, IDs técnicos, timestamps y metadatos de preparación para sincronización.
+8. Segunda llamada: la nueva queda vigente y la anterior pasa visualmente al Histórico.
+9. Llamada antigua posterior: no sustituye una llamada más reciente.
+10. Histórico: inicia cerrado, expande/cierra, conserva nota y muestra solo llamadas anteriores.
+11. Persistencia: dos llamadas e Histórico sobreviven a una reinicialización completa de la interfaz desde el almacenamiento guardado.
+12. Semáforo: 0 y 24 días = verde; 25 días = amarillo; 30 días = rojo; nunca llamada = rojo.
+13. Responsive: sin scroll horizontal general en 1280 px, 820 px y 390 px.
+14. Consola: sin errores JavaScript nuevos durante el smoke test del módulo.
+15. Sintaxis: app.js y service-worker.js aprobados con node --check.
+16. PWA: versión interna, versión visible, referencias versionadas y nombre de caché actualizados.
+17. JSON: exportación, conteos, lectura y fusión incluyen seguimientoLlamadas por ID.
+18. Firestore: contrato preparado para Etapa 2/2 sin activar una sincronización paralela en esta etapa.
+
+BLINDAJE VERIFICADO
+No se alteraron montos, OC, ventas, saldos, utilidad, cierres ni consecutivos. La sección Seguimiento no fue agregada todavía al Resumen y no se integró Último pedido desde Ventas/OC.

@@ -99,9 +99,7 @@ Bloque A / Etapa 3/6: se agregó una pantalla de acceso preparada para Firebase 
 - Consecutivo JSON permanece separado de Excel Consulta y Excel Cierre; no avanza si se cancela o falla la exportación.
 - Cache PWA actualizado a 0.18.16.
 
-## Histórico heredado — Sincronización Inteligente — Etapa 5/5 — Hardening final
-> Referencia de la base anterior. El comportamiento vigente de esta entrega está definido en la Etapa 2/5 al final del documento.
-
+## Sincronización Inteligente — Etapa 5/5 — Hardening final
 - “Actualizar datos” usa metadata y sincronización incremental por defecto; si no existen cambios muestra “Los datos ya están actualizados.” sin descargar colecciones.
 - Eliminado el fallback automático a sincronización completa durante actualizaciones normales. Si la metadata no permite una fusión incremental segura, la app informa el bloqueo y no descarga toda la base silenciosamente.
 - También se eliminó la lectura completa automática de módulos individuales cuando falta cursor, falla la consulta `syncUpdatedAt` o una revisión no devuelve delta; esos casos quedan bloqueados para diagnóstico/recuperación administrativa.
@@ -112,48 +110,6 @@ Bloque A / Etapa 3/6: se agregó una pantalla de acceso preparada para Firebase 
 - Cache PWA actualizado a 0.18.48.
 
 
-## Sincronización Inteligente — Etapa 1/5 — Contrato y compatibilidad
-- Se reforzó de forma idempotente el contrato ya existente de sincronización sin desactivar ni retroceder las capacidades incrementales presentes en la base cargada.
-- Se agregó una auditoría interna de preparación por módulo, campos canónicos, tombstones, compatibilidad legacy y metadata de revisiones.
-- Los documentos antiguos continúan funcionando sin migración masiva: reciben campos de sincronización únicamente al volver a modificarse.
-- No se modificaron interfaz, reglas Firestore, firebaseConfig, relaciones, consecutivos, JSON ni comportamiento visible de los controles de sincronización.
-- Cache PWA actualizado a 0.18.53.
+## Seguimiento — Etapa 2/2 — Integración final
 
-
-## Sincronización Inteligente — Etapa 2/5 — Verificación rápida antes de descargar
-- “Actualizar datos” consulta primero únicamente la metadata de sincronización en Firestore.
-- Si la revisión local y la revisión de nube coinciden, no descarga colecciones y muestra “Los datos ya están actualizados.”
-- Si las revisiones difieren o no pueden compararse con seguridad, mantiene la descarga completa existente; todavía no descarga módulos de forma incremental.
-- Se conservan Guardar datos, Subir pendientes, Facturas, JSON, Diagnóstico, protección de cambios locales y comportamiento sin conexión.
-- Cache PWA actualizado a 0.18.54.
-
-## Sincronización Inteligente — Etapa 3/5 — Descarga incremental por módulos
-- “Actualizar datos” conserva la verificación rápida de metadata antes de leer colecciones.
-- Cuando existen diferencias, consulta solamente los módulos cuya revisión cambió y únicamente documentos posteriores al cursor local mediante `syncUpdatedAt`.
-- La app fusiona registros modificados sin sustituir `appData` completo y conserva módulos no afectados intactos.
-- Se incluyen Catálogos/Retenciones, Ventas, Facturas, Cobros, Compras, Pagos, Gastos, Casa, Notas, Configuración, marcadores de limpieza, consecutivos y tombstones según el contrato existente.
-- Configuración se consulta como documento único; Facturas y Notas mantienen sus reconstrucciones y limpiezas específicas.
-- “Actualizar datos” no ejecuta descarga completa automática si falta baseline, cursor o metadata comparable; esos casos quedan en Diagnóstico para recuperación administrativa.
-- Cache PWA actualizado a 0.18.55.
-
-
-## Sincronización Inteligente — Etapa 4/5 — Fusión segura, conflictos y eliminaciones
-- La cola de cambios locales pendientes ahora se persiste en `localStorage` y se recupera tras recargar o cerrar la PWA, manteniendo la base de comparación original por registro.
-- La descarga incremental y la sincronización completa preservan registros con cambios locales pendientes y bloquean el avance del cursor del módulo cuando existe un conflicto real.
-- Los reintentos son idempotentes: si Firestore ya contiene el mismo estado operativo por una escritura previamente confirmada pero cuya respuesta se perdió, el cambio se reconoce como aplicado sin duplicar ni sobrescribir.
-- Los tombstones se conservan también durante la fusión completa; una creación o edición local con el mismo ID queda protegida como conflicto y no restaura automáticamente un registro eliminado en Firestore.
-- La limpieza de Facturas conserva su tratamiento independiente, sus eliminaciones pendientes y sus confirmaciones sin bloquear guardados operativos válidos.
-- Guardar datos, Actualizar datos, Subir pendientes, Diagnóstico, Facturas, JSON, IDs, consecutivos, orden descendente y Vista GLOBAL permanecen compatibles.
-- Cache PWA actualizado a 0.18.56.
-
-
-## Sincronización Inteligente — Etapa 5/5 — Hardening final
-- “Actualizar datos” mantiene la sincronización incremental como ruta normal y no activa una descarga completa automática ante diferencias, cursores faltantes ni errores de metadata.
-- La sincronización completa queda como respaldo administrativo para primer uso, migración, importación, diagnóstico o recuperación.
-- La lectura completa se ejecuta por grupos concurrentes controlados y dispone de un tiempo de espera independiente de 90 segundos; la confirmación de baseline dispone de 45 segundos.
-- Antes de aplicar una fotografía completa, la app vuelve a verificar la metadata. Si Firestore cambió durante la lectura, descarta la fotografía y exige reintento para evitar una base inconsistente.
-- Cuando Firestore ya posee un baseline confirmado, un equipo nuevo lo adopta localmente sin reescribir la metadata global ni generar revisiones artificiales.
-- Los reintentos incrementales omiten registros idénticos ya aplicados y tombstones repetidos, reduciendo escrituras locales y conteos inflados.
-- La fusión segura conserva cambios locales pendientes, conflictos, eliminaciones, limpieza de Facturas, Notas, bitácora, consecutivos, JSON y datos históricos.
-- Diagnóstico muestra registros descargados, aplicados, sin cambios, tombstones, módulos bloqueados y cursores.
-- Cache PWA actualizado a 0.18.57.
+Seguimiento queda integrado a Ventas/OC para calcular el último pedido global por Cliente + Sucursal, al Resumen mediante semáforo de atención y al contrato Firestore existente para escritura parcial, descarga incremental, sincronización completa, conflictos, cursores, tombstones, JSON y diagnóstico. La versión PWA de esta entrega es `0.18.54-seguimiento-etapa2-integracion-final`.

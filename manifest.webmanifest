@@ -1,7 +1,7 @@
 {
   "name": "KSA PRÁCTIKA",
   "short_name": "KSA",
-  "description": "Control operativo de OC, cobros, proveedores, pagos, gastos y tablero.",
+  "description": "Control operativo de OC, cobros, proveedores, pagos, gastos, Seguimiento integrado, Casa y tablero.",
   "start_url": "./index.html#home",
   "scope": "./",
   "display": "standalone",

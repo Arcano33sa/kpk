@@ -1,72 +1,47 @@
 KSA PRÁCTIKA — SINCRONIZACIÓN INTELIGENTE — ETAPA 5/5
-Hardening final, sincronización completa administrativa y pruebas integrales
+Pruebas de hardening final
+Fecha de validación: 13/07/2026
 
-Fecha y hora de prueba: 14/07/2026 20:04
-Versión de aplicación: 0.18.57-sync-stage5-hardening-final
-Versión del contrato incremental: 1.2.2
+RESULTADO GENERAL
+- Sintaxis JavaScript: correcta en app.js y service-worker.js.
+- Auditoría estática: 52/52 controles aprobados.
+- App shell PWA: todos los recursos declarados existen y responden correctamente.
+- Ejecución en Chromium: 0 excepciones JavaScript no controladas.
+- Responsive: 42 combinaciones revisadas (14 rutas x escritorio, iPad y móvil), sin scroll horizontal general.
 
-CAMBIOS VERIFICADOS
-1. Actualizar datos conserva la sincronización incremental como ruta predeterminada.
-2. Sin diferencias de revisión, no se descargan colecciones y el mensaje es exactamente:
-   "Los datos ya están actualizados."
-3. La sincronización completa no se activa como fallback normal por cambios de metadata.
-4. Motivos completos permitidos: primer uso, migración, importación, diagnóstico y recuperación.
-5. La acción visible de sincronización completa permanece reservada al Administrador.
-6. Lectura completa optimizada por grupos concurrentes controlados.
-7. Tiempo de espera específico: 90 segundos para lectura completa y 45 segundos para confirmación de baseline.
-8. Verificación doble de metadata antes y después de la lectura completa; si Firestore cambia, no se aplica una fotografía inconsistente.
-9. Un equipo nuevo puede adoptar localmente un baseline ya confirmado en Firestore sin reescribir la metadata global.
-10. Reintentos incrementales omiten registros idénticos y tombstones repetidos.
-11. Se conservan cambios locales pendientes, conflictos, tombstones, limpieza de Facturas, Notas, bitácora, consecutivos y JSON.
-12. Diagnóstico incorpora descargados, aplicados, sin cambios, tombstones, módulos bloqueados y cursores.
-13. Cache PWA y referencias de recursos actualizadas a 0.18.57.
+SINCRONIZACIÓN
+- “Actualizar datos” usa metadata y lectura incremental por defecto.
+- Cuando las revisiones coinciden no descarga colecciones y devuelve exactamente: “Los datos ya están actualizados.”
+- No existe fallback automático a snapshot completo.
+- Tampoco existe fallback automático a lectura completa de un módulo cuando falta cursor, falla syncUpdatedAt o el delta resulta inconsistente.
+- Los casos inseguros quedan bloqueados y remiten a recuperación administrativa.
+- Sincronización completa limitada a: primer uso, migración, importación, diagnóstico y recuperación.
+- Acción manual de sincronización completa reservada al Administrador y protegida con confirmación.
+- Los mensajes con cambios incluyen cantidad de registros aplicados, módulos afectados y conflictos protegidos.
 
-PRUEBAS EJECUTADAS
-A. Sintaxis
-- app.js: OK
-- service-worker.js: OK
-- firebase-config.js: OK
+COBERTURA DE DATOS
+- Catálogos.
+- Bdatos.
+- Ventas / OC.
+- Facturas.
+- Cobros.
+- Proveedores / Compras.
+- Pagos a proveedores.
+- Gastos.
+- Casa.
+- Notas.
+- Cierres mensuales.
+- Exportaciones Excel.
+- Bitácora.
+- Configuración.
+- Consecutivos.
+- Tombstones, marcadores de limpieza y cola de cambios conservados por la fusión segura.
 
-B. Contrato y archivos
-- manifest.webmanifest válido: OK
-- Referencias de index.html existentes: OK
-- Recursos APP_SHELL del Service Worker existentes: OK
-- Versión coherente en app.js, index.html y service-worker.js: OK
-- No queda metadata_refresh como motivo de sincronización completa: OK
-- No existe fallback completo automático en Actualizar datos: OK
+PWA Y UI
+- Versión: 0.18.48-sync-incremental-etapa5-hardening-final.
+- Contrato de sincronización: 1.2.0.
+- Caché PWA actualizado: v0_18_48_sync_incremental_etapa5_hardening_final.
+- Botón administrativo responsive; no genera ancho adicional en móvil.
 
-C. Interfaz y responsive
-Rutas probadas: Menú, Resumen, Mora, Ventas, Cobros, Proveedores, Pagos, Gastos, Casa, Notas, Facturas, Catálogos, Bdatos y Configuración.
-Viewports: escritorio 1440x900, iPad horizontal 1180x820, iPad vertical 820x1180 y móvil 390x844.
-Total: 56 recorridos de ruta.
-- Scroll horizontal general: 0 fallos
-- Vistas vacías: 0
-- Excepciones JavaScript: 0
-- Errores/advertencias de consola en entorno controlado: 0
-
-D. Datos locales, JSON y diagnóstico
-- Lectura de snapshot local: OK
-- Escritura local: OK
-- Snapshot compatible con JSON: OK
-- Diagnóstico disponible: OK
-
-E. Pruebas internas de sincronización
-- Registro idéntico repetido: 0 aplicados, 1 sin cambios — OK
-- Registro realmente modificado: 1 aplicado — OK
-- Tombstone repetido sobre registro ausente: 0 aplicados, 1 sin cambios — OK
-- Motivo metadata_refresh rechazado: OK
-- Baseline fuente válido: OK
-- Adopción local de baseline confirmado: OK
-- Cursores completos por módulo después de adopción: OK
-
-F. Cobertura funcional preservada por revisión de contrato y rutas
-- Guardar datos / Subir pendientes: conservados
-- Ventas / Facturas / Cobros / Compras / Pagos / Gastos / Casa: conservados
-- Resumen / Diagnóstico / JSON: conservados
-- PWA / cache / navegación responsive: conservados
-
-LIMITACIÓN DEL ENTORNO
-No se realizó inicio de sesión interactivo contra la base productiva de Firebase desde el sandbox. La integración Firestore se validó mediante revisión del contrato, sintaxis, flujos internos instrumentados y pruebas controladas de fusión/baseline. La prueba final contra Firestore real requiere usuario autenticado y reglas productivas activas en el despliegue del propietario.
-
-RESULTADO FINAL
-APROBADO para entrega de la Etapa 5/5.
+ALCANCE DE LA VALIDACIÓN
+La validación automatizada comprobó estructura, rutas, ejecución, mensajes, contratos, controles de seguridad y comportamiento responsive. No se realizaron escrituras reales contra el proyecto Firestore porque el entorno de entrega no dispone de una sesión Firebase autenticada del usuario; esas operaciones quedan para el smoke test final ya desplegado con credenciales autorizadas.
