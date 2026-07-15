@@ -1,0 +1,32 @@
+KSA PRÁCTIKA — SINCRONIZACIÓN INTELIGENTE — ETAPA 4/5
+FUSIÓN SEGURA, CONFLICTOS Y ELIMINACIONES
+
+Fecha y hora de validación: 14/07/2026 19:29 (America/Managua)
+Versión: 0.18.56-sync-stage4-fusion-safe
+
+RESULTADOS
+- node --check app.js: APROBADO.
+- node --check service-worker.js: APROBADO.
+- node --check firebase-config.js: APROBADO.
+- Parseo HTML: APROBADO.
+- Referencias de index.html: 7/7 existentes.
+- manifest.webmanifest: APROBADO.
+- Referencias App Shell del Service Worker: 12/12 existentes.
+- Referencias activas de la versión anterior 0.18.55 en app/index/service-worker: 0.
+- Validación de funciones exactas de fusión/conflictos: 9/9 aprobadas.
+- Validación estática y simulada complementaria: 14/14 aprobadas.
+
+CASOS CUBIERTOS
+- Cola pendiente persistente y recuperable.
+- Conflicto por edición simultánea del mismo registro.
+- Reintento idempotente cuando Firestore ya contiene el mismo estado.
+- Tombstone remoto sin cambio local pendiente.
+- Creación/edición local contra tombstone remoto.
+- Eliminación local ya confirmada mediante tombstone.
+- Fusión por ID sin duplicados.
+- Preservación del registro local pendiente.
+- Filtrado de tombstones en Bitácora durante sincronización completa.
+- Compatibilidad de versión PWA y App Shell.
+
+NOTA
+La prueba real entre dos equipos conectados al Firestore productivo debe ejecutarse en el entorno desplegado. Se incluye la guía paso a paso en PRUEBAS_SYNC_INCREMENTAL_ETAPA4_FUSION_SEGURA.txt.

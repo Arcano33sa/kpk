@@ -1,0 +1,23 @@
+KSA PRÁCTIKA — SINCRONIZACIÓN INTELIGENTE — ETAPA 2/5
+
+OBJETIVO VALIDADO
+- Actualizar datos consulta primero workspaces/ksa_practika/metadata/sistema.
+- Revisiones iguales: no ejecuta lectura de colecciones y devuelve “Los datos ya están actualizados.”
+- Revisiones distintas o no comparables: ejecuta la descarga completa existente.
+- No se activa la descarga incremental por módulos en esta etapa.
+
+RESULTADO DE PRUEBAS
+- node --check app.js: CORRECTO.
+- node --check service-worker.js: CORRECTO.
+- Aserciones estáticas de flujo metadata → comparación → omitir/descarga completa: CORRECTO.
+- Confirmado que handleCloudDataRefresh no llama readCloudIncrementalChanges: CORRECTO.
+- Confirmado que metadata_refresh está permitido para actualización normal y no forma parte de motivos administrativos: CORRECTO.
+- Coherencia de versión 0.18.54 en app.js, index.html y service-worker.js: CORRECTO.
+- Referencias locales de index.html: CORRECTO.
+- Smoke HTTP de index.html, app.js y service-worker.js: CORRECTO.
+
+CASOS CUBIERTOS
+1. Sin cambios: skippedDownload=true, 0 registros descargados y mensaje exacto requerido.
+2. Con cambios: fullSyncReason=metadata_refresh y lectura completa de colecciones.
+3. Sin conexión: conserva error de Firestore, no aplica snapshot y mantiene datos locales.
+4. Cambios locales pendientes: la fusión completa conserva registros protegidos y registra diagnóstico si existe conflicto.

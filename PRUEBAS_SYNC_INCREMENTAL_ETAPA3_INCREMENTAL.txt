@@ -1,0 +1,52 @@
+PRUEBAS — SINCRONIZACIÓN INTELIGENTE — ETAPA 3/5
+KSA PRÁCTIKA — Descarga incremental por módulos
+
+VERSIÓN
+0.18.55-sync-stage3-incremental
+
+CAMBIO PRINCIPAL
+- “Actualizar datos” consulta primero metadata.
+- Si no existen diferencias, no descarga colecciones.
+- Si existen diferencias, llama readCloudIncrementalChanges.
+- Solamente consulta los módulos cuya revisión cambió.
+- Dentro de esos módulos, consulta documentos con syncUpdatedAt posterior al cursor local, incluyendo solapamiento controlado.
+- No sustituye appData completo.
+- Fusiona únicamente registros recibidos.
+- Conserva IDs, consecutivos, relaciones de Facturas/Compras, ordenamientos y Vista GLOBAL.
+- Configuración se trata como documento único.
+- Catálogos, Retenciones, marcadores de limpieza y tombstones quedan incluidos en el contrato incremental.
+- No existe fallback automático a descarga completa desde “Actualizar datos”.
+
+VALIDACIONES ESTÁTICAS REALIZADAS
+1. app.js pasa node --check.
+2. El manejador “Actualizar datos” usa readCloudSyncMetadata + readCloudIncrementalChanges.
+3. El manejador ya no llama readCloudOperationalSnapshot cuando detecta diferencias.
+4. La descarga incremental conserva consulta por syncUpdatedAt y cursor por módulo.
+5. La fusión incremental cubre Ventas, Facturas, Cobros, Compras, Pagos, Gastos, Casa, Catálogos, Notas, Retenciones, Configuración, marcadores de limpieza y tombstones.
+6. Versiones PWA actualizadas en app.js, index.html y service-worker.js.
+
+CASOS FUNCIONALES RECOMENDADOS EN FIRESTORE
+A. Sin cambios
+- Presionar Actualizar datos.
+- Debe mostrar: “Los datos ya están actualizados.”
+- downloadedRecordCount debe ser 0.
+
+B. Cambio solo en Ventas
+- Modificar/crear una Venta desde otro equipo y confirmar guardado en Firestore.
+- Presionar Actualizar datos.
+- Debe consultar Ventas y fusionar solamente sus documentos nuevos/modificados.
+- Los demás módulos deben permanecer intactos.
+
+C. Cambio en Facturas + Cobros + Retenciones
+- Crear o editar registros en esos módulos desde otro equipo.
+- Presionar Actualizar datos.
+- Deben descargarse solo esos módulos y sus registros con syncUpdatedAt posterior al cursor.
+
+D. Tombstone
+- Eliminar lógicamente un registro desde otro equipo.
+- Presionar Actualizar datos.
+- El tombstone debe retirar el registro local correspondiente sin reemplazar el módulo completo.
+
+E. Metadata no comparable/cursor faltante
+- “Actualizar datos” no debe descargar toda la base automáticamente.
+- Debe detenerse con diagnóstico y orientar a Sincronización completa administrativa.

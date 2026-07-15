@@ -1,0 +1,50 @@
+KSA PRÁCTIKA — SINCRONIZACIÓN INTELIGENTE — ETAPA 1/5
+Contrato incremental y blindaje de compatibilidad
+
+VALIDACIONES ESTÁTICAS REALIZADAS
+
+1. Contrato canónico
+- Campos declarados: id, createdAt, updatedAt, deleted, deletedAt, syncOrigin, syncVersion, syncCreatedAt, syncUpdatedAt, syncRevision.
+- Alias legacy preservados.
+- Política de tombstones preservada.
+- Política touch-on-write para documentos antiguos preservada.
+
+2. Cobertura por módulo
+- Catálogos: clientes, sucursales, proveedores, tipos de gasto, métodos de pago, cuentas/bancos, retenciones y categorías Casa.
+- Bdatos.
+- Ventas / OC.
+- Cobros.
+- Compras proveedores.
+- Pagos proveedores.
+- Gastos.
+- Casa.
+- Facturas.
+- Notas.
+- Cierres mensuales.
+- Exportaciones Excel.
+- Bitácora.
+- Configuración.
+- Consecutivos.
+
+3. Metadata preparada
+- Última sincronización completa.
+- Última sincronización incremental.
+- Última escritura.
+- Última lectura.
+- Revisión general.
+- Revisión por módulo.
+- Auditoría interna de preparación y compatibilidad.
+
+4. Compatibilidad
+- Sin migración destructiva.
+- Sin modificación de documentos históricos por carga.
+- Sin cambios en reglas Firestore.
+- Sin cambios en firebaseConfig.
+- Sin backend nuevo.
+- Sin cambios de interfaz.
+- Sin limpieza de almacenamiento.
+
+5. PWA
+- APP_VERSION: 0.18.53-sync-contract-compat-hardening.
+- Cache: v0_18_53_sync_contract_compat_hardening.
+- Query strings de index.html alineados.

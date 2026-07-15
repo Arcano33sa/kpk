@@ -2,10 +2,11 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.52-sync-incremental-hardening-final';
+  const APP_VERSION = '0.18.57-sync-stage5-hardening-final';
   const SCHEMA_VERSION = '1.0.0';
   const SYNC_CONTRACT_VERSION = '1.2.2';
-  const SYNC_CONTRACT_STAGE = 'Sincronización Inteligente - Reparación 2/2 Hardening Final';
+  const SYNC_CONTRACT_STAGE = 'Sincronización Inteligente - Etapa 5/5 Hardening final y sincronización completa administrativa';
+  const SYNC_PREPARATION_AUDIT_VERSION = '1.0.0';
   const SYNC_INCREMENTAL_DOWNLOAD_ENABLED = true;
   const SYNC_INCREMENTAL_CURSOR_OVERLAP_MS = 10 * 60 * 1000;
   const SYNC_FULL_ALLOWED_REASONS = Object.freeze([
@@ -59,6 +60,8 @@
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const SYNC_CONFLICT_STORAGE_KEY = 'KSA_PRACTIKA_SYNC_CONFLICTS_v1';
   const SYNC_CONFLICT_MAX_ENTRIES = 120;
+  const SESSION_CHANGE_QUEUE_STORAGE_KEY = 'KSA_PRACTIKA_SESSION_CHANGE_QUEUE_v1';
+  const SESSION_CHANGE_QUEUE_MAX_ENTRIES = 5000;
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
   const ACTIVITY_LOG_STORAGE_KEY = 'KSA_PRACTIKA_ACTIVITY_LOG_v1';
   const JSON_EXPORT_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_JSON_EXPORT_SEQUENCE_v1';
@@ -1059,6 +1062,8 @@
   const FIRESTORE_GUIDE_FILENAME = 'GUIA_APLICAR_REGLAS_FIRESTORE.txt';
   const JSON_AUXILIAR_NUBE_GUIDE_FILENAME = 'GUIA_JSON_AUXILIAR_NUBE_KSA_PRACTIKA.txt';
   const FIRESTORE_OPERATION_TIMEOUT_MS = 25000;
+  const FIRESTORE_FULL_SYNC_TIMEOUT_MS = 90000;
+  const FIRESTORE_BASELINE_TIMEOUT_MS = 45000;
   const FIRESTORE_TIMEOUT_SAVE_USER_MESSAGE = 'Tiempo de espera agotado. Revisa conexión, reglas de Firestore o UID.';
   const FIRESTORE_TIMEOUT_REFRESH_MESSAGE = 'Tiempo de espera agotado al actualizar datos.';
 
@@ -2526,7 +2531,8 @@ Notas importantes:
         bdatosSeedVersion: BDATOS_INITIAL_SEED_VERSION,
         bdatosSeededAt: BDATOS_INITIAL_UPDATED_AT,
         syncContract: normalizeSyncContractMetadata({}, timestamp),
-        syncState: normalizeSyncStateMetadata({})
+        syncState: normalizeSyncStateMetadata({}),
+        syncPreparationAudit: normalizeSyncPreparationAudit({}, timestamp)
       }
     };
 
@@ -2630,6 +2636,7 @@ Notas importantes:
       schemaVersion: SCHEMA_VERSION,
       syncContract: normalizeSyncContractMetadata(sourceMetadata.syncContract, base.metadata.syncContract?.preparedAt),
       syncState: normalizeSyncStateMetadata(sourceMetadata.syncState),
+      syncPreparationAudit: normalizeSyncPreparationAudit(sourceMetadata.syncPreparationAudit, base.metadata.syncPreparationAudit?.preparedAt),
       updatedAt: nowIso()
     });
 
@@ -2880,7 +2887,66 @@ Notas importantes:
       })),
       timestampPolicy: 'syncCreatedAt/syncUpdatedAt usan ISO-8601 UTC; createdAt/updatedAt legacy se conservan sin migración destructiva.',
       deletePolicy: 'tombstone',
-      compatibilityPolicy: 'Los registros antiguos quedan cubiertos por el snapshot completo del baseline y reciben syncUpdatedAt únicamente al volver a modificarse; no se ejecuta migración masiva silenciosa.'
+      compatibilityPolicy: 'Los registros antiguos quedan cubiertos por el snapshot completo del baseline y reciben syncUpdatedAt únicamente al volver a modificarse; no se ejecuta migración masiva silenciosa.',
+      preparationAuditVersion: SYNC_PREPARATION_AUDIT_VERSION,
+      metadataSchema: {
+        lastFullSyncAt: 'syncState.lastFullSyncAt',
+        lastIncrementalSyncAt: 'syncState.lastIncrementalSyncAt',
+        lastWriteAt: 'syncState.lastWriteAt',
+        lastReadAt: 'syncState.lastReadAt',
+        generalRevision: 'syncState.revisionGeneral',
+        moduleRevisions: 'syncState.revisionPorModulo'
+      }
+    };
+  }
+
+  function buildSyncPreparationModuleCoverage() {
+    const collectionKeys = new Set(FIRESTORE_COLLECTION_CONTRACTS.map((item) => cleanText(item.key)).filter(Boolean));
+    const catalogKeys = new Set(CATALOGS.map((catalog) => cleanText(catalog.id)).filter(Boolean));
+    return SYNC_AUDIT_MODULE_KEYS.reduce((coverage, moduleKey) => {
+      const key = cleanText(moduleKey);
+      const isCatalog = catalogKeys.has(key);
+      const collectionKey = isCatalog ? 'catalogos' : key;
+      coverage[key] = {
+        moduleKey: key,
+        collectionKey,
+        contractDeclared: collectionKeys.has(collectionKey),
+        revisionPrepared: true,
+        legacyCompatible: true,
+        tombstonePrepared: collectionKey !== 'consecutivos',
+        sessionWriter: SYNC_SESSION_WRITE_COLLECTION_KEYS.includes(collectionKey),
+        canonicalFields: [...SYNC_RECORD_FIELDS]
+      };
+      return coverage;
+    }, {});
+  }
+
+  function normalizeSyncPreparationAudit(value = {}, fallbackPreparedAt = '') {
+    const raw = isPlainObject(value) ? value : {};
+    const preparedAt = cleanText(raw.preparedAt || fallbackPreparedAt) || nowIso();
+    const moduleCoverage = buildSyncPreparationModuleCoverage();
+    const missingContracts = Object.values(moduleCoverage)
+      .filter((entry) => entry.contractDeclared !== true)
+      .map((entry) => entry.moduleKey);
+    return {
+      version: SYNC_PREPARATION_AUDIT_VERSION,
+      preparedAt,
+      status: missingContracts.length ? 'warning' : 'ready',
+      visibleBehaviorChanged: false,
+      destructiveMigrationRequired: false,
+      legacyTouchOnWrite: true,
+      canonicalFields: [...SYNC_RECORD_FIELDS],
+      metadataFields: [
+        'lastFullSyncAt',
+        'lastIncrementalSyncAt',
+        'lastWriteAt',
+        'lastReadAt',
+        'revisionGeneral',
+        'revisionPorModulo'
+      ],
+      coveredModules: Object.keys(moduleCoverage),
+      missingContracts,
+      moduleCoverage
     };
   }
 
@@ -3089,6 +3155,162 @@ Notas importantes:
     }, { ...metadata, syncState: state });
   }
 
+
+  function adoptConfirmedCloudBaselineAfterFullRead(options = {}) {
+    const opts = isPlainObject(options) ? options : {};
+    const sourceMetadata = clonePlainObject(isPlainObject(opts.sourceMetadata) ? opts.sourceMetadata : {}, {});
+    const localMetadata = clonePlainObject(isPlainObject(opts.localMetadata) ? opts.localMetadata : {}, {});
+    const fullReadAt = cleanText(opts.fullReadAt || localMetadata.lastFullCloudReadAt || localMetadata?.syncState?.lastFullSyncAt);
+    const downloadedModules = Array.from(new Set((Array.isArray(opts.downloadedModules) ? opts.downloadedModules : SYNC_AUDIT_MODULE_KEYS).map(cleanText).filter(Boolean)));
+    const pendingLocalChanges = Math.max(0, Number(opts.pendingLocalChanges) || 0);
+    const protectedLocalCount = Math.max(0, Number(opts.protectedLocalCount) || 0);
+    const sourceValidation = getIncrementalBaselineValidation(sourceMetadata, { requiredModules: downloadedModules });
+    const fail = (code, cause, extra = {}) => ({
+      ok: false,
+      action: 'adoptConfirmedCloudBaselineAfterFullRead',
+      code,
+      message: cause,
+      sourceValidation,
+      pendingLocalChanges,
+      protectedLocalCount,
+      ...extra
+    });
+
+    if (!fullReadAt) {
+      return fail('cloud/incremental-cursor-missing', 'La lectura completa terminó sin un cursor verificable para el equipo.');
+    }
+    if (!sourceValidation.ok) {
+      return fail(sourceValidation.code || 'cloud/incremental-metadata-missing', sourceValidation.cause || 'Firestore no posee un baseline incremental confirmado.');
+    }
+
+    const sourceState = normalizeSyncStateMetadata(sourceMetadata.syncState);
+    const localState = normalizeSyncStateMetadata(localMetadata.syncState);
+    const downloadedSet = new Set(downloadedModules);
+    const moduleKeys = new Set([
+      ...SYNC_AUDIT_MODULE_KEYS,
+      ...downloadedModules,
+      ...Object.keys(sourceState.revisionPorModulo || {}),
+      ...Object.keys(localState.revisionPorModulo || {})
+    ]);
+    const revisionPorModulo = {};
+    moduleKeys.forEach((key) => {
+      const sourceModule = normalizeSyncModuleRevision(sourceState.revisionPorModulo?.[key]);
+      const localModule = normalizeSyncModuleRevision(localState.revisionPorModulo?.[key]);
+      const wasDownloaded = downloadedSet.has(key);
+      revisionPorModulo[key] = {
+        revision: sourceModule.revision,
+        lastWriteAt: sourceModule.lastWriteAt || localModule.lastWriteAt,
+        lastReadAt: wasDownloaded ? fullReadAt : (localModule.lastReadAt || sourceModule.lastReadAt),
+        lastFullSyncAt: wasDownloaded ? fullReadAt : (localModule.lastFullSyncAt || sourceModule.lastFullSyncAt),
+        lastIncrementalSyncAt: localModule.lastIncrementalSyncAt || sourceModule.lastIncrementalSyncAt
+      };
+    });
+    const nextSyncState = normalizeSyncStateMetadata({
+      ...sourceState,
+      revisionGeneral: sourceState.revisionGeneral,
+      revisionPorModulo,
+      lastWriteAt: sourceState.lastWriteAt || localState.lastWriteAt,
+      lastReadAt: fullReadAt,
+      lastFullSyncAt: fullReadAt,
+      lastIncrementalSyncAt: localState.lastIncrementalSyncAt || sourceState.lastIncrementalSyncAt,
+      updatedAt: fullReadAt
+    });
+
+    const baseAudit = normalizeIncrementalCursorAudit(localMetadata.incrementalCursorAudit, { ...localMetadata, syncState: nextSyncState });
+    const auditModules = { ...baseAudit.modules };
+    moduleKeys.forEach((key) => {
+      const previousAudit = normalizeSyncCursorAuditEntry(auditModules[key], key, { ...localMetadata, syncState: nextSyncState });
+      const moduleState = normalizeSyncModuleRevision(nextSyncState.revisionPorModulo?.[key]);
+      const wasDownloaded = downloadedSet.has(key);
+      auditModules[key] = normalizeSyncCursorAuditEntry({
+        ...previousAudit,
+        revision: moduleState.revision,
+        localRevision: moduleState.revision,
+        cloudRevision: moduleState.revision,
+        cursor: wasDownloaded ? fullReadAt : previousAudit.cursor,
+        localCursor: wasDownloaded ? fullReadAt : previousAudit.localCursor,
+        cloudCursor: wasDownloaded ? fullReadAt : previousAudit.cloudCursor,
+        cursorAvailable: wasDownloaded ? true : previousAudit.cursorAvailable,
+        cursorSource: wasDownloaded ? 'local_full_read_adopted_from_confirmed_cloud_baseline' : previousAudit.cursorSource,
+        lastReadAt: wasDownloaded ? fullReadAt : previousAudit.lastReadAt,
+        lastFullReadAt: wasDownloaded ? fullReadAt : previousAudit.lastFullReadAt,
+        lastResult: wasDownloaded ? 'baseline_adopted_locally' : previousAudit.lastResult,
+        updatedAt: fullReadAt
+      }, key, { ...localMetadata, syncState: nextSyncState });
+    });
+    const nextCursorAudit = normalizeIncrementalCursorAudit({
+      ...baseAudit,
+      sourceFullReadAt: fullReadAt,
+      lastValidatedAt: fullReadAt,
+      modules: auditModules
+    }, { ...localMetadata, syncState: nextSyncState });
+    const alignmentStatus = pendingLocalChanges > 0 || protectedLocalCount > 0 ? 'pending_local_changes' : 'aligned';
+    const nextBaseline = {
+      ...(isPlainObject(sourceMetadata.incrementalBaseline) ? sourceMetadata.incrementalBaseline : {}),
+      status: 'ready',
+      contractVersion: SYNC_CONTRACT_VERSION,
+      sourceFullReadAt: fullReadAt,
+      updatedAt: fullReadAt,
+      localAdoptedAt: fullReadAt,
+      localAdoptionSource: 'confirmed_cloud_baseline',
+      alignmentStatus
+    };
+    const nextMetadata = sanitizeLocalIncrementalMetadata({
+      ...localMetadata,
+      ...sourceMetadata,
+      fuentePrincipal: 'firestore',
+      cloudActive: true,
+      cloudDataReady: true,
+      syncRevisionCheckAvailable: true,
+      syncRevisionMetadataAvailable: true,
+      syncContract: normalizeSyncContractMetadata(sourceMetadata.syncContract),
+      syncState: nextSyncState,
+      incrementalCursorAudit: nextCursorAudit,
+      incrementalBaseline: nextBaseline,
+      lastIncrementalBaselineAt: fullReadAt,
+      lastIncrementalBaselineStatus: 'ready',
+      incrementalAlignmentStatus: alignmentStatus,
+      lastCloudReadAt: fullReadAt,
+      lastFullCloudReadAt: fullReadAt,
+      lastCloudMetadataCheckAt: fullReadAt,
+      lastCloudSyncMode: 'full'
+    });
+    const localValidation = getIncrementalBaselineValidation(nextMetadata, { requiredModules: downloadedModules });
+    if (!localValidation.ok) {
+      return fail(localValidation.code || 'cloud/incremental-local-baseline-unconfirmed', localValidation.cause || 'El baseline local no pudo confirmarse después de la lectura completa.', { localValidation });
+    }
+    const diagnostic = buildIncrementalDiagnosticEntry({
+      code: 'cloud/incremental-baseline-adopted',
+      cause: 'El equipo adoptó localmente el baseline incremental ya confirmado en Firestore, sin reescribir metadata global.',
+      stage: 'baseline_local_adoption',
+      cursor: fullReadAt,
+      localMetadata: nextMetadata,
+      cloudMetadata: sourceMetadata,
+      downloadedModules,
+      appliedModules: downloadedModules,
+      pendingLocalChanges,
+      protectedConflicts: 0,
+      alignmentStatus,
+      at: fullReadAt
+    });
+    return {
+      ok: true,
+      action: 'adoptConfirmedCloudBaselineAfterFullRead',
+      code: 'cloud/incremental-baseline-adopted',
+      message: 'Baseline incremental local confirmado a partir de Firestore.',
+      metadata: nextMetadata,
+      syncState: nextSyncState,
+      cursorAudit: nextCursorAudit,
+      localValidation,
+      sourceValidation,
+      diagnostic,
+      pendingLocalChanges,
+      protectedLocalCount,
+      alignmentStatus,
+      lastBaselineAt: fullReadAt
+    };
+  }
+
   function updateIncrementalCursorAuditAfterRead(localMetadata = {}, cloudMetadata = {}, moduleResults = {}, appliedModules = [], failedModules = [], readAt = '') {
     const timestamp = cleanText(readAt) || nowIso();
     const localAudit = normalizeIncrementalCursorAudit(localMetadata?.incrementalCursorAudit, localMetadata);
@@ -3151,13 +3373,18 @@ Notas importantes:
     }, localMetadata);
   }
 
-  function hasSyncRevisionMetadata(metadata = {}) {
-    if (metadata?.syncRevisionMetadataAvailable !== true) return false;
+  function hasSyncRevisionStateShape(metadata = {}) {
     const rawState = isPlainObject(metadata?.syncState) ? metadata.syncState : {};
     const moduleState = isPlainObject(rawState.revisionPorModulo)
       ? rawState.revisionPorModulo
       : (isPlainObject(rawState.modules) ? rawState.modules : null);
     return hasOwnField(rawState, 'revisionGeneral') && isPlainObject(moduleState);
+  }
+
+  function hasSyncRevisionMetadata(metadata = {}) {
+    const enabledForComparison = metadata?.syncRevisionCheckAvailable === true
+      || metadata?.syncRevisionMetadataAvailable === true;
+    return enabledForComparison && hasSyncRevisionStateShape(metadata);
   }
 
   function getIncrementalBaselineValidation(metadata = {}, options = {}) {
@@ -3665,8 +3892,81 @@ Notas importantes:
     }
   }
 
-  let sessionChangeQueue = [];
-  let sessionChangeSequence = 0;
+  function normalizePersistedSessionChange(raw = {}) {
+    if (!isPlainObject(raw)) return null;
+    const moduleName = cleanText(raw.module || raw.modulo || raw.moduleName);
+    const recordId = cleanText(raw.recordId || raw.idRegistro || raw.documentId);
+    if (!moduleName || !recordId) return null;
+    const operation = normalizeSessionChangeOperation(raw.operation || raw.operacion || raw.tipoOperacion);
+    const timestamp = cleanText(raw.updatedAt || raw.fechaHoraLocal || raw.createdAt) || nowIso();
+    return {
+      ...raw,
+      id: cleanText(raw.id) || generateId('sessionChange'),
+      idInterno: cleanText(raw.idInterno),
+      module: moduleName,
+      modulo: moduleName,
+      moduleKey: cleanText(raw.moduleKey || resolveSyncModuleKeyFromChange(raw)),
+      operation,
+      operacion: operation,
+      recordId,
+      idRegistro: recordId,
+      key: cleanText(raw.key) || getSessionChangeRecordKey(moduleName, recordId),
+      fechaHoraLocal: cleanText(raw.fechaHoraLocal) || timestamp,
+      origen: cleanText(raw.origen) || 'session_persisted',
+      estado: 'pendiente',
+      baseRemoteExists: raw.baseRemoteExists !== false,
+      baseSyncUpdatedAt: cleanText(raw.baseSyncUpdatedAt),
+      baseSyncRevision: normalizeSyncRevision(raw.baseSyncRevision, 0),
+      baseCloudReadAt: cleanText(raw.baseCloudReadAt),
+      baseModuleRevision: normalizeSyncRevision(raw.baseModuleRevision, 0),
+      baseDeleted: raw.baseDeleted === true,
+      baseCapturedAt: cleanText(raw.baseCapturedAt) || cleanText(raw.createdAt) || timestamp,
+      localSnapshot: isPlainObject(raw.localSnapshot) ? clonePlainObject(raw.localSnapshot, null) : null,
+      createdAt: cleanText(raw.createdAt) || timestamp,
+      updatedAt: timestamp
+    };
+  }
+
+  function loadSessionChangeQueue() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(SESSION_CHANGE_QUEUE_STORAGE_KEY) || '[]');
+      if (!Array.isArray(parsed)) return [];
+      const byKey = new Map();
+      parsed.forEach((raw) => {
+        const change = normalizePersistedSessionChange(raw);
+        if (!change) return;
+        const previous = byKey.get(change.key);
+        if (!previous || parseSyncTimestamp(change.updatedAt) >= parseSyncTimestamp(previous.updatedAt)) byKey.set(change.key, change);
+      });
+      return Array.from(byKey.values())
+        .sort((a, b) => parseSyncTimestamp(a.createdAt) - parseSyncTimestamp(b.createdAt))
+        .slice(-SESSION_CHANGE_QUEUE_MAX_ENTRIES);
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo recuperar la cola local de cambios pendientes.', error);
+      return [];
+    }
+  }
+
+  function getPersistedSessionChangeSequence(changes = []) {
+    return (Array.isArray(changes) ? changes : []).reduce((maxValue, change) => {
+      const match = cleanText(change?.idInterno).match(/session-(\d+)/i);
+      return match ? Math.max(maxValue, Number(match[1]) || 0) : maxValue;
+    }, 0);
+  }
+
+  function persistSessionChangeQueue() {
+    try {
+      const pending = sessionChangeQueue
+        .filter((item) => item && item.estado === 'pendiente')
+        .slice(-SESSION_CHANGE_QUEUE_MAX_ENTRIES);
+      localStorage.setItem(SESSION_CHANGE_QUEUE_STORAGE_KEY, JSON.stringify(pending));
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo persistir la cola local de cambios pendientes.', error);
+    }
+  }
+
+  let sessionChangeQueue = loadSessionChangeQueue();
+  let sessionChangeSequence = getPersistedSessionChangeSequence(sessionChangeQueue);
   let syncConflictRegistry = loadSyncConflictRegistry();
 
   function persistSyncConflictRegistry() {
@@ -3678,6 +3978,7 @@ Notas importantes:
   }
 
   function syncSessionChangeQueueGlobal() {
+    persistSessionChangeQueue();
     if (typeof window !== 'undefined') {
       window.KSA_SESSION_CHANGE_QUEUE = sessionChangeQueue;
       window.KSA_SYNC_CONFLICTS = syncConflictRegistry;
@@ -3704,7 +4005,9 @@ Notas importantes:
       localBaseSyncUpdatedAt: cleanText(conflict.localBaseSyncUpdatedAt),
       cloudSyncUpdatedAt: cleanText(conflict.cloudSyncUpdatedAt),
       detectedAt: timestamp,
-      retryPending: true
+      retryPending: true,
+      pendingQueuePersisted: true,
+      localSnapshotAvailable: isPlainObject(conflict.localSnapshot) || isPlainObject(conflict.change?.localSnapshot)
     };
     const existingIndex = syncConflictRegistry.findIndex((item) => cleanText(item?.key) === key);
     if (existingIndex >= 0) syncConflictRegistry.splice(existingIndex, 1);
@@ -3878,12 +4181,57 @@ Notas importantes:
     return Number.isFinite(parsed) ? parsed : 0;
   }
 
+  const SYNC_BUSINESS_COMPARE_IGNORED_FIELDS = new Set([
+    'id', 'catalogoId', '_docPrefix',
+    'updatedAt', 'updatedAtLocal', 'updatedBy',
+    'deleted', '_deleted', '_cloudDeleted', 'eliminadoEnNube', 'eliminadoCloud', 'deletedInCloud',
+    'deletedAt', 'deletedAtLocal',
+    'syncOrigin', 'origenSync', 'syncVersion', '_syncVersion', 'syncCreatedAt', 'syncUpdatedAt', 'syncRevision',
+    '_cloudSync', 'operacionSesion'
+  ]);
+
+  function normalizeSyncBusinessComparable(value) {
+    if (Array.isArray(value)) return value.map(normalizeSyncBusinessComparable);
+    if (!value || typeof value !== 'object') return value;
+    const normalized = {};
+    Object.keys(value).sort().forEach((key) => {
+      if (SYNC_BUSINESS_COMPARE_IGNORED_FIELDS.has(key)) return;
+      const item = value[key];
+      if (item === undefined || typeof item === 'function') return;
+      normalized[key] = normalizeSyncBusinessComparable(item);
+    });
+    return normalized;
+  }
+
+  function areSyncBusinessRecordsEquivalent(localRecord, remoteRecord, normalizer = null) {
+    if (!isPlainObject(localRecord) || !isPlainObject(remoteRecord)) return false;
+    try {
+      const normalize = typeof normalizer === 'function' ? normalizer : ((record) => ({ ...(record || {}) }));
+      const localComparable = normalizeSyncBusinessComparable(normalize(localRecord));
+      const remoteComparable = normalizeSyncBusinessComparable(normalize(remoteRecord));
+      return JSON.stringify(localComparable) === JSON.stringify(remoteComparable);
+    } catch (_) {
+      return false;
+    }
+  }
+
   function assessPendingCloudRecordConflict(change = {}, remoteRecord = null, options = {}) {
     const operation = normalizeSessionChangeOperation(change.operation || change.operacion);
     const remoteExists = options.remoteExists !== false && isPlainObject(remoteRecord);
     const remoteDeleted = remoteExists && isCloudDeletedRecord(remoteRecord);
+    const intendedAlreadyApplied = remoteExists
+      && !remoteDeleted
+      && areSyncBusinessRecordsEquivalent(options.intendedRecord, remoteRecord, options.normalizer);
     if (isFacturasCleanupSessionChange(change)) {
       return { conflict: false, alreadyApplied: !remoteExists || remoteDeleted, code: '', reason: '' };
+    }
+    if (intendedAlreadyApplied) {
+      return {
+        conflict: false,
+        alreadyApplied: true,
+        code: 'cloud/retry-already-applied',
+        reason: 'Firestore ya contiene el mismo estado operativo; el reintento se confirma sin duplicar ni sobrescribir.'
+      };
     }
     if (operation === 'crear') {
       if (remoteExists) {
@@ -7411,8 +7759,10 @@ Notas importantes:
         const metadataRef = fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
         const metadataSnap = await fs.getDoc(metadataRef);
         const rawMetadata = metadataSnap.exists() ? normalizeFirestoreDoc(metadataSnap) : {};
+        const rawRevisionStateAvailable = hasSyncRevisionStateShape(rawMetadata);
         const metadata = {
           ...rawMetadata,
+          syncRevisionCheckAvailable: rawRevisionStateAvailable,
           syncRevisionMetadataAvailable: rawMetadata.syncRevisionMetadataAvailable === true,
           syncContract: isPlainObject(rawMetadata.syncContract) ? clonePlainObject(rawMetadata.syncContract, {}) : {},
           syncState: normalizeSyncStateMetadata(rawMetadata.syncState),
@@ -7532,6 +7882,7 @@ Notas importantes:
           syncState: normalizeSyncStateMetadata(rawMetadata.syncState),
           incrementalCursorAudit: normalizeIncrementalCursorAudit(rawMetadata.incrementalCursorAudit, rawMetadata)
         };
+        let confirmedSourceMetadata = clonePlainObject(rawMetadata, {});
         const metadataExists = Boolean(prefetchedMetadata || metadataSnap?.exists());
         const ready = isCloudReadyMetadata(metadata);
         const activeByMetadata = cleanText(metadata.fuentePrincipal).toLowerCase() === 'firestore' || metadata.cloudActive === true;
@@ -7565,21 +7916,52 @@ Notas importantes:
           });
           return { ok: false, action: 'readCloudOperationalSnapshot', code: 'cloud/not-active', message: state.lastSyncError, snapshot: null, metadata, user, role, fullSyncReason };
         }
+        const sourceIncrementalValidation = getIncrementalBaselineValidation(metadata);
+        if (fullSyncReason === 'first_use' && !sourceIncrementalValidation.ok && role?.id !== 'administrador') {
+          state.lastSyncError = 'El primer uso requiere que un Administrador repare o confirme el baseline incremental antes de descargar toda la base.';
+          publishKSAFirebaseRuntime({
+            cloudActive: true,
+            cloudReadsEnabled: true,
+            cloudWritesEnabled: false,
+            cloudDataReady: true,
+            workspaceId,
+            workspaceInitialized: true,
+            message: state.lastSyncError
+          });
+          return {
+            ok: false,
+            action: 'readCloudOperationalSnapshot',
+            code: 'cloud/admin-required-for-baseline-repair',
+            message: state.lastSyncError,
+            snapshot: null,
+            metadata,
+            sourceIncrementalValidation,
+            user,
+            role,
+            fullSyncReason,
+            requiresAdministrativeFullSync: true
+          };
+        }
 
         const fullReadStartedAt = nowIso();
         const snapshot = createInitialData();
         const fullReadModuleSummaries = {};
+        const fullReadTombstones = {};
         CATALOGS.forEach((catalog) => { snapshot[catalog.id] = []; });
         snapshot.bdatos = [];
         const downloadedModules = [];
         let recordCount = 0;
-        for (const catalog of CATALOGS) {
-          const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'catalogos', catalog.id, 'items');
+        const catalogReadResults = await Promise.all(CATALOGS.map(async (catalog) => ({
+          catalog,
+          records: await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'catalogos', catalog.id, 'items')
+        })));
+        catalogReadResults.forEach(({ catalog, records }) => {
           snapshot[catalog.id] = records.filter((record) => !isCloudDeletedRecord(record)).map((record) => normalizeCatalogRecord(record, catalog));
+          fullReadTombstones[catalog.id] = records.filter((record) => isCloudDeletedRecord(record));
           fullReadModuleSummaries[catalog.id] = summarizeSyncRecordsForCursor(records);
           downloadedModules.push(catalog.id);
           recordCount += records.length;
-        }
+        });
 
         const listReaders = [
           ['bdatos', normalizeBdatosRecord],
@@ -7592,21 +7974,86 @@ Notas importantes:
           ['cierresMensuales', normalizeCierreMensualRecord],
           ['exportacionesExcel', normalizeExcelExportRecord]
         ];
-        for (const [key, normalizer] of listReaders) {
-          const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, key);
+        const listReadResults = await Promise.all(listReaders.map(async ([key, normalizer]) => ({
+          key,
+          normalizer,
+          records: await readCollectionDocs(db, fs, 'workspaces', workspaceId, key)
+        })));
+        listReadResults.forEach(({ key, normalizer, records }) => {
           snapshot[key] = records.filter((record) => !isCloudDeletedRecord(record)).map((record) => normalizer(record));
+          fullReadTombstones[key] = records.filter((record) => isCloudDeletedRecord(record));
           fullReadModuleSummaries[key] = summarizeSyncRecordsForCursor(records);
           downloadedModules.push(key);
           recordCount += records.length;
-        }
+        });
 
-        const configSnap = await fs.getDoc(fs.doc(db, 'workspaces', workspaceId, 'configuracion', 'sistema'));
+        const [configSnap, facturasRecords, notasRecords, bitacoraRecords, consecutivosRecords] = await Promise.all([
+          fs.getDoc(fs.doc(db, 'workspaces', workspaceId, 'configuracion', 'sistema')),
+          readCollectionDocs(db, fs, 'workspaces', workspaceId, 'facturasModulo'),
+          readCollectionDocs(db, fs, 'workspaces', workspaceId, 'notasModulo'),
+          readCollectionDocs(db, fs, 'workspaces', workspaceId, 'bitacora'),
+          readCollectionDocs(db, fs, 'workspaces', workspaceId, 'consecutivos')
+        ]);
         snapshot.configuracion = configSnap.exists()
           ? normalizeConfiguracion(normalizeFirestoreDoc(configSnap))
           : normalizeConfiguracion(appData?.configuracion || {});
         fullReadModuleSummaries.configuracion = summarizeSyncRecordsForCursor(configSnap.exists() ? [normalizeFirestoreDoc(configSnap)] : []);
-        downloadedModules.push('configuracion');
+        downloadedModules.push('configuracion', 'facturasModulo', 'notasModulo', 'bitacora', 'consecutivos');
         recordCount += configSnap.exists() ? 1 : 0;
+        fullReadTombstones.facturasModulo = facturasRecords.filter((record) => isCloudDeletedRecord(record));
+        fullReadTombstones.notasModulo = notasRecords.filter((record) => isCloudDeletedRecord(record));
+        fullReadTombstones.bitacora = bitacoraRecords.filter((record) => isCloudDeletedRecord(record));
+        fullReadTombstones.consecutivos = consecutivosRecords.filter((record) => isCloudDeletedRecord(record));
+        fullReadModuleSummaries.facturasModulo = summarizeSyncRecordsForCursor(facturasRecords);
+        fullReadModuleSummaries.notasModulo = summarizeSyncRecordsForCursor(notasRecords);
+        fullReadModuleSummaries.bitacora = summarizeSyncRecordsForCursor(bitacoraRecords);
+        fullReadModuleSummaries.consecutivos = summarizeSyncRecordsForCursor(consecutivosRecords);
+        recordCount += facturasRecords.length + notasRecords.length + bitacoraRecords.length + consecutivosRecords.length;
+        const consecutivos = {};
+        consecutivosRecords.forEach((record) => {
+          if (isCloudDeletedRecord(record)) return;
+          const key = cleanText(record.tipo || record.id);
+          if (key) consecutivos[key] = record.valor ?? record.value ?? record.consecutivo ?? '';
+        });
+
+        const metadataVerificationSnap = await fs.getDoc(metadataRef);
+        const metadataVerificationRaw = metadataVerificationSnap.exists() ? normalizeFirestoreDoc(metadataVerificationSnap) : {};
+        const initialFingerprint = getIncrementalConcurrencyFingerprint(rawMetadata);
+        const finalFingerprint = getIncrementalConcurrencyFingerprint(metadataVerificationRaw);
+        if (!metadataVerificationSnap.exists() || initialFingerprint !== finalFingerprint) {
+          const fullReadAbortedAt = nowIso();
+          state.lastSyncError = 'Firestore cambió durante la lectura completa. No se aplicaron datos para evitar una fotografía inconsistente; vuelve a ejecutar la sincronización completa.';
+          publishKSAFirebaseRuntime({
+            cloudActive: true,
+            cloudReadsEnabled: true,
+            cloudWritesEnabled: true,
+            cloudDataReady: true,
+            workspaceId,
+            workspaceInitialized: true,
+            lastCloudSyncMode: 'full_aborted_concurrent_change',
+            message: state.lastSyncError
+          });
+          return {
+            ok: false,
+            action: 'readCloudOperationalSnapshot',
+            code: 'cloud/full-sync-concurrent-change',
+            message: state.lastSyncError,
+            snapshot: null,
+            metadata,
+            sourceMetadata: clonePlainObject(confirmedSourceMetadata, {}),
+            verifiedMetadata: clonePlainObject(metadataVerificationRaw, {}),
+            sourceIncrementalValidation,
+            fullReadStartedAt,
+            fullReadCompletedAt: fullReadAbortedAt,
+            downloadedModules: Array.from(new Set(downloadedModules)),
+            recordCount,
+            fullSyncReason,
+            user,
+            role,
+            requiresRetry: true
+          };
+        }
+        confirmedSourceMetadata = clonePlainObject(metadataVerificationRaw, {});
         const fullReadAt = nowIso();
         const localMetadataBeforeFullRead = clonePlainObject(isPlainObject(appData?.metadata) ? appData.metadata : {}, {});
         snapshot.metadata = sanitizeLocalIncrementalMetadata({
@@ -7631,22 +8078,6 @@ Notas importantes:
           lastCloudSyncMode: 'full',
           fullReadStartedAt,
           fullReadCompletedAt: fullReadAt
-        });
-
-        const facturasRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'facturasModulo');
-        const notasRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'notasModulo');
-        const bitacoraRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'bitacora');
-        const consecutivosRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'consecutivos');
-        downloadedModules.push('facturasModulo', 'notasModulo', 'bitacora', 'consecutivos');
-        fullReadModuleSummaries.facturasModulo = summarizeSyncRecordsForCursor(facturasRecords);
-        fullReadModuleSummaries.notasModulo = summarizeSyncRecordsForCursor(notasRecords);
-        fullReadModuleSummaries.bitacora = summarizeSyncRecordsForCursor(bitacoraRecords);
-        fullReadModuleSummaries.consecutivos = summarizeSyncRecordsForCursor(consecutivosRecords);
-        recordCount += facturasRecords.length + notasRecords.length + bitacoraRecords.length + consecutivosRecords.length;
-        const consecutivos = {};
-        consecutivosRecords.forEach((record) => {
-          const key = cleanText(record.tipo || record.id);
-          if (key) consecutivos[key] = record.valor ?? record.value ?? record.consecutivo ?? '';
         });
 
         snapshot.metadata.incrementalCursorAudit = buildIncrementalCursorAuditFromFullRead(fullReadModuleSummaries, fullReadAt, snapshot.metadata);
@@ -7686,13 +8117,16 @@ Notas importantes:
           snapshot: normalized,
           notasModulo: rebuildNotasDataFromCloud(notasRecords.filter((record) => !isCloudDeletedRecord(record))),
           facturasModulo: buildFacturasClientesCloudSnapshot(facturasRecords),
-          bitacora: bitacoraRecords.map((entry) => normalizeActivityEntry(entry)),
+          bitacora: bitacoraRecords.filter((record) => !isCloudDeletedRecord(record)).map((entry) => normalizeActivityEntry(entry)),
           consecutivos,
           metadata: snapshot.metadata,
-          sourceMetadata: clonePlainObject(rawMetadata, {}),
+          sourceMetadata: clonePlainObject(confirmedSourceMetadata, {}),
           fullReadStartedAt,
           fullReadCompletedAt: fullReadAt,
           downloadedModules: Array.from(new Set(downloadedModules)),
+          tombstonesByModule: fullReadTombstones,
+          fullReadModuleSummaries: clonePlainObject(fullReadModuleSummaries, {}),
+          sourceIncrementalValidation,
           recordCount,
           fullSyncReason,
           fullSyncReasonLabel: reasonLabel,
@@ -7738,6 +8172,7 @@ Notas importantes:
           activatedBy: user.email,
           syncContract: normalizeSyncContractMetadata(metadata.syncContract),
           syncState: normalizeSyncStateMetadata(metadata.syncState),
+          syncPreparationAudit: normalizeSyncPreparationAudit(metadata.syncPreparationAudit, metadata?.syncContract?.preparedAt),
           updatedAt: stamp,
           appVersion: APP_VERSION
         }, { merge: true });
@@ -8193,6 +8628,8 @@ Notas importantes:
         ref,
         payload: stripUndefinedForFirestore(payload),
         change,
+        intendedRecord: target.record ? clonePlainObject(target.record, {}) : null,
+        normalizer: target.normalizer,
         key: `${target.kind || 'simple'}:${target.collection}:${target.catalogId || ''}:${recordId}`
       };
     }
@@ -8285,6 +8722,7 @@ Notas importantes:
             lastIncrementalBaselineStatus: 'ready'
           } : {}),
           syncState: nextSyncState,
+          syncPreparationAudit: normalizeSyncPreparationAudit(currentMetadata.syncPreparationAudit, currentMetadata?.syncContract?.preparedAt),
           lastSyncAt: context.stamp,
           lastSyncAtLocal: sessionWriteAt,
           lastSessionPartialWriteAt: context.stamp,
@@ -8321,7 +8759,9 @@ Notas importantes:
         const decision = assessPendingCloudRecordConflict(write.change || {}, remoteRecord, {
           remoteExists,
           metadataComparison: context.baseMetadataComparison,
-          cloudMetadata: context.cloudMetadata
+          cloudMetadata: context.cloudMetadata,
+          intendedRecord: write.intendedRecord,
+          normalizer: write.normalizer
         });
         return { ...decision, remoteExists, remoteRecord };
       };
@@ -8473,7 +8913,8 @@ Notas importantes:
               localBaseSyncUpdatedAt: cleanText(change.baseSyncUpdatedAt),
               cloudSyncUpdatedAt: remoteSyncUpdatedAt,
               change,
-              remoteRecord: result.remoteRecord || null
+              remoteRecord: result.remoteRecord || null,
+              localSnapshot: isPlainObject(change.localSnapshot) ? clonePlainObject(change.localSnapshot, null) : null
             };
             conflicts.push(conflict);
             failedChanges.push(...entry.changes);
@@ -8889,6 +9330,7 @@ Notas importantes:
             cloudReady: true,
             syncContract: getSyncContractDescriptor(),
             syncState: normalizeSyncStateMetadata({}),
+            syncPreparationAudit: normalizeSyncPreparationAudit({}),
             createdAt: stamp,
             updatedAt: stamp,
             versionApp: APP_VERSION
@@ -8902,6 +9344,7 @@ Notas importantes:
             cloudReady: true,
             syncContract: normalizeSyncContractMetadata(normalizeFirestoreDoc(metadataSnap).syncContract),
             syncState: normalizeSyncStateMetadata(normalizeFirestoreDoc(metadataSnap).syncState),
+            syncPreparationAudit: normalizeSyncPreparationAudit(normalizeFirestoreDoc(metadataSnap).syncPreparationAudit, normalizeFirestoreDoc(metadataSnap)?.syncContract?.preparedAt),
             updatedAt: stamp,
             versionApp: APP_VERSION
           }, { merge: true });
@@ -9237,6 +9680,7 @@ Notas importantes:
           cloudActive: true,
           syncRevisionMetadataAvailable: false,
           syncContract: normalizeSyncContractMetadata(prepared?.data?.metadata?.syncContract),
+          syncPreparationAudit: normalizeSyncPreparationAudit(prepared?.data?.metadata?.syncPreparationAudit, prepared?.data?.metadata?.syncContract?.preparedAt),
           incrementalBaseline: {
             status: 'pending_confirmation',
             updatedAt: importStartedAtLocal,
@@ -10463,8 +10907,13 @@ Notas importantes:
   function saveData(data) {
     try {
       data.configuracion = normalizeConfiguracion(data.configuracion);
+      const existingMetadata = isPlainObject(data.metadata) ? data.metadata : {};
+      const revisionCheckAvailable = existingMetadata.syncRevisionCheckAvailable === true
+        || existingMetadata.syncRevisionMetadataAvailable === true
+        || Boolean(existingMetadata.lastCloudHydratedAt || existingMetadata.lastFullCloudReadAt || existingMetadata.lastCloudMetadataCheckAt);
       data.metadata = sanitizeLocalIncrementalMetadata({
-        ...(isPlainObject(data.metadata) ? data.metadata : {}),
+        ...existingMetadata,
+        syncRevisionCheckAvailable: revisionCheckAvailable,
         appName: APP_NAME,
         appVersion: APP_VERSION,
         schemaVersion: SCHEMA_VERSION,
@@ -10605,9 +11054,11 @@ Notas importantes:
     let applied = 0;
     let deleted = 0;
     let protectedLocal = 0;
+    let unchanged = 0;
     let blockedRevision = false;
     const protectedIds = [];
     const conflictIds = [];
+    const alreadyAppliedIds = [];
     (Array.isArray(cloudRecords) ? cloudRecords : []).forEach((rawRecord) => {
       const id = cleanText(rawRecord?.id);
       if (!id) return;
@@ -10615,9 +11066,12 @@ Notas importantes:
       if (pendingChange) {
         protectedLocal += 1;
         protectedIds.push(id);
+        const localRecord = map.get(id) || null;
         const decision = assessPendingCloudRecordConflict(pendingChange, rawRecord, {
           remoteExists: true,
-          cloudMetadata: options.cloudMetadata
+          cloudMetadata: options.cloudMetadata,
+          intendedRecord: localRecord,
+          normalizer: normalize
         });
         if (decision.conflict) {
           blockedRevision = true;
@@ -10629,37 +11083,66 @@ Notas importantes:
             code: decision.code,
             reason: decision.reason,
             localBaseSyncUpdatedAt: pendingChange.baseSyncUpdatedAt,
-            cloudSyncUpdatedAt: cleanText(rawRecord.syncUpdatedAt || rawRecord?._cloudSync?.syncedAt || rawRecord.updatedAt)
+            cloudSyncUpdatedAt: cleanText(rawRecord.syncUpdatedAt || rawRecord?._cloudSync?.syncedAt || rawRecord.updatedAt),
+            localSnapshot: pendingChange.localSnapshot
           });
         }
-        if (decision.alreadyApplied && isCloudDeletedRecord(rawRecord)) {
-          map.delete(id);
+        if (decision.alreadyApplied) {
+          alreadyAppliedIds.push(id);
+          if (isCloudDeletedRecord(rawRecord)) map.delete(id);
         }
         return;
       }
       if (isCloudDeletedRecord(rawRecord)) {
-        if (map.delete(id)) deleted += 1;
-        applied += 1;
+        if (map.delete(id)) {
+          deleted += 1;
+          applied += 1;
+        } else {
+          unchanged += 1;
+        }
         return;
       }
-      map.set(id, normalize(rawRecord));
+      const normalizedRemote = normalize(rawRecord);
+      const existing = map.get(id) || null;
+      const existingSyncUpdatedAt = getRecordSyncUpdatedAt(existing);
+      const remoteSyncUpdatedAt = getRecordSyncUpdatedAt(rawRecord);
+      const existingRevision = normalizeSyncRevision(existing?.syncRevision, 0);
+      const remoteRevision = normalizeSyncRevision(rawRecord?.syncRevision, 0);
+      const sameEnvelope = Boolean(existing)
+        && existingSyncUpdatedAt === remoteSyncUpdatedAt
+        && existingRevision === remoteRevision;
+      if (sameEnvelope && areSyncBusinessRecordsEquivalent(existing, normalizedRemote, normalize)) {
+        unchanged += 1;
+        return;
+      }
+      map.set(id, normalizedRemote);
       applied += 1;
     });
-    return { records: Array.from(map.values()), applied, deleted, protectedLocal, protectedIds, conflictIds, blockedRevision };
+    return { records: Array.from(map.values()), applied, deleted, unchanged, protectedLocal, protectedIds, conflictIds, alreadyAppliedIds, blockedRevision };
   }
 
   function mergeFullCloudRecordsPreservingPending(localRecords, cloudRecords, normalizer, moduleKey, options = {}) {
     const normalize = typeof normalizer === 'function' ? normalizer : ((record) => ({ ...(record || {}) }));
     const map = new Map();
+    const remoteById = new Map();
+    let remoteTombstones = 0;
     (Array.isArray(cloudRecords) ? cloudRecords : []).forEach((record) => {
-      if (isCloudDeletedRecord(record)) return;
+      const id = cleanText(record?.id);
+      if (!id) return;
+      remoteById.set(id, record);
+      if (isCloudDeletedRecord(record)) {
+        remoteTombstones += 1;
+        return;
+      }
       const normalized = normalize(record);
-      const id = cleanText(normalized?.id || record?.id);
-      if (id) map.set(id, normalized);
+      const normalizedId = cleanText(normalized?.id || id);
+      if (normalizedId) map.set(normalizedId, normalized);
     });
     let protectedLocal = 0;
     let blockedRevision = false;
+    const protectedIds = [];
     const conflictIds = [];
+    const alreadyAppliedIds = [];
     (Array.isArray(localRecords) ? localRecords : []).forEach((record) => {
       const normalized = normalize(record);
       const id = cleanText(normalized?.id || record?.id);
@@ -10667,10 +11150,13 @@ Notas importantes:
       const pendingChange = getPendingLocalSyncChange(moduleKey, id);
       if (!pendingChange) return;
       protectedLocal += 1;
-      const remoteRecord = map.get(id) || null;
+      protectedIds.push(id);
+      const remoteRecord = remoteById.get(id) || null;
       const decision = assessPendingCloudRecordConflict(pendingChange, remoteRecord, {
         remoteExists: Boolean(remoteRecord),
-        cloudMetadata: options.cloudMetadata
+        cloudMetadata: options.cloudMetadata,
+        intendedRecord: normalized,
+        normalizer: normalize
       });
       if (decision.conflict) {
         blockedRevision = true;
@@ -10682,12 +11168,28 @@ Notas importantes:
           code: decision.code,
           reason: decision.reason,
           localBaseSyncUpdatedAt: pendingChange.baseSyncUpdatedAt,
-          cloudSyncUpdatedAt: cleanText(remoteRecord?.syncUpdatedAt || remoteRecord?._cloudSync?.syncedAt || remoteRecord?.updatedAt)
+          cloudSyncUpdatedAt: cleanText(remoteRecord?.syncUpdatedAt || remoteRecord?._cloudSync?.syncedAt || remoteRecord?.updatedAt),
+          localSnapshot: pendingChange.localSnapshot
         });
       }
-      if (!decision.alreadyApplied) map.set(id, normalized);
+      if (decision.alreadyApplied) {
+        alreadyAppliedIds.push(id);
+        if (isCloudDeletedRecord(remoteRecord)) map.delete(id);
+        return;
+      }
+      map.set(id, normalized);
     });
-    return { records: Array.from(map.values()), applied: map.size, deleted: 0, protectedLocal, conflictIds, blockedRevision };
+    return {
+      records: Array.from(map.values()),
+      applied: remoteById.size,
+      resulting: map.size,
+      deleted: remoteTombstones,
+      protectedLocal,
+      protectedIds,
+      conflictIds,
+      alreadyAppliedIds,
+      blockedRevision
+    };
   }
 
   function applyIncrementalFacturasChanges(records = [], options = {}) {
@@ -10755,6 +11257,7 @@ Notas importantes:
         modules: [],
         appliedModules: [],
         applied: 0,
+        unchanged: 0,
         deleted: 0,
         tombstones: Number(result.tombstoneCount) || 0,
         protectedLocal: 0,
@@ -10779,6 +11282,7 @@ Notas importantes:
       const registerMergeStats = (key, merged) => {
         stats.modules.push(key);
         stats.applied += Number(merged?.applied) || 0;
+        stats.unchanged += Number(merged?.unchanged) || 0;
         stats.deleted += Number(merged?.deleted) || 0;
         stats.protectedLocal += Number(merged?.protectedLocal) || 0;
         stats.conflicts += Array.isArray(merged?.conflictIds) ? merged.conflictIds.length : 0;
@@ -10814,7 +11318,12 @@ Notas importantes:
         try {
           const pendingConfig = getPendingLocalSyncChange('configuracion', FIRESTORE_METADATA_SYSTEM_ID);
           if (pendingConfig) {
-            const decision = assessPendingCloudRecordConflict(pendingConfig, changes.configuracion, { remoteExists: isPlainObject(changes.configuracion), cloudMetadata: result.metadata });
+            const decision = assessPendingCloudRecordConflict(pendingConfig, changes.configuracion, {
+              remoteExists: isPlainObject(changes.configuracion),
+              cloudMetadata: result.metadata,
+              intendedRecord: normalizeConfiguracion(nextData.configuracion || {}),
+              normalizer: normalizeConfiguracion
+            });
             stats.protectedLocal += 1;
             stats.modules.push('configuracion');
             blockedModules.add('configuracion');
@@ -10897,6 +11406,7 @@ Notas importantes:
         lastIncrementalFailedModules: stats.blockedModules,
         lastIncrementalDownloadedRecords: Number(result.recordCount) || 0,
         lastIncrementalAppliedRecords: stats.applied,
+        lastIncrementalUnchangedRecords: stats.unchanged,
         lastIncrementalTombstones: stats.tombstones,
         lastIncrementalConflicts: stats.conflicts
       };
@@ -10938,16 +11448,38 @@ Notas importantes:
       const cloudSnapshot = normalizeData(result.snapshot);
       const previousMetadata = isPlainObject(appData?.metadata) ? clonePlainObject(appData.metadata, {}) : {};
       const blockedModules = new Set();
-      const stats = { modules: [], applied: 0, deleted: 0, protectedLocal: 0, conflicts: 0, blockedModules: [] };
+      const stats = {
+        modules: [],
+        applied: 0,
+        resulting: 0,
+        deleted: 0,
+        protectedLocal: 0,
+        conflicts: 0,
+        blockedModules: []
+      };
       const nextData = { ...cloudSnapshot };
-      const mergeModule = (key, normalizer) => {
-        const merged = mergeFullCloudRecordsPreservingPending(appData?.[key], cloudSnapshot[key], normalizer, key, { cloudMetadata: result.metadata || cloudSnapshot.metadata });
-        nextData[key] = merged.records;
+      let stagedFacturasData = null;
+      let stagedNotasData = null;
+      let stagedActivityLog = null;
+      const stagedConsecutivos = clonePlainObject(result.consecutivos || {}, {});
+
+      const registerFullMerge = (key, merged) => {
         stats.modules.push(key);
-        stats.applied += Number(merged.applied) || 0;
-        stats.protectedLocal += Number(merged.protectedLocal) || 0;
-        stats.conflicts += Array.isArray(merged.conflictIds) ? merged.conflictIds.length : 0;
-        if (merged.blockedRevision) blockedModules.add(key);
+        stats.applied += Number(merged?.applied) || 0;
+        stats.resulting += Number(merged?.resulting ?? merged?.records?.length) || 0;
+        stats.deleted += Number(merged?.deleted) || 0;
+        stats.protectedLocal += Number(merged?.protectedLocal) || 0;
+        stats.conflicts += Array.isArray(merged?.conflictIds) ? merged.conflictIds.length : 0;
+        if (merged?.blockedRevision) blockedModules.add(key);
+      };
+      const mergeModule = (key, normalizer) => {
+        const cloudRecords = [
+          ...(Array.isArray(cloudSnapshot[key]) ? cloudSnapshot[key] : []),
+          ...(Array.isArray(result?.tombstonesByModule?.[key]) ? result.tombstonesByModule[key] : [])
+        ];
+        const merged = mergeFullCloudRecordsPreservingPending(appData?.[key], cloudRecords, normalizer, key, { cloudMetadata: result.sourceMetadata || result.metadata || cloudSnapshot.metadata });
+        nextData[key] = merged.records;
+        registerFullMerge(key, merged);
       };
 
       CATALOGS.forEach((catalog) => mergeModule(catalog.id, (record) => normalizeCatalogRecord(record, catalog)));
@@ -10962,14 +11494,17 @@ Notas importantes:
       mergeModule('exportacionesExcel', normalizeExcelExportRecord);
 
       const pendingConfig = getPendingLocalSyncChange('configuracion', FIRESTORE_METADATA_SYSTEM_ID);
+      stats.modules.push('configuracion');
       if (pendingConfig) {
         const decision = assessPendingCloudRecordConflict(pendingConfig, cloudSnapshot.configuracion, {
           remoteExists: isPlainObject(cloudSnapshot.configuracion),
-          cloudMetadata: result.metadata || cloudSnapshot.metadata
+          cloudMetadata: result.sourceMetadata || result.metadata || cloudSnapshot.metadata,
+          intendedRecord: normalizeConfiguracion(appData.configuracion || {}),
+          normalizer: normalizeConfiguracion
         });
         nextData.configuracion = normalizeConfiguracion(appData.configuracion || {});
-        stats.modules.push('configuracion');
         stats.protectedLocal += 1;
+        stats.resulting += 1;
         if (decision.conflict) {
           blockedModules.add('configuracion');
           stats.conflicts += 1;
@@ -10983,40 +11518,51 @@ Notas importantes:
             cloudSyncUpdatedAt: cleanText(cloudSnapshot.configuracion?.syncUpdatedAt || cloudSnapshot.configuracion?._cloudSync?.syncedAt || cloudSnapshot.configuracion?.updatedAt)
           });
         }
+      } else {
+        const configRecords = Number(result?.fullReadModuleSummaries?.configuracion?.recordsConsidered) || 0;
+        stats.applied += configRecords;
+        stats.resulting += configRecords;
       }
 
       if (result.facturasModulo) {
         const localFacturas = getFacturasData();
         const cloudFacturas = normalizeFacturasData(result.facturasModulo);
-        const merged = mergeFullCloudRecordsPreservingPending(localFacturas.facturas, cloudFacturas.facturas, normalizeFacturaModuloRecord, 'facturasModulo', { cloudMetadata: result.metadata || cloudSnapshot.metadata });
+        const cloudFacturaRecords = [
+          ...(Array.isArray(cloudFacturas.facturas) ? cloudFacturas.facturas : []),
+          ...(Array.isArray(result?.tombstonesByModule?.facturasModulo) ? result.tombstonesByModule.facturasModulo : [])
+        ];
+        const merged = mergeFullCloudRecordsPreservingPending(localFacturas.facturas, cloudFacturaRecords, normalizeFacturaModuloRecord, 'facturasModulo', { cloudMetadata: result.sourceMetadata || result.metadata || cloudSnapshot.metadata });
         const cloudIds = Array.isArray(cloudFacturas.metadata?.cloudProviderCopyIds) ? cloudFacturas.metadata.cloudProviderCopyIds : [];
-        const mergedData = mergeFacturasCleanupMetadata({ ...cloudFacturas, facturas: merged.records }, cloudIds);
-        saveFacturasData(mergedData);
-        registerPendingFacturasCleanupDeletes(mergedData);
-        stats.modules.push('facturasModulo');
-        stats.applied += merged.records.length;
-        stats.protectedLocal += merged.protectedLocal;
-        stats.conflicts += merged.conflictIds.length;
-        if (merged.blockedRevision) blockedModules.add('facturasModulo');
+        stagedFacturasData = mergeFacturasCleanupMetadata({ ...cloudFacturas, facturas: merged.records }, cloudIds);
+        registerFullMerge('facturasModulo', merged);
       }
 
       if (result.notasModulo) {
         const localNotas = buildCloudNotasRecords(cloneNotasModuleData());
-        const cloudNotas = buildCloudNotasRecords(result.notasModulo);
-        const merged = mergeFullCloudRecordsPreservingPending(localNotas, cloudNotas, (record) => ({ ...(record || {}) }), 'notasModulo', { cloudMetadata: result.metadata || cloudSnapshot.metadata });
-        saveNotasData(rebuildNotasDataFromCloud(merged.records));
-        stats.modules.push('notasModulo');
-        stats.applied += merged.records.length;
-        stats.protectedLocal += merged.protectedLocal;
-        stats.conflicts += merged.conflictIds.length;
-        if (merged.blockedRevision) blockedModules.add('notasModulo');
+        const cloudNotas = [
+          ...buildCloudNotasRecords(result.notasModulo),
+          ...(Array.isArray(result?.tombstonesByModule?.notasModulo) ? result.tombstonesByModule.notasModulo : [])
+        ];
+        const merged = mergeFullCloudRecordsPreservingPending(localNotas, cloudNotas, (record) => ({ ...(record || {}) }), 'notasModulo', { cloudMetadata: result.sourceMetadata || result.metadata || cloudSnapshot.metadata });
+        stagedNotasData = rebuildNotasDataFromCloud(merged.records);
+        registerFullMerge('notasModulo', merged);
       }
 
       if (Array.isArray(result.bitacora)) {
-        appActivityLog = result.bitacora.map((entry) => normalizeActivityEntry(entry));
-        saveActivityLog(appActivityLog);
+        const cloudActivityRecords = [
+          ...result.bitacora,
+          ...(Array.isArray(result?.tombstonesByModule?.bitacora) ? result.tombstonesByModule.bitacora : [])
+        ];
+        const merged = mergeFullCloudRecordsPreservingPending(appActivityLog, cloudActivityRecords, normalizeActivityEntry, 'bitacora', { cloudMetadata: result.sourceMetadata || result.metadata || cloudSnapshot.metadata });
+        stagedActivityLog = merged.records.map((entry) => normalizeActivityEntry(entry));
+        registerFullMerge('bitacora', merged);
       }
-      applyCloudConsecutivosMirror(result.consecutivos || {});
+
+      const consecutivosCount = Number(result?.fullReadModuleSummaries?.consecutivos?.recordsConsidered) || 0;
+      stats.modules.push('consecutivos');
+      stats.applied += consecutivosCount;
+      stats.resulting += consecutivosCount;
+      stats.deleted += Number(result?.fullReadModuleSummaries?.consecutivos?.tombstones) || 0;
 
       stats.blockedModules = Array.from(blockedModules);
       nextData.metadata = sanitizeLocalIncrementalMetadata({
@@ -11044,6 +11590,17 @@ Notas importantes:
       appData = normalizeData(nextData);
       saveData(appData);
 
+      if (stagedFacturasData) {
+        saveFacturasData(stagedFacturasData);
+        registerPendingFacturasCleanupDeletes(stagedFacturasData);
+      }
+      if (stagedNotasData) saveNotasData(stagedNotasData);
+      if (stagedActivityLog) {
+        appActivityLog = stagedActivityLog;
+        saveActivityLog(appActivityLog);
+      }
+      applyCloudConsecutivosMirror(stagedConsecutivos);
+
       reconcileWorkPeriodSelectionAfterDataChange();
       syncCasaFiltersWithActiveWorkPeriod({ force: true, preserveCategory: true });
       cloudOperationState.active = true;
@@ -11057,8 +11614,8 @@ Notas importantes:
         ? `${stats.conflicts} conflicto(s) protegido(s) durante la lectura completa.`
         : '';
       cloudOperationState.message = stats.conflicts
-        ? `Sincronización completa aplicada parcialmente: ${updatedRecordCount} registro(s). ${stats.conflicts} conflicto(s) quedaron pendientes.`
-        : `Sincronización completa finalizada: ${updatedRecordCount} registro(s) aplicados. Motivo: ${getFullSyncReasonLabel(result.fullSyncReason)}.`;
+        ? `Sincronización completa aplicada parcialmente: ${updatedRecordCount} registro(s) procesado(s). ${stats.conflicts} conflicto(s) quedaron pendientes.`
+        : `Sincronización completa finalizada: ${updatedRecordCount} registro(s) procesado(s). Motivo: ${getFullSyncReasonLabel(result.fullSyncReason)}.`;
       result.message = cloudOperationState.message;
       result.mergeStats = stats;
       result.updatedRecordCount = updatedRecordCount;
@@ -11111,7 +11668,11 @@ Notas importantes:
             fullSyncReason,
             allowExistingBaseline: opts.allowExistingBaseline === true
           }),
-        { message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
+        {
+          ms: forceFull ? FIRESTORE_FULL_SYNC_TIMEOUT_MS : FIRESTORE_OPERATION_TIMEOUT_MS,
+          message: forceFull ? 'Tiempo de espera agotado durante la sincronización completa.' : FIRESTORE_TIMEOUT_REFRESH_MESSAGE,
+          code: forceFull ? 'app/full-sync-timeout' : 'app/refresh-cloud-timeout'
+        }
       );
 
       if (!result.ok && result.requiresAdministrativeFullSync === true) {
@@ -11159,7 +11720,11 @@ Notas importantes:
                 requireActive: true,
                 fullSyncReason: 'first_use'
               }),
-              { message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
+              {
+                ms: FIRESTORE_FULL_SYNC_TIMEOUT_MS,
+                message: 'Tiempo de espera agotado durante la sincronización completa de primer uso.',
+                code: 'app/full-sync-timeout'
+              }
             );
           } else {
             result = await withOperationTimeout(
@@ -11231,23 +11796,57 @@ Notas importantes:
           result.diagnostic = diagnostic;
         } else {
           const applied = applyCloudSnapshotToRuntime(result);
-          if (applied && typeof KSAFirebaseAdapter.createIncrementalBaselineAfterFullSync === 'function') {
+          if (!applied) {
+            result.ok = false;
+            result.code = 'cloud/full-sync-apply-failed';
+            result.message = 'La lectura completa terminó, pero no fue posible aplicar la fotografía local de forma segura.';
+            cloudOperationState.lastError = result.message;
+            cloudOperationState.message = result.message;
+          } else {
             const mergeStats = isPlainObject(result.mergeStats) ? result.mergeStats : {};
             const localMetadataBeforeBaseline = clonePlainObject(appData?.metadata || {}, {});
-            const baselineResult = await withOperationTimeout(
-              () => KSAFirebaseAdapter.createIncrementalBaselineAfterFullSync({
+            const blockedModules = Array.from(new Set((Array.isArray(mergeStats.blockedModules) ? mergeStats.blockedModules : []).map(cleanText).filter(Boolean)));
+            const conflictCount = Number(mergeStats.conflicts) || 0;
+            const sourceValidation = getIncrementalBaselineValidation(result.sourceMetadata || {}, { requiredModules: result.downloadedModules });
+            let baselineResult = null;
+
+            if (sourceValidation.ok && conflictCount === 0 && blockedModules.length === 0) {
+              baselineResult = adoptConfirmedCloudBaselineAfterFullRead({
                 sourceMetadata: result.sourceMetadata || {},
                 localMetadata: localMetadataBeforeBaseline,
                 fullReadAt: result.fullReadCompletedAt || result.lastSyncAt,
                 downloadedModules: result.downloadedModules,
-                conflictCount: Number(mergeStats.conflicts) || 0,
-                blockedModules: Array.isArray(mergeStats.blockedModules) ? mergeStats.blockedModules : [],
                 pendingLocalChanges: getSessionChangePendingCount(),
-                protectedLocalCount: Number(mergeStats.protectedLocal) || 0,
-                applicationComplete: true
-              }),
-              { message: 'Tiempo de espera agotado al crear el baseline incremental.', code: 'cloud/incremental-baseline-write-failed' }
-            );
+                protectedLocalCount: Number(mergeStats.protectedLocal) || 0
+              });
+            } else if (typeof KSAFirebaseAdapter.createIncrementalBaselineAfterFullSync === 'function') {
+              baselineResult = await withOperationTimeout(
+                () => KSAFirebaseAdapter.createIncrementalBaselineAfterFullSync({
+                  sourceMetadata: result.sourceMetadata || {},
+                  localMetadata: localMetadataBeforeBaseline,
+                  fullReadAt: result.fullReadCompletedAt || result.lastSyncAt,
+                  downloadedModules: result.downloadedModules,
+                  conflictCount,
+                  blockedModules,
+                  pendingLocalChanges: getSessionChangePendingCount(),
+                  protectedLocalCount: Number(mergeStats.protectedLocal) || 0,
+                  applicationComplete: true
+                }),
+                {
+                  ms: FIRESTORE_BASELINE_TIMEOUT_MS,
+                  message: 'Tiempo de espera agotado al confirmar el baseline incremental.',
+                  code: 'cloud/incremental-baseline-write-failed'
+                }
+              );
+            } else {
+              baselineResult = {
+                ok: false,
+                action: 'baselineUnavailable',
+                code: sourceValidation.code || 'cloud/incremental-baseline-write-failed',
+                message: sourceValidation.cause || 'No existe una vía segura para confirmar el baseline incremental.'
+              };
+            }
+
             result.baselineResult = baselineResult;
             if (baselineResult?.ok) {
               const confirmedMetadata = clonePlainObject(baselineResult.metadata || {}, {});
@@ -11258,14 +11857,18 @@ Notas importantes:
                 baselineResult.message = confirmedValidation.cause;
               }
             }
-            result.baselineCreated = baselineResult?.ok === true;
+            result.baselineCreated = baselineResult?.ok === true && baselineResult?.action === 'createIncrementalBaselineAfterFullSync';
+            result.baselineAdopted = baselineResult?.ok === true && baselineResult?.action === 'adoptConfirmedCloudBaselineAfterFullRead';
             if (baselineResult?.ok) {
+              const baselineWasAdopted = result.baselineAdopted === true;
               const diagnostic = baselineResult.diagnostic || buildIncrementalDiagnosticEntry({
-                code: 'cloud/incremental-baseline-ready',
-                cause: 'Baseline incremental creado correctamente.',
-                stage: 'baseline_confirmation',
+                code: baselineWasAdopted ? 'cloud/incremental-baseline-adopted' : 'cloud/incremental-baseline-ready',
+                cause: baselineWasAdopted
+                  ? 'Baseline incremental local confirmado a partir de Firestore.'
+                  : 'Baseline incremental creado correctamente.',
+                stage: baselineWasAdopted ? 'baseline_local_adoption' : 'baseline_confirmation',
                 localMetadata: baselineResult.metadata,
-                cloudMetadata: baselineResult.metadata,
+                cloudMetadata: result.sourceMetadata || baselineResult.metadata,
                 pendingLocalChanges: baselineResult.pendingLocalChanges,
                 protectedConflicts: 0,
                 alignmentStatus: baselineResult.alignmentStatus,
@@ -11289,7 +11892,10 @@ Notas importantes:
               const pendingSuffix = Number(baselineResult.pendingLocalChanges) > 0
                 ? ` ${Number(baselineResult.pendingLocalChanges)} cambio(s) local(es) pendiente(s) permanecen protegidos.`
                 : '';
-              result.message = `Sincronización completa finalizada: ${Number(result.updatedRecordCount) || 0} registro(s) aplicados de ${Number(result.downloadedRecordCount ?? result.recordCount) || 0} descargados. Baseline incremental creado correctamente.${pendingSuffix}`;
+              const baselineMessage = baselineWasAdopted
+                ? 'Baseline incremental local confirmado sin reescribir la metadata global.'
+                : 'Baseline incremental creado correctamente.';
+              result.message = `Sincronización completa finalizada: ${Number(result.updatedRecordCount) || 0} registro(s) procesado(s) de ${Number(result.downloadedRecordCount ?? result.recordCount) || 0} descargados. ${baselineMessage}${pendingSuffix}`;
               cloudOperationState.lastError = '';
               cloudOperationState.message = result.message;
             } else {
@@ -11301,7 +11907,7 @@ Notas importantes:
                 cloudMetadata: baselineResult?.cloudMetadata || result.sourceMetadata || {},
                 pendingLocalChanges: getSessionChangePendingCount(),
                 protectedConflicts: getSyncConflictCount(),
-                blockedModules: Array.isArray(mergeStats.blockedModules) ? mergeStats.blockedModules : [],
+                blockedModules,
                 alignmentStatus: 'baseline_unconfirmed'
               });
               appData.metadata = appendIncrementalDiagnosticMetadata(sanitizeLocalIncrementalMetadata({
@@ -11324,7 +11930,9 @@ Notas importantes:
               result.fullDownloadApplied = true;
               result.code = cleanText(baselineResult?.code || 'cloud/incremental-baseline-write-failed');
               result.diagnostic = diagnostic;
-              result.message = 'Los datos fueron descargados, pero el baseline incremental no pudo confirmarse en Firestore. La sincronización incremental continúa deshabilitada. Revise Diagnóstico.';
+              result.message = conflictCount > 0 || blockedModules.length > 0
+                ? 'Los datos fueron descargados y los cambios locales quedaron protegidos, pero existen conflictos pendientes. La sincronización incremental no avanzará esos módulos hasta resolverlos. Revise Diagnóstico.'
+                : 'Los datos fueron descargados, pero el baseline incremental no pudo confirmarse. La sincronización incremental continúa deshabilitada. Revise Diagnóstico.';
               cloudOperationState.lastError = `${result.code} · ${cleanText(baselineResult?.message || 'No se pudo confirmar el baseline incremental.')}`;
               cloudOperationState.message = result.message;
             }
@@ -11339,7 +11947,9 @@ Notas importantes:
       if (opts.render === true && typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
       return result;
     } catch (error) {
-      cloudOperationState.lastError = cleanText(error?.message || 'No se pudo leer Firestore.');
+      cloudOperationState.lastError = isOperationTimeoutError(error)
+        ? (forceFull ? 'Tiempo de espera agotado durante la sincronización completa.' : FIRESTORE_TIMEOUT_REFRESH_MESSAGE)
+        : cleanText(error?.message || 'No se pudo leer Firestore.');
       cloudOperationState.message = cloudOperationState.lastError;
       if (opts.render === true && typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
       return { ok: false, message: cloudOperationState.lastError, error };
@@ -11351,105 +11961,316 @@ Notas importantes:
   async function handleCloudDataRefresh(button = null) {
     if (!requireRolePermission('updateData', configState, { preserveScroll: true })) return null;
     if (cloudOperationState.isReading || cloudOperationState.isCheckingMetadata) return { ok: false, message: 'Ya hay una actualización de nube en curso.' };
+    if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.readCloudSyncMetadata || !KSAFirebaseAdapter?.readCloudIncrementalChanges) {
+      configState.message = 'Adaptador Firestore incremental no disponible.';
+      configState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return { ok: false, code: 'cloud/incremental-adapter-unavailable', message: configState.message };
+    }
+
     cloudOperationState.isCheckingMetadata = true;
     if (button) button.disabled = true;
     configState.message = 'Verificando si existen cambios en Firestore...';
     configState.messageType = 'success';
     renderRoute({ preserveScroll: true });
-    try {
-      let prefetchedMetadata = null;
-      if (typeof KSAFirebaseAdapter !== 'undefined' && KSAFirebaseAdapter?.readCloudSyncMetadata) {
-        const metadataResult = await withOperationTimeout(
-          () => KSAFirebaseAdapter.readCloudSyncMetadata({ requireActive: true }),
-          { message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
-        );
-        if (!metadataResult?.ok) {
-          const metadataMessage = cleanText(metadataResult?.message || 'No se pudieron verificar los datos en Firestore.');
-          configState.message = metadataMessage === FIRESTORE_TIMEOUT_REFRESH_MESSAGE
-            ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE
-            : metadataMessage;
-          configState.messageType = 'error';
-          cloudOperationState.lastError = configState.message;
-          cloudOperationState.message = configState.message;
-          cloudOperationState.isCheckingMetadata = false;
-          renderRoute({ preserveScroll: true });
-          return metadataResult;
-        }
 
-        const verifiedMetadata = metadataResult.metadata;
-        prefetchedMetadata = isPlainObject(metadataResult.rawMetadata) ? metadataResult.rawMetadata : verifiedMetadata;
-        const comparison = compareSyncMetadataRevisions(appData?.metadata, verifiedMetadata);
-        const localBaselineValidation = getIncrementalBaselineValidation(appData?.metadata);
-        const cloudBaselineValidation = getIncrementalBaselineValidation(verifiedMetadata);
-        if (comparison.matches && localBaselineValidation.ok && cloudBaselineValidation.ok) {
-          const checkedAt = nowIso();
-          appData.metadata = {
-            ...(isPlainObject(appData.metadata) ? appData.metadata : {}),
-            syncContract: normalizeSyncContractMetadata(verifiedMetadata?.syncContract || appData.metadata?.syncContract),
-            syncState: normalizeSyncStateMetadata(verifiedMetadata?.syncState || appData.metadata?.syncState),
-            lastCloudMetadataCheckAt: checkedAt,
-            lastCloudRevisionChecked: comparison.cloudRevision
-          };
-          const diagnostic = buildIncrementalDiagnosticEntry({
-            code: 'cloud/already-current',
-            cause: 'La metadata local y la metadata de Firestore coinciden.',
-            stage: 'incremental_compare',
-            localMetadata: appData.metadata,
-            cloudMetadata: verifiedMetadata,
-            at: checkedAt
-          });
-          appData.metadata = appendIncrementalDiagnosticMetadata(appData.metadata, diagnostic);
-          saveData(appData);
-          cloudOperationState.active = true;
-          cloudOperationState.lastRefreshAt = checkedAt;
-          cloudOperationState.lastSyncAt = cloudOperationState.lastSyncAt || checkedAt;
-          cloudOperationState.lastError = '';
-          cloudOperationState.message = 'Los datos ya están actualizados.';
-          configState.message = 'Los datos ya están actualizados.';
-          configState.messageType = 'success';
-          const result = {
-            ok: true,
-            action: 'handleCloudDataRefresh',
-            code: 'cloud/already-current',
-            message: 'Los datos ya están actualizados.',
-            skippedDownload: true,
-            comparison,
-            metadata: verifiedMetadata
-          };
-          cloudOperationState.isCheckingMetadata = false;
-          renderRoute({ preserveScroll: true });
-          return result;
-        }
+    try {
+      const localMetadataBeforeRead = clonePlainObject(isPlainObject(appData?.metadata) ? appData.metadata : {}, {});
+      const metadataResult = await withOperationTimeout(
+        () => KSAFirebaseAdapter.readCloudSyncMetadata({ requireActive: true }),
+        { message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
+      );
+      if (!metadataResult?.ok) {
+        const metadataMessage = cleanText(metadataResult?.message || 'No se pudieron verificar los datos en Firestore.');
+        configState.message = metadataMessage === FIRESTORE_TIMEOUT_REFRESH_MESSAGE
+          ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE
+          : metadataMessage;
+        configState.messageType = 'error';
+        cloudOperationState.lastError = configState.message;
+        cloudOperationState.message = configState.message;
+        return metadataResult;
+      }
+
+      const verifiedMetadata = metadataResult.metadata;
+      const prefetchedMetadata = isPlainObject(metadataResult.rawMetadata) ? metadataResult.rawMetadata : verifiedMetadata;
+      const comparison = compareSyncMetadataRevisions(localMetadataBeforeRead, verifiedMetadata);
+
+      if (comparison.matches) {
+        const checkedAt = nowIso();
+        appData.metadata = {
+          ...(isPlainObject(appData.metadata) ? appData.metadata : {}),
+          syncRevisionCheckAvailable: true,
+          syncRevisionMetadataAvailable: verifiedMetadata?.syncRevisionMetadataAvailable === true,
+          syncContract: normalizeSyncContractMetadata(verifiedMetadata?.syncContract || appData.metadata?.syncContract),
+          syncState: mergeCloudRevisionStateWithLocalReadCursors(verifiedMetadata?.syncState, appData.metadata?.syncState),
+          lastCloudMetadataCheckAt: checkedAt,
+          lastCloudRevisionChecked: comparison.cloudRevision,
+          lastCloudSyncMode: 'metadata_check',
+          lastCloudRefreshDecision: 'skip_incremental_download_no_changes'
+        };
+        const diagnostic = buildIncrementalDiagnosticEntry({
+          code: 'cloud/already-current',
+          cause: 'La revisión local y la revisión de Firestore coinciden; no se descargaron módulos ni registros.',
+          stage: 'metadata_compare',
+          localMetadata: appData.metadata,
+          cloudMetadata: verifiedMetadata,
+          downloadedModules: [],
+          downloadedRecords: 0,
+          appliedRecords: 0,
+          alignmentStatus: 'aligned',
+          at: checkedAt
+        });
+        appData.metadata = appendIncrementalDiagnosticMetadata(appData.metadata, diagnostic);
+        saveData(appData);
+        cloudOperationState.active = true;
+        cloudOperationState.lastMode = 'metadata_check';
+        cloudOperationState.lastRefreshAt = checkedAt;
+        cloudOperationState.lastError = '';
+        cloudOperationState.message = 'Los datos ya están actualizados.';
+        configState.message = 'Los datos ya están actualizados.';
+        configState.messageType = 'success';
+        return {
+          ok: true,
+          action: 'handleCloudDataRefresh',
+          code: 'cloud/already-current',
+          message: 'Los datos ya están actualizados.',
+          skippedDownload: true,
+          downloadedModules: [],
+          downloadedRecordCount: 0,
+          updatedRecordCount: 0,
+          comparison,
+          metadata: appData.metadata,
+          diagnostic
+        };
+      }
+
+      if (!comparison.comparable) {
+        const checkedAt = nowIso();
+        const message = 'No se pudo confirmar una base incremental compatible. No se descargó la base completa automáticamente. Un Administrador puede usar “Sincronización completa” desde Datos y sincronización.';
+        const diagnostic = buildIncrementalDiagnosticEntry({
+          code: 'cloud/incremental-metadata-not-comparable',
+          cause: message,
+          stage: 'metadata_compare',
+          localMetadata: localMetadataBeforeRead,
+          cloudMetadata: verifiedMetadata,
+          failedModules: comparison.changedModules,
+          alignmentStatus: 'baseline_unconfirmed',
+          at: checkedAt
+        });
+        appData.metadata = appendIncrementalDiagnosticMetadata({
+          ...(isPlainObject(appData.metadata) ? appData.metadata : {}),
+          lastCloudMetadataCheckAt: checkedAt,
+          lastCloudRefreshDecision: 'incremental_blocked_metadata_not_comparable',
+          lastCloudSyncMode: 'incremental_blocked'
+        }, diagnostic);
+        saveData(appData);
+        configState.message = message;
+        configState.messageType = 'error';
+        cloudOperationState.lastError = message;
+        cloudOperationState.message = message;
+        return {
+          ok: false,
+          action: 'handleCloudDataRefresh',
+          code: 'cloud/incremental-metadata-not-comparable',
+          message,
+          comparison,
+          metadata: verifiedMetadata,
+          diagnostic,
+          requiresAdministrativeFullSync: true
+        };
+      }
+
+      const changedModules = Array.from(new Set((comparison.changedModules || []).map(cleanText).filter(Boolean)));
+      if (!changedModules.length) {
+        const message = 'La revisión general cambió, pero la metadata no identifica módulos modificados de forma segura. No se descargó la base completa. Revise Diagnóstico.';
+        const checkedAt = nowIso();
+        const diagnostic = buildIncrementalDiagnosticEntry({
+          code: 'cloud/incremental-changed-modules-missing',
+          cause: message,
+          stage: 'metadata_compare',
+          localMetadata: localMetadataBeforeRead,
+          cloudMetadata: verifiedMetadata,
+          alignmentStatus: 'metadata_incomplete',
+          at: checkedAt
+        });
+        appData.metadata = appendIncrementalDiagnosticMetadata({
+          ...(isPlainObject(appData.metadata) ? appData.metadata : {}),
+          lastCloudMetadataCheckAt: checkedAt,
+          lastCloudRefreshDecision: 'incremental_blocked_changed_modules_missing',
+          lastCloudSyncMode: 'incremental_blocked'
+        }, diagnostic);
+        saveData(appData);
+        configState.message = message;
+        configState.messageType = 'error';
+        cloudOperationState.lastError = message;
+        cloudOperationState.message = message;
+        return {
+          ok: false,
+          action: 'handleCloudDataRefresh',
+          code: 'cloud/incremental-changed-modules-missing',
+          message,
+          comparison,
+          metadata: verifiedMetadata,
+          diagnostic,
+          requiresAdministrativeFullSync: true
+        };
       }
 
       cloudOperationState.isCheckingMetadata = false;
-      const result = await activateAndLoadCloudOperation({
-        activateIfReady: false,
-        render: false,
-        prefetchedMetadata,
-        incremental: true,
-        changedModules: compareSyncMetadataRevisions(appData?.metadata, prefetchedMetadata).changedModules
-      });
-      const message = cleanText(result?.message || '');
-      const mergeConflicts = Number(result?.mergeStats?.conflicts) || 0;
-      const updatedRecords = Number(result?.updatedRecordCount) || 0;
-      const updatedModules = new Set(Array.isArray(result?.mergeStats?.modules) ? result.mergeStats.modules : (result?.downloadedModules || [])).size;
-      configState.message = result?.ok
-        ? (message || (result.action === 'readCloudIncrementalChanges'
-          ? `Actualización finalizada: ${updatedRecords} registro(s) actualizado(s) en ${updatedModules} módulo(s).`
-          : 'Datos actualizados correctamente.'))
-        : (message === FIRESTORE_TIMEOUT_REFRESH_MESSAGE ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : (message || 'No se pudieron actualizar los datos.'));
-      configState.messageType = result?.ok ? 'success' : 'error';
-      cloudOperationState.isCheckingMetadata = false;
+      cloudOperationState.isReading = true;
+      configState.message = `Se detectaron cambios en ${changedModules.length} módulo(s). Descargando únicamente los registros modificados...`;
+      configState.messageType = 'success';
       renderRoute({ preserveScroll: true });
+
+      const result = await withOperationTimeout(
+        () => KSAFirebaseAdapter.readCloudIncrementalChanges({
+          requireActive: true,
+          prefetchedMetadata,
+          localMetadata: localMetadataBeforeRead,
+          changedModules
+        }),
+        { message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
+      );
+
+      if (!result?.ok) {
+        const message = cleanText(result?.message || 'No se pudieron descargar los cambios incrementales.');
+        const failedAt = nowIso();
+        const diagnostic = result?.diagnostic || buildIncrementalDiagnosticEntry({
+          code: cleanText(result?.code || 'cloud/incremental-query-failed'),
+          cause: message,
+          stage: 'incremental_read',
+          localMetadata: localMetadataBeforeRead,
+          cloudMetadata: verifiedMetadata,
+          failedModules: result?.failedModules || result?.unsupportedModules || changedModules,
+          blockedModules: result?.failedModules || [],
+          moduleFailures: result?.moduleFailures || [],
+          downloadedModules: result?.downloadedModules || [],
+          downloadedRecords: result?.recordCount || 0,
+          tombstones: result?.tombstoneCount || 0,
+          alignmentStatus: 'incremental_failed',
+          at: failedAt
+        });
+        appData.metadata = appendIncrementalDiagnosticMetadata({
+          ...(isPlainObject(appData.metadata) ? appData.metadata : {}),
+          lastCloudMetadataCheckAt: failedAt,
+          lastCloudRefreshDecision: 'incremental_download_failed_no_full_fallback',
+          lastCloudSyncMode: 'incremental_failed'
+        }, diagnostic);
+        saveData(appData);
+        configState.message = message === FIRESTORE_TIMEOUT_REFRESH_MESSAGE ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : message;
+        configState.messageType = 'error';
+        cloudOperationState.lastError = configState.message;
+        cloudOperationState.message = configState.message;
+        return { ...result, diagnostic, comparison, skippedFullFallback: true };
+      }
+
+      const applied = applyCloudIncrementalToRuntime(result);
+      if (!applied) {
+        const message = 'La descarga incremental terminó, pero no fue posible aplicar los cambios recibidos.';
+        const failedAt = nowIso();
+        const diagnostic = buildIncrementalDiagnosticEntry({
+          code: 'cloud/incremental-apply-failed',
+          cause: message,
+          stage: 'incremental_apply',
+          localMetadata: appData?.metadata,
+          cloudMetadata: result.metadata || verifiedMetadata,
+          downloadedModules: result.downloadedModules,
+          failedModules: result.downloadedModules,
+          downloadedRecords: result.recordCount,
+          tombstones: result.tombstoneCount,
+          alignmentStatus: 'incremental_apply_failed',
+          at: failedAt
+        });
+        appData.metadata = appendIncrementalDiagnosticMetadata({
+          ...(isPlainObject(appData.metadata) ? appData.metadata : {}),
+          lastCloudRefreshDecision: 'incremental_apply_failed',
+          lastCloudSyncMode: 'incremental_failed'
+        }, diagnostic);
+        saveData(appData);
+        configState.message = message;
+        configState.messageType = 'error';
+        cloudOperationState.lastError = message;
+        cloudOperationState.message = message;
+        return { ...result, ok: false, code: 'cloud/incremental-apply-failed', message, diagnostic };
+      }
+
+      const checkedAt = result.lastSyncAt || nowIso();
+      const mergeStats = isPlainObject(result.mergeStats) ? result.mergeStats : {};
+      const blockedModules = Array.from(new Set((mergeStats.blockedModules || result.failedModules || []).map(cleanText).filter(Boolean)));
+      const appliedModules = Array.from(new Set((mergeStats.appliedModules || []).map(cleanText).filter(Boolean)));
+      const downloadedModules = Array.from(new Set((result.downloadedModules || []).map(cleanText).filter(Boolean)));
+      const downloadedRecords = Number(result.downloadedRecordCount ?? result.recordCount) || 0;
+      const appliedRecords = Number(result.updatedRecordCount) || 0;
+      const partial = result.partial === true || blockedModules.length > 0;
+      const diagnostic = buildIncrementalDiagnosticEntry({
+        code: partial ? 'cloud/incremental-partial' : 'cloud/incremental-read-ok',
+        cause: partial
+          ? 'La descarga incremental se aplicó parcialmente; los módulos protegidos conservaron sus datos locales.'
+          : 'La descarga incremental se aplicó únicamente sobre los módulos modificados.',
+        stage: partial ? 'incremental_partial_apply' : 'incremental_apply',
+        localMetadata: appData?.metadata,
+        cloudMetadata: result.metadata || verifiedMetadata,
+        downloadedModules,
+        appliedModules,
+        failedModules: blockedModules,
+        blockedModules,
+        downloadedRecords,
+        appliedRecords,
+        tombstones: mergeStats.tombstones ?? result.tombstoneCount,
+        moduleFailures: [
+          ...(Array.isArray(result.moduleFailures) ? result.moduleFailures : []),
+          ...(Array.isArray(mergeStats.applyFailures) ? mergeStats.applyFailures : [])
+        ],
+        protectedConflicts: Number(mergeStats.conflicts) || 0,
+        alignmentStatus: partial ? 'partial' : 'aligned',
+        at: checkedAt
+      });
+      appData.metadata = appendIncrementalDiagnosticMetadata({
+        ...(isPlainObject(appData.metadata) ? appData.metadata : {}),
+        lastCloudMetadataCheckAt: checkedAt,
+        lastCloudRevisionChecked: comparison.cloudRevision,
+        lastCloudRefreshDecision: partial ? 'incremental_partial' : 'incremental_modules_only',
+        lastCloudSyncMode: 'incremental',
+        lastStage3IncrementalRefreshAt: checkedAt,
+        lastIncrementalChangedModules: changedModules,
+        lastIncrementalDownloadedModules: downloadedModules,
+        lastIncrementalAppliedModules: appliedModules,
+        lastIncrementalBlockedModules: blockedModules
+      }, diagnostic);
+      saveData(appData);
+
+      const moduleCount = downloadedModules.length;
+      const baseMessage = partial
+        ? `Actualización incremental parcial: ${appliedRecords} registro(s) actualizado(s) de ${downloadedRecords} descargados en ${moduleCount} módulo(s). Revise Diagnóstico.`
+        : `Datos actualizados incrementalmente: ${appliedRecords} registro(s) actualizado(s) en ${moduleCount} módulo(s).`;
+      result.code = partial ? 'cloud/incremental-partial' : 'cloud/incremental-read-ok';
+      result.message = baseMessage;
+      result.diagnostic = diagnostic;
+      result.metadata = appData.metadata;
+      result.comparison = comparison;
+      result.changedModules = changedModules;
+      result.skippedDownload = false;
+      result.skippedFullFallback = true;
+      result.syncMode = 'incremental';
+      cloudOperationState.active = true;
+      cloudOperationState.lastMode = 'incremental';
+      cloudOperationState.lastRefreshAt = checkedAt;
+      cloudOperationState.lastSyncAt = checkedAt;
+      cloudOperationState.lastError = partial ? `${blockedModules.length} módulo(s) pendiente(s).` : '';
+      cloudOperationState.message = baseMessage;
+      configState.message = baseMessage;
+      configState.messageType = partial ? 'error' : 'success';
       return result;
     } catch (error) {
-      cloudOperationState.isReading = false;
-      cloudOperationState.isCheckingMetadata = false;
       configState.message = isOperationTimeoutError(error) ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : (cleanText(error?.message) || 'No se pudieron actualizar los datos.');
       configState.messageType = 'error';
+      cloudOperationState.lastError = configState.message;
+      cloudOperationState.message = configState.message;
+      return { ok: false, message: configState.message, error };
+    } finally {
+      cloudOperationState.isReading = false;
+      cloudOperationState.isCheckingMetadata = false;
       renderRoute({ preserveScroll: true });
-      return { ok: false, message: configState.message };
     }
   }
 
@@ -11467,7 +12288,7 @@ Notas importantes:
     }
     const confirmed = typeof window === 'undefined' || typeof window.confirm !== 'function'
       ? true
-      : window.confirm('La sincronización completa leerá todas las colecciones de Firestore. Úsala solo para recuperación, migración o diagnóstico. La fusión segura conservará cambios locales pendientes. ¿Continuar?');
+      : window.confirm('La sincronización completa leerá todas las colecciones de Firestore. Úsala solo para recuperación, migración, importación o diagnóstico. La fusión segura conservará cambios locales pendientes. ¿Continuar?');
     if (!confirmed) return { ok: false, cancelled: true, message: 'Sincronización completa cancelada.' };
 
     if (button) button.disabled = true;
@@ -11487,8 +12308,8 @@ Notas importantes:
       const conflicts = Number(result?.mergeStats?.conflicts) || 0;
       configState.message = result?.ok
         ? (conflicts
-          ? `Sincronización completa finalizada parcialmente: ${updatedRecords} registro(s) aplicados y ${conflicts} conflicto(s) protegidos.`
-          : (cleanText(result?.message) || `Sincronización completa finalizada: ${updatedRecords} registro(s) aplicados de ${downloadedRecords} descargados. Baseline incremental creado correctamente.`))
+          ? `Sincronización completa finalizada parcialmente: ${updatedRecords} registro(s) procesado(s) y ${conflicts} conflicto(s) protegido(s).`
+          : (cleanText(result?.message) || `Sincronización completa finalizada: ${updatedRecords} registro(s) procesado(s) de ${downloadedRecords} descargados.`))
         : (result?.fullDownloadApplied
           ? (cleanText(result?.message) || 'Los datos fueron descargados, pero la sincronización incremental todavía no quedó habilitada.')
           : (cleanText(result?.message) || 'No se pudo completar la sincronización completa.'));
@@ -11496,7 +12317,9 @@ Notas importantes:
       renderRoute({ preserveScroll: true });
       return result;
     } catch (error) {
-      configState.message = isOperationTimeoutError(error) ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : (cleanText(error?.message) || 'No se pudo completar la sincronización completa.');
+      configState.message = isOperationTimeoutError(error)
+        ? 'Tiempo de espera agotado durante la sincronización completa.'
+        : (cleanText(error?.message) || 'No se pudo completar la sincronización completa.');
       configState.messageType = 'error';
       renderRoute({ preserveScroll: true });
       return { ok: false, message: configState.message };
@@ -27338,6 +28161,7 @@ Notas importantes:
       lastIncrementalFailedModules: Array.isArray(appData?.metadata?.lastIncrementalFailedModules) ? appData.metadata.lastIncrementalFailedModules.map(cleanText).filter(Boolean) : [],
       lastIncrementalDownloadedRecords: Number(appData?.metadata?.lastIncrementalDownloadedRecords) || 0,
       lastIncrementalAppliedRecords: Number(appData?.metadata?.lastIncrementalAppliedRecords) || 0,
+      lastIncrementalUnchangedRecords: Number(appData?.metadata?.lastIncrementalUnchangedRecords) || 0,
       lastIncrementalTombstones: Number(appData?.metadata?.lastIncrementalTombstones) || 0,
       lastIncrementalComparisonAt: cleanText(appData?.metadata?.lastIncrementalComparisonAt),
       incrementalDiagnosticCode: cleanText(incrementalDiagnostic.code),
@@ -27406,7 +28230,7 @@ Notas importantes:
           <div class="status-item"><strong>Baseline nube disponible</strong><span>${info.baselineCloudAvailable ? 'Sí' : 'No verificado'}</span><small>${escapeHtml(info.baselineCloudCode || '—')}</small></div>
           <div class="status-item"><strong>Contrato local / nube</strong><span>${escapeHtml(info.localContractVersion || '—')} / ${escapeHtml(info.cloudContractVersion || '—')}</span></div>
           <div class="status-item"><strong>Última descarga incremental</strong><span>${escapeHtml(String(info.lastIncrementalDownloadedRecords))} descargado(s)</span><small>${escapeHtml(info.lastIncrementalDownloadedModules.length ? info.lastIncrementalDownloadedModules.join(', ') : '—')}</small></div>
-          <div class="status-item"><strong>Última aplicación incremental</strong><span>${escapeHtml(String(info.lastIncrementalAppliedRecords))} aplicado(s)</span><small>${escapeHtml(info.lastIncrementalAppliedModules.length ? info.lastIncrementalAppliedModules.join(', ') : '—')}</small></div>
+          <div class="status-item"><strong>Última aplicación incremental</strong><span>${escapeHtml(String(info.lastIncrementalAppliedRecords))} aplicado(s)</span><small>Sin cambios: ${escapeHtml(String(info.lastIncrementalUnchangedRecords || 0))} · ${escapeHtml(info.lastIncrementalAppliedModules.length ? info.lastIncrementalAppliedModules.join(', ') : '—')}</small></div>
           <div class="status-item"><strong>Módulos pendientes</strong><span>${escapeHtml(info.lastIncrementalFailedModules.length ? info.lastIncrementalFailedModules.join(', ') : '—')}</span><small>Tombstones: ${escapeHtml(String(info.lastIncrementalTombstones))}</small></div>
           <div class="status-item"><strong>Última comparación incremental</strong><span>${escapeHtml(info.lastIncrementalComparisonAt ? formatDateTime(info.lastIncrementalComparisonAt) : '—')}</span><small>Local ${escapeHtml(String(info.localSyncRevision || 0))} · Nube ${escapeHtml(String(info.cloudSyncRevision || 0))}</small></div>
           <div class="status-item"><strong>Código diagnóstico</strong><span>${escapeHtml(info.incrementalDiagnosticCode || '—')}</span><small>${escapeHtml(info.incrementalDiagnosticStage || '—')} · ${escapeHtml(info.incrementalDiagnosticModule || '—')}</small></div>
@@ -28274,7 +29098,7 @@ Notas importantes:
             <div class="status-item"><strong>Cambios de sesión pendientes</strong><span data-session-change-count>${escapeHtml(String(getSessionChangePendingCount()))}</span></div>
             <div class="status-item"><strong>Conflictos protegidos</strong><span data-sync-conflict-count>${escapeHtml(String(getSyncConflictCount()))}</span></div>
           </div>
-          <p class="compact-note">Guardar datos sube solo cambios de esta sesión. Actualizar datos usa sincronización incremental. La sincronización completa queda reservada para recuperación administrativa.</p>
+          <p class="compact-note">Guardar datos sube solo cambios de esta sesión. Actualizar datos verifica primero la metadata y solo descarga la base completa cuando detecta diferencias.</p>
         </article>
 
         ${configState.message ? `<div class="form-message ${configState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(configState.message)}</div>` : ''}
