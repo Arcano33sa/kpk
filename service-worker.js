@@ -1,8 +1,8 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_60_sync_incremental_reparacion_baseline_hardening_final';
+const CACHE_VERSION = 'v0_18_61_sync_incremental_reparacion_definitiva_baseline_local_first';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
-const ASSET_VERSION = '0.18.60-sync-incremental-reparacion-baseline-hardening-final';
+const ASSET_VERSION = '0.18.61-sync-incremental-reparacion-definitiva-baseline-local-first';
 const APP_SHELL = [
   './',
   './index.html',

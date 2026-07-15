@@ -9,7 +9,7 @@ const appSource = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
 const indexSource = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const swSource = fs.readFileSync(path.join(ROOT, 'service-worker.js'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.webmanifest'), 'utf8'));
-const VERSION = '0.18.60-sync-incremental-reparacion-baseline-hardening-final';
+const VERSION = '0.18.61-sync-incremental-reparacion-definitiva-baseline-local-first';
 const CONTRACT_VERSION = '1.2.3';
 
 function sha256(file) {
@@ -132,7 +132,7 @@ const badContract = makeMetadata('baseline_contract'); badContract.syncContract.
 
 check('01 versión interna final', appSource.includes(`const APP_VERSION = '${VERSION}'`));
 check('02 contrato incremental conservado', appSource.includes(`const SYNC_CONTRACT_VERSION = '${CONTRACT_VERSION}'`));
-check('03 etapa interna 2/2', appSource.includes("Reparación baseline Etapa 2/2"));
+check('03 etapa interna 1/2', appSource.includes("Reparación definitiva Etapa 1/2"));
 check('04 baseline válido aceptado', getIncrementalBaselineValidation(valid, { scope: 'local' }).ok === true);
 check('05 confirmationId obligatorio', getIncrementalBaselineValidation(missingId, { scope: 'local' }).diagnosticCode === BASELINE_DIAGNOSTIC_CODES.CONFIRMATION_ID_MISSING);
 check('06 revisionGeneral ausente detectada', getIncrementalBaselineValidation(missingRevision, { scope: 'local' }).diagnosticCode === BASELINE_DIAGNOSTIC_CODES.REVISION_GENERAL_MISSING);
@@ -155,7 +155,7 @@ check('18 no-change usa observación sin adopción', (appSource.match(/persistRe
 check('19 estilos responsive intactos', sha256('styles.css') === 'eee1a3d711d7b19d2277ee6a4af97be63dbf84f658db38bd010dc9064ca9732e');
 check('20 firebaseConfig intacto', sha256('firebase-config.js') === 'b695ca847b041ff39422c591a64931c201f93a07d8af2d006be0671ccf2ff2c9');
 check('21 referencias PWA versionadas', (indexSource.match(new RegExp(VERSION.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length === 7);
-check('22 Service Worker alineado', swSource.includes(`const ASSET_VERSION = '${VERSION}'`) && swSource.includes('v0_18_60_sync_incremental_reparacion_baseline_hardening_final'));
+check('22 Service Worker alineado', swSource.includes(`const ASSET_VERSION = '${VERSION}'`) && swSource.includes('v0_18_61_sync_incremental_reparacion_definitiva_baseline_local_first'));
 check('23 manifest válido', manifest.name === 'KSA PRÁCTIKA' && manifest.start_url === './index.html#home');
 check('24 sin dependencias nuevas', !fs.existsSync(path.join(ROOT, 'package.json')) && !fs.existsSync(path.join(ROOT, 'node_modules')));
 check('25 módulos operativos presentes', ['ventas','facturas','cobros','proveedores','pagos','gastos','seguimiento','casa','notas','catalogos'].every((route) => indexSource.includes(`data-route="${route}"`)));

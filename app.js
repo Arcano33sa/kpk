@@ -2,10 +2,10 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.60-sync-incremental-reparacion-baseline-hardening-final';
+  const APP_VERSION = '0.18.61-sync-incremental-reparacion-definitiva-baseline-local-first';
   const SCHEMA_VERSION = '1.0.0';
   const SYNC_CONTRACT_VERSION = '1.2.3';
-  const SYNC_CONTRACT_STAGE = 'Sincronización incremental - Reparación baseline Etapa 2/2';
+  const SYNC_CONTRACT_STAGE = 'Sincronización incremental - Reparación definitiva Etapa 1/2';
   const SYNC_INCREMENTAL_DOWNLOAD_ENABLED = true;
   const SYNC_INCREMENTAL_CURSOR_OVERLAP_MS = 10 * 60 * 1000;
   const SYNC_FULL_ALLOWED_REASONS = Object.freeze([
@@ -3257,6 +3257,18 @@ Notas importantes:
     const baselineReady = baselineStatus === 'ready';
     const baselineContractCompatible = cleanText(baseline.contractVersion) === SYNC_CONTRACT_VERSION;
     const confirmationId = cleanText(baseline.confirmationId || raw.lastIncrementalBaselineConfirmationId);
+    const invalidModules = Array.from(new Set([...missingRevisionModules, ...missingCursorModules]));
+    const validModules = requiredModules.filter((moduleKey) => !invalidModules.includes(moduleKey));
+    const coreConfirmed = Boolean(
+      baselinePresent
+      && contractCompatible
+      && baselineContractCompatible
+      && revisionGeneralPresent
+      && moduleRevisionShapePresent
+      && flagConfirmed
+      && baselineReady
+      && confirmationId
+    );
     let code = 'cloud/incremental-baseline-ready';
     let diagnosticCode = BASELINE_DIAGNOSTIC_CODES.CONFIRMED;
     let cause = 'Baseline incremental confirmado.';
@@ -3277,7 +3289,7 @@ Notas importantes:
       code = 'cloud/incremental-metadata-missing';
       diagnosticCode = BASELINE_DIAGNOSTIC_CODES.MODULE_REVISIONS_INCOMPLETE;
       cause = missingRevisionModules.length
-        ? `Falta revisionPorModulo para ${missingRevisionModules.length} módulo(s).`
+        ? `Falta revisionPorModulo para ${missingRevisionModules.length} módulo(s): ${missingRevisionModules.join(', ')}.`
         : 'La metadata incremental no contiene revisionPorModulo.';
     } else if (!flagConfirmed || !baselineReady) {
       code = scope === 'remote' ? 'cloud/incremental-remote-baseline-unconfirmed' : 'cloud/incremental-local-baseline-unconfirmed';
@@ -3296,8 +3308,13 @@ Notas importantes:
       diagnosticCode = BASELINE_DIAGNOSTIC_CODES.MODULE_CURSOR_MISSING;
       cause = `Falta cursor confirmado para ${missingCursorModules.length} módulo(s): ${missingCursorModules.join(', ')}.`;
     }
+    const ok = diagnosticCode === BASELINE_DIAGNOSTIC_CODES.CONFIRMED;
+    const partiallyValid = !ok && coreConfirmed && invalidModules.length > 0;
     return {
-      ok: diagnosticCode === BASELINE_DIAGNOSTIC_CODES.CONFIRMED,
+      ok,
+      usable: ok || partiallyValid,
+      partiallyValid,
+      coreConfirmed,
       code,
       diagnosticCode,
       cause,
@@ -3312,9 +3329,11 @@ Notas importantes:
       baselineReady,
       baselineContractCompatible,
       missingCursorModules,
+      invalidModules,
+      validModules,
       requiredModules,
       revisionGeneral: normalizeSyncRevision(state.revisionGeneral, 0),
-      confirmedModuleCount: requiredModules.length - missingRevisionModules.length,
+      confirmedModuleCount: validModules.length,
       confirmedCursorCount: requiredModules.length - missingCursorModules.length,
       baselineAt: cleanText(raw.lastIncrementalBaselineAt || baseline.updatedAt),
       confirmationId,
@@ -3324,18 +3343,23 @@ Notas importantes:
   }
 
   function hasConfirmedIncrementalBaseline(metadata = {}) {
-    return getIncrementalBaselineValidation(metadata).ok;
+    const validation = getIncrementalBaselineValidation(metadata);
+    return validation.ok || validation.partiallyValid;
   }
 
   function sanitizeLocalIncrementalMetadata(metadata = {}) {
     const raw = isPlainObject(metadata) ? clonePlainObject(metadata, {}) : {};
     const validation = getIncrementalBaselineValidation(raw);
-    if (validation.ok) {
+    if (validation.ok || validation.partiallyValid) {
       return {
         ...raw,
         syncRevisionMetadataAvailable: true,
         lastIncrementalBaselineStatus: 'ready',
-        incrementalBaselineValidationCode: validation.code
+        incrementalBaselineValidationCode: validation.code,
+        incrementalBaselinePartial: validation.partiallyValid === true,
+        incrementalBaselineBlockedModules: validation.partiallyValid ? validation.invalidModules : [],
+        incrementalBaselineMissingCursorModules: validation.missingCursorModules,
+        incrementalBaselineMissingRevisionModules: validation.missingRevisionModules
       };
     }
     const hadConfirmedMarker = raw.syncRevisionMetadataAvailable === true
@@ -3353,14 +3377,19 @@ Notas importantes:
       ...(incrementalBaseline ? { incrementalBaseline } : {}),
       ...(hadConfirmedMarker ? { lastIncrementalBaselineStatus: 'unconfirmed' } : {}),
       incrementalBaselineValidationCode: validation.code,
-      incrementalBaselineMissingCursorModules: validation.missingCursorModules
+      incrementalBaselinePartial: false,
+      incrementalBaselineBlockedModules: validation.invalidModules,
+      incrementalBaselineMissingCursorModules: validation.missingCursorModules,
+      incrementalBaselineMissingRevisionModules: validation.missingRevisionModules
     };
   }
 
   function getBaselineBlockingMessage(localValidation = {}, remoteValidation = {}) {
     const local = isPlainObject(localValidation) ? localValidation : {};
     const remote = isPlainObject(remoteValidation) ? remoteValidation : {};
-    const failing = local.ok === false ? local : remote;
+    const localUsable = local.ok === true || local.partiallyValid === true;
+    const remoteUsable = remote.ok === true || remote.partiallyValid === true;
+    const failing = !localUsable ? local : (!remoteUsable ? remote : (local.ok === true ? remote : local));
     const moduleKey = cleanText(failing?.missingCursorModules?.[0] || failing?.missingRevisionModules?.[0]);
     switch (failing.diagnosticCode) {
       case BASELINE_DIAGNOSTIC_CODES.LOCAL_MISSING:
@@ -3551,7 +3580,7 @@ Notas importantes:
     const remoteValidation = getIncrementalBaselineValidation(remoteMetadata, { scope: 'remote', requiredModules: opts.requiredModules });
     if (!remoteValidation.ok) return { ok: false, skipped: true, reason: remoteValidation.cause, remoteValidation };
     const localValidation = getIncrementalBaselineValidation(appData?.metadata, { scope: 'local', requiredModules: opts.requiredModules });
-    if (localValidation.ok) return { ok: true, skipped: true, alreadyConfirmed: true, metadata: appData.metadata, localValidation, remoteValidation };
+    if (localValidation.ok || localValidation.partiallyValid) return { ok: true, skipped: true, alreadyConfirmed: true, metadata: appData.metadata, localValidation, remoteValidation };
     const localFullReadAt = cleanText(appData?.metadata?.lastFullCloudReadAt || appData?.metadata?.syncState?.lastFullSyncAt);
     const remoteFullReadAt = cleanText(remoteMetadata?.incrementalBaseline?.sourceFullReadAt || remoteMetadata?.syncState?.lastFullSyncAt);
     const sameFullSnapshot = Boolean(localFullReadAt && remoteFullReadAt && localFullReadAt === remoteFullReadAt);
@@ -3981,10 +4010,92 @@ Notas importantes:
     firestoreUnavailable: 'No se pudo guardar en la nube. Firestore no está disponible.'
   });
 
+  function normalizeSyncConflictStatus(value = '') {
+    const status = cleanText(value).toLowerCase();
+    return ['active', 'resolved', 'orphaned', 'historical'].includes(status) ? status : '';
+  }
+
+  function normalizeSyncConflictEntry(value = {}) {
+    const raw = isPlainObject(value) ? value : {};
+    const moduleKey = cleanText(raw.moduleKey || raw.module || raw.modulo);
+    const recordId = cleanText(raw.recordId || raw.idRegistro || raw.id);
+    const detectedAt = cleanText(raw.detectedAt || raw.createdAt || raw.updatedAt) || nowIso();
+    const status = normalizeSyncConflictStatus(raw.status)
+      || (raw.resolvedAt ? 'resolved' : (raw.retryPending === false ? 'historical' : 'active'));
+    return {
+      ...raw,
+      key: cleanText(raw.key) || (moduleKey && recordId ? `${moduleKey}::${recordId}` : ''),
+      moduleKey,
+      recordId,
+      operation: normalizeSessionChangeOperation(raw.operation || raw.operacion),
+      code: cleanText(raw.code) || 'cloud/sync-conflict',
+      reason: cleanText(raw.reason) || 'El registro cambió localmente y también en Firestore.',
+      detectedAt,
+      lastDetectedAt: cleanText(raw.lastDetectedAt || detectedAt),
+      status,
+      retryPending: status === 'active',
+      resolvedAt: cleanText(raw.resolvedAt),
+      orphanedAt: cleanText(raw.orphanedAt),
+      historicalAt: cleanText(raw.historicalAt)
+    };
+  }
+
+  function classifySyncConflictEntry(value = {}) {
+    const entry = normalizeSyncConflictEntry(value);
+    if (entry.status === 'resolved' || entry.resolvedAt) return 'resolved';
+    const pendingChange = typeof getPendingLocalSyncChange === 'function'
+      ? getPendingLocalSyncChange(entry.moduleKey, entry.recordId)
+      : null;
+    if (pendingChange) return 'active';
+    if (entry.status === 'historical') return 'historical';
+    return 'orphaned';
+  }
+
+  function getSyncConflictRegistryStats() {
+    const stats = { active: 0, resolved: 0, orphaned: 0, historical: 0, total: syncConflictRegistry.length };
+    syncConflictRegistry.forEach((entry) => {
+      const status = classifySyncConflictEntry(entry);
+      stats[status] = (stats[status] || 0) + 1;
+    });
+    return stats;
+  }
+
+  function getActiveSyncConflicts(moduleKey = '') {
+    const filterKey = cleanText(moduleKey);
+    return syncConflictRegistry
+      .map((entry) => ({ ...normalizeSyncConflictEntry(entry), status: classifySyncConflictEntry(entry) }))
+      .filter((entry) => entry.status === 'active' && (!filterKey || entry.moduleKey === filterKey));
+  }
+
+  function reconcileSyncConflictRegistryStatuses(options = {}) {
+    const opts = isPlainObject(options) ? options : {};
+    const timestamp = nowIso();
+    let changed = false;
+    syncConflictRegistry = syncConflictRegistry.map((rawEntry) => {
+      const entry = normalizeSyncConflictEntry(rawEntry);
+      const status = classifySyncConflictEntry(entry);
+      const next = {
+        ...entry,
+        status,
+        retryPending: status === 'active',
+        ...(status === 'orphaned' && !entry.orphanedAt ? { orphanedAt: timestamp } : {}),
+        ...(status === 'historical' && !entry.historicalAt ? { historicalAt: timestamp } : {})
+      };
+      if (JSON.stringify(next) !== JSON.stringify(rawEntry)) changed = true;
+      return next;
+    }).slice(0, SYNC_CONFLICT_MAX_ENTRIES);
+    if (changed && opts.persist !== false) persistSyncConflictRegistry();
+    syncSessionChangeQueueGlobal();
+    updateSessionChangeQueueDom();
+    return getSyncConflictRegistryStats();
+  }
+
   function loadSyncConflictRegistry() {
     try {
       const parsed = JSON.parse(localStorage.getItem(SYNC_CONFLICT_STORAGE_KEY) || '[]');
-      return Array.isArray(parsed) ? parsed.filter((item) => isPlainObject(item)).slice(0, SYNC_CONFLICT_MAX_ENTRIES) : [];
+      return Array.isArray(parsed)
+        ? parsed.filter((item) => isPlainObject(item)).map((item) => normalizeSyncConflictEntry(item)).slice(0, SYNC_CONFLICT_MAX_ENTRIES)
+        : [];
     } catch (_) {
       return [];
     }
@@ -4006,11 +4117,12 @@ Notas importantes:
     if (typeof window !== 'undefined') {
       window.KSA_SESSION_CHANGE_QUEUE = sessionChangeQueue;
       window.KSA_SYNC_CONFLICTS = syncConflictRegistry;
+      window.KSA_SYNC_CONFLICT_STATS = getSyncConflictRegistryStats();
     }
   }
 
   function getSyncConflictCount() {
-    return syncConflictRegistry.length;
+    return getActiveSyncConflicts().length;
   }
 
   function registerSyncConflict(conflict = {}) {
@@ -4019,7 +4131,10 @@ Notas importantes:
     if (!moduleKey || !recordId) return null;
     const timestamp = nowIso();
     const key = `${moduleKey}::${recordId}`;
-    const entry = {
+    const existingIndex = syncConflictRegistry.findIndex((item) => cleanText(item?.key) === key);
+    const existing = existingIndex >= 0 ? normalizeSyncConflictEntry(syncConflictRegistry[existingIndex]) : null;
+    const entry = normalizeSyncConflictEntry({
+      ...(existing || {}),
       key,
       moduleKey,
       recordId,
@@ -4028,10 +4143,16 @@ Notas importantes:
       reason: cleanText(conflict.reason) || 'El registro cambió localmente y también en Firestore.',
       localBaseSyncUpdatedAt: cleanText(conflict.localBaseSyncUpdatedAt),
       cloudSyncUpdatedAt: cleanText(conflict.cloudSyncUpdatedAt),
-      detectedAt: timestamp,
-      retryPending: true
-    };
-    const existingIndex = syncConflictRegistry.findIndex((item) => cleanText(item?.key) === key);
+      localSnapshot: isPlainObject(conflict.localSnapshot) ? clonePlainObject(conflict.localSnapshot, {}) : (existing?.localSnapshot || null),
+      remoteSnapshot: isPlainObject(conflict.remoteSnapshot) ? clonePlainObject(conflict.remoteSnapshot, {}) : (existing?.remoteSnapshot || null),
+      detectedAt: cleanText(existing?.detectedAt) || timestamp,
+      lastDetectedAt: timestamp,
+      status: 'active',
+      retryPending: true,
+      resolvedAt: '',
+      orphanedAt: '',
+      historicalAt: ''
+    });
     if (existingIndex >= 0) syncConflictRegistry.splice(existingIndex, 1);
     syncConflictRegistry.unshift(entry);
     syncConflictRegistry = syncConflictRegistry.slice(0, SYNC_CONFLICT_MAX_ENTRIES);
@@ -4048,14 +4169,27 @@ Notas importantes:
       return moduleKey && recordId ? `${moduleKey}::${recordId}` : '';
     }).filter(Boolean));
     if (!keys.size) return 0;
-    const before = syncConflictRegistry.length;
-    syncConflictRegistry = syncConflictRegistry.filter((item) => !keys.has(cleanText(item?.key)));
-    if (before !== syncConflictRegistry.length) {
+    const timestamp = nowIso();
+    let resolved = 0;
+    syncConflictRegistry = syncConflictRegistry.map((rawEntry) => {
+      const entry = normalizeSyncConflictEntry(rawEntry);
+      if (!keys.has(cleanText(entry.key))) return entry;
+      resolved += 1;
+      return {
+        ...entry,
+        status: 'resolved',
+        retryPending: false,
+        resolvedAt: timestamp,
+        historicalAt: entry.historicalAt || timestamp,
+        resolutionCode: 'cloud/local-change-confirmed'
+      };
+    });
+    if (resolved) {
       persistSyncConflictRegistry();
       syncSessionChangeQueueGlobal();
       updateSessionChangeQueueDom();
     }
-    return before - syncConflictRegistry.length;
+    return resolved;
   }
 
   function normalizeSessionChangeOperation(value) {
@@ -4429,6 +4563,15 @@ Notas importantes:
     return updated;
   }
 
+  function isBrowserOffline() {
+    return typeof navigator !== 'undefined' && navigator.onLine === false;
+  }
+
+  function getOfflineCloudActionMessage(action = 'sincronizar') {
+    const label = cleanText(action) || 'sincronizar';
+    return `Sin conexión. No se puede ${label} con Firestore; los datos locales permanecen disponibles.`;
+  }
+
   async function handleSessionSavePreview(button = null) {
     if (button) button.disabled = true;
     const pending = getPendingSessionChanges();
@@ -4438,6 +4581,16 @@ Notas importantes:
       cloudOperationState.message = SESSION_SAVE_MESSAGES.noChanges;
       renderRoute({ preserveScroll: true });
       return { ok: true, count: 0, message: SESSION_SAVE_MESSAGES.noChanges };
+    }
+
+    if (isBrowserOffline()) {
+      const message = getOfflineCloudActionMessage('guardar datos');
+      configState.message = message;
+      configState.messageType = 'error';
+      cloudOperationState.lastError = message;
+      cloudOperationState.message = message;
+      renderRoute({ preserveScroll: true });
+      return { ok: false, code: 'cloud/offline', count: pending.length, message };
     }
 
     if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.saveSessionChangesToCloud) {
@@ -7193,8 +7346,10 @@ Notas importantes:
           }
         }
         const comparison = compareSyncMetadataRevisions(localMetadata, metadata);
-        if (!localValidation.ok || !cloudValidation.ok || !comparison.comparable) {
-          const validation = !localValidation.ok ? localValidation : cloudValidation;
+        const localBaselineUsable = localValidation.ok || localValidation.partiallyValid;
+        const cloudBaselineUsable = cloudValidation.ok || cloudValidation.partiallyValid;
+        if (!localBaselineUsable || !cloudBaselineUsable || !comparison.comparable) {
+          const validation = !localBaselineUsable ? localValidation : cloudValidation;
           const diagnosticCode = cleanText(validation.diagnosticCode || BASELINE_DIAGNOSTIC_CODES.CONTRACT_INCOMPATIBLE);
           const code = cleanText(validation.code || 'cloud/incremental-metadata-missing');
           const message = getBaselineBlockingMessage(localValidation, cloudValidation);
@@ -7211,10 +7366,28 @@ Notas importantes:
             remoteObservation,
             adoptionResult,
             affectedModule: validation.missingCursorModules?.[0] || validation.missingRevisionModules?.[0] || '',
-            requiresAdministrativeFullSync: true
+            requiresAdministrativeFullSync: validation.partiallyValid !== true
           };
         }
-        if (comparison.matches) {
+        if (comparison.matches && (localValidation.partiallyValid || cloudValidation.partiallyValid)) {
+          const validation = localValidation.partiallyValid ? localValidation : cloudValidation;
+          return {
+            ok: false,
+            action: 'readCloudIncrementalChanges',
+            code: cleanText(validation.code || 'cloud/incremental-metadata-missing'),
+            diagnosticCode: cleanText(validation.diagnosticCode || BASELINE_DIAGNOSTIC_CODES.MODULE_CURSOR_MISSING),
+            message: getBaselineBlockingMessage(localValidation, cloudValidation),
+            metadata,
+            comparison,
+            localValidation,
+            cloudValidation,
+            remoteObservation,
+            adoptionResult,
+            affectedModule: validation.missingCursorModules?.[0] || validation.missingRevisionModules?.[0] || '',
+            requiresAdministrativeFullSync: false
+          };
+        }
+        if (comparison.matches && localValidation.ok && cloudValidation.ok) {
           return {
             ok: true,
             action: 'readCloudIncrementalChanges',
@@ -7381,7 +7554,7 @@ Notas importantes:
             moduleFailures,
             moduleResults,
             affectedModule: first.moduleKey,
-            requiresAdministrativeFullSync: first.code === 'cloud/incremental-cursor-missing'
+            requiresAdministrativeFullSync: false
           };
         }
 
@@ -7520,13 +7693,6 @@ Notas importantes:
       if (opts.applicationComplete === false) {
         return fail('cloud/incremental-full-sync-partial-apply', 'La descarga completa no terminó de aplicarse localmente. No se confirmó un baseline parcial.', { stage: 'full_sync_apply' });
       }
-      if (protectedConflicts > 0 || blockedModules.length) {
-        return fail('cloud/incremental-protected-conflicts', 'Existen conflictos protegidos o módulos bloqueados. Resuelva o suba los cambios pendientes antes de intentar confirmar un nuevo baseline.', {
-          stage: 'full_sync_merge',
-          moduleKey: blockedModules[0] || ''
-        });
-      }
-
       try {
         const { user, role, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: true });
         if (typeof fs.runTransaction !== 'function') {
@@ -7662,7 +7828,7 @@ Notas importantes:
             revisionGeneral: nextSyncState.revisionGeneral,
             moduleCount: Object.keys(revisionPorModulo).length,
             pendingLocalChanges,
-            alignmentStatus: pendingLocalChanges > 0 ? 'pending_local_changes' : 'aligned',
+            alignmentStatus: protectedConflicts > 0 || blockedModules.length ? 'protected_conflicts' : (pendingLocalChanges > 0 ? 'pending_local_changes' : 'aligned'),
             legacyDocumentPolicy: 'full_snapshot_baseline_then_touch_on_write',
             legacyDocumentsWithoutSyncUpdatedAt: confirmedCursorAudit.totalLegacyWithoutSyncUpdatedAt,
             cursorAuditVersion: confirmedCursorAudit.version,
@@ -7830,7 +7996,7 @@ Notas importantes:
           cloudValidation,
           diagnostic: transactionOutcome.diagnostic || null,
           pendingLocalChanges,
-          alignmentStatus: pendingLocalChanges > 0 ? 'pending_local_changes' : 'aligned',
+          alignmentStatus: protectedConflicts > 0 || blockedModules.length ? 'protected_conflicts' : (pendingLocalChanges > 0 ? 'pending_local_changes' : 'aligned'),
           user,
           role,
           lastBaselineAt: baselineAt,
@@ -11114,7 +11280,6 @@ Notas importantes:
           cloudMetadata: options.cloudMetadata
         });
         if (decision.conflict) {
-          blockedRevision = true;
           conflictIds.push(id);
           registerSyncConflict({
             moduleKey,
@@ -11123,7 +11288,9 @@ Notas importantes:
             code: decision.code,
             reason: decision.reason,
             localBaseSyncUpdatedAt: pendingChange.baseSyncUpdatedAt,
-            cloudSyncUpdatedAt: cleanText(rawRecord.syncUpdatedAt || rawRecord?._cloudSync?.syncedAt || rawRecord.updatedAt)
+            cloudSyncUpdatedAt: cleanText(rawRecord.syncUpdatedAt || rawRecord?._cloudSync?.syncedAt || rawRecord.updatedAt),
+            localSnapshot: pendingChange.localSnapshot || map.get(id) || null,
+            remoteSnapshot: rawRecord
           });
         }
         if (decision.alreadyApplied && isCloudDeletedRecord(rawRecord)) {
@@ -11167,7 +11334,6 @@ Notas importantes:
         cloudMetadata: options.cloudMetadata
       });
       if (decision.conflict) {
-        blockedRevision = true;
         conflictIds.push(id);
         registerSyncConflict({
           moduleKey,
@@ -11176,7 +11342,9 @@ Notas importantes:
           code: decision.code,
           reason: decision.reason,
           localBaseSyncUpdatedAt: pendingChange.baseSyncUpdatedAt,
-          cloudSyncUpdatedAt: cleanText(remoteRecord?.syncUpdatedAt || remoteRecord?._cloudSync?.syncedAt || remoteRecord?.updatedAt)
+          cloudSyncUpdatedAt: cleanText(remoteRecord?.syncUpdatedAt || remoteRecord?._cloudSync?.syncedAt || remoteRecord?.updatedAt),
+          localSnapshot: pendingChange.localSnapshot || normalized,
+          remoteSnapshot: remoteRecord
         });
       }
       if (!decision.alreadyApplied) map.set(id, normalized);
@@ -11321,7 +11489,6 @@ Notas importantes:
             const decision = assessPendingCloudRecordConflict(pendingConfig, changes.configuracion, { remoteExists: isPlainObject(changes.configuracion), cloudMetadata: result.metadata });
             stats.protectedLocal += 1;
             stats.modules.push('configuracion');
-            blockedModules.add('configuracion');
             if (decision.conflict) {
               stats.conflicts += 1;
               registerSyncConflict({
@@ -11331,7 +11498,9 @@ Notas importantes:
                 code: decision.code,
                 reason: decision.reason,
                 localBaseSyncUpdatedAt: pendingConfig.baseSyncUpdatedAt,
-                cloudSyncUpdatedAt: cleanText(changes.configuracion?.syncUpdatedAt || changes.configuracion?._cloudSync?.syncedAt || changes.configuracion?.updatedAt)
+                cloudSyncUpdatedAt: cleanText(changes.configuracion?.syncUpdatedAt || changes.configuracion?._cloudSync?.syncedAt || changes.configuracion?.updatedAt),
+                localSnapshot: pendingConfig.localSnapshot || nextData.configuracion || null,
+                remoteSnapshot: changes.configuracion
               });
             }
           } else if (isPlainObject(changes.configuracion)) {
@@ -11478,7 +11647,6 @@ Notas importantes:
         stats.modules.push('configuracion');
         stats.protectedLocal += 1;
         if (decision.conflict) {
-          blockedModules.add('configuracion');
           stats.conflicts += 1;
           registerSyncConflict({
             moduleKey: 'configuracion',
@@ -11487,7 +11655,9 @@ Notas importantes:
             code: decision.code,
             reason: decision.reason,
             localBaseSyncUpdatedAt: pendingConfig.baseSyncUpdatedAt,
-            cloudSyncUpdatedAt: cleanText(cloudSnapshot.configuracion?.syncUpdatedAt || cloudSnapshot.configuracion?._cloudSync?.syncedAt || cloudSnapshot.configuracion?.updatedAt)
+            cloudSyncUpdatedAt: cleanText(cloudSnapshot.configuracion?.syncUpdatedAt || cloudSnapshot.configuracion?._cloudSync?.syncedAt || cloudSnapshot.configuracion?.updatedAt),
+            localSnapshot: pendingConfig.localSnapshot || nextData.configuracion || null,
+            remoteSnapshot: cloudSnapshot.configuracion || null
           });
         }
       }
@@ -11962,6 +12132,15 @@ Notas importantes:
 
   async function handleCloudDataRefresh(button = null) {
     if (!requireRolePermission('updateData', configState, { preserveScroll: true })) return null;
+    if (isBrowserOffline()) {
+      const message = getOfflineCloudActionMessage('actualizar datos');
+      configState.message = message;
+      configState.messageType = 'error';
+      cloudOperationState.lastError = message;
+      cloudOperationState.message = message;
+      renderRoute({ preserveScroll: true });
+      return { ok: false, code: 'cloud/offline', message };
+    }
     if (cloudOperationState.isReading || cloudOperationState.isCheckingMetadata) return { ok: false, message: 'Ya hay una actualización de nube en curso.' };
     cloudOperationState.isCheckingMetadata = true;
     if (button) button.disabled = true;
@@ -12150,6 +12329,15 @@ Notas importantes:
       configState.messageType = 'error';
       renderRoute({ preserveScroll: true });
       return { ok: false, code: 'cloud/admin-required', message: ADMIN_RESTRICTED_MESSAGE };
+    }
+    if (isBrowserOffline()) {
+      const message = getOfflineCloudActionMessage('ejecutar la sincronización completa');
+      configState.message = message;
+      configState.messageType = 'error';
+      cloudOperationState.lastError = message;
+      cloudOperationState.message = message;
+      renderRoute({ preserveScroll: true });
+      return { ok: false, code: 'cloud/offline', message };
     }
     if (cloudOperationState.isReading || cloudOperationState.isCheckingMetadata) {
       return { ok: false, message: 'Ya hay una actualización de nube en curso.' };
@@ -12477,6 +12665,7 @@ Notas importantes:
 
   let appData = loadData();
   queueSeguimientoEtapa1MigrationChanges();
+  reconcileSyncConflictRegistryStatuses({ persist: true });
   runFacturasProveedorCleanupMigration({ showMessage: true });
   reconcileWorkPeriodSelectionAfterDataChange();
   syncCasaFiltersWithActiveWorkPeriod({ force: true });
@@ -12499,9 +12688,151 @@ Notas importantes:
     });
   }
   cloudOperationState.runtimeReady = true;
-  KSAFirebaseAdapter.initFirebase();
+  let firebaseInitializationScheduled = false;
+  function scheduleFirebaseInitializationAfterLocalRender() {
+    if (firebaseInitializationScheduled) return;
+    firebaseInitializationScheduled = true;
+    const initialize = () => {
+      if (typeof window !== 'undefined') window.KSA_FIREBASE_INIT_STARTED_AT = performance.now();
+      try { KSAFirebaseAdapter.initFirebase(); }
+      catch (error) { console.warn('KSA PRÁCTIKA Firebase: la inicialización remota falló; la app continúa con datos locales.', error); }
+    };
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => window.setTimeout(initialize, 0));
+    } else if (typeof window !== 'undefined' && typeof window.setTimeout === 'function') {
+      window.setTimeout(initialize, 0);
+    } else initialize();
+  }
   const KSADataLayer = createKSADataLayer();
   if (typeof window !== 'undefined') window.KSADataLayer = KSADataLayer;
+
+  function installIncrementalSyncSmokeDiagnostics() {
+    if (typeof window === 'undefined') return;
+    let enabled = false;
+    try { enabled = new URLSearchParams(window.location.search).get('syncSmoke') === '1'; }
+    catch (_) { enabled = false; }
+    if (!enabled) return;
+
+    const buildConfirmedMetadata = (overrides = {}) => {
+      const timestamp = cleanText(overrides.timestamp) || nowIso();
+      const confirmationId = cleanText(overrides.confirmationId) || `smoke-${Date.now()}`;
+      const revisionPorModulo = {};
+      const auditModules = {};
+      SYNC_AUDIT_MODULE_KEYS.forEach((moduleKey, index) => {
+        const revision = index + 1;
+        revisionPorModulo[moduleKey] = {
+          revision,
+          lastReadAt: timestamp,
+          lastFullSyncAt: timestamp,
+          lastIncrementalSyncAt: timestamp,
+          updatedAt: timestamp
+        };
+        auditModules[moduleKey] = {
+          moduleKey,
+          revision,
+          localRevision: revision,
+          cloudRevision: revision,
+          cursor: timestamp,
+          localCursor: timestamp,
+          cloudCursor: timestamp,
+          cursorAvailable: true,
+          cursorSource: 'smoke_real_persistence',
+          lastReadAt: timestamp,
+          lastResult: 'confirmed',
+          updatedAt: timestamp
+        };
+      });
+      const missingCursorModule = cleanText(overrides.missingCursorModule);
+      if (missingCursorModule && revisionPorModulo[missingCursorModule]) {
+        revisionPorModulo[missingCursorModule] = {
+          ...revisionPorModulo[missingCursorModule],
+          lastReadAt: '',
+          lastFullSyncAt: '',
+          lastIncrementalSyncAt: ''
+        };
+        auditModules[missingCursorModule] = {
+          ...auditModules[missingCursorModule],
+          cursor: '',
+          localCursor: '',
+          cloudCursor: '',
+          cursorAvailable: false
+        };
+      }
+      return {
+        ...(isPlainObject(appData?.metadata) ? clonePlainObject(appData.metadata, {}) : {}),
+        syncRevisionMetadataAvailable: true,
+        syncContract: {
+          name: 'KSAIncrementalSyncContract',
+          version: SYNC_CONTRACT_VERSION,
+          incrementalDownloadEnabled: true,
+          updatedAt: timestamp
+        },
+        syncState: {
+          revisionGeneral: Math.max(1, Number(overrides.revisionGeneral) || 101),
+          revisionPorModulo,
+          lastFullSyncAt: timestamp,
+          updatedAt: timestamp
+        },
+        incrementalCursorAudit: {
+          generatedAt: timestamp,
+          lastValidatedAt: timestamp,
+          modules: auditModules
+        },
+        incrementalBaseline: {
+          status: 'ready',
+          contractVersion: SYNC_CONTRACT_VERSION,
+          confirmationId,
+          sourceFullReadAt: timestamp,
+          updatedAt: timestamp
+        },
+        lastIncrementalBaselineAt: timestamp,
+        lastIncrementalBaselineConfirmationId: confirmationId,
+        lastIncrementalBaselineStatus: 'ready',
+        syncUpdatedAt: timestamp
+      };
+    };
+
+    window.KSASyncSmoke = Object.freeze({
+      storageKey: STORAGE_KEY,
+      conflictStorageKey: SYNC_CONFLICT_STORAGE_KEY,
+      requiredModules: [...SYNC_AUDIT_MODULE_KEYS],
+      contractVersion: SYNC_CONTRACT_VERSION,
+      getAppSnapshot: () => clonePlainObject(appData, {}),
+      getPersistedSnapshot: () => {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        return raw ? JSON.parse(raw) : null;
+      },
+      buildConfirmedMetadata,
+      validateBaseline: (metadata, options = {}) => getIncrementalBaselineValidation(metadata, options),
+      getBaselineMessage: (localValidation = {}, remoteValidation = {}) => getBaselineBlockingMessage(localValidation, remoteValidation),
+      compareMetadata: (localMetadata = {}, remoteMetadata = {}) => compareSyncMetadataRevisions(localMetadata, remoteMetadata),
+      persistConfirmedBaseline: (metadata, options = {}) => persistConfirmedIncrementalBaselineLocally(metadata, options),
+      sanitizeMetadata: (metadata) => sanitizeLocalIncrementalMetadata(metadata),
+      mergeIncrementalRecords: (localRecords = [], remoteRecords = [], moduleKey = 'ventas') => mergeIncrementalCloudRecords(localRecords, remoteRecords, (record) => clonePlainObject(record, {}), moduleKey, { cloudMetadata: appData?.metadata || {} }),
+      getConflictStats: () => getSyncConflictRegistryStats(),
+      getActiveConflicts: (moduleKey = '') => getActiveSyncConflicts(moduleKey),
+      reconcileConflicts: (options = {}) => reconcileSyncConflictRegistryStatuses(options),
+      registerChange: (payload = {}) => registerSessionChange(payload),
+      registerConflict: (payload = {}) => registerSyncConflict(payload),
+      clearConfirmedChanges: (changes = []) => clearConfirmedSessionChanges(changes),
+      resetSmokeConflictsAndQueue: () => {
+        sessionChangeQueue = [];
+        syncConflictRegistry = [];
+        persistSyncConflictRegistry();
+        syncSessionChangeQueueGlobal();
+        return { queue: sessionChangeQueue.length, conflicts: syncConflictRegistry.length };
+      },
+      setRecordForSmoke: (moduleKey, record) => {
+        const key = cleanText(moduleKey);
+        if (!key || !Array.isArray(appData?.[key]) || !isPlainObject(record)) return false;
+        const id = cleanText(record.id);
+        if (!id) return false;
+        appData[key] = [clonePlainObject(record, {}), ...appData[key].filter((item) => cleanText(item?.id) !== id)];
+        return saveData(appData)?.ok === true;
+      }
+    });
+  }
+  installIncrementalSyncSmokeDiagnostics();
   const KSAFirestoreContract = getKSAFirestoreContract();
   if (typeof window !== 'undefined') window.KSAFirestoreContract = KSAFirestoreContract;
 
@@ -28616,7 +28947,7 @@ Notas importantes:
     });
     const seguimientoAudit = cursorAuditRows.find((row) => row.moduleKey === 'seguimientoLlamadas') || {};
     const seguimientoPending = getPendingSessionChanges().filter((change) => resolveSyncModuleKeyFromChange(change) === 'seguimientoLlamadas').length;
-    const seguimientoConflicts = syncConflictRegistry.filter((entry) => cleanText(entry?.moduleKey) === 'seguimientoLlamadas').length;
+    const seguimientoConflicts = getActiveSyncConflicts('seguimientoLlamadas').length;
     const seguimientoDownloaded = Array.isArray(appData?.metadata?.lastIncrementalDownloadedModules) && appData.metadata.lastIncrementalDownloadedModules.includes('seguimientoLlamadas');
     const seguimientoApplied = Array.isArray(appData?.metadata?.lastIncrementalAppliedModules) && appData.metadata.lastIncrementalAppliedModules.includes('seguimientoLlamadas');
     const seguimientoReadStats = isPlainObject(appData?.metadata?.lastIncrementalModuleResults?.seguimientoLlamadas) ? appData.metadata.lastIncrementalModuleResults.seguimientoLlamadas : {};
@@ -34628,7 +34959,20 @@ ${rowsXml}
     window.history.replaceState(null, '', '#home');
   }
   renderRoute();
+  if (typeof window !== 'undefined') {
+    window.KSA_LOCAL_FIRST_RENDER_AT = performance.now();
+    window.KSA_LOCAL_FIRST_RENDER_COMPLETE = true;
+    window.KSA_LOCAL_FIRST_RENDER_SNAPSHOT = Object.freeze({
+      ventas: Array.isArray(appData?.ventas) ? appData.ventas.length : 0,
+      facturas: Array.isArray(getFacturasData()?.facturas) ? getFacturasData().facturas.length : 0,
+      seguimiento: Array.isArray(appData?.seguimientoLlamadas) ? appData.seguimientoLlamadas.length : 0,
+      gastos: Array.isArray(appData?.gastos) ? appData.gastos.length : 0,
+      casa: Array.isArray(appData?.casaGastos) ? appData.casaGastos.length : 0,
+      notas: Array.isArray(getNotasData()?.notas) ? getNotasData().notas.length : 0
+    });
+  }
   initPreparedAccessScreen();
+  scheduleFirebaseInitializationAfterLocalRender();
 
   let seguimientoRenderedDay = todayInputValue();
   window.setInterval(() => {

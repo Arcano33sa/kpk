@@ -134,3 +134,14 @@ La vista principal agrupa por Cliente mediante encabezados compactos desplegable
 - Se agregaron diagnósticos exactos para baseline local/remoto, revisionGeneral, revisionPorModulo, cursores, contrato, escritura, relectura y persistencia local.
 - El contrato incremental se actualizó a 1.2.3 e incluye los 23 módulos sincronizables, entre ellos Seguimiento e Históricos asociados.
 - La versión PWA se actualizó a 0.18.59-sync-incremental-reparacion-baseline-confirmacion-persistente.
+
+## Sincronización incremental — Reparación definitiva — Etapa 1/2
+
+- La app lee y renderiza `appData` local antes de inicializar Firebase o consultar Firestore.
+- El arranque conserva navegación y datos locales con conexión normal, conexión lenta o sin internet.
+- La confirmación del baseline se persiste y relee mediante el almacenamiento real antes de habilitar la sincronización incremental.
+- Los conflictos se clasifican como activos, resueltos, huérfanos o históricos; únicamente los activos protegen el registro relacionado.
+- Un conflicto aislado ya no invalida globalmente el baseline ni los cursores sanos de otros módulos.
+- Los diagnósticos diferencian baseline ausente, confirmación pendiente, contrato incompatible, revisión o cursor faltante, conflicto activo, error local y error remoto.
+- Se mantienen intactos la lógica de negocio, Seguimiento, tombstones, Firestore, `firebaseConfig` y el responsive aprobado.
+- La versión PWA se actualizó a `0.18.61-sync-incremental-reparacion-definitiva-baseline-local-first`.
