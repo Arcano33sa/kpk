@@ -118,3 +118,19 @@ Seguimiento queda integrado a Ventas/OC para calcular el último pedido global p
 
 La vista principal agrupa por Cliente mediante encabezados compactos desplegables. Cada grupo conserva las sucursales como filas y columnas compartidas, sin repetir el Cliente y sin convertir las filas en tarjetas. El Histórico se abre únicamente debajo de la sucursal correspondiente y permanece fuera de Firestore, JSON y datos operativos como estado puramente visual de sesión. La versión PWA de esta entrega es `0.18.56-seguimiento-responsive-hardening-final`.
 
+
+
+## Sincronización incremental — Reparación de baseline — Etapa 2/2
+
+- Se exige un `confirmationId` válido para considerar confirmado el baseline local o remoto.
+- La verificación sin cambios conserva la identidad del baseline local y registra la observación remota sin sustituir metadata local.
+- La sincronización completa dejó de ejecutarse automáticamente durante autenticación o activación; queda reservada al botón administrativo con confirmación.
+- Se mantienen sin cambios el contrato incremental `1.2.3`, la lógica de negocio, Seguimiento y el diseño responsive aprobado.
+- La versión PWA se actualizó a 0.18.60-sync-incremental-reparacion-baseline-hardening-final.
+
+## Sincronización incremental — Reparación de baseline — Etapa 1/2
+- La Sincronización completa confirma el baseline mediante transacción, relectura de Firestore e identificador único de confirmación.
+- El baseline remoto confirmado se persiste y se relee en almacenamiento local antes de habilitar Actualizar datos.
+- Se agregaron diagnósticos exactos para baseline local/remoto, revisionGeneral, revisionPorModulo, cursores, contrato, escritura, relectura y persistencia local.
+- El contrato incremental se actualizó a 1.2.3 e incluye los 23 módulos sincronizables, entre ellos Seguimiento e Históricos asociados.
+- La versión PWA se actualizó a 0.18.59-sync-incremental-reparacion-baseline-confirmacion-persistente.

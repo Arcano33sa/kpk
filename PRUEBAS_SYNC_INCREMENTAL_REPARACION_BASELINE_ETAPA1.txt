@@ -1,0 +1,24 @@
+KSA PRÁCTIKA — SINCRONIZACIÓN INCREMENTAL — REPARACIÓN DE BASELINE — ETAPA 1/2
+
+Versión: 0.18.59-sync-incremental-reparacion-baseline-confirmacion-persistente
+Contrato incremental: 1.2.3
+Módulos auditados: 23
+
+VALIDACIONES EJECUTADAS
+- Sintaxis JavaScript: app.js, service-worker.js y firebase-config.js sin errores.
+- Baseline válido: BASELINE_CONFIRMADO.
+- Baseline local ausente: BASELINE_LOCAL_AUSENTE.
+- Baseline remoto ausente: BASELINE_REMOTO_AUSENTE.
+- Baseline remoto no confirmado: BASELINE_REMOTO_NO_CONFIRMADO.
+- revisionGeneral ausente: REVISION_GENERAL_AUSENTE.
+- revisionPorModulo incompleta: REVISION_POR_MODULO_INCOMPLETA.
+- Cursor de Seguimiento ausente: CURSOR_DE_MODULO_AUSENTE con mensaje exacto del módulo.
+- Contrato anterior/incompatible: CONTRATO_INCREMENTAL_INCOMPATIBLE.
+- Persistencia local simulada: escritura, relectura, confirmationId y conservación de datos operativos correctas.
+- Confirmación remota: escritura transaccional, confirmationId, relectura y comparación local/remota presentes en el flujo.
+- PWA: versión de app, referencias versionadas, caché y Service Worker alineados.
+- CSS: styles.css sin modificaciones respecto del ZIP base.
+- ZIP: estructura completa e integridad comprobadas antes de entrega.
+
+NOTA DE ENTORNO
+Las pruebas de lógica de baseline y persistencia se ejecutaron localmente con metadata controlada. No se escribieron ni borraron datos reales del proyecto Firestore durante el smoke test de empaquetado.
