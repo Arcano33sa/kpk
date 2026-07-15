@@ -12158,3 +12158,64 @@ body,
   }
 }
 
+/* KSA PRÁCTIKA · Ajuste visual global · centrado coherente de columnas y filas */
+/*
+  Se centra el contenido únicamente en estructuras tabulares reales.
+  Filas de detalle expandido conservan su lectura natural y las vistas tipo tarjeta
+  de Seguimiento en iPad vertical/móvil mantienen su disposición por etiquetas.
+*/
+@media (min-width: 901px) {
+  .seguimiento-grid-row > .seguimiento-cell {
+    text-align: center;
+  }
+
+  .seguimiento-grid-row .seguimiento-call-main {
+    justify-content: center;
+  }
+
+  .seguimiento-grid-row .seguimiento-history-inline {
+    text-align: center;
+  }
+
+  .seguimiento-grid-row .seguimiento-history-inline > summary {
+    justify-content: center;
+  }
+}
+
+.resumen-seguimiento-table th,
+.resumen-seguimiento-table td {
+  text-align: center;
+}
+
+.operational-table thead th,
+.operational-table tbody tr:not(.compact-adjustments-row):not(.historial-detail-row):not(.resumen-periodo-detail-row) > td {
+  text-align: center;
+}
+
+.operational-table tbody tr:not(.compact-adjustments-row):not(.historial-detail-row):not(.resumen-periodo-detail-row) > td.amount-cell {
+  text-align: center;
+}
+
+.operational-table tbody tr:not(.compact-adjustments-row):not(.historial-detail-row):not(.resumen-periodo-detail-row) > td > :where(span, small, strong, b) {
+  margin-inline: auto;
+  text-align: center;
+}
+
+.operational-table tbody tr:not(.compact-adjustments-row):not(.historial-detail-row):not(.resumen-periodo-detail-row) > td :where(.record-actions, .form-actions, .compact-row-actions) {
+  justify-content: center;
+}
+
+.operational-table tbody tr:not(.compact-adjustments-row):not(.historial-detail-row):not(.resumen-periodo-detail-row) > td :where(.state-pill, .badge, .factura-chip, select) {
+  margin-inline: auto;
+}
+
+.operational-table tbody tr:not(.compact-adjustments-row):not(.historial-detail-row):not(.resumen-periodo-detail-row) > td :where(
+  .summary-cell-item span,
+  .summary-cell-item b,
+  .cobro-summary-item span,
+  .cobro-summary-item b
+) {
+  justify-self: center;
+  text-align: center;
+}
+

@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_47_seguimiento_etapa4_hardening_final';
+const CACHE_VERSION = 'v0_18_48_ajuste_visual_centrado_global';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
