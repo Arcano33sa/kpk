@@ -11869,6 +11869,240 @@ body,
 }
 
 
+
+/* Seguimiento — Ajuste visual Etapa 1/2 · Cliente desplegable y sucursales por filas */
+.seguimiento-client-groups {
+  display: grid;
+  gap: 0.58rem;
+  min-width: 0;
+}
+
+.seguimiento-client-group {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border, #d8dde7);
+  border-radius: 0.72rem;
+  background: var(--surface, #fff);
+}
+
+.seguimiento-client-toggle {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 2rem;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 0.82rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.seguimiento-client-toggle:hover,
+.seguimiento-client-toggle:focus-visible,
+.seguimiento-client-group.is-open > .seguimiento-client-toggle {
+  background: rgba(37, 99, 235, 0.055);
+  outline: none;
+}
+
+.seguimiento-client-identity {
+  min-width: 0;
+}
+
+.seguimiento-client-identity strong,
+.seguimiento-client-identity small {
+  display: block;
+}
+
+.seguimiento-client-identity strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.95rem;
+}
+
+.seguimiento-client-identity small {
+  margin-top: 0.12rem;
+  color: var(--muted, #64748b);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.seguimiento-client-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.34rem;
+  white-space: nowrap;
+}
+
+.seguimiento-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  min-width: 2.35rem;
+  padding: 0.26rem 0.42rem;
+  border: 1px solid var(--border, #d8dde7);
+  border-radius: 999px;
+  background: var(--surface, #fff);
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.seguimiento-status-chip i {
+  width: 0.52rem;
+  height: 0.52rem;
+  flex: 0 0 0.52rem;
+  border-radius: 50%;
+}
+
+.seguimiento-status-chip.is-green i { background: #16a34a; }
+.seguimiento-status-chip.is-yellow i { background: #eab308; }
+.seguimiento-status-chip.is-red i { background: #dc2626; }
+
+.seguimiento-client-chevron {
+  display: grid;
+  place-items: center;
+  min-width: 2rem;
+  font-size: 1.15rem;
+  font-weight: 900;
+}
+
+.seguimiento-client-table {
+  min-width: 0;
+  overflow-x: auto;
+  border-top: 1px solid var(--border, #d8dde7);
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.seguimiento-branch-grid {
+  display: grid;
+  grid-template-columns: minmax(6.3rem, 0.82fr) minmax(8.5rem, 1.2fr) minmax(7.2rem, 0.88fr) minmax(5.7rem, 0.62fr) minmax(7.2rem, 0.86fr) minmax(5.2rem, 0.58fr) minmax(6.8rem, 0.78fr);
+  gap: 0.5rem;
+  align-items: center;
+  min-width: 50rem;
+}
+
+.seguimiento-branch-head {
+  padding: 0.5rem 0.66rem;
+  background: #111827;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.seguimiento-branch-body {
+  min-width: 50rem;
+}
+
+.seguimiento-branch-entry {
+  min-width: 50rem;
+  border-bottom: 1px solid var(--border, #d8dde7);
+  background: var(--surface, #fff);
+}
+
+.seguimiento-branch-entry:last-child {
+  border-bottom: 0;
+}
+
+.seguimiento-branch-row {
+  padding: 0.6rem 0.66rem;
+}
+
+.seguimiento-branch-row > div {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.seguimiento-sucursal-cell strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seguimiento-nowrap {
+  white-space: nowrap;
+}
+
+.seguimiento-history-action-cell {
+  display: flex;
+  justify-content: center;
+}
+
+.secondary-action.compact.seguimiento-history-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.34rem;
+  min-height: 2.25rem;
+  padding: 0.42rem 0.56rem;
+  white-space: nowrap;
+}
+
+.seguimiento-history-action strong {
+  min-width: 1.35rem;
+  padding: 0.1rem 0.28rem;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.1);
+  text-align: center;
+  font-size: 0.7rem;
+}
+
+.seguimiento-history-action i {
+  font-style: normal;
+  font-weight: 900;
+}
+
+.seguimiento-history-inline {
+  padding: 0.56rem 0.66rem 0.64rem;
+  border-top: 1px dashed var(--border, #d8dde7);
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.seguimiento-history-inline .seguimiento-history-lines {
+  gap: 0;
+  border: 1px solid var(--border, #d8dde7);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.seguimiento-history-inline .seguimiento-history-line {
+  grid-template-columns: 7.2rem minmax(0, 1fr);
+  gap: 0.6rem;
+  padding: 0.46rem 0.55rem;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border, #d8dde7);
+  background: var(--surface, #fff);
+}
+
+.seguimiento-history-inline .seguimiento-history-line:last-child {
+  border-bottom: 0;
+}
+
+@media (max-width: 700px) {
+  .seguimiento-client-toggle {
+    grid-template-columns: minmax(0, 1fr) 2rem;
+    gap: 0.55rem;
+  }
+
+  .seguimiento-client-status {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: flex-start;
+  }
+
+  .seguimiento-client-chevron {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
 /* Seguimiento integrado en Resumen — Etapa 2/2 */
 .resumen-seguimiento-panel {
   min-width: 0;
@@ -11949,3 +12183,534 @@ body,
   .seguimiento-grid-row,
   .resumen-seguimiento-row { grid-template-columns: 1fr; }
 }
+
+/* Seguimiento — Ajuste visual Etapa 2/2 · responsive tabular y hardening final */
+.seguimiento-shell,
+.seguimiento-toolbar,
+.seguimiento-list-panel,
+.seguimiento-history-panel,
+.seguimiento-client-groups,
+.seguimiento-client-group,
+.resumen-seguimiento-panel {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.seguimiento-client-toggle {
+  min-height: 3rem;
+  touch-action: manipulation;
+}
+
+.seguimiento-client-chevron {
+  min-width: 2.35rem;
+  min-height: 2.35rem;
+}
+
+.seguimiento-client-table,
+.resumen-seguimiento-table {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+}
+
+.resumen-seguimiento-panel {
+  overflow: hidden;
+}
+
+.resumen-seguimiento-table {
+  border-radius: 0.65rem;
+}
+
+.seguimiento-branch-grid {
+  grid-template-columns:
+    6.7rem
+    minmax(6.8rem, 1.2fr)
+    6.2rem
+    4.4rem
+    6.2rem
+    3rem
+    5.5rem;
+  gap: 0.32rem;
+  width: 100%;
+  min-width: 41rem;
+}
+
+.seguimiento-branch-body,
+.seguimiento-branch-entry {
+  width: 100%;
+  min-width: 41rem;
+}
+
+.seguimiento-branch-head,
+.seguimiento-branch-row {
+  padding-inline: 0.58rem;
+}
+
+.seguimiento-branch-row > div,
+.resumen-seguimiento-row > div {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.seguimiento-light,
+.seguimiento-nowrap,
+.resumen-seguimiento-client-cell strong,
+.resumen-seguimiento-sucursal-cell {
+  white-space: nowrap;
+}
+
+.resumen-seguimiento-client-cell strong,
+.resumen-seguimiento-sucursal-cell {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.resumen-seguimiento-grid {
+  grid-template-columns:
+    6.7rem
+    minmax(6.2rem, 1.05fr)
+    minmax(6.2rem, 1.05fr)
+    6.2rem
+    4.4rem
+    6.2rem
+    3rem;
+  gap: 0.32rem;
+  width: 100%;
+  min-width: 41rem;
+}
+
+.resumen-seguimiento-body {
+  width: 100%;
+  min-width: 41rem;
+  gap: 0;
+}
+
+.resumen-seguimiento-row {
+  border-top: 0;
+  border-radius: 0;
+}
+
+.resumen-seguimiento-row:last-child {
+  border-radius: 0 0 0.65rem 0.65rem;
+}
+
+.seguimiento-history-action-cell,
+.seguimiento-action-cell {
+  min-width: 0;
+}
+
+.icon-action.seguimiento-call-action {
+  width: 2.5rem;
+  height: 2.5rem;
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  touch-action: manipulation;
+}
+
+.secondary-action.compact.seguimiento-history-action {
+  min-width: 5.6rem;
+  min-height: 2.5rem;
+  touch-action: manipulation;
+}
+
+.seguimiento-history-inline {
+  min-width: 0;
+}
+
+.seguimiento-history-inline .seguimiento-history-lines {
+  min-width: 0;
+}
+
+.seguimiento-history-inline .seguimiento-history-line {
+  grid-template-columns: 6.8rem minmax(0, 1fr);
+  min-width: 0;
+}
+
+/* iPad, tablets y Split View razonable: conservar encabezados, columnas y filas. */
+@media (min-width: 561px) {
+  .seguimiento-grid-head,
+  .resumen-seguimiento-head {
+    display: grid;
+  }
+
+  .seguimiento-grid-body,
+  .resumen-seguimiento-body {
+    gap: 0;
+  }
+
+  .seguimiento-grid-row,
+  .resumen-seguimiento-row {
+    display: grid;
+    padding: 0.62rem 0.58rem;
+    border-top: 0;
+    border-radius: 0;
+  }
+
+  .seguimiento-grid-row > div,
+  .resumen-seguimiento-row > div {
+    display: block;
+  }
+
+  .seguimiento-grid-row > div::before,
+  .resumen-seguimiento-row > div::before {
+    content: none !important;
+    display: none !important;
+  }
+
+  .seguimiento-action-cell {
+    justify-content: center;
+  }
+}
+
+@media (min-width: 561px) and (max-width: 900px) {
+  .seguimiento-branch-head,
+  .resumen-seguimiento-head {
+    font-size: 0.63rem;
+    letter-spacing: 0.015em;
+  }
+
+  .seguimiento-branch-row,
+  .resumen-seguimiento-row {
+    font-size: 0.74rem;
+  }
+
+  .seguimiento-light {
+    gap: 0.28rem;
+    font-size: 0.7rem;
+  }
+
+  .seguimiento-branch-grid,
+  .resumen-seguimiento-grid {
+    gap: 0.32rem;
+  }
+}
+
+/* Móvil estrecho: sigue siendo una fila compacta; se ocultan solo columnas secundarias. */
+@media (max-width: 560px) {
+  .seguimiento-toolbar .panel-heading-row,
+  .seguimiento-list-panel .panel-heading-row,
+  .seguimiento-history-panel .panel-heading-row {
+    gap: 0.55rem;
+  }
+
+  .seguimiento-client-toggle {
+    grid-template-columns: minmax(0, 1fr) 2.35rem;
+    gap: 0.45rem;
+    padding: 0.66rem 0.7rem;
+  }
+
+  .seguimiento-client-status {
+    gap: 0.26rem;
+  }
+
+  .seguimiento-status-chip {
+    min-width: 2.15rem;
+    padding: 0.22rem 0.34rem;
+  }
+
+  .seguimiento-client-table,
+  .resumen-seguimiento-table {
+    overflow-x: hidden;
+    scrollbar-gutter: auto;
+  }
+
+  .seguimiento-branch-grid,
+  .resumen-seguimiento-grid {
+    min-width: 0;
+    width: 100%;
+    gap: 0.3rem;
+  }
+
+  .seguimiento-branch-body,
+  .seguimiento-branch-entry,
+  .resumen-seguimiento-body {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .seguimiento-branch-grid {
+    grid-template-columns: 2.15rem minmax(0, 1fr) 3.15rem 5.55rem;
+  }
+
+  .seguimiento-branch-head {
+    display: grid;
+    padding: 0.42rem 0.46rem;
+    font-size: 0.58rem;
+  }
+
+  .seguimiento-branch-head > span:nth-child(1) {
+    grid-column: 1;
+    font-size: 0;
+  }
+
+  .seguimiento-branch-head > span:nth-child(1)::after {
+    content: '●';
+    font-size: 0.72rem;
+  }
+
+  .seguimiento-branch-head > span:nth-child(2) { grid-column: 2; }
+  .seguimiento-branch-head > span:nth-child(4) {
+    grid-column: 3;
+    text-align: center;
+    font-size: 0;
+  }
+  .seguimiento-branch-head > span:nth-child(4)::after {
+    content: 'Días';
+    font-size: 0.58rem;
+  }
+  .seguimiento-branch-head > span:nth-child(6) {
+    grid-column: 4;
+    text-align: center;
+    font-size: 0;
+  }
+  .seguimiento-branch-head > span:nth-child(6)::after {
+    content: 'Acciones';
+    font-size: 0.58rem;
+  }
+
+  .seguimiento-branch-head > span:nth-child(3),
+  .seguimiento-branch-head > span:nth-child(5),
+  .seguimiento-branch-head > span:nth-child(7),
+  .seguimiento-branch-row > div:nth-child(3),
+  .seguimiento-branch-row > div:nth-child(5) {
+    display: none;
+  }
+
+  .seguimiento-branch-row {
+    display: grid;
+    grid-template-columns: 2.15rem minmax(0, 1fr) 3.15rem 5.55rem;
+    gap: 0.3rem;
+    min-height: 3.2rem;
+    padding: 0.38rem 0.46rem;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .seguimiento-branch-row > div {
+    display: flex;
+    align-items: center;
+  }
+
+  .seguimiento-branch-row > div:nth-child(1) { grid-column: 1; }
+  .seguimiento-branch-row > div:nth-child(2) { grid-column: 2; }
+  .seguimiento-branch-row > div:nth-child(4) {
+    grid-column: 3;
+    justify-content: center;
+  }
+  .seguimiento-branch-row > div:nth-child(6),
+  .seguimiento-branch-row > div:nth-child(7) {
+    grid-column: 4;
+    grid-row: 1;
+  }
+  .seguimiento-branch-row > div:nth-child(6) { justify-content: flex-start; }
+  .seguimiento-branch-row > div:nth-child(7) { justify-content: flex-end; }
+
+  .seguimiento-light {
+    justify-content: center;
+  }
+
+  .seguimiento-light > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .seguimiento-light i {
+    width: 0.82rem;
+    height: 0.82rem;
+    flex-basis: 0.82rem;
+  }
+
+  .seguimiento-sucursal-cell strong {
+    font-size: 0.77rem;
+  }
+
+  .icon-action.seguimiento-call-action {
+    width: 2.35rem;
+    height: 2.35rem;
+    min-width: 2.35rem;
+    min-height: 2.35rem;
+  }
+
+  .secondary-action.compact.seguimiento-history-action {
+    min-width: 2.85rem;
+    width: 2.85rem;
+    min-height: 2.35rem;
+    padding: 0.3rem 0.32rem;
+    gap: 0.18rem;
+  }
+
+  .seguimiento-history-action > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .seguimiento-history-action strong {
+    min-width: 1.15rem;
+    padding-inline: 0.2rem;
+  }
+
+  .seguimiento-history-inline {
+    padding: 0.42rem 0.46rem 0.5rem;
+  }
+
+  .seguimiento-history-inline .seguimiento-history-line,
+  .seguimiento-history-line {
+    grid-template-columns: 6.1rem minmax(0, 1fr);
+    gap: 0.42rem;
+    padding: 0.4rem 0.44rem;
+    font-size: 0.73rem;
+  }
+
+  .resumen-seguimiento-grid {
+    grid-template-columns: 2.15rem minmax(0, 1fr) 3.15rem 2.55rem;
+  }
+
+  .resumen-seguimiento-head {
+    display: grid;
+    padding: 0.42rem 0.46rem;
+    font-size: 0.58rem;
+  }
+
+  .resumen-seguimiento-head > span:nth-child(1) {
+    grid-column: 1;
+    font-size: 0;
+  }
+  .resumen-seguimiento-head > span:nth-child(1)::after {
+    content: '●';
+    font-size: 0.72rem;
+  }
+  .resumen-seguimiento-head > span:nth-child(2) {
+    grid-column: 2;
+    font-size: 0;
+  }
+  .resumen-seguimiento-head > span:nth-child(2)::after {
+    content: 'Cliente / Sucursal';
+    font-size: 0.58rem;
+  }
+  .resumen-seguimiento-head > span:nth-child(5) {
+    grid-column: 3;
+    text-align: center;
+    font-size: 0;
+  }
+  .resumen-seguimiento-head > span:nth-child(5)::after {
+    content: 'Días';
+    font-size: 0.58rem;
+  }
+  .resumen-seguimiento-head > span:nth-child(7) {
+    grid-column: 4;
+    text-align: center;
+    font-size: 0;
+  }
+  .resumen-seguimiento-head > span:nth-child(7)::after {
+    content: 'Abrir';
+    font-size: 0.58rem;
+  }
+
+  .resumen-seguimiento-head > span:nth-child(3),
+  .resumen-seguimiento-head > span:nth-child(4),
+  .resumen-seguimiento-head > span:nth-child(6),
+  .resumen-seguimiento-row > div:nth-child(4),
+  .resumen-seguimiento-row > div:nth-child(6) {
+    display: none;
+  }
+
+  .resumen-seguimiento-row {
+    display: grid;
+    grid-template-columns: 2.15rem minmax(0, 1fr) 3.15rem 2.55rem;
+    grid-template-rows: minmax(1.25rem, auto) minmax(1.1rem, auto);
+    gap: 0.06rem 0.3rem;
+    min-height: 3.2rem;
+    padding: 0.38rem 0.46rem;
+    border-top: 0;
+    border-radius: 0;
+  }
+
+  .resumen-seguimiento-row > div {
+    display: flex;
+    align-items: center;
+  }
+
+  .resumen-seguimiento-row > div::before {
+    content: none !important;
+    display: none !important;
+  }
+
+  .resumen-seguimiento-row > div:nth-child(1) {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    justify-content: center;
+  }
+  .resumen-seguimiento-row > div:nth-child(2) {
+    grid-column: 2;
+    grid-row: 1;
+    align-items: end;
+  }
+  .resumen-seguimiento-row > div:nth-child(3) {
+    grid-column: 2;
+    grid-row: 2;
+    align-items: start;
+    color: var(--muted, #64748b);
+    font-size: 0.72rem;
+  }
+  .resumen-seguimiento-row > div:nth-child(5) {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    justify-content: center;
+  }
+  .resumen-seguimiento-row > div:nth-child(7) {
+    grid-column: 4;
+    grid-row: 1 / span 2;
+    justify-content: center;
+  }
+
+  .resumen-seguimiento-client-cell strong,
+  .resumen-seguimiento-sucursal-cell {
+    width: 100%;
+    font-size: 0.75rem;
+  }
+
+  .resumen-seguimiento-row:last-child {
+    border-radius: 0 0 0.65rem 0.65rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .seguimiento-branch-grid {
+    grid-template-columns: 1.9rem minmax(0, 1fr) 2.75rem 5.15rem;
+    gap: 0.22rem;
+  }
+
+  .seguimiento-branch-row {
+    grid-template-columns: 1.9rem minmax(0, 1fr) 2.75rem 5.15rem;
+    gap: 0.22rem;
+    padding-inline: 0.38rem;
+  }
+
+  .resumen-seguimiento-grid,
+  .resumen-seguimiento-row {
+    grid-template-columns: 1.9rem minmax(0, 1fr) 2.75rem 2.4rem;
+    gap: 0.04rem 0.22rem;
+  }
+}
+

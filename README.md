@@ -112,4 +112,9 @@ Bloque A / Etapa 3/6: se agregó una pantalla de acceso preparada para Firebase 
 
 ## Seguimiento — Etapa 2/2 — Integración final
 
-Seguimiento queda integrado a Ventas/OC para calcular el último pedido global por Cliente + Sucursal, al Resumen mediante semáforo de atención y al contrato Firestore existente para escritura parcial, descarga incremental, sincronización completa, conflictos, cursores, tombstones, JSON y diagnóstico. La versión PWA de esta entrega es `0.18.54-seguimiento-etapa2-integracion-final`.
+Seguimiento queda integrado a Ventas/OC para calcular el último pedido global por Cliente + Sucursal, al Resumen mediante semáforo de atención y al contrato Firestore existente para escritura parcial, descarga incremental, sincronización completa, conflictos, cursores, tombstones, JSON y diagnóstico. La versión PWA de esta entrega es `0.18.56-seguimiento-responsive-hardening-final`.
+
+## Seguimiento — Ajuste visual Etapa 1/2
+
+La vista principal agrupa por Cliente mediante encabezados compactos desplegables. Cada grupo conserva las sucursales como filas y columnas compartidas, sin repetir el Cliente y sin convertir las filas en tarjetas. El Histórico se abre únicamente debajo de la sucursal correspondiente y permanece fuera de Firestore, JSON y datos operativos como estado puramente visual de sesión. La versión PWA de esta entrega es `0.18.56-seguimiento-responsive-hardening-final`.
+

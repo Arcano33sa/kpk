@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.54-seguimiento-etapa2-integracion-final';
+  const APP_VERSION = '0.18.56-seguimiento-responsive-hardening-final';
   const SCHEMA_VERSION = '1.0.0';
   const SYNC_CONTRACT_VERSION = '1.2.2';
   const SYNC_CONTRACT_STAGE = 'Seguimiento - Etapa 2/2 Integración final';
@@ -1352,6 +1352,7 @@ Notas importantes:
     sucursalId: '',
     semaforo: '',
     soloNunca: false,
+    expandedClientId: '',
     expandedKey: '',
     formOpen: false,
     formClienteId: '',
@@ -26533,21 +26534,23 @@ Notas importantes:
           <div class="count-pill">Sucursales al día: ${escapeHtml(String(summary.greenCount))}</div>
         </div>
         ${rows.length ? `
-          <div class="resumen-seguimiento-grid resumen-seguimiento-head" aria-hidden="true">
-            <span>Semáforo</span><span>Cliente</span><span>Sucursal</span><span>Última llamada</span><span>Días sin llamar</span><span>Último pedido</span><span>Acción</span>
-          </div>
-          <div class="resumen-seguimiento-body">
-            ${rows.map((row) => `
-              <div class="resumen-seguimiento-grid resumen-seguimiento-row">
-                <div data-label="Semáforo"><span class="seguimiento-light ${escapeHtml(row.semaforo.className)}"><i aria-hidden="true"></i><span>${escapeHtml(row.semaforo.label)}</span></span></div>
-                <div data-label="Cliente"><strong>${escapeHtml(row.cliente.nombre || 'Cliente')}</strong></div>
-                <div data-label="Sucursal">${escapeHtml(row.sucursal.nombre || 'Sucursal')}</div>
-                <div data-label="Última llamada">${escapeHtml(row.latest ? formatDate(row.latest.fechaLlamada) : 'Nunca llamada')}</div>
-                <div data-label="Días sin llamar"><strong>${escapeHtml(row.semaforo.days === null ? '—' : String(row.semaforo.days))}</strong></div>
-                <div data-label="Último pedido">${escapeHtml(row.ultimoPedido.label)}</div>
-                <div data-label="Acción" class="seguimiento-action-cell"><button type="button" class="icon-action seguimiento-call-action" data-go="seguimiento" aria-label="Abrir Seguimiento" title="Abrir Seguimiento">☎</button></div>
-              </div>
-            `).join('')}
+          <div class="resumen-seguimiento-table" role="table" aria-label="Sucursales que requieren seguimiento">
+            <div class="resumen-seguimiento-grid resumen-seguimiento-head" role="row">
+              <span role="columnheader">Semáforo</span><span role="columnheader">Cliente</span><span role="columnheader">Sucursal</span><span role="columnheader">Última llamada</span><span role="columnheader">Días sin llamar</span><span role="columnheader">Último pedido</span><span role="columnheader">Acción</span>
+            </div>
+            <div class="resumen-seguimiento-body" role="rowgroup">
+              ${rows.map((row) => `
+                <div class="resumen-seguimiento-grid resumen-seguimiento-row" role="row">
+                  <div role="cell" data-label="Semáforo"><span class="seguimiento-light ${escapeHtml(row.semaforo.className)}" title="${escapeHtml(row.semaforo.label)}"><i aria-hidden="true"></i><span>${escapeHtml(row.semaforo.label)}</span></span></div>
+                  <div role="cell" data-label="Cliente" class="resumen-seguimiento-client-cell"><strong>${escapeHtml(row.cliente.nombre || 'Cliente')}</strong></div>
+                  <div role="cell" data-label="Sucursal" class="resumen-seguimiento-sucursal-cell">${escapeHtml(row.sucursal.nombre || 'Sucursal')}</div>
+                  <div role="cell" data-label="Última llamada"><span class="seguimiento-nowrap">${escapeHtml(row.latest ? formatDate(row.latest.fechaLlamada) : 'Nunca llamada')}</span></div>
+                  <div role="cell" data-label="Días sin llamar"><strong class="seguimiento-nowrap">${escapeHtml(row.semaforo.days === null ? '—' : String(row.semaforo.days))}</strong></div>
+                  <div role="cell" data-label="Último pedido"><span class="seguimiento-nowrap">${escapeHtml(row.ultimoPedido.label)}</span></div>
+                  <div role="cell" data-label="Acción" class="seguimiento-action-cell"><button type="button" class="icon-action seguimiento-call-action" data-go="seguimiento" aria-label="Abrir Seguimiento" title="Abrir Seguimiento">☎</button></div>
+                </div>
+              `).join('')}
+            </div>
           </div>
         ` : '<div class="empty-state compact-empty"><strong>Seguimiento al día.</strong><p>No hay sucursales amarillas, rojas ni pendientes de primera llamada.</p></div>'}
       </section>
@@ -26658,22 +26661,12 @@ Notas importantes:
         <article class="panel-card seguimiento-list-panel">
           <div class="panel-heading-row seguimiento-list-heading">
             <div>
-              <h2>Sucursales</h2>
-              <p class="compact-note">${rows.length} de ${allRows.length} combinaciones activas visibles.</p>
+              <span class="eyebrow mini">Agrupación operativa</span>
+              <h2>Clientes y sucursales</h2>
+              <p class="compact-note">${rows.length} de ${allRows.length} sucursales activas visibles. Abre un Cliente para consultar sus filas e Históricos.</p>
             </div>
           </div>
           ${rows.length ? renderSeguimientoMainList(rows) : '<div class="empty-state compact-empty"><strong>No hay coincidencias.</strong><p>Ajusta los filtros; el teléfono no se escondió, solo está bien filtrado.</p></div>'}
-        </article>
-
-        <article class="panel-card seguimiento-history-panel">
-          <div class="panel-heading-row">
-            <div>
-              <span class="eyebrow mini">Trazabilidad</span>
-              <h2>Histórico</h2>
-              <p class="compact-note">Todo inicia cerrado. Al expandir una sucursal se muestran únicamente sus llamadas anteriores.</p>
-            </div>
-          </div>
-          ${rows.length ? renderSeguimientoHistory(rows) : '<div class="empty-state compact-empty"><strong>Sin histórico visible.</strong><p>No existen sucursales que coincidan con los filtros actuales.</p></div>'}
         </article>
 
         ${seguimientoState.formOpen ? renderEditModal(getSeguimientoModalId(), 'Registrar llamada', 'Guarda un contacto manual por cliente y sucursal. No crea ventas ni movimientos.', renderSeguimientoForm(clientes)) : ''}
@@ -26733,13 +26726,87 @@ Notas importantes:
     `;
   }
 
+  function groupSeguimientoRowsByClient(rows = []) {
+    const groups = new Map();
+    rows.forEach((row) => {
+      const clienteId = cleanText(row?.cliente?.id);
+      if (!clienteId) return;
+      if (!groups.has(clienteId)) {
+        groups.set(clienteId, {
+          key: clienteId,
+          cliente: row.cliente,
+          rows: []
+        });
+      }
+      groups.get(clienteId).rows.push(row);
+    });
+    return Array.from(groups.values())
+      .map((group) => ({
+        ...group,
+        rows: group.rows.slice().sort((left, right) => compareCatalogDisplayText(left.sucursal.nombre, right.sucursal.nombre))
+      }))
+      .sort((left, right) => compareCatalogDisplayText(left.cliente.nombre, right.cliente.nombre));
+  }
+
+  function getSeguimientoClientStatusSummary(rows = []) {
+    return rows.reduce((acc, row) => {
+      const key = cleanText(row?.semaforo?.key) || 'never';
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, { green: 0, yellow: 0, red: 0, never: 0 });
+  }
+
   function renderSeguimientoMainList(rows) {
+    const groups = groupSeguimientoRowsByClient(rows);
     return `
-      <div class="seguimiento-grid seguimiento-grid-head" aria-hidden="true">
-        <span>Semáforo</span><span>Cliente</span><span>Sucursal</span><span>Última llamada</span><span>Días sin llamar</span><span>Último pedido</span><span>Acción</span>
+      <div class="seguimiento-client-groups">
+        ${groups.map((group) => renderSeguimientoClientGroup(group)).join('')}
       </div>
-      <div class="seguimiento-grid-body">
-        ${rows.map((row) => renderSeguimientoMainRow(row)).join('')}
+    `;
+  }
+
+  function renderSeguimientoClientGroup(group) {
+    const clienteId = cleanText(group?.cliente?.id);
+    const isOpen = seguimientoState.expandedClientId === clienteId;
+    const rows = Array.isArray(group?.rows) ? group.rows : [];
+    const status = getSeguimientoClientStatusSummary(rows);
+    const redTotal = status.red + status.never;
+    const sucursalLabel = rows.length === 1 ? '1 sucursal' : `${rows.length} sucursales`;
+    const statusLabel = `Verde ${status.green}, amarillo ${status.yellow}, rojo ${redTotal}`;
+    return `
+      <section class="seguimiento-client-group ${isOpen ? 'is-open' : ''}" data-seguimiento-client-group="${escapeHtml(clienteId)}">
+        <button type="button" class="seguimiento-client-toggle" data-seguimiento-client-toggle="${escapeHtml(clienteId)}" aria-expanded="${isOpen ? 'true' : 'false'}" title="${isOpen ? 'Ocultar sucursales' : 'Mostrar sucursales'}">
+          <span class="seguimiento-client-identity">
+            <strong>${escapeHtml(group.cliente.nombre || 'Cliente')}</strong>
+            <small>${escapeHtml(sucursalLabel)}</small>
+          </span>
+          <span class="seguimiento-client-status" aria-label="${escapeHtml(statusLabel)}">
+            <span class="seguimiento-status-chip is-green" title="Verde"><i aria-hidden="true"></i>${status.green}</span>
+            <span class="seguimiento-status-chip is-yellow" title="Amarillo"><i aria-hidden="true"></i>${status.yellow}</span>
+            <span class="seguimiento-status-chip is-red" title="Rojo y nunca llamada"><i aria-hidden="true"></i>${redTotal}</span>
+          </span>
+          <span class="seguimiento-client-chevron" aria-hidden="true">${isOpen ? '⌃' : '⌄'}</span>
+        </button>
+        ${isOpen ? renderSeguimientoClientRows(rows, group.cliente) : ''}
+      </section>
+    `;
+  }
+
+  function renderSeguimientoClientRows(rows, cliente) {
+    return `
+      <div class="seguimiento-client-table" role="table" aria-label="Sucursales de ${escapeHtml(cliente?.nombre || 'Cliente')}">
+        <div class="seguimiento-branch-grid seguimiento-branch-head" role="row">
+          <span role="columnheader">Semáforo</span>
+          <span role="columnheader">Sucursal</span>
+          <span role="columnheader">Última llamada</span>
+          <span role="columnheader">Días sin llamar</span>
+          <span role="columnheader">Último pedido</span>
+          <span role="columnheader">Registrar llamada</span>
+          <span role="columnheader">Histórico</span>
+        </div>
+        <div class="seguimiento-branch-body" role="rowgroup">
+          ${rows.map((row) => renderSeguimientoMainRow(row)).join('')}
+        </div>
       </div>
     `;
   }
@@ -26747,50 +26814,36 @@ Notas importantes:
   function renderSeguimientoMainRow(row) {
     const lastDate = row.latest ? formatDate(row.latest.fechaLlamada) : 'Nunca llamada';
     const daysLabel = row.semaforo.days === null ? '—' : String(row.semaforo.days);
+    const historyOpen = seguimientoState.expandedKey === row.key;
+    const historyCount = row.previous.length;
     return `
-      <div class="seguimiento-grid seguimiento-grid-row" data-seguimiento-row="${escapeHtml(row.key)}">
-        <div data-label="Semáforo"><span class="seguimiento-light ${escapeHtml(row.semaforo.className)}" title="${escapeHtml(row.semaforo.label)}"><i aria-hidden="true"></i><span>${escapeHtml(row.semaforo.label)}</span></span></div>
-        <div data-label="Cliente"><strong>${escapeHtml(row.cliente.nombre || 'Cliente')}</strong></div>
-        <div data-label="Sucursal"><span>${escapeHtml(row.sucursal.nombre || 'Sucursal')}</span></div>
-        <div data-label="Última llamada"><span>${escapeHtml(lastDate)}</span></div>
-        <div data-label="Días sin llamar"><strong>${escapeHtml(daysLabel)}</strong></div>
-        <div data-label="Último pedido"><span>${escapeHtml(row.ultimoPedido.label)}</span></div>
-        <div data-label="Acción" class="seguimiento-action-cell">
-          <button type="button" class="icon-action seguimiento-call-action" data-seguimiento-call="${escapeHtml(row.key)}" data-cliente-id="${escapeHtml(row.cliente.id)}" data-sucursal-id="${escapeHtml(row.sucursal.id)}" aria-label="Registrar llamada a ${escapeHtml(row.sucursal.nombre)}" title="Registrar nueva llamada">☎</button>
+      <div class="seguimiento-branch-entry ${historyOpen ? 'is-history-open' : ''}" data-seguimiento-row="${escapeHtml(row.key)}">
+        <div class="seguimiento-branch-grid seguimiento-branch-row" role="row">
+          <div role="cell"><span class="seguimiento-light ${escapeHtml(row.semaforo.className)}" title="${escapeHtml(row.semaforo.label)}"><i aria-hidden="true"></i><span>${escapeHtml(row.semaforo.label)}</span></span></div>
+          <div role="cell" class="seguimiento-sucursal-cell"><strong>${escapeHtml(row.sucursal.nombre || 'Sucursal')}</strong></div>
+          <div role="cell"><span class="seguimiento-nowrap">${escapeHtml(lastDate)}</span></div>
+          <div role="cell"><strong class="seguimiento-nowrap">${escapeHtml(daysLabel)}</strong></div>
+          <div role="cell"><span class="seguimiento-nowrap">${escapeHtml(row.ultimoPedido.label)}</span></div>
+          <div role="cell" class="seguimiento-action-cell">
+            <button type="button" class="icon-action seguimiento-call-action" data-seguimiento-call="${escapeHtml(row.key)}" data-cliente-id="${escapeHtml(row.cliente.id)}" data-sucursal-id="${escapeHtml(row.sucursal.id)}" aria-label="Registrar llamada a ${escapeHtml(row.sucursal.nombre)}" title="Registrar nueva llamada">☎</button>
+          </div>
+          <div role="cell" class="seguimiento-history-action-cell">
+            <button type="button" class="secondary-action compact seguimiento-history-action" data-seguimiento-history-toggle="${escapeHtml(row.key)}" aria-expanded="${historyOpen ? 'true' : 'false'}" title="${historyOpen ? 'Ocultar histórico' : 'Ver histórico'}">
+              <span>Histórico</span><strong>${historyCount}</strong><i aria-hidden="true">${historyOpen ? '⌃' : '⌄'}</i>
+            </button>
+          </div>
         </div>
+        ${historyOpen ? renderSeguimientoHistoryExpanded(row) : ''}
       </div>
-    `;
-  }
-
-  function renderSeguimientoHistory(rows) {
-    return `
-      <div class="seguimiento-history-list">
-        ${rows.map((row) => renderSeguimientoHistoryItem(row)).join('')}
-      </div>
-    `;
-  }
-
-  function renderSeguimientoHistoryItem(row) {
-    const isOpen = seguimientoState.expandedKey === row.key;
-    return `
-      <section class="seguimiento-history-item ${isOpen ? 'is-open' : ''}">
-        <button type="button" class="seguimiento-history-summary" data-seguimiento-history-toggle="${escapeHtml(row.key)}" aria-expanded="${isOpen ? 'true' : 'false'}" title="${isOpen ? 'Ocultar histórico' : 'Ver histórico'}">
-          <span class="seguimiento-history-client"><strong>${escapeHtml(row.cliente.nombre)}</strong><small>${escapeHtml(row.sucursal.nombre)}</small></span>
-          <span><small>Total de llamadas</small><strong>${row.calls.length}</strong></span>
-          <span><small>Última registrada</small><strong>${row.latest ? escapeHtml(formatDate(row.latest.fechaLlamada)) : 'Nunca llamada'}</strong></span>
-          <span class="seguimiento-history-chevron" aria-hidden="true">${isOpen ? '⌃' : '⌄'}</span>
-        </button>
-        ${isOpen ? renderSeguimientoHistoryExpanded(row) : ''}
-      </section>
     `;
   }
 
   function renderSeguimientoHistoryExpanded(row) {
     if (!row.previous.length) {
-      return '<div class="seguimiento-history-expanded"><p class="compact-note">No existen llamadas anteriores para esta sucursal.</p></div>';
+      return '<div class="seguimiento-history-expanded seguimiento-history-inline"><p class="compact-note">No existen llamadas anteriores para esta sucursal.</p></div>';
     }
     return `
-      <div class="seguimiento-history-expanded">
+      <div class="seguimiento-history-expanded seguimiento-history-inline" role="region" aria-label="Histórico de ${escapeHtml(row.sucursal.nombre || 'Sucursal')}">
         <div class="seguimiento-history-lines">
           ${row.previous.map((call) => `
             <div class="seguimiento-history-line">
@@ -26954,6 +27007,7 @@ Notas importantes:
     seguimientoState.sucursalId = availableSucursales.some((item) => item.id === requestedSucursal) ? requestedSucursal : '';
     seguimientoState.semaforo = cleanText(formData.get('semaforo'));
     seguimientoState.soloNunca = formData.get('soloNunca') === 'on';
+    seguimientoState.expandedClientId = '';
     seguimientoState.expandedKey = '';
     renderRoute({ preserveScroll: true });
   }
@@ -26964,6 +27018,15 @@ Notas importantes:
     seguimientoState.sucursalId = '';
     seguimientoState.semaforo = '';
     seguimientoState.soloNunca = false;
+    seguimientoState.expandedClientId = '';
+    seguimientoState.expandedKey = '';
+    renderRoute({ preserveScroll: true });
+  }
+
+  function toggleSeguimientoClient(clienteId) {
+    const key = cleanText(clienteId);
+    const closingCurrent = seguimientoState.expandedClientId === key;
+    seguimientoState.expandedClientId = closingCurrent ? '' : key;
     seguimientoState.expandedKey = '';
     renderRoute({ preserveScroll: true });
   }
@@ -33691,6 +33754,10 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-seguimiento-clear-filters]').forEach((button) => {
       button.addEventListener('click', clearSeguimientoFilters);
+    });
+
+    viewRoot.querySelectorAll('[data-seguimiento-client-toggle]').forEach((button) => {
+      button.addEventListener('click', () => toggleSeguimientoClient(button.dataset.seguimientoClientToggle));
     });
 
     viewRoot.querySelectorAll('[data-seguimiento-history-toggle]').forEach((button) => {

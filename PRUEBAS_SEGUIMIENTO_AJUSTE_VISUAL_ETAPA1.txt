@@ -1,0 +1,38 @@
+KSA PRÁCTIKA — SEGUIMIENTO — AJUSTE VISUAL — ETAPA 1/2
+Fecha y hora: 14/07/2026 21:35
+Versión PWA: 0.18.55-seguimiento-ajuste-visual-etapa1
+
+CAMBIOS VALIDADOS
+- Clientes agrupados una sola vez mediante encabezados compactos desplegables.
+- Clientes cerrados por defecto y estado abierto conservado solo durante la sesión.
+- Sucursales renderizadas como filas y columnas compartidas, sin repetir Cliente.
+- Columnas: Semáforo, Sucursal, Última llamada, Días sin llamar, Último pedido, Registrar llamada e Histórico.
+- Histórico integrado debajo de la sucursal exacta, cerrado por defecto y exclusivo por fila.
+- Orden alfabético de Clientes y Sucursales mediante el comparador existente.
+- Filas preservadas en anchos reducidos mediante desplazamiento horizontal interno; no se convierten en tarjetas.
+- Versión interna, referencias versionadas, caché y Service Worker actualizados.
+
+BLINDAJES CONFIRMADOS POR COMPARACIÓN DE FUENTE
+- Sin cambios en normalizeSeguimientoLlamadaRecord.
+- Sin cambios en getSeguimientoSemaphore.
+- Sin cambios en getSeguimientoLatestOrder.
+- Sin cambios en buildSeguimientoRows.
+- Sin cambios en saveSeguimientoCall.
+- Sin cambios en migración y confirmación de sincronización de Seguimiento.
+- Sin cambios en firebase-config.js, reglas Firestore, manifest, JSZip y guías JSON/Firestore.
+
+SMOKE TEST
+- node --check app.js: APROBADO.
+- node --check service-worker.js: APROBADO.
+- Prueba dinámica aislada de agrupación/render: APROBADA.
+  * 2 clientes agrupados.
+  * Orden: Águila, Beta.
+  * Sucursales: Álamos, Zona Sur.
+  * Cliente abierto: 2 filas.
+  * Histórico simultáneo: 1.
+  * Apertura/cierre de Cliente e Histórico: APROBADO.
+- Consistencia PWA: APROBADA.
+  * APP_VERSION, referencias HTML y ASSET_VERSION coinciden.
+  * Nombre de caché renovado.
+  * manifest.webmanifest válido.
+- Consola sintáctica: sin errores nuevos detectados.

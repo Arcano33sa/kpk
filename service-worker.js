@@ -1,8 +1,8 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_54_seguimiento_etapa2_integracion_final';
+const CACHE_VERSION = 'v0_18_56_seguimiento_responsive_hardening_final';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
-const ASSET_VERSION = '0.18.54-seguimiento-etapa2-integracion-final';
+const ASSET_VERSION = '0.18.56-seguimiento-responsive-hardening-final';
 const APP_SHELL = [
   './',
   './index.html',
