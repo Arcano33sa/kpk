@@ -12219,3 +12219,207 @@ body,
   text-align: center;
 }
 
+
+
+/* Gastos — Etapa 1/3: monto activo por categoría sin ensanchar el acordeón */
+.gastos-shell .entity-accordion-toggle.has-total-indicator {
+  min-width: 0;
+}
+
+.gastos-shell .entity-accordion-total {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gastos-shell .gasto-category-empty {
+  margin: 0;
+}
+
+/* KSA PRÁCTIKA — Notas y Recordatorios Etapa 2/3 — Vista general operativa */
+.notas-home-message,
+.notas-home-pending-panel {
+  width: 100%;
+  min-width: 0;
+}
+
+.notas-home-pending-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.notas-home-pending-title-row {
+  align-items: center;
+}
+
+.notas-home-pending-count {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.notas-home-pending-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  max-height: min(52vh, 520px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: 2px 5px 4px 2px;
+  scrollbar-gutter: stable;
+}
+
+.notas-home-pending-item {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(185, 135, 43, 0.24);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fffdf8, #ffffff);
+  box-shadow: 0 8px 18px rgba(122, 22, 29, 0.05);
+}
+
+.notas-home-pending-main {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.notas-home-pending-heading,
+.notas-home-pending-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.notas-home-type,
+.notas-home-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 25px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.notas-home-type.is-note {
+  color: var(--accent-dark);
+  background: #fff8ea;
+  border: 1px solid rgba(185, 135, 43, 0.26);
+}
+
+.notas-home-type.is-reminder {
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid rgba(29, 78, 216, 0.18);
+}
+
+.notas-home-state {
+  color: #7a4f12;
+  background: #fffaf0;
+  border: 1px solid rgba(185, 135, 43, 0.2);
+}
+
+.notas-home-pending-item h3 {
+  margin: 0;
+  font-size: 0.98rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.notas-home-pending-item p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.notas-home-pending-meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.notas-home-pending-meta span,
+.notas-home-pending-meta strong {
+  white-space: nowrap;
+}
+
+.notas-home-pending-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.notas-home-pending-action {
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid rgba(4, 120, 87, 0.24);
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #047857;
+  font-size: 0.78rem;
+  font-weight: 950;
+  line-height: 1;
+  white-space: nowrap;
+  touch-action: manipulation;
+}
+
+.notas-home-pending-action:hover,
+.notas-home-pending-action:focus-visible {
+  border-color: rgba(4, 120, 87, 0.48);
+  box-shadow: 0 0 0 4px rgba(4, 120, 87, 0.1);
+}
+
+@media (max-width: 900px) {
+  .notas-home-pending-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .notas-home-pending-panel {
+    margin-top: 12px;
+  }
+
+  .notas-home-pending-list {
+    max-height: min(58vh, 480px);
+    padding-right: 2px;
+  }
+
+  .notas-home-pending-item {
+    grid-template-columns: 1fr;
+    align-items: start;
+    gap: 9px;
+    padding: 11px;
+  }
+
+  .notas-home-pending-controls {
+    justify-content: flex-start;
+  }
+
+  .notas-home-pending-action {
+    min-height: 36px;
+  }
+}
+

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.48-ajuste-visual-centrado-global';
+  const APP_VERSION = '0.18.50-notas-recordatorios-etapa2';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -14719,11 +14719,103 @@ Notas importantes:
     renderRoute();
   }
 
+  function isNotasHomePendingRecord(record) {
+    return Boolean(record)
+      && !record.completed
+      && normalizeNotasEstado(record.estado, 'Pendiente') === 'Pendiente';
+  }
+
+  function getNotasHomePendingItems(data = getNotasData()) {
+    const normalized = normalizeNotasData(data);
+    const notas = normalized.notas
+      .filter(isNotasHomePendingRecord)
+      .map((record) => ({
+        id: record.id,
+        tipo: 'nota',
+        tipoLabel: 'Nota',
+        titulo: record.titulo,
+        fecha: record.fecha,
+        hora: '',
+        descripcion: record.observacion,
+        estado: 'Pendiente',
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt
+      }));
+    const recordatorios = normalized.recordatorios
+      .filter(isNotasHomePendingRecord)
+      .map((record) => ({
+        id: record.id,
+        tipo: 'recordatorio',
+        tipoLabel: 'Recordatorio',
+        titulo: record.titulo,
+        fecha: record.fecha,
+        hora: record.hora,
+        descripcion: record.descripcion,
+        estado: 'Pendiente',
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt
+      }));
+
+    return [...notas, ...recordatorios].sort((a, b) => {
+      const dateA = cleanText(a.fecha) || '9999-12-31';
+      const dateB = cleanText(b.fecha) || '9999-12-31';
+      const byDate = dateA.localeCompare(dateB);
+      if (byDate !== 0) return byDate;
+      const byTime = (cleanText(a.hora) || '99:99').localeCompare(cleanText(b.hora) || '99:99');
+      if (byTime !== 0) return byTime;
+      return String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''));
+    });
+  }
+
+  function renderNotasHomePendingItem(item) {
+    const isRecordatorio = item.tipo === 'recordatorio';
+    const description = cleanText(item.descripcion);
+    const action = isRecordatorio
+      ? `<button type="button" class="notas-home-pending-action" data-recordatorio-complete="${escapeHtml(item.id)}" aria-label="Marcar recordatorio como cumplido">Cumplido</button>`
+      : `<button type="button" class="notas-home-pending-action" data-notas-complete="${escapeHtml(item.id)}" data-notas-type="nota" aria-label="Marcar nota como realizada">Realizada</button>`;
+    return `
+      <article class="notas-home-pending-item" role="listitem">
+        <div class="notas-home-pending-main">
+          <div class="notas-home-pending-heading">
+            <span class="notas-home-type ${isRecordatorio ? 'is-reminder' : 'is-note'}">${escapeHtml(item.tipoLabel)}</span>
+            <span class="notas-home-state">${escapeHtml(item.estado)}</span>
+          </div>
+          <h3>${escapeHtml(item.titulo || `${item.tipoLabel} sin título`)}</h3>
+          <div class="notas-home-pending-meta">
+            ${item.fecha ? `<span><strong>Fecha</strong> ${escapeHtml(formatDate(item.fecha))}</span>` : ''}
+            ${item.hora ? `<span><strong>Hora</strong> ${escapeHtml(item.hora)}</span>` : ''}
+          </div>
+          ${description ? `<p>${escapeHtml(description)}</p>` : ''}
+        </div>
+        <div class="notas-home-pending-controls">${action}</div>
+      </article>
+    `;
+  }
+
+  function renderNotasHomePendingOverview(items = []) {
+    if (!Array.isArray(items) || !items.length) return '';
+    return `
+      <section class="panel-card notas-panel notas-home-pending-panel" aria-labelledby="notas-home-pending-title">
+        <div class="section-title-row notas-home-pending-title-row">
+          <div>
+            <span class="eyebrow mini">Vista general</span>
+            <h2 id="notas-home-pending-title">Notas y Recordatorios pendientes</h2>
+          </div>
+          <span class="notas-home-pending-count" aria-label="${items.length} pendientes">${items.length}</span>
+        </div>
+        <div class="notas-home-pending-list" role="list" aria-label="Pendientes de Notas y Recordatorios">
+          ${items.map(renderNotasHomePendingItem).join('')}
+        </div>
+      </section>
+    `;
+  }
+
   function renderNotasHome() {
     const data = getNotasData();
     const activeNotas = data.notas.filter((record) => !record.completed && record.estado !== 'Cumplido');
     const activePendientes = data.pendientes.filter((record) => !record.completed);
     const activeRecordatorios = data.recordatorios.filter((record) => !record.completed && record.estado !== 'Cumplido');
+    const homePendingItems = getNotasHomePendingItems(data);
     const historicalNotas = data.notas.filter((record) => record.completed || record.estado === 'Cumplido').length + data.pendientes.filter((record) => record.completed).length;
     const historicalRecordatorios = data.recordatorios.filter((record) => record.completed || record.estado === 'Cumplido').length;
     return `
@@ -14744,6 +14836,8 @@ Notas importantes:
         </aside>
       </section>
 
+      ${notasState.message ? `<div class="form-message ${notasState.messageType === 'error' ? 'is-error' : 'is-success'} notas-home-message" role="status">${escapeHtml(notasState.message)}</div>` : ''}
+
       <section class="card-grid notas-card-grid" aria-label="Secciones internas de Notas">
         <article class="module-card notas-section-card">
           <div class="module-icon" aria-hidden="true">✎</div>
@@ -14758,6 +14852,8 @@ Notas importantes:
           <button type="button" class="card-action" data-go="notas-recordatorios">Entrar</button>
         </article>
       </section>
+
+      ${renderNotasHomePendingOverview(homePendingItems)}
 
       <article class="placeholder-card notas-stage-card">
         <h2>Funcionamiento separado</h2>
@@ -15437,7 +15533,7 @@ Notas importantes:
     saveNotasData(data);
     registerSessionChange({ module: 'Notas / pendientes', operation: 'editar', recordId: id });
     clearNotasForms();
-    setNotasMessage('Registro marcado como cumplido y enviado al Histórico.');
+    setNotasMessage(type === 'nota' ? 'Nota marcada como realizada y conservada en el Histórico.' : 'Registro marcado como cumplido y enviado al Histórico.');
     renderRoute();
   }
 
@@ -15448,7 +15544,7 @@ Notas importantes:
     saveNotasData(data);
     registerSessionChange({ module: 'Notas / pendientes', operation: 'editar', recordId: id });
     clearNotasForms();
-    setNotasMessage('Recordatorio marcado como cumplido y enviado al Histórico.');
+    setNotasMessage('Recordatorio marcado como cumplido y conservado en el Histórico.');
     renderRoute();
   }
 
@@ -21139,7 +21235,9 @@ Notas importantes:
         ${groups.map((group) => {
           const isOpen = group.key === openGroupKey;
           const pendingIndicator = module === 'compras' ? renderComprasAccordionPending(group.records) : '';
-          const totalIndicator = module === 'casa' ? renderCasaAccordionTotal(group) : '';
+          const totalIndicator = module === 'casa'
+            ? renderCasaAccordionTotal(group)
+            : (module === 'gastos' ? renderGastosAccordionTotal(group) : '');
           const middleIndicator = pendingIndicator || totalIndicator;
           const indicatorClass = pendingIndicator ? 'has-pending-indicator' : (totalIndicator ? 'has-total-indicator' : '');
           return `
@@ -21233,6 +21331,24 @@ Notas importantes:
     };
   }
 
+  function getGastoSearchText(gasto) {
+    const record = normalizeGastoRecord(gasto);
+    const tipo = getCatalogRecordById('tiposGasto', record.tipoGastoId);
+    const metodo = getCatalogRecordById('metodosPago', record.metodoPagoId);
+    const cuenta = getCatalogRecordById('cuentasBancos', record.cuentaBancoId);
+    return normalizeNameForCompare([
+      tipo?.nombre,
+      record.tipoGastoNombre,
+      metodo?.nombre,
+      record.metodoPagoNombre,
+      cuenta?.nombre,
+      record.cuentaBancoNombre,
+      record.estado,
+      record.observacion,
+      formatMoney(record.monto)
+    ].join(' '));
+  }
+
   function getGastoAccordionInfo(gasto) {
     const record = normalizeGastoRecord(gasto);
     const tipo = getCatalogRecordById('tiposGasto', record.tipoGastoId);
@@ -21240,7 +21356,7 @@ Notas importantes:
     return {
       key: makeAccordionGroupKey('gastos-tipo', record.tipoGastoId, label),
       label,
-      searchText: `${label} ${record.metodoPagoNombre} ${record.cuentaBancoNombre} ${record.estado} ${record.observacion}`
+      searchText: getGastoSearchText(record)
     };
   }
 
@@ -21762,6 +21878,7 @@ Notas importantes:
         const text = row.getAttribute('data-search-text') || '';
         row.hidden = Boolean(query) && !text.includes(query);
       });
+      if (module === 'gastos') updateGastosAccordionTotalsForSearch(query);
     });
   }
 
@@ -23697,24 +23814,105 @@ Notas importantes:
     `;
   }
 
+  function buildGastosAccordionGroups(gastos) {
+    const records = (Array.isArray(gastos) ? gastos : []).map((record) => normalizeGastoRecord(record));
+    const groupsMap = new Map(buildAccordionGroups(records, getGastoAccordionInfo).map((group) => [group.key, group]));
+
+    getActiveCatalogRecords('tiposGasto').forEach((tipo) => {
+      const label = cleanText(tipo?.nombre) || 'Sin tipo de gasto';
+      const key = makeAccordionGroupKey('gastos-tipo', tipo?.id, label);
+      if (groupsMap.has(key)) return;
+      groupsMap.set(key, {
+        key,
+        label,
+        records: [],
+        searchText: normalizeNameForCompare(label)
+      });
+    });
+
+    return Array.from(groupsMap.values())
+      .map((group) => {
+        const groupRecords = (Array.isArray(group.records) ? group.records : []).map((record) => normalizeGastoRecord(record));
+        const activeTotal = groupRecords.reduce((sum, record) => {
+          if (!record.activo || record.anulado) return sum;
+          return roundMoney(sum + record.monto);
+        }, 0);
+        const searchText = normalizeNameForCompare(`${group.label} ${group.searchText || ''} ${groupRecords.map((record) => getGastoSearchText(record)).join(' ')}`);
+        return {
+          ...group,
+          records: groupRecords,
+          total: activeTotal,
+          searchText
+        };
+      })
+      .sort((a, b) => compareVisualText(a.label, b.label) || compareVisualText(a.key, b.key));
+  }
+
+  function renderGastosAccordionTotal(group) {
+    const amount = formatMoney(roundMoney(Number(group?.total) || 0));
+    return `
+      <span class="entity-accordion-total" data-gastos-accordion-total title="Total: ${escapeHtml(amount)}">
+        <span class="total-full" data-gastos-total-full>Total: ${escapeHtml(amount)}</span>
+        <span class="total-short" data-gastos-total-short>Tot.: ${escapeHtml(amount)}</span>
+      </span>
+    `;
+  }
+
+  function getGastosAccordionTotalByQuery(groupKey, query = '') {
+    const normalizedQuery = normalizeNameForCompare(query);
+    return getGastosOrdenados().reduce((sum, gasto) => {
+      const record = normalizeGastoRecord(gasto);
+      if (!record.activo || record.anulado) return sum;
+      if (getGastoAccordionInfo(record).key !== groupKey) return sum;
+      if (normalizedQuery && !getGastoSearchText(record).includes(normalizedQuery)) return sum;
+      return roundMoney(sum + record.monto);
+    }, 0);
+  }
+
+  function updateGastosAccordionTotalsForSearch(query = '') {
+    viewRoot.querySelectorAll('[data-accordion-item="gastos"]').forEach((item) => {
+      const toggle = item.querySelector('[data-accordion-key]');
+      const indicator = item.querySelector('[data-gastos-accordion-total]');
+      const groupKey = cleanText(toggle?.dataset?.accordionKey);
+      if (!indicator || !groupKey) return;
+      const amount = formatMoney(getGastosAccordionTotalByQuery(groupKey, query));
+      indicator.title = `Total: ${amount}`;
+      const full = indicator.querySelector('[data-gastos-total-full]');
+      const short = indicator.querySelector('[data-gastos-total-short]');
+      if (full) full.textContent = `Total: ${amount}`;
+      if (short) short.textContent = `Tot.: ${amount}`;
+    });
+  }
+
+  function renderEmptyGastosCategory(groupLabel = '') {
+    return `
+      <div class="empty-state gasto-category-empty">
+        <strong>Sin gastos registrados en ${escapeHtml(groupLabel || 'esta categoría')}.</strong>
+        <p>El total de la categoría se mantiene en ${escapeHtml(formatMoney(0))} para el período y filtros activos.</p>
+      </div>
+    `;
+  }
+
   function renderGastosList(gastos) {
-    if (!gastos.length) {
+    const groups = buildGastosAccordionGroups(gastos);
+    if (!groups.length) {
       return `
         <div class="empty-state">
-          <strong>No hay gastos registrados todavía.</strong>
-          <p>Guarda el primer gasto para iniciar el control operativo.</p>
+          <strong>No hay categorías de gasto disponibles.</strong>
+          <p>Crea o activa un tipo de gasto en Catálogos para iniciar el control operativo.</p>
         </div>
       `;
     }
 
-    const groups = buildAccordionGroups(gastos, getGastoAccordionInfo);
     ensureOpenAccordionGroup(gastosState, groups);
 
     return renderAccordionGroups({
       module: 'gastos',
       groups,
       openGroupKey: gastosState.openGroupKey,
-      renderOpenGroup: (group) => renderGastosTable(group.records, group.label)
+      renderOpenGroup: (group) => group.records.length
+        ? renderGastosTable(group.records, group.label)
+        : renderEmptyGastosCategory(group.label)
     });
   }
 
@@ -23753,7 +23951,7 @@ Notas importantes:
     const cuenta = getCatalogRecordById('cuentasBancos', record.cuentaBancoId);
     const estadoClass = getEstadoClass(record.estado);
     const tipoNombre = tipo?.nombre || record.tipoGastoNombre || 'Tipo no encontrado';
-    const searchText = normalizeNameForCompare([record.tipoGastoNombre, tipo?.nombre, record.metodoPagoNombre, metodo?.nombre, record.cuentaBancoNombre, cuenta?.nombre, record.observacion].join(' '));
+    const searchText = getGastoSearchText(record);
 
     return `
       <tr class="compact-record-row gasto-row ${record.activo ? 'is-active' : 'is-inactive'}" data-gasto-card data-search-text="${escapeHtml(searchText)}">
