@@ -1,3 +1,10 @@
+# KSA PRÁCTIKA — Notas y Recordatorios Etapa 3/3
+
+- Integración condicional de Notas y Recordatorios pendientes dentro de Resumen.
+- Se reutilizan los mismos registros y acciones del módulo Notas, sin colecciones ni estados paralelos.
+- Ubicación: después de indicadores/movimientos y antes de Períodos Pendientes de Cierre.
+- Versión/cache PWA actualizada a 0.18.51.
+
 # KSA PRÁCTIKA — Post12 Casa Etapa 2
 
 - Se agregó resumen interno de Casa con “Utilidad KPK”, “Total global Casa” y “Disponible después de Casa”.

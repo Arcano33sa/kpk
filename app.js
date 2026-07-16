@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.50-notas-recordatorios-etapa2';
+  const APP_VERSION = '0.18.51-notas-recordatorios-etapa3';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -14792,14 +14792,20 @@ Notas importantes:
     `;
   }
 
-  function renderNotasHomePendingOverview(items = []) {
+  function renderNotasHomePendingOverview(items = [], options = {}) {
     if (!Array.isArray(items) || !items.length) return '';
+    const context = cleanText(options.context) === 'resumen' ? 'resumen' : 'notas';
+    const titleId = context === 'resumen' ? 'resumen-notas-pending-title' : 'notas-home-pending-title';
+    const panelClass = context === 'resumen'
+      ? 'panel-card resumen-panel notas-home-pending-panel resumen-notas-pending-panel'
+      : 'panel-card notas-panel notas-home-pending-panel';
+    const eyebrow = context === 'resumen' ? 'Pendientes operativos' : 'Vista general';
     return `
-      <section class="panel-card notas-panel notas-home-pending-panel" aria-labelledby="notas-home-pending-title">
+      <section class="${panelClass}" aria-labelledby="${titleId}">
         <div class="section-title-row notas-home-pending-title-row">
           <div>
-            <span class="eyebrow mini">Vista general</span>
-            <h2 id="notas-home-pending-title">Notas y Recordatorios pendientes</h2>
+            <span class="eyebrow mini">${eyebrow}</span>
+            <h2 id="${titleId}">Notas y Recordatorios pendientes</h2>
           </div>
           <span class="notas-home-pending-count" aria-label="${items.length} pendientes">${items.length}</span>
         </div>
@@ -15852,6 +15858,8 @@ Notas importantes:
           <article class="metric-card resumen-exercise-card ${summary.utilidadAcumulada < 0 ? 'is-negative' : ''}" aria-label="Utilidad acumulada"><span>Utilidad acumulada</span><strong>${escapeHtml(formatMoney(summary.utilidadAcumulada || 0))}</strong><small>Hasta corte seleccionado</small></article>
         </section>
         <p class="resumen-utility-note">Flujo por movimiento; utilidad por origen del documento.</p>
+
+        ${renderNotasHomePendingOverview(getNotasHomePendingItems(), { context: 'resumen' })}
 
         ${renderPeriodosPendientesCierreCard(summary.periodosCierre)}
 

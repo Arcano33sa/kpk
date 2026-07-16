@@ -12423,3 +12423,28 @@ body,
   }
 }
 
+/* KSA PRÁCTIKA — Notas y Recordatorios Etapa 3/3 — integración condicional en Resumen */
+.resumen-notas-pending-panel {
+  margin-top: 0;
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.resumen-notas-pending-panel .notas-home-pending-list {
+  max-height: min(46vh, 460px);
+}
+
+.resumen-notas-pending-panel .notas-home-pending-item {
+  padding: 10px 12px;
+}
+
+@media (max-width: 560px) {
+  .resumen-notas-pending-panel {
+    margin-top: 0;
+  }
+
+  .resumen-notas-pending-panel .notas-home-pending-list {
+    max-height: min(54vh, 440px);
+  }
+}
+
