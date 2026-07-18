@@ -1,3 +1,12 @@
+# KSA PRÁCTIKA — Excel con nombre manual Etapa 2/2 — Hardening final
+
+- El cierre mensual exige una exportación válida de tipo Cierre para el mismo mes/año, con ID, nombre manual, fecha, estado completado y snapshot consistente.
+- El nombre exacto del archivo queda congelado en el cierre oficial y se muestra en Cierres recientes.
+- Exportaciones Excel y Cierres Mensuales se incorporan a la cola parcial de “Guardar datos” para Firestore.
+- La carga desde Firebase y la importación JSON reconcilian cierres/exportaciones sin duplicarlos ni reemplazar un nombre oficial local válido por datos remotos antiguos.
+- Se conserva compatibilidad histórica, reexportación independiente y separación total entre Excel de Consulta, Excel de Cierre y consecutivo JSON.
+- Versión/cache PWA: 0.18.58.
+
 # KSA PRÁCTIKA — Notas y Recordatorios Etapa 3/3
 
 - Integración condicional de Notas y Recordatorios pendientes dentro de Resumen.

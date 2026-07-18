@@ -13134,3 +13134,42 @@ body,
     font-size: clamp(1.9rem, 11vw, 2.8rem);
   }
 }
+
+/* Excel con nombre manual — Etapa 1/2 */
+.excel-manual-name-grid {
+  grid-template-columns: repeat(2, minmax(0, 220px));
+  align-items: end;
+}
+
+.excel-file-name-field {
+  grid-column: 1 / -1;
+}
+
+.excel-file-name-field small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.excel-export-card {
+  min-width: 0;
+}
+
+.excel-cierre-readiness {
+  margin-top: 2px;
+}
+
+.excel-stage-shell > .excel-close-card,
+.excel-stage-shell > .excel-history-card {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 620px) {
+  .excel-manual-name-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .excel-file-name-field {
+    grid-column: auto;
+  }
+}

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.56-calculadora-etapa5-comercial-hardening-final';
+  const APP_VERSION = '0.18.58-excel-nombre-manual-etapa2-hardening-final';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1424,10 +1424,18 @@ Notas importantes:
   };
 
   let excelExportState = {
-    month: String(new Date().getMonth() + 1).padStart(2, '0'),
-    year: String(new Date().getFullYear()),
-    message: null,
-    messageType: 'success'
+    consultaMonth: String(new Date().getMonth() + 1).padStart(2, '0'),
+    consultaYear: String(new Date().getFullYear()),
+    consultaFileName: '',
+    consultaMessage: null,
+    consultaMessageType: 'success',
+    isConsultaExporting: false,
+    cierreMonth: String(new Date().getMonth() + 1).padStart(2, '0'),
+    cierreYear: String(new Date().getFullYear()),
+    cierreFileName: '',
+    cierreMessage: null,
+    cierreMessageType: 'success',
+    isCierreExporting: false
   };
 
   let cierreMensualState = {
@@ -2629,8 +2637,12 @@ Notas importantes:
     normalized.gastos = normalized.gastos.map((record) => normalizeGastoRecord(record));
     normalized.casaGastos = normalized.casaGastos.map((record) => normalizeCasaGastoRecord(record));
     enrichBankSnapshotsForData(normalized);
-    normalized.cierresMensuales = normalized.cierresMensuales.map((record) => normalizeCierreMensualRecord(record));
-    normalized.exportacionesExcel = normalized.exportacionesExcel.map((record) => normalizeExcelExportRecord(record));
+    const reconciledClosuresExcel = reconcileClosureExcelReferences(
+      normalized.cierresMensuales.map((record) => normalizeCierreMensualRecord(record)),
+      normalized.exportacionesExcel.map((record) => normalizeExcelExportRecord(record))
+    );
+    normalized.cierresMensuales = reconciledClosuresExcel.cierres;
+    normalized.exportacionesExcel = reconciledClosuresExcel.exportaciones;
     normalized.comprasProveedores = normalized.comprasProveedores.map((record) => normalizeCompraProveedorRecord(record));
     normalized.comprasProveedores = recalculateComprasProveedoresWithPagos(normalized.comprasProveedores, normalized.pagosProveedores);
     normalized.ventas = normalized.ventas.map((record) => normalizeVentaRecord(record));
@@ -4360,22 +4372,31 @@ Notas importantes:
     const month = /^\d{2}$/.test(String(raw.month || raw.mes || '')) ? String(raw.month || raw.mes) : String(new Date().getMonth() + 1).padStart(2, '0');
     const year = /^\d{4}$/.test(String(raw.year || raw.anio || raw.año || '')) ? String(raw.year || raw.anio || raw.año) : String(new Date().getFullYear());
     const periodo = `${year}-${month}`;
+    const nombreArchivoExcel = cleanText(raw.nombreArchivoExcel || raw.nombreArchivoManual || raw.archivoExcel || raw.fileName);
+    const snapshotCierre = normalizeExcelCierreSnapshotRecord(raw.snapshotCierre || raw.corteOficialSnapshot || raw.snapshotOficial || raw.corteOficial);
+    const fechaHoraCierre = cleanText(raw.fechaHoraCierre || raw.closedAt || raw.fechaCierre) || timestamp;
+    const fechaExportacion = cleanText(raw.fechaExportacion || raw.exportadoAt || raw.excelExportedAt || snapshotCierre?.generadoAt || snapshotCierre?.corteOficialAt);
     return {
       id: cleanText(raw.id) || `cierre_${periodo}`,
       periodo,
       month,
       year,
-      fechaHoraCierre: cleanText(raw.fechaHoraCierre || raw.closedAt || raw.fechaCierre) || timestamp,
+      fechaHoraCierre,
+      fechaExportacion,
       usuarioRol: cleanText(raw.usuarioRol || raw.rol || 'Administrador'),
-      nombreArchivoExcel: cleanText(raw.nombreArchivoExcel || raw.archivoExcel || raw.fileName),
-      exportacionExcelId: cleanText(raw.exportacionExcelId),
+      nombreArchivoExcel,
+      nombreArchivoManual: nombreArchivoExcel,
+      exportacionExcelId: cleanText(raw.exportacionExcelId || raw.excelExportId),
+      tipoExportacion: 'cierre',
+      exportacionEstado: cleanText(raw.exportacionEstado || raw.estadoExportacion || 'completada').toLowerCase() || 'completada',
+      estado: 'Cerrado',
       modoEdicion: cleanText(raw.modoEdicion || 'advertencia'),
-      corteOficialAt: cleanText(raw.corteOficialAt || raw.fechaHoraCierre || raw.closedAt || raw.fechaCierre) || timestamp,
-      snapshotCierre: normalizeExcelCierreSnapshotRecord(raw.snapshotCierre || raw.corteOficialSnapshot || raw.snapshotOficial || raw.corteOficial),
+      corteOficialAt: cleanText(raw.corteOficialAt || snapshotCierre?.corteOficialAt || fechaHoraCierre) || fechaHoraCierre,
+      snapshotCierre,
       totales: isPlainObject(raw.totales) ? raw.totales : {},
       observacion: cleanText(raw.observacion || 'Período cerrado con advertencia para edición posterior.'),
-      createdAt: raw.createdAt || raw.fechaHoraCierre || timestamp,
-      updatedAt: raw.updatedAt || timestamp
+      createdAt: raw.createdAt || raw.fechaHoraCierre || fechaHoraCierre,
+      updatedAt: raw.updatedAt || fechaHoraCierre
     };
   }
 
@@ -4385,22 +4406,174 @@ Notas importantes:
     const month = /^\d{2}$/.test(String(raw.month || raw.mes || '')) ? String(raw.month || raw.mes) : String(new Date().getMonth() + 1).padStart(2, '0');
     const year = /^\d{4}$/.test(String(raw.year || raw.anio || raw.año || '')) ? String(raw.year || raw.anio || raw.año) : String(new Date().getFullYear());
     const periodo = `${year}-${month}`;
+    const tipoRaw = cleanText(raw.tipo || raw.mode || raw.modo).toLowerCase();
+    const tipo = ['consulta', 'cierre'].includes(tipoRaw) ? tipoRaw : 'cierre';
+    const nombreArchivo = cleanText(raw.nombreArchivo || raw.nombreArchivoManual || raw.fileName || raw.archivo);
+    const snapshotCierre = normalizeExcelCierreSnapshotRecord(raw.snapshotCierre || raw.corteOficialSnapshot || raw.snapshotOficial || raw.corteOficial);
+    const snapshotConsulta = normalizeExcelConsultaSnapshotRecord(raw.snapshotConsulta || raw.consultaSnapshot || raw.snapshotReporte);
+    const hasExpectedSnapshot = tipo === 'cierre' ? Boolean(snapshotCierre) : Boolean(snapshotConsulta);
+    const explicitState = cleanText(raw.estadoExportacion || raw.exportacionEstado || raw.estado).toLowerCase();
+    const estadoExportacion = ['completada', 'fallida', 'incompleta'].includes(explicitState)
+      ? explicitState
+      : (hasExpectedSnapshot && isUsableStoredExcelFileName(nombreArchivo) ? 'completada' : 'incompleta');
+    const completada = raw.completada === true || raw.exportacionCompletada === true || estadoExportacion === 'completada';
+    const datosConsistentes = raw.datosConsistentes === false ? false : hasExpectedSnapshot;
+    const nombreManual = raw.nombreManual === false ? false : isUsableStoredExcelFileName(nombreArchivo);
     return {
-      id: cleanText(raw.id) || generateId('exportExcel'),
+      id: cleanText(raw.id || raw.exportacionId) || generateId('exportExcel'),
       periodo,
       month,
       year,
-      tipo: ['consulta', 'cierre'].includes(cleanText(raw.tipo || raw.mode || raw.modo).toLowerCase()) ? cleanText(raw.tipo || raw.mode || raw.modo).toLowerCase() : 'cierre',
-      nombreArchivo: cleanText(raw.nombreArchivo || raw.fileName || raw.archivo),
+      tipo,
+      nombreArchivo,
+      nombreArchivoManual: nombreArchivo,
+      nombreManual,
       exportadoAt: cleanText(raw.exportadoAt || raw.fechaExportacion || raw.createdAt) || timestamp,
-      corteOficialAt: cleanText(raw.corteOficialAt || raw.fechaCorteOficial || raw.exportadoAt || raw.fechaExportacion || raw.createdAt) || timestamp,
-      snapshotCierre: normalizeExcelCierreSnapshotRecord(raw.snapshotCierre || raw.corteOficialSnapshot || raw.snapshotOficial || raw.corteOficial),
+      estadoExportacion,
+      completada,
+      datosConsistentes,
+      corteOficialAt: tipo === 'cierre'
+        ? (cleanText(raw.corteOficialAt || raw.fechaCorteOficial || snapshotCierre?.corteOficialAt || raw.exportadoAt || raw.fechaExportacion || raw.createdAt) || timestamp)
+        : '',
+      snapshotCierre,
+      snapshotConsulta,
       totales: isPlainObject(raw.totales) ? raw.totales : {},
       hojas: Array.isArray(raw.hojas) ? raw.hojas : ['Resumen', 'Ventas', 'Cobros', 'Proveedores', 'Pagos', 'Gastos', 'Catálogos'],
-      createdAt: raw.createdAt || timestamp,
-      updatedAt: raw.updatedAt || timestamp
+      createdAt: raw.createdAt || raw.exportadoAt || timestamp,
+      updatedAt: raw.updatedAt || raw.exportadoAt || timestamp
     };
   }
+
+  function mergeFrozenExcelExportRecord(primaryRecord, fallbackRecord) {
+    const primary = normalizeExcelExportRecord(primaryRecord);
+    const fallback = normalizeExcelExportRecord(fallbackRecord);
+    const primaryComplete = primary.estadoExportacion === 'completada' && primary.completada && primary.datosConsistentes;
+    const fallbackComplete = fallback.estadoExportacion === 'completada' && fallback.completada && fallback.datosConsistentes;
+    const preferFallbackCompletion = !primaryComplete && fallbackComplete;
+    const nombreArchivo = isUsableStoredExcelFileName(primary.nombreArchivo)
+      ? primary.nombreArchivo
+      : fallback.nombreArchivo;
+    const snapshotCierre = primary.snapshotCierre || fallback.snapshotCierre;
+    const snapshotConsulta = primary.snapshotConsulta || fallback.snapshotConsulta;
+    return normalizeExcelExportRecord({
+      ...fallback,
+      ...primary,
+      id: primary.id || fallback.id,
+      nombreArchivo,
+      nombreArchivoManual: nombreArchivo,
+      nombreManual: primary.nombreManual || fallback.nombreManual || isUsableStoredExcelFileName(nombreArchivo),
+      estadoExportacion: preferFallbackCompletion ? fallback.estadoExportacion : primary.estadoExportacion,
+      completada: preferFallbackCompletion ? fallback.completada : primary.completada,
+      datosConsistentes: preferFallbackCompletion ? fallback.datosConsistentes : primary.datosConsistentes,
+      snapshotCierre,
+      snapshotConsulta,
+      totales: Object.keys(primary.totales || {}).length ? primary.totales : fallback.totales,
+      hojas: Array.isArray(primary.hojas) && primary.hojas.length ? primary.hojas : fallback.hojas,
+      createdAt: primary.createdAt || fallback.createdAt,
+      updatedAt: primary.updatedAt || fallback.updatedAt
+    });
+  }
+
+  function getExcelExportSignature(record) {
+    const normalized = normalizeExcelExportRecord(record);
+    const name = cleanText(normalized.nombreArchivo).normalize('NFC').toLocaleLowerCase('es-NI');
+    return name ? `${normalized.periodo}|${normalized.tipo}|${name}` : '';
+  }
+
+  function reconcileExcelExportRecords(records = []) {
+    const result = [];
+    const idIndex = new Map();
+    const signatureIndex = new Map();
+    (Array.isArray(records) ? records : []).forEach((rawRecord) => {
+      const normalized = normalizeExcelExportRecord(rawRecord);
+      const idKey = cleanText(normalized.id);
+      const signature = getExcelExportSignature(normalized);
+      const existingIndex = (idKey && idIndex.has(idKey))
+        ? idIndex.get(idKey)
+        : (signature && signatureIndex.has(signature) ? signatureIndex.get(signature) : -1);
+      if (existingIndex >= 0) {
+        result[existingIndex] = mergeFrozenExcelExportRecord(result[existingIndex], normalized);
+      } else {
+        const nextIndex = result.length;
+        result.push(normalized);
+        if (idKey) idIndex.set(idKey, nextIndex);
+        if (signature) signatureIndex.set(signature, nextIndex);
+      }
+    });
+    return result.sort((a, b) => String(b.exportadoAt).localeCompare(String(a.exportadoAt)));
+  }
+
+  function mergeFrozenCierreMensualRecord(primaryRecord, fallbackRecord) {
+    const primary = normalizeCierreMensualRecord(primaryRecord);
+    const fallback = normalizeCierreMensualRecord(fallbackRecord);
+    const nombreArchivoExcel = isUsableStoredExcelFileName(primary.nombreArchivoExcel)
+      ? primary.nombreArchivoExcel
+      : fallback.nombreArchivoExcel;
+    return normalizeCierreMensualRecord({
+      ...fallback,
+      ...primary,
+      id: primary.id || fallback.id,
+      periodo: primary.periodo || fallback.periodo,
+      fechaHoraCierre: primary.fechaHoraCierre || fallback.fechaHoraCierre,
+      fechaExportacion: primary.fechaExportacion || fallback.fechaExportacion,
+      nombreArchivoExcel,
+      nombreArchivoManual: nombreArchivoExcel,
+      exportacionExcelId: primary.exportacionExcelId || fallback.exportacionExcelId,
+      tipoExportacion: 'cierre',
+      exportacionEstado: primary.exportacionEstado || fallback.exportacionEstado || 'completada',
+      snapshotCierre: primary.snapshotCierre || fallback.snapshotCierre,
+      totales: Object.keys(primary.totales || {}).length ? primary.totales : fallback.totales,
+      createdAt: primary.createdAt || fallback.createdAt,
+      updatedAt: primary.updatedAt || fallback.updatedAt
+    });
+  }
+
+  function reconcileCierreMensualRecords(records = []) {
+    const result = [];
+    const periodIndex = new Map();
+    (Array.isArray(records) ? records : []).forEach((rawRecord) => {
+      const normalized = normalizeCierreMensualRecord(rawRecord);
+      const key = cleanText(normalized.periodo || normalized.id);
+      if (key && periodIndex.has(key)) {
+        const index = periodIndex.get(key);
+        result[index] = mergeFrozenCierreMensualRecord(result[index], normalized);
+      } else {
+        const nextIndex = result.length;
+        result.push(normalized);
+        if (key) periodIndex.set(key, nextIndex);
+      }
+    });
+    return result.sort((a, b) => String(b.fechaHoraCierre).localeCompare(String(a.fechaHoraCierre)));
+  }
+
+  function reconcileClosureExcelReferences(cierres = [], exportaciones = []) {
+    const exports = reconcileExcelExportRecords(exportaciones);
+    const byId = new Map(exports.map((record) => [cleanText(record.id), record]).filter(([id]) => id));
+    const closures = reconcileCierreMensualRecords(cierres).map((cierre) => {
+      const linkedById = cleanText(cierre.exportacionExcelId) ? byId.get(cleanText(cierre.exportacionExcelId)) : null;
+      const linkedByName = linkedById || exports.find((record) => (
+        record.tipo === 'cierre'
+        && record.periodo === cierre.periodo
+        && cleanText(record.nombreArchivo).normalize('NFC').toLocaleLowerCase('es-NI') === cleanText(cierre.nombreArchivoExcel).normalize('NFC').toLocaleLowerCase('es-NI')
+      ));
+      if (!linkedByName) return cierre;
+      const nombreArchivoExcel = isUsableStoredExcelFileName(cierre.nombreArchivoExcel)
+        ? cierre.nombreArchivoExcel
+        : linkedByName.nombreArchivo;
+      return normalizeCierreMensualRecord({
+        ...cierre,
+        nombreArchivoExcel,
+        nombreArchivoManual: nombreArchivoExcel,
+        exportacionExcelId: cierre.exportacionExcelId || linkedByName.id,
+        fechaExportacion: cierre.fechaExportacion || linkedByName.exportadoAt,
+        exportacionEstado: cierre.exportacionEstado || linkedByName.estadoExportacion,
+        snapshotCierre: cierre.snapshotCierre || linkedByName.snapshotCierre,
+        totales: Object.keys(cierre.totales || {}).length ? cierre.totales : linkedByName.totales
+      });
+    });
+    return { cierres: reconcileCierreMensualRecords(closures), exportaciones: exports };
+  }
+
 
   function clonePlainObject(value, fallback = null) {
     try {
@@ -5939,6 +6112,12 @@ Notas importantes:
         gastos: { collection: 'gastos', list: data.gastos, normalizer: normalizeGastoRecord, fallback: 'gasto' },
         casa: { collection: 'casaGastos', list: data.casaGastos, normalizer: normalizeCasaGastoRecord, fallback: 'casaGasto' },
         casagastos: { collection: 'casaGastos', list: data.casaGastos, normalizer: normalizeCasaGastoRecord, fallback: 'casaGasto' },
+        cierresmensuales: { collection: 'cierresMensuales', list: data.cierresMensuales, normalizer: normalizeCierreMensualRecord, fallback: 'cierre' },
+        cierres: { collection: 'cierresMensuales', list: data.cierresMensuales, normalizer: normalizeCierreMensualRecord, fallback: 'cierre' },
+        cierre: { collection: 'cierresMensuales', list: data.cierresMensuales, normalizer: normalizeCierreMensualRecord, fallback: 'cierre' },
+        exportacionesexcel: { collection: 'exportacionesExcel', list: data.exportacionesExcel, normalizer: normalizeExcelExportRecord, fallback: 'exportExcel' },
+        excelcierre: { collection: 'exportacionesExcel', list: data.exportacionesExcel, normalizer: normalizeExcelExportRecord, fallback: 'exportExcel' },
+        excelconsulta: { collection: 'exportacionesExcel', list: data.exportacionesExcel, normalizer: normalizeExcelExportRecord, fallback: 'exportExcel' },
         seguimiento: { collection: 'seguimiento', list: seguimientoData.registros, normalizer: normalizeSeguimientoGroup, fallback: 'seguimiento', kind: 'seguimiento' }
       };
 
@@ -7521,6 +7700,54 @@ Notas importantes:
     return normalizeExcelCierreSnapshotSummary(payload);
   }
 
+  function normalizeExcelConsultaSnapshotRecord(snapshot) {
+    const raw = isPlainObject(snapshot) ? snapshot : null;
+    if (!raw) return null;
+    const timestamp = nowIso();
+    const month = /^\d{2}$/.test(String(raw.month || raw.mes || '')) ? String(raw.month || raw.mes) : String(new Date().getMonth() + 1).padStart(2, '0');
+    const year = /^\d{4}$/.test(String(raw.year || raw.anio || raw.año || '')) ? String(raw.year || raw.anio || raw.año) : String(new Date().getFullYear());
+    const summary = normalizeExcelCierreSnapshotSummary(raw.summary || raw.resumen || {});
+    const hasMeaningfulSummary = Boolean(
+      summary.periodLabel
+      || summary.ventasExport.length
+      || summary.comprasExport.length
+      || summary.cobrosPeriodo.length
+      || summary.pagosPeriodo.length
+      || summary.gastosPeriodo.length
+      || summary.casaGastosPeriodo.length
+    );
+    if (!hasMeaningfulSummary) return null;
+    return {
+      version: cleanText(raw.version || '1.0'),
+      tipo: 'consulta',
+      periodo: cleanText(raw.periodo) || `${year}-${month}`,
+      month,
+      year,
+      generadoAt: cleanText(raw.generadoAt || raw.createdAt || raw.exportedAt) || timestamp,
+      nombreArchivo: cleanText(raw.nombreArchivo || raw.fileName || raw.archivo),
+      summary
+    };
+  }
+
+  function buildExcelConsultaSnapshot(month, year, summary, fileName = '', exportedAt = nowIso()) {
+    const snapshotSummary = buildExcelSummarySnapshotPayload({
+      ...(isPlainObject(summary) ? summary : {}),
+      excelConsultaMode: true,
+      excelCierreMode: false,
+      corteOficialAt: ''
+    });
+    return normalizeExcelConsultaSnapshotRecord({
+      version: '1.0',
+      tipo: 'consulta',
+      periodo: getPeriodKey(month, year),
+      month,
+      year,
+      generadoAt: exportedAt,
+      nombreArchivo: fileName,
+      summary: snapshotSummary
+    });
+  }
+
   function buildExcelCierreSnapshot(month, year, cutoffAt, summary, fileName = '') {
     const snapshotSummary = buildExcelSummarySnapshotPayload({
       ...(isPlainObject(summary) ? summary : {}),
@@ -8139,7 +8366,16 @@ Notas importantes:
     if (!result?.ok || !isPlainObject(result.snapshot)) return false;
     cloudOperationState.isHydrating = true;
     try {
-      appData = normalizeData(result.snapshot);
+      const localClosures = Array.isArray(appData?.cierresMensuales) ? appData.cierresMensuales : [];
+      const localExports = Array.isArray(appData?.exportacionesExcel) ? appData.exportacionesExcel : [];
+      const cloudSnapshot = normalizeData(result.snapshot);
+      const reconciledClosuresExcel = reconcileClosureExcelReferences(
+        [...localClosures, ...(cloudSnapshot.cierresMensuales || [])],
+        [...localExports, ...(cloudSnapshot.exportacionesExcel || [])]
+      );
+      cloudSnapshot.cierresMensuales = reconciledClosuresExcel.cierres;
+      cloudSnapshot.exportacionesExcel = reconciledClosuresExcel.exportaciones;
+      appData = normalizeData(cloudSnapshot);
       appData.metadata = {
         ...(isPlainObject(appData.metadata) ? appData.metadata : {}),
         fuentePrincipal: 'firestore',
@@ -17513,18 +17749,51 @@ Notas importantes:
     return lines.join('\n');
   }
 
-  function renderCierrePeriodStatusBox(status, lastExport) {
+  function renderExcelCierreReadinessBox(status) {
+    const safe = status || createPeriodoCierreBase(excelExportState.cierreMonth, excelExportState.cierreYear);
+    const blocked = hasPeriodClosingBlock(safe);
+    const statusClass = safe.cierre ? 'is-closed' : blocked ? 'is-pending' : 'is-ready';
+    const note = blocked
+      ? `No se puede exportar el Excel de Cierre de ${safe.label}: existen saldos pendientes en ${getPeriodBlockingOrigin(safe)}.`
+      : `${safe.label} está cuadrado y puede exportarse como Excel de Cierre.`;
+    return `
+      <article class="periodo-cierre-card cierre-status-card excel-cierre-readiness ${statusClass}">
+        <div class="resumen-row-head periodo-cierre-head">
+          <strong>${escapeHtml(safe.label)}</strong>
+          <span class="periodo-cierre-status">${blocked ? 'Bloqueado' : 'Listo para exportar'}</span>
+        </div>
+        <p class="notice ${blocked ? '' : 'success-note'}">${escapeHtml(note)}</p>
+        <div class="resumen-mini-grid periodo-cierre-grid">
+          <div><span>Clientes pendientes</span><strong>${escapeHtml(formatMoney(safe.saldoClientes))}</strong></div>
+          <div><span>Proveedores pendientes</span><strong>${escapeHtml(formatMoney(safe.saldoProveedores))}</strong></div>
+          <div><span>Bloqueo</span><strong>${escapeHtml(getPeriodBlockingOrigin(safe))}</strong></div>
+          <div><span>Estado</span><strong>${blocked ? 'No exportable' : 'Cuadrado'}</strong></div>
+        </div>
+        ${blocked ? `
+          <details class="periodo-cierre-detail" open>
+            <summary>Ver detalle del bloqueo</summary>
+            ${renderPeriodoCierreDetail(safe)}
+          </details>
+        ` : ''}
+      </article>
+    `;
+  }
+
+  function renderCierrePeriodStatusBox(status, lastExport, lastRecordedExport = null) {
     const safe = status || createPeriodoCierreBase(cierreMensualState.month, cierreMensualState.year);
     const blocked = hasPeriodClosingBlock(safe);
-    const ready = !blocked && !safe.cierre;
+    const ready = !blocked && !safe.cierre && Boolean(lastExport);
+    const invalidRecorded = !lastExport && Boolean(lastRecordedExport);
     const note = safe.cierre
       ? `Período cerrado el ${formatDateTime(safe.cierre.fechaHoraCierre)}.`
       : blocked
         ? `No se puede cerrar ${safe.label} porque aún existen saldos pendientes vinculados a este período.`
         : lastExport
-          ? `${safe.label} ya está listo para cierre. El Excel previo está registrado y puedes cerrar el período.`
-          : `${safe.label} ya está listo para cierre. Exporta el Excel del período para poder cerrarlo.`;
-    const statusClass = safe.cierre ? 'is-closed' : blocked ? 'is-pending' : 'is-ready';
+          ? `${safe.label} ya está listo para cierre. El Excel de Cierre válido “${lastExport.nombreArchivo}” está registrado.`
+          : invalidRecorded
+            ? `${safe.label} está cuadrado, pero la exportación registrada está incompleta o no tiene snapshot válido. Debes exportar nuevamente un Excel de Cierre.`
+            : `${safe.label} ya está listo para cierre. Exporta un Excel de Cierre válido para poder cerrarlo.`;
+    const statusClass = safe.cierre ? 'is-closed' : blocked || invalidRecorded ? 'is-pending' : 'is-ready';
     return `
       <article class="periodo-cierre-card cierre-status-card ${statusClass}">
         <div class="resumen-row-head periodo-cierre-head">
@@ -17536,7 +17805,7 @@ Notas importantes:
           <div><span>Clientes pendientes</span><strong>${escapeHtml(formatMoney(safe.saldoClientes))}</strong></div>
           <div><span>Proveedores pendientes</span><strong>${escapeHtml(formatMoney(safe.saldoProveedores))}</strong></div>
           <div><span>Bloqueo</span><strong>${escapeHtml(getPeriodBlockingOrigin(safe))}</strong></div>
-          <div><span>Excel previo</span><strong>${lastExport ? 'Sí' : 'No'}</strong></div>
+          <div><span>Excel previo</span><strong>${lastExport ? 'Válido' : (invalidRecorded ? 'Inválido' : 'No')}</strong></div>
         </div>
         ${blocked ? `
           <details class="periodo-cierre-detail" open>
@@ -17547,6 +17816,7 @@ Notas importantes:
       </article>
     `;
   }
+
 
   function buildPeriodoClienteDetalle(venta) {
     const cliente = getCatalogRecordById('clientes', venta.clienteId);
@@ -28222,9 +28492,9 @@ Notas importantes:
 
     incoming.cierresMensuales.forEach((cierre) => {
       const normalized = normalizeCierreMensualRecord(cierre);
-      const id = cleanText(normalized.id || normalized.periodo || '');
-      const existing = target.cierresMensuales.find((item) => cleanText(item.id || item.periodo) === id && id);
-      if (existing) {
+      const existingIndex = target.cierresMensuales.findIndex((item) => normalizeCierreMensualRecord(item).periodo === normalized.periodo);
+      if (existingIndex >= 0) {
+        target.cierresMensuales[existingIndex] = mergeFrozenCierreMensualRecord(target.cierresMensuales[existingIndex], normalized);
         skipped += 1;
         return;
       }
@@ -28234,15 +28504,23 @@ Notas importantes:
 
     incoming.exportacionesExcel.forEach((exportacion) => {
       const normalized = normalizeExcelExportRecord(exportacion);
-      const id = cleanText(normalized.id || normalized.nombreArchivo || normalized.periodo || '');
-      const existing = target.exportacionesExcel.find((item) => cleanText(item.id || item.nombreArchivo || item.periodo) === id && id);
-      if (existing) {
+      const signature = getExcelExportSignature(normalized);
+      const existingIndex = target.exportacionesExcel.findIndex((item) => {
+        const candidate = normalizeExcelExportRecord(item);
+        return (cleanText(candidate.id) && cleanText(candidate.id) === cleanText(normalized.id))
+          || (signature && getExcelExportSignature(candidate) === signature);
+      });
+      if (existingIndex >= 0) {
+        target.exportacionesExcel[existingIndex] = mergeFrozenExcelExportRecord(target.exportacionesExcel[existingIndex], normalized);
         skipped += 1;
         return;
       }
       target.exportacionesExcel = [normalized, ...target.exportacionesExcel];
       added.exportacionesExcel += 1;
     });
+    const reconciledImportedClosuresExcel = reconcileClosureExcelReferences(target.cierresMensuales, target.exportacionesExcel);
+    target.cierresMensuales = reconciledImportedClosuresExcel.cierres;
+    target.exportacionesExcel = reconciledImportedClosuresExcel.exportaciones;
 
     if (incomingNotas) {
       const notesMerge = mergeNotasModuleData(getNotasData(), incomingNotas);
@@ -28764,64 +29042,104 @@ Notas importantes:
   function renderExcelExportCierrePanel() {
     const monthOptions = getMonthOptions();
     const yearOptions = getResumenYearOptions();
-    const exportMonth = /^\d{2}$/.test(excelExportState.month) ? excelExportState.month : String(new Date().getMonth() + 1).padStart(2, '0');
-    const exportYear = /^\d{4}$/.test(excelExportState.year) ? excelExportState.year : String(new Date().getFullYear());
-    const closeMonth = /^\d{2}$/.test(cierreMensualState.month) ? cierreMensualState.month : exportMonth;
-    const closeYear = /^\d{4}$/.test(cierreMensualState.year) ? cierreMensualState.year : exportYear;
+    const fallbackMonth = String(new Date().getMonth() + 1).padStart(2, '0');
+    const fallbackYear = String(new Date().getFullYear());
+    const consultaMonth = /^\d{2}$/.test(excelExportState.consultaMonth) ? excelExportState.consultaMonth : fallbackMonth;
+    const consultaYear = /^\d{4}$/.test(excelExportState.consultaYear) ? excelExportState.consultaYear : fallbackYear;
+    const cierreExportMonth = /^\d{2}$/.test(excelExportState.cierreMonth) ? excelExportState.cierreMonth : fallbackMonth;
+    const cierreExportYear = /^\d{4}$/.test(excelExportState.cierreYear) ? excelExportState.cierreYear : fallbackYear;
+    const closeMonth = /^\d{2}$/.test(cierreMensualState.month) ? cierreMensualState.month : cierreExportMonth;
+    const closeYear = /^\d{4}$/.test(cierreMensualState.year) ? cierreMensualState.year : cierreExportYear;
+    const lastRecordedExport = getLatestRecordedExcelExportForPeriod(closeMonth, closeYear, 'cierre');
     const lastExport = getLastExcelExportForPeriod(closeMonth, closeYear);
     const cierre = getCierreMensualForPeriod(closeMonth, closeYear);
     const cierreStatus = buildPeriodClosingStatus(closeMonth, closeYear);
-    const hasClosingBlock = hasPeriodClosingBlock(cierreStatus);
+    const cierreExportStatus = buildPeriodClosingStatus(cierreExportMonth, cierreExportYear);
     const canExportConsulta = canCurrentRole('exportExcelConsulta');
     const canExportCierre = canCurrentRole('exportExcelCierre');
     const canClose = canCurrentRole('closeMonth');
     const cierres = getCierresMensuales().slice(0, 8);
+    const consultaBusy = Boolean(excelExportState.isConsultaExporting);
+    const cierreBusy = Boolean(excelExportState.isCierreExporting);
+    const cierreBlocked = hasPeriodClosingBlock(cierreStatus);
+    const cierreExportBlocked = hasPeriodClosingBlock(cierreExportStatus);
+    const closeReady = Boolean(canClose && !cierre && !cierreBlocked && lastExport);
 
     return `
       <section class="excel-stage-shell">
-        <article class="panel-card import-card full-span">
+        <article class="panel-card import-card excel-export-card">
           <div class="section-title-row">
             <div>
-              <span class="eyebrow mini">3. Exportación final</span>
-              <h2>Exportar Excel del período</h2>
+              <span class="eyebrow mini">3A. Consulta</span>
+              <h2>Excel de Consulta</h2>
             </div>
           </div>
-          ${excelExportState.message ? `<div class="form-message ${excelExportState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(excelExportState.message)}</div>` : ''}
-          ${renderRolePermissionNotice('exportExcelCierre', 'Exportar Excel de cierre queda reservado para Administrador. El Excel de consulta permanece disponible para Usuario normal.')}
-          <p class="notice">Genera un .xlsx como fotografía del período. La base viva sigue siendo la webapp; el Excel es reporte, no el trono.</p>
-          <form class="period-form" data-excel-export-form novalidate>
-            <div class="form-grid compact-period-grid">
+          ${excelExportState.consultaMessage ? `<div class="form-message ${excelExportState.consultaMessageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(excelExportState.consultaMessage)}</div>` : ''}
+          <p class="notice">Fotografía de consulta. Puede exportarse aunque existan saldos, mora o documentos pendientes; no cierra ni habilita el cierre.</p>
+          <form class="period-form" data-excel-consulta-form novalidate>
+            <div class="form-grid excel-manual-name-grid">
               <label class="form-field">
                 <span>Mes</span>
-                <select name="month">
-                  ${monthOptions.map((item) => `<option value="${escapeHtml(item.value)}" ${item.value === exportMonth ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
+                <select name="month" ${consultaBusy ? 'disabled' : ''}>
+                  ${monthOptions.map((item) => `<option value="${escapeHtml(item.value)}" ${item.value === consultaMonth ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
                 </select>
               </label>
               <label class="form-field">
                 <span>Año</span>
-                <select name="year">
-                  ${yearOptions.map((year) => `<option value="${escapeHtml(year)}" ${year === exportYear ? 'selected' : ''}>${escapeHtml(year)}</option>`).join('')}
+                <select name="year" ${consultaBusy ? 'disabled' : ''}>
+                  ${yearOptions.map((year) => `<option value="${escapeHtml(year)}" ${year === consultaYear ? 'selected' : ''}>${escapeHtml(year)}</option>`).join('')}
                 </select>
+              </label>
+              <label class="form-field excel-file-name-field">
+                <span>Nombre del archivo de consulta</span>
+                <input type="text" name="fileName" maxlength="180" autocomplete="off" spellcheck="false" value="${escapeHtml(excelExportState.consultaFileName || '')}" placeholder="Ej. Consulta Mayo 2026" ${consultaBusy ? 'disabled' : ''} />
+                <small>La extensión .xlsx se agrega automáticamente.</small>
               </label>
             </div>
             <div class="form-actions">
-              <button type="button" class="secondary-action" data-excel-consulta-export ${canExportConsulta ? '' : 'disabled'}>Exportar Excel de consulta</button>
-              <button type="submit" class="card-action" ${canExportCierre ? '' : 'disabled'}>Exportar Excel de cierre</button>
+              <button type="submit" class="secondary-action" ${canExportConsulta && !consultaBusy ? '' : 'disabled'} aria-busy="${consultaBusy ? 'true' : 'false'}">${consultaBusy ? 'Generando consulta…' : 'Exportar Excel de Consulta'}</button>
             </div>
           </form>
-          <div class="badge-row">
-            <span class="badge">Resumen</span>
-            <span class="badge">Ventas</span>
-            <span class="badge">Cobros</span>
-            <span class="badge">Proveedores</span>
-            <span class="badge">Pagos</span>
-            <span class="badge">Gastos</span>
-            <span class="badge">Catálogos</span>
-            <span class="badge">JSZip local</span>
-          </div>
         </article>
 
-        <article class="panel-card import-card full-span">
+        <article class="panel-card import-card excel-export-card">
+          <div class="section-title-row">
+            <div>
+              <span class="eyebrow mini">3B. Cierre</span>
+              <h2>Excel de Cierre</h2>
+            </div>
+          </div>
+          ${excelExportState.cierreMessage ? `<div class="form-message ${excelExportState.cierreMessageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(excelExportState.cierreMessage)}</div>` : ''}
+          ${renderRolePermissionNotice('exportExcelCierre', 'Exportar Excel de cierre queda reservado para Administrador. El Excel de consulta permanece disponible para Usuario normal.')}
+          <p class="notice">El Excel oficial solo puede generarse cuando el período está completamente cuadrado. Exportarlo no cierra el mes automáticamente.</p>
+          <form class="period-form" data-excel-cierre-export-form novalidate>
+            <div class="form-grid excel-manual-name-grid">
+              <label class="form-field">
+                <span>Mes</span>
+                <select name="month" ${cierreBusy ? 'disabled' : ''}>
+                  ${monthOptions.map((item) => `<option value="${escapeHtml(item.value)}" ${item.value === cierreExportMonth ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
+                </select>
+              </label>
+              <label class="form-field">
+                <span>Año</span>
+                <select name="year" ${cierreBusy ? 'disabled' : ''}>
+                  ${yearOptions.map((year) => `<option value="${escapeHtml(year)}" ${year === cierreExportYear ? 'selected' : ''}>${escapeHtml(year)}</option>`).join('')}
+                </select>
+              </label>
+              <label class="form-field excel-file-name-field">
+                <span>Nombre del archivo de cierre</span>
+                <input type="text" name="fileName" maxlength="180" autocomplete="off" spellcheck="false" value="${escapeHtml(excelExportState.cierreFileName || '')}" placeholder="Ej. Cierre Oficial Mayo 2026" ${cierreBusy ? 'disabled' : ''} />
+                <small>La extensión .xlsx se agrega automáticamente.</small>
+              </label>
+            </div>
+            ${renderExcelCierreReadinessBox(cierreExportStatus)}
+            <div class="form-actions">
+              <button type="submit" class="card-action" ${canExportCierre && !cierreBusy && !cierreExportBlocked ? '' : 'disabled'} aria-busy="${cierreBusy ? 'true' : 'false'}">${cierreBusy ? 'Generando cierre…' : 'Exportar Excel de Cierre'}</button>
+            </div>
+          </form>
+        </article>
+
+        <article class="panel-card import-card full-span excel-close-card">
           <div class="section-title-row">
             <div>
               <span class="eyebrow mini">4. Cierre mensual</span>
@@ -28830,8 +29148,8 @@ Notas importantes:
           </div>
           ${cierreMensualState.message ? `<div class="form-message ${cierreMensualState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(cierreMensualState.message)}</div>` : ''}
           ${renderRolePermissionNotice('closeMonth', 'Cerrar mes queda reservado para Administrador.')}
-          <p class="notice ${cierre ? 'success-note' : ''}">${cierre ? `Período cerrado el ${escapeHtml(formatDateTime(cierre.fechaHoraCierre))}. Las ediciones posteriores quedan con advertencia clara.` : 'Para cerrar, primero se valida que no existan saldos pendientes de Clientes ni Proveedores del período de origen. Luego debe existir una exportación Excel guardada para el mismo mes/año.'}</p>
-          ${renderCierrePeriodStatusBox(cierreStatus, lastExport)}
+          <p class="notice ${cierre ? 'success-note' : ''}">${cierre ? `Período cerrado el ${escapeHtml(formatDateTime(cierre.fechaHoraCierre))}. Las ediciones posteriores quedan con advertencia clara.` : 'Para cerrar, primero se valida que no existan saldos pendientes de Clientes ni Proveedores del período de origen. Luego debe existir una exportación Excel de Cierre guardada para el mismo mes/año.'}</p>
+          ${renderCierrePeriodStatusBox(cierreStatus, lastExport, lastRecordedExport)}
           <form class="period-form" data-cierre-form novalidate>
             <div class="form-grid compact-period-grid">
               <label class="form-field">
@@ -28848,18 +29166,18 @@ Notas importantes:
               </label>
             </div>
             <div class="import-summary-grid compact-summary">
-              <div class="status-item"><strong>Excel previo</strong><span>${lastExport ? 'Sí' : 'No'}</span></div>
+              <div class="status-item"><strong>Excel previo</strong><span>${lastExport ? 'Válido' : (lastRecordedExport ? 'Inválido' : 'No')}</span></div>
               <div class="status-item"><strong>Archivo</strong><span>${escapeHtml(lastExport?.nombreArchivo || '—')}</span></div>
               <div class="status-item"><strong>Bloqueo</strong><span>${escapeHtml(getPeriodBlockingOrigin(cierreStatus))}</span></div>
               <div class="status-item"><strong>Estado cierre</strong><span>${escapeHtml(cierreStatus.estado)}</span></div>
             </div>
             <div class="form-actions">
-              <button type="submit" class="card-action" ${canClose && !cierre ? '' : 'disabled'}>Cerrar mes</button>
+              <button type="submit" class="card-action" ${closeReady ? '' : 'disabled'}>Cerrar mes</button>
             </div>
           </form>
         </article>
 
-        <article class="panel-card import-card full-span">
+        <article class="panel-card import-card full-span excel-history-card">
           <div class="section-title-row">
             <div>
               <span class="eyebrow mini">Historial</span>
@@ -28915,20 +29233,16 @@ Notas importantes:
   }
 
   function getExcelExports() {
-    return (Array.isArray(appData.exportacionesExcel) ? appData.exportacionesExcel : [])
-      .map((record) => normalizeExcelExportRecord(record))
-      .sort((a, b) => String(b.exportadoAt).localeCompare(String(a.exportadoAt)));
+    return reconcileExcelExportRecords(Array.isArray(appData.exportacionesExcel) ? appData.exportacionesExcel : []);
   }
 
   function getCierresMensuales() {
-    return (Array.isArray(appData.cierresMensuales) ? appData.cierresMensuales : [])
-      .map((record) => normalizeCierreMensualRecord(record))
-      .sort((a, b) => String(b.fechaHoraCierre).localeCompare(String(a.fechaHoraCierre)));
+    return reconcileCierreMensualRecords(Array.isArray(appData.cierresMensuales) ? appData.cierresMensuales : []);
   }
 
   function getLastExcelExportForPeriod(month, year) {
-    const key = getPeriodKey(month, year);
-    return getExcelExports().find((record) => record.periodo === key && (!record.tipo || record.tipo === 'cierre')) || null;
+    const candidates = getExcelExports().filter((record) => record.periodo === getPeriodKey(month, year) && record.tipo === 'cierre');
+    return candidates.find((record) => validateExcelClosureExportRecord(record, month, year).ok) || null;
   }
 
   function getCierreMensualForPeriod(month, year) {
@@ -28943,161 +29257,256 @@ Notas importantes:
     return { month, year, periodo: getPeriodKey(month, year) };
   }
 
-  function getExcelConsultaSequence() {
-    try {
-      const raw = window.localStorage.getItem(EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY);
-      const parsed = Number.parseInt(raw || '1', 10);
-      return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
-    } catch (error) {
-      console.warn('KSA PRÁCTIKA: no se pudo leer el consecutivo local de Excel de consulta.', error);
-      return 1;
+  const EXCEL_MANUAL_FILE_NAME_MAX_LENGTH = 180;
+  const EXCEL_INVALID_FILE_NAME_PATTERN = /[\/\\:*?"<>|\u0000-\u001F]/;
+  const EXCEL_RESERVED_FILE_NAMES = new Set(['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9']);
+
+  function validateExcelManualFileName(value) {
+    const original = String(value ?? '');
+    const trimmed = original.trim();
+    if (!trimmed) {
+      return { ok: false, message: 'Escribe un nombre para el archivo antes de exportar.' };
     }
-  }
-
-  function saveExcelConsultaSequence(sequence) {
-    try {
-      const safe = Number.isFinite(Number(sequence)) && Number(sequence) > 0 ? Math.floor(Number(sequence)) : 1;
-      window.localStorage.setItem(EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY, String(safe));
-      if (typeof scheduleCloudSnapshotSync === 'function') scheduleCloudSnapshotSync('excelConsultaSequence');
-      return true;
-    } catch (error) {
-      console.warn('KSA PRÁCTIKA: no se pudo guardar el consecutivo local de Excel de consulta.', error);
-      return false;
+    if (EXCEL_INVALID_FILE_NAME_PATTERN.test(trimmed)) {
+      return { ok: false, message: 'El nombre contiene caracteres no permitidos: / \\ : * ? " < > |' };
     }
-  }
 
-  function formatExcelConsultaSequence(sequence) {
-    const safe = Number.isFinite(Number(sequence)) && Number(sequence) > 0 ? Math.floor(Number(sequence)) : 1;
-    return String(safe).padStart(4, '0');
-  }
-
-  function buildExcelConsultaFileName(month, year, sequence) {
-    return `${formatExcelConsultaSequence(sequence)}- Consulta ${getMonthLabel(month)} ${year}.xlsx`;
-  }
-
-  function getExcelCierreSequence() {
-    try {
-      const raw = window.localStorage.getItem(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY);
-      const parsed = Number.parseInt(raw || '1', 10);
-      return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
-    } catch (error) {
-      console.warn('KSA PRÁCTIKA: no se pudo leer el consecutivo local de Excel de cierre.', error);
-      return 1;
+    let baseName = trimmed;
+    while (/\.xlsx$/i.test(baseName)) {
+      baseName = baseName.slice(0, -5).trimEnd();
     }
-  }
-
-  function saveExcelCierreSequence(sequence) {
-    try {
-      const safe = Number.isFinite(Number(sequence)) && Number(sequence) > 0 ? Math.floor(Number(sequence)) : 1;
-      window.localStorage.setItem(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY, String(safe));
-      if (typeof scheduleCloudSnapshotSync === 'function') scheduleCloudSnapshotSync('excelCierreSequence');
-      return true;
-    } catch (error) {
-      console.warn('KSA PRÁCTIKA: no se pudo guardar el consecutivo local de Excel de cierre.', error);
-      return false;
+    if (!baseName || /^\.+$/.test(baseName)) {
+      return { ok: false, message: 'El nombre no puede ser únicamente .xlsx, puntos o espacios.' };
     }
+    if (/[. ]$/.test(baseName)) {
+      return { ok: false, message: 'El nombre no puede terminar en punto ni espacio.' };
+    }
+
+    const reservedStem = baseName.split('.')[0].trim().toUpperCase();
+    if (EXCEL_RESERVED_FILE_NAMES.has(reservedStem)) {
+      return { ok: false, message: `“${baseName}” es un nombre reservado por el sistema. Usa otro nombre.` };
+    }
+
+    const fileName = `${baseName}.xlsx`;
+    if (fileName.length > EXCEL_MANUAL_FILE_NAME_MAX_LENGTH) {
+      return { ok: false, message: `El nombre es demasiado largo. Usa máximo ${EXCEL_MANUAL_FILE_NAME_MAX_LENGTH} caracteres incluyendo .xlsx.` };
+    }
+    return { ok: true, fileName, baseName };
   }
 
-  function formatExcelCierreSequence(sequence) {
-    const safe = Number.isFinite(Number(sequence)) && Number(sequence) > 0 ? Math.floor(Number(sequence)) : 1;
-    return String(safe).padStart(4, '0');
+  function isUsableStoredExcelFileName(value) {
+    const name = cleanText(value);
+    if (!name || name === 'undefined' || name === '[object Object]') return false;
+    const validation = validateExcelManualFileName(name);
+    return Boolean(validation.ok && validation.fileName === name);
   }
 
-  function buildExcelCierreFileName(month, year, sequence) {
-    return `${formatExcelCierreSequence(sequence)}- ${getMonthLabel(month)} ${year}.xlsx`;
+  function validateExcelClosureExportRecord(record, month, year) {
+    if (!record) return { ok: false, message: 'No existe una exportación Excel de Cierre registrada para este período.' };
+    const normalized = normalizeExcelExportRecord(record);
+    const expectedPeriod = getPeriodKey(month, year);
+    const snapshot = getExcelCierreSnapshotFromRecord(normalized);
+    const failures = [];
+    if (!cleanText(normalized.id)) failures.push('ID interno inválido');
+    if (normalized.tipo !== 'cierre') failures.push('la exportación no es de tipo Cierre');
+    if (normalized.periodo !== expectedPeriod || normalized.month !== String(month) || normalized.year !== String(year)) failures.push('el período no coincide');
+    if (!isUsableStoredExcelFileName(normalized.nombreArchivo)) failures.push('nombre manual inválido');
+    if (!cleanText(normalized.exportadoAt)) failures.push('fecha de exportación inexistente');
+    if (normalized.estadoExportacion !== 'completada' || !normalized.completada) failures.push('exportación no completada');
+    if (!normalized.datosConsistentes) failures.push('datos inconsistentes');
+    if (!snapshot) failures.push('snapshot inexistente');
+    if (snapshot && (snapshot.periodo !== expectedPeriod || snapshot.month !== String(month) || snapshot.year !== String(year))) failures.push('snapshot de otro período');
+    if (snapshot && isUsableStoredExcelFileName(snapshot.nombreArchivo) && snapshot.nombreArchivo !== normalized.nombreArchivo) failures.push('nombre del snapshot no coincide');
+    if (failures.length) {
+      return { ok: false, record: normalized, snapshot, failures, message: `La exportación de Cierre registrada no es válida: ${failures.join(', ')}.` };
+    }
+    return { ok: true, record: normalized, snapshot, failures: [], message: '' };
   }
+
+  function getLatestRecordedExcelExportForPeriod(month, year, type = 'cierre') {
+    const key = getPeriodKey(month, year);
+    return getExcelExports().find((record) => record.periodo === key && record.tipo === type) || null;
+  }
+
+  function findMatchingExcelExport(month, year, type, fileName) {
+    const period = getPeriodKey(month, year);
+    const comparableName = cleanText(fileName).normalize('NFC').toLocaleLowerCase('es-NI');
+    return getExcelExports().find((record) => (
+      record.periodo === period
+      && record.tipo === type
+      && cleanText(record.nombreArchivo).normalize('NFC').toLocaleLowerCase('es-NI') === comparableName
+    )) || null;
+  }
+
+  function confirmExcelReexportIfNeeded(month, year, type, fileName) {
+    const existing = findMatchingExcelExport(month, year, type, fileName);
+    if (!existing) return true;
+    const label = type === 'consulta' ? 'Consulta' : 'Cierre';
+    return window.confirm(`Ya existe una exportación de tipo ${label} para ${getMonthLabel(month)} ${year} con el nombre “${fileName}”. ¿Deseas reexportarla conscientemente?`);
+  }
+
+  function registerExcelExportResult({ month, year, type, result }) {
+    const periodo = getPeriodKey(month, year);
+    const existing = findMatchingExcelExport(month, year, type, result.fileName);
+    const record = normalizeExcelExportRecord({
+      id: existing?.id || generateId('exportExcel'),
+      periodo,
+      month,
+      year,
+      tipo: type,
+      nombreArchivo: result.fileName,
+      nombreArchivoManual: result.fileName,
+      nombreManual: true,
+      exportadoAt: result.exportedAt,
+      estadoExportacion: 'completada',
+      completada: true,
+      datosConsistentes: true,
+      corteOficialAt: type === 'cierre' ? (result.corteOficialAt || result.exportedAt) : '',
+      snapshotCierre: type === 'cierre' ? result.snapshotCierre : null,
+      snapshotConsulta: type === 'consulta' ? result.snapshotConsulta : null,
+      totales: result.totales,
+      hojas: result.hojas,
+      createdAt: existing?.createdAt || result.exportedAt,
+      updatedAt: result.exportedAt
+    });
+    appData.exportacionesExcel = reconcileExcelExportRecords([
+      record,
+      ...getExcelExports().filter((item) => item.id !== record.id && getExcelExportSignature(item) !== getExcelExportSignature(record))
+    ]);
+    saveData(appData);
+    registerSessionChange({
+      module: 'Exportaciones Excel',
+      operation: existing ? 'editar' : 'crear',
+      recordId: record.id,
+      sourceModule: type === 'consulta' ? 'Excel Consulta' : 'Excel Cierre'
+    });
+    registerActivity({
+      module: 'Excel / Cierre',
+      action: type === 'consulta' ? 'Consulta exportada' : 'Cierre exportado',
+      entityType: 'Excel',
+      entityRef: result.fileName,
+      detail: buildActivityDetail([type === 'consulta' ? 'Excel de consulta exportado' : 'Excel de cierre exportado', periodo, result.fileName]),
+      source: 'local'
+    });
+    return record;
+  }
+
 
   async function handleExcelConsultaExport(form) {
     if (!canCurrentRole('exportExcelConsulta')) {
-      excelExportState.message = ADMIN_RESTRICTED_MESSAGE;
-      excelExportState.messageType = 'error';
+      excelExportState.consultaMessage = ADMIN_RESTRICTED_MESSAGE;
+      excelExportState.consultaMessageType = 'error';
+      renderRoute();
+      return;
+    }
+    if (excelExportState.isConsultaExporting) return;
+
+    const { month, year } = getPeriodFromForm(form);
+    const validation = validateExcelManualFileName(new FormData(form).get('fileName'));
+    excelExportState.consultaMonth = month;
+    excelExportState.consultaYear = year;
+    excelExportState.consultaFileName = String(new FormData(form).get('fileName') || '');
+    if (!validation.ok) {
+      excelExportState.consultaMessage = validation.message;
+      excelExportState.consultaMessageType = 'error';
+      renderRoute();
+      return;
+    }
+    excelExportState.consultaFileName = validation.fileName;
+    if (!confirmExcelReexportIfNeeded(month, year, 'consulta', validation.fileName)) {
+      excelExportState.consultaMessage = 'Reexportación cancelada. No se generó ni registró ningún archivo.';
+      excelExportState.consultaMessageType = 'error';
       renderRoute();
       return;
     }
 
-    const { month, year } = getPeriodFromForm(form);
-    const sequence = getExcelConsultaSequence();
-    const fileName = buildExcelConsultaFileName(month, year, sequence);
-    excelExportState.month = month;
-    excelExportState.year = year;
-    excelExportState.message = 'Generando Excel de consulta...';
-    excelExportState.messageType = 'success';
+    excelExportState.isConsultaExporting = true;
+    excelExportState.consultaMessage = 'Generando Excel de Consulta…';
+    excelExportState.consultaMessageType = 'success';
     renderRoute();
 
     try {
-      const result = await exportExcelForPeriod(month, year, { fileName, mode: 'consulta' });
-      if (!saveExcelConsultaSequence(sequence + 1)) {
-        throw new Error('El Excel se generó, pero no se pudo avanzar el consecutivo local de consulta.');
-      }
-      excelExportState.message = `Excel de consulta exportado: ${result.fileName}. Próxima consulta: ${formatExcelConsultaSequence(sequence + 1)}.`;
-      excelExportState.messageType = 'success';
+      const result = await exportExcelForPeriod(month, year, { fileName: validation.fileName, mode: 'consulta' });
+      registerExcelExportResult({ month, year, type: 'consulta', result });
+      excelExportState.consultaFileName = result.fileName;
+      excelExportState.consultaMessage = `Excel de Consulta exportado: ${result.fileName}. El período no fue cerrado ni habilitado por esta exportación.`;
+      excelExportState.consultaMessageType = 'success';
     } catch (error) {
       console.error('KSA PRÁCTIKA: error al exportar Excel de consulta.', error);
-      excelExportState.message = error.message || 'No se pudo generar el Excel de consulta.';
-      excelExportState.messageType = 'error';
+      excelExportState.consultaMessage = error.message || 'No se pudo generar el Excel de Consulta.';
+      excelExportState.consultaMessageType = 'error';
+    } finally {
+      excelExportState.isConsultaExporting = false;
+      renderRoute();
     }
-
-    renderRoute();
   }
 
   async function handleExcelExportSubmit(form) {
     if (!canCurrentRole('exportExcelCierre')) {
-      excelExportState.message = ADMIN_RESTRICTED_MESSAGE;
-      excelExportState.messageType = 'error';
+      excelExportState.cierreMessage = ADMIN_RESTRICTED_MESSAGE;
+      excelExportState.cierreMessageType = 'error';
+      renderRoute();
+      return;
+    }
+    if (excelExportState.isCierreExporting) return;
+
+    const { month, year } = getPeriodFromForm(form);
+    const formData = new FormData(form);
+    const rawFileName = String(formData.get('fileName') || '');
+    excelExportState.cierreMonth = month;
+    excelExportState.cierreYear = year;
+    excelExportState.cierreFileName = rawFileName;
+
+    const cierreStatus = buildPeriodClosingStatus(month, year);
+    if (hasPeriodClosingBlock(cierreStatus)) {
+      const origin = getPeriodBlockingOrigin(cierreStatus);
+      excelExportState.cierreMessage = `No se puede exportar el Excel de Cierre de ${getMonthLabel(month)} ${year}. Hay pendientes en ${origin}: Clientes ${formatMoney(cierreStatus.saldoClientes)} · Proveedores ${formatMoney(cierreStatus.saldoProveedores)}.`;
+      excelExportState.cierreMessageType = 'error';
       renderRoute();
       return;
     }
 
-    const { month, year, periodo } = getPeriodFromForm(form);
-    const sequence = getExcelCierreSequence();
-    const fileName = buildExcelCierreFileName(month, year, sequence);
-    excelExportState.month = month;
-    excelExportState.year = year;
-    excelExportState.message = 'Generando Excel oficial de cierre...';
-    excelExportState.messageType = 'success';
+    const validation = validateExcelManualFileName(rawFileName);
+    if (!validation.ok) {
+      excelExportState.cierreMessage = validation.message;
+      excelExportState.cierreMessageType = 'error';
+      renderRoute();
+      return;
+    }
+    excelExportState.cierreFileName = validation.fileName;
+    if (!confirmExcelReexportIfNeeded(month, year, 'cierre', validation.fileName)) {
+      excelExportState.cierreMessage = 'Reexportación cancelada. No se generó ni registró ningún archivo.';
+      excelExportState.cierreMessageType = 'error';
+      renderRoute();
+      return;
+    }
+
+    excelExportState.isCierreExporting = true;
+    excelExportState.cierreMessage = 'Generando Excel oficial de Cierre…';
+    excelExportState.cierreMessageType = 'success';
     renderRoute();
 
     try {
-      const result = await exportExcelForPeriod(month, year, { fileName, mode: 'cierre' });
-      if (!saveExcelCierreSequence(sequence + 1)) {
-        throw new Error('El Excel se generó, pero no se pudo avanzar el consecutivo local de cierre.');
-      }
-      const record = normalizeExcelExportRecord({
-        id: generateId('exportExcel'),
-        periodo,
-        month,
-        year,
-        tipo: 'cierre',
-        nombreArchivo: result.fileName,
-        exportadoAt: result.exportedAt,
-        corteOficialAt: result.corteOficialAt || result.exportedAt,
-        snapshotCierre: result.snapshotCierre,
-        totales: result.totales,
-        hojas: result.hojas
-      });
-      appData.exportacionesExcel = [record, ...getExcelExports()];
-      saveData(appData);
-      registerActivity({
-        module: 'Excel / Cierre',
-        action: 'Exportado',
-        entityType: 'Excel',
-        entityRef: result.fileName,
-        detail: buildActivityDetail(['Excel exportado', periodo, result.fileName]),
-        source: 'local'
-      });
-      excelExportState.message = `Excel de cierre exportado: ${result.fileName}. Próximo cierre: ${formatExcelCierreSequence(sequence + 1)}. Hojas: ${result.hojas.join(', ')}.`;
-      excelExportState.messageType = 'success';
+      const result = await exportExcelForPeriod(month, year, { fileName: validation.fileName, mode: 'cierre' });
+      const exportRecord = registerExcelExportResult({ month, year, type: 'cierre', result });
+      const exportValidation = validateExcelClosureExportRecord(exportRecord, month, year);
+      if (!exportValidation.ok) throw new Error(exportValidation.message);
+      excelExportState.cierreFileName = result.fileName;
+      excelExportState.cierreMessage = `Excel de Cierre exportado: ${result.fileName}. Hojas: ${result.hojas.join(', ')}. El período todavía no se cerró automáticamente.`;
+      excelExportState.cierreMessageType = 'success';
       cierreMensualState.month = month;
       cierreMensualState.year = year;
       cierreMensualState.message = null;
     } catch (error) {
-      console.error('KSA PRÁCTIKA: error al exportar Excel.', error);
-      excelExportState.message = error.message || 'No se pudo generar el Excel.';
-      excelExportState.messageType = 'error';
+      console.error('KSA PRÁCTIKA: error al exportar Excel de cierre.', error);
+      excelExportState.cierreMessage = error.message || 'No se pudo generar el Excel de Cierre.';
+      excelExportState.cierreMessageType = 'error';
+    } finally {
+      excelExportState.isCierreExporting = false;
+      renderRoute();
     }
-
-    renderRoute();
   }
+
 
   function handleCierreMensualSubmit(form) {
     if (!canCurrentRole('closeMonth')) {
@@ -29122,46 +29531,93 @@ Notas importantes:
     if (hasPeriodClosingBlock(cierreStatus)) {
       const origin = getPeriodBlockingOrigin(cierreStatus);
       const detail = buildPeriodBlockingSummaryText(cierreStatus);
-      cierreMensualState.message = `No se puede cerrar ${getMonthLabel(month)} ${year} porque aún existen saldos pendientes vinculados a este período. Bloqueo: ${origin}.${detail ? `\n${detail}` : ''}`;
+      cierreMensualState.message = `No se puede cerrar ${getMonthLabel(month)} ${year} porque aún existen saldos pendientes vinculados a este período. Bloqueo: ${origin}.${detail ? `
+${detail}` : ''}`;
       cierreMensualState.messageType = 'error';
       renderRoute();
       return;
     }
 
-    const lastExport = getLastExcelExportForPeriod(month, year);
-    if (!lastExport) {
-      cierreMensualState.message = `${getMonthLabel(month)} ${year} ya está listo para cierre. Primero exporta Excel para ese mismo mes/año.`;
+    const latestRecordedExport = getLatestRecordedExcelExportForPeriod(month, year, 'cierre');
+    const validExport = getLastExcelExportForPeriod(month, year);
+    if (!validExport) {
+      cierreMensualState.message = latestRecordedExport
+        ? validateExcelClosureExportRecord(latestRecordedExport, month, year).message
+        : `${getMonthLabel(month)} ${year} ya está listo para cierre. Primero exporta un Excel de Cierre válido para ese mismo mes/año.`;
       cierreMensualState.messageType = 'error';
       renderRoute();
       return;
     }
 
-    const ok = window.confirm(`Vas a cerrar ${getMonthLabel(month)} ${year}. Se usará el Excel ${lastExport.nombreArchivo}. Las ediciones futuras del período mostrarán advertencia. ¿Continuar?`);
+    const exportValidation = validateExcelClosureExportRecord(validExport, month, year);
+    if (!exportValidation.ok) {
+      cierreMensualState.message = exportValidation.message;
+      cierreMensualState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+    const lastExport = exportValidation.record;
+    const exportDateLabel = formatDateTime(lastExport.exportadoAt);
+    const ok = window.confirm(`Vas a cerrar ${getMonthLabel(month)} ${year} usando el archivo:
+
+${lastExport.nombreArchivo}
+
+Exportado: ${exportDateLabel}
+
+¿Continuar?`);
     if (!ok) return;
 
+    const finalValidation = validateExcelClosureExportRecord(
+      getExcelExports().find((record) => record.id === lastExport.id) || lastExport,
+      month,
+      year
+    );
+    if (!finalValidation.ok) {
+      cierreMensualState.message = 'La exportación dejó de ser válida antes del cierre. Exporta nuevamente el Excel de Cierre.';
+      cierreMensualState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+
     const fechaHoraCierre = nowIso();
-    const exportSnapshot = getExcelCierreSnapshotFromRecord(lastExport);
-    const summary = exportSnapshot
-      ? reviveExcelCierreSummaryFromSnapshot(exportSnapshot)
-      : buildExcelCierreSummaryForPeriod(month, year, { cutoffAt: fechaHoraCierre });
-    const snapshotCierre = exportSnapshot || buildExcelCierreSnapshot(month, year, fechaHoraCierre, summary, lastExport.nombreArchivo);
+    const snapshotCierre = finalValidation.snapshot;
+    const summary = reviveExcelCierreSummaryFromSnapshot(snapshotCierre);
+    if (!summary) {
+      cierreMensualState.message = 'No se pudo recuperar el snapshot oficial del Excel de Cierre. El período no fue cerrado.';
+      cierreMensualState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+
     const cierre = normalizeCierreMensualRecord({
       id: `cierre_${periodo}`,
       periodo,
       month,
       year,
       fechaHoraCierre,
-      corteOficialAt: snapshotCierre?.corteOficialAt || fechaHoraCierre,
+      fechaExportacion: lastExport.exportadoAt,
+      corteOficialAt: snapshotCierre.corteOficialAt || lastExport.corteOficialAt || lastExport.exportadoAt,
       usuarioRol: getCurrentRoleDefinition().label,
       nombreArchivoExcel: lastExport.nombreArchivo,
+      nombreArchivoManual: lastExport.nombreArchivo,
       exportacionExcelId: lastExport.id,
+      tipoExportacion: 'cierre',
+      exportacionEstado: 'completada',
+      estado: 'Cerrado',
       modoEdicion: 'advertencia',
       snapshotCierre,
       totales: buildClosingTotals(summary),
-      observacion: 'Cierre mensual con exportación Excel previa obligatoria. Corte oficial congelado para no recalcular movimientos posteriores.'
+      observacion: 'Cierre mensual con exportación Excel de Cierre previa, válida y obligatoria. El nombre manual y el corte oficial quedan congelados.'
     });
 
-    appData.cierresMensuales = [cierre, ...getCierresMensuales()];
+    appData.cierresMensuales = reconcileCierreMensualRecords([cierre, ...getCierresMensuales()]);
+    registerSessionChange({
+      module: 'Cierres Mensuales',
+      operation: 'crear',
+      recordId: cierre.id,
+      relatedId: lastExport.id,
+      sourceModule: 'Excel Cierre'
+    });
     saveData(appData);
     registerActivity({
       module: 'Excel / Cierre',
@@ -29175,10 +29631,11 @@ Notas importantes:
     const workPeriodNote = workPeriodResult.empty
       ? ' No hay períodos abiertos disponibles; el selector queda sin opción editable.'
       : ` Período de trabajo activo: ${workPeriodResult.label}.`;
-    cierreMensualState.message = `Cierre mensual registrado para ${getMonthLabel(month)} ${year}.${workPeriodNote}`;
+    cierreMensualState.message = `Cierre mensual registrado para ${getMonthLabel(month)} ${year} con ${lastExport.nombreArchivo}.${workPeriodNote}`;
     cierreMensualState.messageType = 'success';
     renderRoute();
   }
+
 
   function buildClosingTotals(summary) {
     return {
@@ -29246,6 +29703,7 @@ Notas importantes:
       exportedAt: workbook.exportedAt,
       corteOficialAt: workbook.corteOficialAt,
       snapshotCierre: workbook.snapshotCierre,
+      snapshotConsulta: workbook.snapshotConsulta,
       hojas: workbook.sheets.map((sheet) => sheet.name),
       totales: workbook.totales
     };
@@ -29255,17 +29713,26 @@ Notas importantes:
     const exportMode = cleanText(options.mode || options.tipo || '').toLowerCase();
     const isConsulta = exportMode === 'consulta';
     const exportedAt = nowIso();
-    const fileName = cleanText(options.fileName) || `KSA_PRACTIKA_${year}_${month}_CONTROL.xlsx`;
+    const fileNameValidation = validateExcelManualFileName(options.fileName);
+    if (!fileNameValidation.ok) throw new Error(fileNameValidation.message);
+    const fileName = fileNameValidation.fileName;
     let summary;
     let snapshotCierre = null;
+    let snapshotConsulta = null;
     if (isConsulta) {
       summary = buildExcelConsultaSummaryForPeriod(month, year);
+      snapshotConsulta = buildExcelConsultaSnapshot(month, year, summary, fileName, exportedAt);
     } else {
       const cierreExistente = getCierreMensualForPeriod(month, year);
       const snapshotExistente = getExcelCierreSnapshotFromRecord(cierreExistente);
       if (snapshotExistente) {
-        snapshotCierre = snapshotExistente;
         summary = reviveExcelCierreSummaryFromSnapshot(snapshotExistente);
+        snapshotCierre = normalizeExcelCierreSnapshotRecord({
+          ...snapshotExistente,
+          generadoAt: exportedAt,
+          nombreArchivo: fileName,
+          summary: snapshotExistente.summary
+        });
       } else {
         const cutoffAt = cleanText(options.cutoffAt || options.corteOficialAt || cierreExistente?.fechaHoraCierre || exportedAt);
         summary = buildExcelCierreSummaryForPeriod(month, year, { cutoffAt });
@@ -29278,6 +29745,7 @@ Notas importantes:
       exportedAt,
       corteOficialAt: snapshotCierre?.corteOficialAt || '',
       snapshotCierre,
+      snapshotConsulta,
       totales: buildClosingTotals(summary),
       sheets: [
         buildResumenSheet(summary, label, exportedAt),
@@ -31660,15 +32128,43 @@ ${rowsXml}
       button.addEventListener('click', clearExcelImportState);
     });
 
-    viewRoot.querySelectorAll('[data-excel-export-form]').forEach((form) => {
+    viewRoot.querySelectorAll('[data-excel-consulta-form]').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        handleExcelConsultaExport(form);
+      });
+      form.querySelectorAll('select').forEach((select) => {
+        select.addEventListener('change', () => {
+          const { month, year } = getPeriodFromForm(form);
+          excelExportState.consultaMonth = month;
+          excelExportState.consultaYear = year;
+          excelExportState.consultaMessage = null;
+          renderRoute();
+        });
+      });
+      const fileNameInput = form.querySelector('input[name="fileName"]');
+      fileNameInput?.addEventListener('input', () => {
+        excelExportState.consultaFileName = fileNameInput.value;
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-excel-cierre-export-form]').forEach((form) => {
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         handleExcelExportSubmit(form);
       });
-      form.querySelectorAll('[data-excel-consulta-export]').forEach((button) => {
-        button.addEventListener('click', () => {
-          handleExcelConsultaExport(form);
+      form.querySelectorAll('select').forEach((select) => {
+        select.addEventListener('change', () => {
+          const { month, year } = getPeriodFromForm(form);
+          excelExportState.cierreMonth = month;
+          excelExportState.cierreYear = year;
+          excelExportState.cierreMessage = null;
+          renderRoute();
         });
+      });
+      const fileNameInput = form.querySelector('input[name="fileName"]');
+      fileNameInput?.addEventListener('input', () => {
+        excelExportState.cierreFileName = fileNameInput.value;
       });
     });
 
