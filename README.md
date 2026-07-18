@@ -105,3 +105,22 @@ Bloque A / Etapa 3/6: se agregó una pantalla de acceso preparada para Firebase 
 - Se agregó `GUIA_JSON_AUXILIAR_NUBE_KSA_PRACTIKA.txt`.
 - Consecutivo JSON permanece separado de Excel Consulta y Excel Cierre; no avanza si se cancela o falla la exportación.
 - Cache PWA actualizado a 0.18.16.
+
+
+## Cierres mensuales / Etapa 1/2 — Persistencia local, Firebase y Guardar datos
+- `cierresMensuales` y `exportacionesExcel` quedaron integrados a la cola parcial de “Guardar datos”.
+- La cola pendiente se conserva localmente para soportar navegación, recarga y operación offline hasta confirmación real de Firestore.
+- Los cierres usan el período `YYYY-MM` como ID estable del documento remoto; las exportaciones conservan su ID y tipo Consulta/Cierre.
+- La carga desde Firestore preserva cierres y exportaciones locales que todavía están pendientes de confirmación, evitando reabrir el período por una versión remota atrasada.
+- La cola elimina únicamente escrituras confirmadas por Firestore; los fallos permanecen pendientes y no muestran éxito falso.
+- Cache PWA actualizado a 0.18.57.
+
+
+## Cierres mensuales / Etapa 2/2 — Consecutivo oficial, reconciliación y hardening final
+- El consecutivo de Excel de Cierre ahora se consume únicamente cuando el período se cierra oficialmente.
+- Las reexportaciones del mismo período reutilizan el mismo nombre, consecutivo y registro de exportación.
+- Se agregó reserva única por período abierto para evitar que dos períodos diferentes utilicen el mismo consecutivo.
+- La reconciliación calcula el próximo número desde el mayor consecutivo oficial válido, corrige valores inflados por pruebas y conserva secuencias históricas legítimas no continuas.
+- La migración idempotente consolida exportaciones de prueba duplicadas, conserva Excel Consulta y JSON independientes y deja tombstones pendientes para limpiar duplicados remotos sin borrar datos operativos.
+- “Guardar datos” incluye el documento `consecutivos/excelCierre`, junto con cierres y exportaciones, manteniendo los fallos pendientes y sin mostrar éxito falso.
+- Cache PWA actualizado a 0.18.58.
