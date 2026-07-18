@@ -2,12 +2,14 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.61-cierres-oficiales-reparacion-etapa3';
+  const APP_VERSION = '0.18.63-guardar-nube-reparacion-etapa2-hardening-final';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
   const ACTIVITY_LOG_STORAGE_KEY = 'KSA_PRACTIKA_ACTIVITY_LOG_v1';
   const SESSION_CHANGE_QUEUE_STORAGE_KEY = 'KSA_PRACTIKA_SESSION_CHANGE_QUEUE_v1';
+  const SESSION_SAVE_DIAGNOSTIC_STORAGE_KEY = 'KSA_PRACTIKA_SESSION_SAVE_DIAGNOSTIC_v1';
+  const SESSION_METADATA_PENDING_STORAGE_KEY = 'KSA_PRACTIKA_SESSION_METADATA_PENDING_v1';
   const JSON_EXPORT_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_JSON_EXPORT_SEQUENCE_v1';
   const EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_EXCEL_CONSULTA_SEQUENCE_v1';
   const EXCEL_CIERRE_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_EXCEL_CIERRE_SEQUENCE_v1';
@@ -2775,12 +2777,100 @@ Notas importantes:
   const SESSION_SAVE_MESSAGES = Object.freeze({
     saving: 'Guardando datos...',
     success: 'Guardado correcto.',
+    confirmationPending: 'Los datos fueron enviados. La confirmación de la nube está pendiente y se intentará nuevamente.',
+    offlinePending: 'Sin conexión. Los cambios permanecen guardados localmente y pendientes de enviar.',
+    metadataPending: 'Datos guardados. La información de diagnóstico quedó pendiente.',
     partialCleanupPending: 'Guardado correcto. La limpieza de Facturas quedó pendiente para reintento.',
     cleanupFailure: 'No se pudo completar la limpieza de Facturas. Se intentará nuevamente.',
     noChanges: 'No hay cambios nuevos de esta sesión para guardar.',
-    failure: 'No se pudo guardar en la nube. Los cambios de sesión se conservaron para intentar nuevamente.',
+    failure: 'No se pudo guardar en la nube. Los cambios se conservaron para intentar nuevamente.',
     firestoreUnavailable: 'No se pudo guardar en la nube. Firestore no está disponible.'
   });
+
+  const SESSION_SAVE_RESULT_STATUS = Object.freeze({
+    confirmed: 'CONFIRMADO',
+    pending: 'PENDIENTE DE CONFIRMACIÓN',
+    failed: 'FALLIDO',
+    metadataPending: 'METADATA PENDIENTE',
+    idle: 'SIN INTENTO'
+  });
+
+  function loadSessionSaveDiagnosticState() {
+    const defaults = {
+      lastConfirmedWriteAt: '',
+      lastAttemptAt: '',
+      attemptStatus: SESSION_SAVE_RESULT_STATUS.idle,
+      lastRealError: '',
+      confirmationPending: false,
+      metadataPending: false,
+      errorCode: '',
+      updatedAt: ''
+    };
+    try {
+      const raw = window.localStorage.getItem(SESSION_SAVE_DIAGNOSTIC_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      return isPlainObject(parsed) ? { ...defaults, ...parsed } : defaults;
+    } catch (_) {
+      return defaults;
+    }
+  }
+
+  let sessionSaveDiagnosticState = loadSessionSaveDiagnosticState();
+
+  function persistSessionSaveDiagnosticState() {
+    try {
+      window.localStorage.setItem(SESSION_SAVE_DIAGNOSTIC_STORAGE_KEY, JSON.stringify(sessionSaveDiagnosticState));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function updateSessionSaveDiagnosticState(patch = {}) {
+    sessionSaveDiagnosticState = {
+      ...loadSessionSaveDiagnosticState(),
+      ...(isPlainObject(patch) ? patch : {}),
+      updatedAt: nowIso()
+    };
+    persistSessionSaveDiagnosticState();
+    return { ...sessionSaveDiagnosticState };
+  }
+
+  function getSessionSaveDiagnosticState() {
+    return { ...sessionSaveDiagnosticState };
+  }
+
+  function loadPendingSessionMetadata() {
+    try {
+      const raw = window.localStorage.getItem(SESSION_METADATA_PENDING_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      return isPlainObject(parsed) ? parsed : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function setPendingSessionMetadata(payload = {}) {
+    const previous = loadPendingSessionMetadata() || {};
+    const next = {
+      ...previous,
+      ...(isPlainObject(payload) ? payload : {}),
+      pending: true,
+      attempts: Math.max(0, Number(previous.attempts) || 0) + 1,
+      firstPendingAt: previous.firstPendingAt || nowIso(),
+      lastAttemptAt: nowIso()
+    };
+    try { window.localStorage.setItem(SESSION_METADATA_PENDING_STORAGE_KEY, JSON.stringify(next)); } catch (_) {}
+    return next;
+  }
+
+  function clearPendingSessionMetadata() {
+    try { window.localStorage.removeItem(SESSION_METADATA_PENDING_STORAGE_KEY); } catch (_) {}
+  }
+
+  function hasPendingSessionMetadata() {
+    return Boolean(loadPendingSessionMetadata()?.pending);
+  }
 
   function loadPersistedSessionChangeQueue() {
     try {
@@ -2805,6 +2895,9 @@ Notas importantes:
         item.operation = normalizeSessionChangeOperation(item.operation || item.operacion || item.tipoOperacion);
         item.operacion = item.operation;
         item.estado = 'pendiente';
+        item.revision = Math.max(1, Number(item.revision) || 1);
+        item.cloudOperationToken = cleanText(item.cloudOperationToken) || `${cleanText(item.id) || key}::r${item.revision}`;
+        item.cloudWriteAttempted = item.cloudWriteAttempted === true;
         return true;
       });
     } catch (error) {
@@ -2848,6 +2941,12 @@ Notas importantes:
     const moduleKey = cleanText(moduleName).toLowerCase();
     const recordKey = cleanText(recordId || fallback);
     return `${moduleKey}::${recordKey}`;
+  }
+
+  function getSessionChangeOperationToken(change = {}) {
+    const revision = Math.max(1, Number(change?.revision) || 1);
+    const identity = cleanText(change?.id) || cleanText(change?.key) || getSessionChangeRecordKey(change?.module || change?.modulo, change?.recordId || change?.idRegistro);
+    return cleanText(change?.cloudOperationToken) || `${identity}::r${revision}`;
   }
 
   function getSessionChangePendingCount() {
@@ -2911,13 +3010,52 @@ Notas importantes:
   }
 
   function clearConfirmedSessionChanges(changes = []) {
-    const confirmedIds = new Set((Array.isArray(changes) ? changes : []).map((item) => cleanText(item?.id)).filter(Boolean));
-    if (!confirmedIds.size) return 0;
+    const confirmations = new Map();
+    (Array.isArray(changes) ? changes : []).forEach((item) => {
+      const id = cleanText(item?.id);
+      if (id) confirmations.set(id, getSessionChangeOperationToken(item));
+    });
+    if (!confirmations.size) return 0;
     const before = sessionChangeQueue.length;
-    sessionChangeQueue = sessionChangeQueue.filter((item) => !(item && item.estado === 'pendiente' && confirmedIds.has(cleanText(item.id))));
+    sessionChangeQueue = sessionChangeQueue.filter((item) => {
+      if (!item || item.estado !== 'pendiente') return true;
+      const expectedToken = confirmations.get(cleanText(item.id));
+      if (!expectedToken) return true;
+      return getSessionChangeOperationToken(item) !== expectedToken;
+    });
     syncSessionChangeQueueGlobal();
     updateSessionChangeQueueDom();
     return before - sessionChangeQueue.length;
+  }
+
+  function markSessionChangesPendingConfirmation(changes = [], details = {}) {
+    const pendingTokens = new Map();
+    (Array.isArray(changes) ? changes : []).forEach((item) => {
+      const id = cleanText(item?.id);
+      if (id) pendingTokens.set(id, getSessionChangeOperationToken(item));
+    });
+    if (!pendingTokens.size) return 0;
+    let updated = 0;
+    sessionChangeQueue.forEach((item) => {
+      if (!item || item.estado !== 'pendiente') return;
+      const expectedToken = pendingTokens.get(cleanText(item.id));
+      if (!expectedToken || getSessionChangeOperationToken(item) !== expectedToken) return;
+      item.cloudConfirmationPending = true;
+      item.cloudWriteAttempted = details.writeAttempted !== false;
+      const sentAt = cleanText(details.sentAt);
+      if (sentAt) item.cloudWriteSentAt = sentAt;
+      else if (item.cloudWriteAttempted && !item.cloudWriteSentAt) item.cloudWriteSentAt = nowIso();
+      else if (!item.cloudWriteAttempted) delete item.cloudWriteSentAt;
+      item.cloudConfirmationCode = cleanText(details.code || 'cloud/session-confirmation-pending');
+      item.cloudConfirmationMessage = cleanText(details.message || SESSION_SAVE_MESSAGES.confirmationPending);
+      item.updatedAt = nowIso();
+      updated += 1;
+    });
+    if (updated) {
+      syncSessionChangeQueueGlobal();
+      updateSessionChangeQueueDom();
+    }
+    return updated;
   }
 
   function isCloudDeletedRecord(record) {
@@ -2973,6 +3111,13 @@ Notas importantes:
       existing.operacion = finalOperation;
       existing.fechaHoraLocal = timestamp;
       existing.updatedAt = timestamp;
+      existing.revision = Math.max(1, Number(existing.revision) || 1) + 1;
+      existing.cloudOperationToken = `${cleanText(existing.id) || key}::r${existing.revision}`;
+      delete existing.cloudConfirmationPending;
+      delete existing.cloudWriteAttempted;
+      delete existing.cloudWriteSentAt;
+      delete existing.cloudConfirmationCode;
+      delete existing.cloudConfirmationMessage;
       if (base.relatedId) existing.relatedId = base.relatedId;
       if (base.sourceModule) existing.sourceModule = base.sourceModule;
       syncSessionChangeQueueGlobal();
@@ -2981,10 +3126,13 @@ Notas importantes:
     }
 
     sessionChangeSequence += 1;
+    const changeId = generateId('sessionChange');
     const change = {
-      id: generateId('sessionChange'),
+      id: changeId,
       idInterno: `session-${String(sessionChangeSequence).padStart(4, '0')}`,
       ...base,
+      revision: 1,
+      cloudOperationToken: `${changeId}::r1`,
       createdAt: timestamp,
       updatedAt: timestamp
     };
@@ -3017,13 +3165,24 @@ Notas importantes:
     else if (action === 'annulled') registerSessionChange({ module: 'Gastos', operation: 'anular', recordId: result.gasto.id, sourceModule: 'Ventas / OC' });
   }
 
-  async function handleSessionSavePreview(button = null) {
+  let sessionSaveInFlightPromise = null;
+
+  async function performSessionSavePreview(button = null) {
     if (button) button.disabled = true;
     const pending = getPendingSessionChanges();
-    if (!pending.length) {
+    const metadataWasPending = hasPendingSessionMetadata();
+    const attemptAt = nowIso();
+    if (!pending.length && !metadataWasPending) {
       configState.message = SESSION_SAVE_MESSAGES.noChanges;
       configState.messageType = 'info';
       cloudOperationState.message = SESSION_SAVE_MESSAGES.noChanges;
+      updateSessionSaveDiagnosticState({
+        lastAttemptAt: attemptAt,
+        attemptStatus: SESSION_SAVE_RESULT_STATUS.idle,
+        confirmationPending: false,
+        metadataPending: false,
+        errorCode: ''
+      });
       renderRoute({ preserveScroll: true });
       return { ok: true, count: 0, message: SESSION_SAVE_MESSAGES.noChanges };
     }
@@ -3033,6 +3192,14 @@ Notas importantes:
       configState.messageType = 'error';
       cloudOperationState.lastError = SESSION_SAVE_MESSAGES.firestoreUnavailable;
       cloudOperationState.message = SESSION_SAVE_MESSAGES.firestoreUnavailable;
+      updateSessionSaveDiagnosticState({
+        lastAttemptAt: attemptAt,
+        attemptStatus: SESSION_SAVE_RESULT_STATUS.failed,
+        lastRealError: SESSION_SAVE_MESSAGES.firestoreUnavailable,
+        confirmationPending: pending.some((item) => item?.cloudConfirmationPending === true),
+        metadataPending: metadataWasPending,
+        errorCode: 'cloud/firestore-unavailable'
+      });
       renderRoute({ preserveScroll: true });
       return { ok: false, count: pending.length, message: SESSION_SAVE_MESSAGES.firestoreUnavailable };
     }
@@ -3045,50 +3212,116 @@ Notas importantes:
     try {
       const result = await KSAFirebaseAdapter.saveSessionChangesToCloud(pending);
       const confirmedChanges = Array.isArray(result?.confirmedChanges) ? result.confirmedChanges : [];
+      const pendingConfirmationChanges = Array.isArray(result?.pendingConfirmationChanges) ? result.pendingConfirmationChanges : [];
       if (confirmedChanges.length) {
         confirmFacturasCleanupCloudChanges(confirmedChanges.filter((change) => isFacturasCleanupSessionChange(change)));
         clearConfirmedSessionChanges(confirmedChanges);
       }
+      if (pendingConfirmationChanges.length) {
+        markSessionChangesPendingConfirmation(pendingConfirmationChanges, {
+          sentAt: result?.writeSentAt || '',
+          writeAttempted: result?.writeAttempted !== false,
+          code: result?.code,
+          message: result?.message
+        });
+      }
 
-      const message = cleanText(result?.message) || (result?.ok ? SESSION_SAVE_MESSAGES.success : SESSION_SAVE_MESSAGES.failure);
       const cleanupOnlyFailure = result?.code === 'cloud/facturas-cleanup-failed';
       const cleanupPendingAfterOperationalSuccess = result?.code === 'cloud/session-write-ok-cleanup-pending';
       const unavailable = result?.code === 'firebase/unavailable' || result?.code === 'cloud/firestore-unavailable';
+      const confirmationPending = result?.confirmationPending === true || result?.code === 'cloud/session-confirmation-pending' || result?.code === 'cloud/offline-pending';
+      const metadataPending = result?.metadataPending === true || result?.code === 'cloud/session-metadata-pending';
       const operationalFailure = result?.operationalFailed === true || result?.code === 'cloud/session-operational-failed';
+      const dataConfirmed = confirmedChanges.length > 0 || result?.dataConfirmed === true;
 
-      configState.message = unavailable
-        ? SESSION_SAVE_MESSAGES.firestoreUnavailable
-        : (cleanupPendingAfterOperationalSuccess
-          ? SESSION_SAVE_MESSAGES.partialCleanupPending
-          : (cleanupOnlyFailure
-            ? SESSION_SAVE_MESSAGES.cleanupFailure
-            : (operationalFailure ? SESSION_SAVE_MESSAGES.failure : message)));
-      configState.messageType = (result?.ok || cleanupPendingAfterOperationalSuccess) ? 'success' : 'error';
+      let message = cleanText(result?.message) || (result?.ok ? SESSION_SAVE_MESSAGES.success : SESSION_SAVE_MESSAGES.failure);
+      if (unavailable) message = SESSION_SAVE_MESSAGES.firestoreUnavailable;
+      else if (operationalFailure) message = SESSION_SAVE_MESSAGES.failure;
+      else if (result?.code === 'cloud/offline-pending') message = SESSION_SAVE_MESSAGES.offlinePending;
+      else if (confirmationPending) message = SESSION_SAVE_MESSAGES.confirmationPending;
+      else if (metadataPending) message = SESSION_SAVE_MESSAGES.metadataPending;
+      else if (cleanupPendingAfterOperationalSuccess) message = SESSION_SAVE_MESSAGES.partialCleanupPending;
+      else if (cleanupOnlyFailure) message = SESSION_SAVE_MESSAGES.cleanupFailure;
 
-      if (result?.ok || confirmedChanges.length) {
+      configState.message = message;
+      configState.messageType = (operationalFailure || unavailable || cleanupOnlyFailure) ? 'error' : (confirmationPending || metadataPending ? 'info' : 'success');
+
+      if (dataConfirmed || result?.cloudActive === true) {
         cloudOperationState.active = true;
+      }
+      if (dataConfirmed) {
         cloudOperationState.lastSyncAt = result?.lastSyncAt || cloudOperationState.lastSyncAt || nowIso();
         cloudOperationState.lastCloudWriteAt = result?.lastCloudWriteAt || result?.lastSyncAt || cloudOperationState.lastCloudWriteAt || nowIso();
       }
-      cloudOperationState.lastError = cleanText(result?.lastError || '');
-      if (!cloudOperationState.lastError && !result?.ok && !cleanupOnlyFailure) {
-        cloudOperationState.lastError = configState.message;
-      }
+      const realError = cleanText(result?.lastRealError || (operationalFailure || unavailable || cleanupOnlyFailure ? result?.lastError : ''));
+      cloudOperationState.lastError = realError;
+      cloudOperationState.confirmationPending = confirmationPending;
+      cloudOperationState.metadataPending = metadataPending;
+      cloudOperationState.lastSaveAttemptAt = attemptAt;
+      cloudOperationState.lastSaveStatus = operationalFailure || unavailable || cleanupOnlyFailure
+        ? SESSION_SAVE_RESULT_STATUS.failed
+        : (confirmationPending
+          ? SESSION_SAVE_RESULT_STATUS.pending
+          : (metadataPending ? SESSION_SAVE_RESULT_STATUS.metadataPending : SESSION_SAVE_RESULT_STATUS.confirmed));
+      cloudOperationState.lastSaveErrorCode = (operationalFailure || unavailable || cleanupOnlyFailure || confirmationPending || metadataPending)
+        ? cleanText(result?.errorCode || result?.code || '')
+        : '';
       cloudOperationState.message = configState.message;
+
+      const status = cloudOperationState.lastSaveStatus;
+      updateSessionSaveDiagnosticState({
+        lastConfirmedWriteAt: dataConfirmed
+          ? (result?.lastCloudWriteAt || result?.lastSyncAt || cloudOperationState.lastCloudWriteAt || nowIso())
+          : sessionSaveDiagnosticState.lastConfirmedWriteAt,
+        lastAttemptAt: attemptAt,
+        attemptStatus: status,
+        lastRealError: realError,
+        confirmationPending,
+        metadataPending,
+        errorCode: cloudOperationState.lastSaveErrorCode
+      });
 
       renderRoute({ preserveScroll: true });
       return result;
     } catch (error) {
       const message = SESSION_SAVE_MESSAGES.failure;
+      const code = cleanText(error?.code || 'firebase/firestore-error');
+      const realError = cleanText(error?.message || message);
       configState.message = message;
       configState.messageType = 'error';
-      cloudOperationState.lastError = cleanText(error?.message || message);
+      cloudOperationState.lastError = realError;
       cloudOperationState.message = message;
+      cloudOperationState.confirmationPending = pending.some((item) => item?.cloudConfirmationPending === true);
+      cloudOperationState.metadataPending = hasPendingSessionMetadata();
+      cloudOperationState.lastSaveAttemptAt = attemptAt;
+      cloudOperationState.lastSaveStatus = SESSION_SAVE_RESULT_STATUS.failed;
+      cloudOperationState.lastSaveErrorCode = code;
+      updateSessionSaveDiagnosticState({
+        lastAttemptAt: attemptAt,
+        attemptStatus: SESSION_SAVE_RESULT_STATUS.failed,
+        lastRealError: realError,
+        confirmationPending: cloudOperationState.confirmationPending,
+        metadataPending: cloudOperationState.metadataPending,
+        errorCode: code
+      });
       renderRoute({ preserveScroll: true });
       return { ok: false, count: pending.length, message, error };
     }
   }
 
+  function handleSessionSavePreview(button = null) {
+    if (sessionSaveInFlightPromise) {
+      if (button) button.disabled = true;
+      return sessionSaveInFlightPromise;
+    }
+    sessionSaveInFlightPromise = Promise.resolve()
+      .then(() => performSessionSavePreview(button))
+      .finally(() => {
+        sessionSaveInFlightPromise = null;
+        if (button?.isConnected) button.disabled = false;
+      });
+    return sessionSaveInFlightPromise;
+  }
 
 
   syncSessionChangeQueueGlobal();
@@ -6983,6 +7216,9 @@ Notas importantes:
         _cloudSync: {
           source: 'session_partial_delete',
           operation: 'eliminar',
+          changeId: getSessionChangeOperationToken(change),
+          changeKey: cleanText(change?.key),
+          changeRevision: Math.max(1, Number(change?.revision) || 1),
           syncedAt: deletedAtLocal,
           syncedBy: user?.email || ''
         }
@@ -7001,6 +7237,9 @@ Notas importantes:
         _cloudSync: {
           source: 'session_partial_save',
           operation: normalizeSessionChangeOperation(change?.operation || change?.operacion),
+          changeId: getSessionChangeOperationToken(change),
+          changeKey: cleanText(change?.key),
+          changeRevision: Math.max(1, Number(change?.revision) || 1),
           syncedAt,
           syncedBy: user?.email || ''
         }
@@ -7159,7 +7398,15 @@ Notas importantes:
           valor: target.record?.valor,
           updatedAt: stamp,
           updatedBy: cleanText(user?.email || user?.uid),
-          _cloudSync: { source: 'guardar_datos', syncedAt: nowIso() }
+          _cloudSync: {
+            source: 'guardar_datos',
+            operation: normalizeSessionChangeOperation(change?.operation || change?.operacion),
+            changeId: getSessionChangeOperationToken(change),
+            changeKey: cleanText(change?.key),
+            changeRevision: Math.max(1, Number(change?.revision) || 1),
+            syncedAt: nowIso(),
+            syncedBy: cleanText(user?.email || user?.uid)
+          }
         };
       } else if (target.kind === 'catalog') {
         const docId = sanitizeFirestoreDocId(recordId, `${target.catalogId}_item`);
@@ -7219,40 +7466,129 @@ Notas importantes:
       return false;
     }
 
-    async function verifyCriticalExcelCierreSessionWrite(write, fs) {
-      if (!isCriticalExcelCierreSessionWrite(write)) return true;
-      const snap = await fs.getDoc(write.ref);
-      if (!snap.exists()) throw { code: 'cloud/session-write-not-found', message: 'Firestore no devolvió el documento crítico recién guardado.' };
-      if (snap.metadata?.fromCache === true || snap.metadata?.hasPendingWrites === true) {
-        throw { code: 'cloud/session-write-not-server-confirmed', message: 'Firestore todavía no confirmó en servidor el documento crítico recién guardado.' };
-      }
-      const actual = normalizeFirestoreDoc(snap);
+    const SESSION_CONFIRMATION_RETRY_DELAYS = Object.freeze([0, 180, 420]);
+    const SESSION_CONFIRMATION_READ_TIMEOUT_MS = 1800;
+    const SESSION_WRITE_COMMIT_TIMEOUT_MS = 5000;
+
+    function delaySessionConfirmation(ms) {
+      return new Promise((resolve) => window.setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+    }
+
+    function withSessionConfirmationTimeout(promise, timeoutMs, code = 'cloud/session-confirmation-timeout') {
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const timer = window.setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          reject({ code, message: 'La confirmación de Firestore excedió el tiempo breve permitido.' });
+        }, Math.max(1, Number(timeoutMs) || SESSION_CONFIRMATION_READ_TIMEOUT_MS));
+        Promise.resolve(promise).then((value) => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timer);
+          resolve(value);
+        }, (error) => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timer);
+          reject(error);
+        });
+      });
+    }
+
+    function getSessionConfirmationErrorClass(error) {
+      const code = cleanText(error?.code || error?.name || 'firebase/firestore-error').toLowerCase();
+      const realFailureCodes = new Set([
+        'permission-denied', 'firestore/permission-denied', 'unauthenticated', 'auth/no-current-user',
+        'firebase/not-initial-admin', 'firebase/user-inactive', 'firebase/user-not-registered',
+        'invalid-argument', 'failed-precondition'
+      ]);
+      if (realFailureCodes.has(code)) return 'failed';
+      return 'pending';
+    }
+
+    function compareSessionWriteConfirmation(write, actual) {
+      const expectedChangeId = cleanText(write?.payload?._cloudSync?.changeId);
+      const actualChangeId = cleanText(actual?._cloudSync?.changeId);
+      if (!expectedChangeId || expectedChangeId !== actualChangeId) return false;
+
       if (write.kind === 'cierreMensual') {
-        const expectedSignature = getExcelCierreClosureSignature(write.payload);
-        const actualSignature = getExcelCierreClosureSignature(actual);
-        if (expectedSignature !== actualSignature) {
-          throw { code: 'cloud/session-write-verification-mismatch', message: 'El cierre leído desde Firestore no coincide con el cierre oficial guardado.' };
-        }
-        return true;
+        return getExcelCierreClosureSignature(write.payload) === getExcelCierreClosureSignature(actual);
       }
-      if (write.kind === 'exportacionExcel') {
-        const expectedSignature = getExcelCierreExportSignature(write.payload);
-        const actualSignature = getExcelCierreExportSignature(actual);
-        if (expectedSignature !== actualSignature) {
-          throw { code: 'cloud/session-write-verification-mismatch', message: 'La exportación de cierre leída desde Firestore no coincide con la exportación guardada.' };
-        }
-        return true;
+      if (write.kind === 'exportacionExcel' && cleanText(write.payload?.tipo).toLowerCase() === 'cierre') {
+        return getExcelCierreExportSignature(write.payload) === getExcelCierreExportSignature(actual);
       }
-      if (write.kind === 'consecutivo') {
+      if (write.kind === 'consecutivo' && cleanText(write.recordId) === 'excelCierre') {
         const expectedType = cleanText(write.payload?.tipo || write.recordId);
         const actualType = cleanText(actual?.tipo || actual?.id);
         const expectedValue = parseExcelCierreSequenceValue(write.payload?.valor);
         const actualValue = parseExcelCierreSequenceValue(actual?.valor ?? actual?.value ?? actual?.consecutivo);
-        if (expectedType !== actualType || !expectedValue || expectedValue !== actualValue) {
-          throw { code: 'cloud/session-write-verification-mismatch', message: 'El próximo consecutivo leído desde Firestore no coincide con el valor reconciliado.' };
-        }
+        return expectedType === actualType && Boolean(expectedValue) && expectedValue === actualValue;
       }
       return true;
+    }
+
+    async function verifySessionWrite(write, fs, options = {}) {
+      const preflight = options?.preflight === true;
+      let sawServerSnapshot = false;
+      let sawServerMissingOrMismatch = false;
+      let lastPendingCode = 'cloud/session-write-not-server-confirmed';
+      let lastPendingMessage = 'Firestore todavía no confirmó en servidor el documento recién guardado.';
+
+      if (!preflight && typeof fs.waitForPendingWrites === 'function') {
+        try {
+          await withSessionConfirmationTimeout(fs.waitForPendingWrites(state.firestore), SESSION_CONFIRMATION_READ_TIMEOUT_MS);
+        } catch (error) {
+          if (getSessionConfirmationErrorClass(error) === 'failed') {
+            return { status: 'failed', code: cleanText(error?.code || 'cloud/session-write-verification-failed'), message: getSafeSessionCloudErrorMessage(error), error };
+          }
+          lastPendingCode = cleanText(error?.code || lastPendingCode);
+          lastPendingMessage = getSafeSessionCloudErrorMessage(error);
+        }
+      }
+
+      for (let attempt = 0; attempt < SESSION_CONFIRMATION_RETRY_DELAYS.length; attempt += 1) {
+        const delayMs = SESSION_CONFIRMATION_RETRY_DELAYS[attempt];
+        if (delayMs) await delaySessionConfirmation(delayMs);
+        try {
+          const readPromise = typeof fs.getDocFromServer === 'function'
+            ? fs.getDocFromServer(write.ref)
+            : fs.getDoc(write.ref);
+          const snap = await withSessionConfirmationTimeout(readPromise, SESSION_CONFIRMATION_READ_TIMEOUT_MS);
+          if (snap.metadata?.fromCache === true || snap.metadata?.hasPendingWrites === true) {
+            lastPendingCode = 'cloud/session-write-not-server-confirmed';
+            lastPendingMessage = 'La lectura inmediata todavía proviene de caché o conserva escrituras pendientes.';
+            continue;
+          }
+          sawServerSnapshot = true;
+          if (!snap.exists()) {
+            sawServerMissingOrMismatch = true;
+            lastPendingCode = 'cloud/session-write-not-found';
+            lastPendingMessage = 'Firestore todavía no devolvió el documento esperado.';
+            continue;
+          }
+          const actual = normalizeFirestoreDoc(snap);
+          if (compareSessionWriteConfirmation(write, actual)) {
+            return { status: 'confirmed', code: 'cloud/session-write-confirmed', message: 'Firestore confirmó el documento en servidor.', attempts: attempt + 1 };
+          }
+          sawServerMissingOrMismatch = true;
+          lastPendingCode = 'cloud/session-write-verification-mismatch';
+          lastPendingMessage = isCriticalExcelCierreSessionWrite(write)
+            ? 'El documento crítico leído todavía no coincide con el cierre, exportación o consecutivo oficial enviado.'
+            : 'El documento leído todavía no contiene la confirmación de esta operación.';
+        } catch (error) {
+          if (getSessionConfirmationErrorClass(error) === 'failed') {
+            return { status: 'failed', code: cleanText(error?.code || 'cloud/session-write-verification-failed'), message: getSafeSessionCloudErrorMessage(error), error };
+          }
+          lastPendingCode = cleanText(error?.code || lastPendingCode);
+          lastPendingMessage = getSafeSessionCloudErrorMessage(error);
+        }
+      }
+
+      if (preflight && sawServerSnapshot && sawServerMissingOrMismatch) {
+        return { status: 'needs_write', code: lastPendingCode, message: lastPendingMessage };
+      }
+      return { status: 'pending', code: lastPendingCode, message: lastPendingMessage };
     }
 
     function uniqueSessionChangesById(changes = []) {
@@ -7289,9 +7625,11 @@ Notas importantes:
           label,
           count: 0,
           confirmedChanges: [],
+          pendingConfirmationChanges: [],
           failedChanges: [],
           unresolvedChanges: [],
-          errors: []
+          errors: [],
+          confirmationNotes: []
         };
       }
 
@@ -7315,65 +7653,158 @@ Notas importantes:
       });
 
       const confirmedChanges = [];
+      const pendingConfirmationChanges = [];
       const failedChanges = [...unresolvedChanges];
       const errors = [];
+      const failureCodes = [];
+      const confirmationNotes = [];
       if (unresolvedChanges.length) {
+        failureCodes.push('cloud/session-change-unresolved');
         errors.push(`${formatDateTime(nowIso())} · ${label} · cloud/session-change-unresolved · ${unresolvedChanges.length} cambio(s) no pudieron resolverse contra el estado local.`);
       }
 
       const writeEntries = Array.from(writesByKey.values());
+      const entriesToWrite = [];
+
+      for (const entry of writeEntries) {
+        const verifyOnly = entry.changes.every((change) => change?.cloudConfirmationPending === true && change?.cloudWriteAttempted === true);
+        if (!verifyOnly) {
+          entriesToWrite.push(entry);
+          continue;
+        }
+        const preflight = await verifySessionWrite(entry.write, fs, { preflight: true });
+        if (preflight.status === 'confirmed') {
+          confirmedChanges.push(...entry.changes);
+        } else if (preflight.status === 'pending') {
+          pendingConfirmationChanges.push(...entry.changes);
+          confirmationNotes.push(buildSessionCloudDiagnostic(`${label} / confirmación pendiente`, preflight, preflight.code));
+        } else if (preflight.status === 'needs_write') {
+          entriesToWrite.push(entry);
+        } else {
+          failedChanges.push(...entry.changes);
+          failureCodes.push(cleanText(preflight.code || 'cloud/session-write-verification-failed'));
+          errors.push(buildSessionCloudDiagnostic(`${label} / verificación`, preflight, preflight.code));
+        }
+      }
+
+      const applyVerificationResult = (entry, verification) => {
+        if (verification.status === 'confirmed') {
+          confirmedChanges.push(...entry.changes);
+        } else if (verification.status === 'pending') {
+          pendingConfirmationChanges.push(...entry.changes);
+          confirmationNotes.push(buildSessionCloudDiagnostic(`${label} / confirmación pendiente`, verification, verification.code));
+        } else {
+          failedChanges.push(...entry.changes);
+          failureCodes.push(cleanText(verification.code || 'cloud/session-write-verification-failed'));
+          errors.push(buildSessionCloudDiagnostic(`${label} / verificación`, verification, verification.code));
+        }
+      };
+
       const batchLimit = Math.max(1, FIRESTORE_IMPORT_BATCH_LIMIT - 2);
-      for (let offset = 0; offset < writeEntries.length; offset += batchLimit) {
-        const chunk = writeEntries.slice(offset, offset + batchLimit);
+      for (let offset = 0; offset < entriesToWrite.length; offset += batchLimit) {
+        const chunk = entriesToWrite.slice(offset, offset + batchLimit);
         let batch = fs.writeBatch(db);
         chunk.forEach((entry) => batch.set(entry.write.ref, entry.write.payload, { merge: true }));
         try {
-          await batch.commit();
-          for (const entry of chunk) {
-            try {
-              await verifyCriticalExcelCierreSessionWrite(entry.write, fs);
-              confirmedChanges.push(...entry.changes);
-            } catch (verificationError) {
-              failedChanges.push(...entry.changes);
-              errors.push(buildSessionCloudDiagnostic(`${label} / verificación`, verificationError, 'cloud/session-write-verification-failed'));
-            }
-          }
+          await withSessionConfirmationTimeout(batch.commit(), SESSION_WRITE_COMMIT_TIMEOUT_MS, 'cloud/session-write-commit-pending');
+          const verifications = await Promise.all(chunk.map((entry) => verifySessionWrite(entry.write, fs)));
+          verifications.forEach((verification, index) => applyVerificationResult(chunk[index], verification));
         } catch (batchError) {
+          if (getSessionConfirmationErrorClass(batchError) === 'pending') {
+            confirmationNotes.push(buildSessionCloudDiagnostic(`${label} / envío pendiente`, batchError, cleanText(batchError?.code || 'cloud/session-write-commit-pending')));
+            const verifications = await Promise.all(chunk.map((entry) => verifySessionWrite(entry.write, fs)));
+            verifications.forEach((verification, index) => applyVerificationResult(chunk[index], verification));
+            continue;
+          }
           if (chunk.length === 1) {
             failedChanges.push(...chunk[0].changes);
+            failureCodes.push(cleanText(batchError?.code || 'firebase/firestore-error'));
             errors.push(buildSessionCloudDiagnostic(label, batchError));
             continue;
           }
 
           for (const entry of chunk) {
             try {
-              await fs.setDoc(entry.write.ref, entry.write.payload, { merge: true });
-              await verifyCriticalExcelCierreSessionWrite(entry.write, fs);
-              confirmedChanges.push(...entry.changes);
+              await withSessionConfirmationTimeout(
+                fs.setDoc(entry.write.ref, entry.write.payload, { merge: true }),
+                SESSION_WRITE_COMMIT_TIMEOUT_MS,
+                'cloud/session-write-commit-pending'
+              );
+              const verification = await verifySessionWrite(entry.write, fs);
+              applyVerificationResult(entry, verification);
             } catch (itemError) {
-              failedChanges.push(...entry.changes);
-              errors.push(buildSessionCloudDiagnostic(label, itemError));
+              if (getSessionConfirmationErrorClass(itemError) === 'pending') {
+                confirmationNotes.push(buildSessionCloudDiagnostic(`${label} / envío pendiente`, itemError, cleanText(itemError?.code || 'cloud/session-write-commit-pending')));
+                const verification = await verifySessionWrite(entry.write, fs);
+                applyVerificationResult(entry, verification);
+              } else {
+                failedChanges.push(...entry.changes);
+                failureCodes.push(cleanText(itemError?.code || 'firebase/firestore-error'));
+                errors.push(buildSessionCloudDiagnostic(label, itemError));
+              }
             }
           }
         }
       }
 
       const uniqueConfirmed = uniqueSessionChangesById(confirmedChanges);
+      const confirmedIds = new Set(uniqueConfirmed.map((item) => cleanText(item?.id)).filter(Boolean));
+      const uniquePending = uniqueSessionChangesById(pendingConfirmationChanges).filter((item) => !confirmedIds.has(cleanText(item?.id)));
+      const pendingIds = new Set(uniquePending.map((item) => cleanText(item?.id)).filter(Boolean));
       const uniqueFailed = uniqueSessionChangesById(failedChanges).filter((failed) => {
         const failedId = cleanText(failed?.id);
-        return !failedId || !uniqueConfirmed.some((confirmed) => cleanText(confirmed?.id) === failedId);
+        return !failedId || (!confirmedIds.has(failedId) && !pendingIds.has(failedId));
       });
       return {
-        ok: uniqueFailed.length === 0,
-        partial: uniqueConfirmed.length > 0 && uniqueFailed.length > 0,
+        ok: uniqueFailed.length === 0 && uniquePending.length === 0,
+        partial: uniqueConfirmed.length > 0 && (uniqueFailed.length > 0 || uniquePending.length > 0),
+        confirmationPending: uniquePending.length > 0,
         label,
         count: groupChanges.length,
         writtenCount: uniqueConfirmed.length,
+        acceptedCount: uniqueConfirmed.length + uniquePending.length,
         confirmedChanges: uniqueConfirmed,
+        pendingConfirmationChanges: uniquePending,
         failedChanges: uniqueFailed,
         unresolvedChanges,
-        errors
+        errorCode: cleanText(failureCodes.find(Boolean) || ''),
+        errors,
+        confirmationNotes
       };
+    }
+
+    async function writeSessionMetadata(metadataRef, fs, user, summary = {}) {
+      const stamp = getFirestoreTimestampValue(fs);
+      const localNow = nowIso();
+      const payload = stripUndefinedForFirestore({
+        id: FIRESTORE_METADATA_SYSTEM_ID,
+        appName: APP_NAME,
+        appVersion: APP_VERSION,
+        schemaVersion: SCHEMA_VERSION,
+        datosMigrados: true,
+        importacionInicialCompletada: true,
+        cloudDataReady: true,
+        cloudReady: true,
+        cloudActive: true,
+        modo: 'online_controlada',
+        modoDatos: 'nube_activa',
+        fuentePrincipal: 'firestore',
+        lastSyncAt: stamp,
+        lastSyncAtLocal: localNow,
+        lastSessionPartialWriteAt: stamp,
+        lastSessionPartialWriteAtLocal: localNow,
+        lastSessionOperationalWriteCount: Math.max(0, Number(summary.operationalWriteCount) || 0),
+        lastSessionCleanupWriteCount: Math.max(0, Number(summary.cleanupWriteCount) || 0),
+        lastSyncBy: cleanText(user?.email || user?.uid),
+        updatedAt: stamp
+      });
+      await withSessionConfirmationTimeout(
+        fs.setDoc(metadataRef, payload, { merge: true }),
+        SESSION_WRITE_COMMIT_TIMEOUT_MS,
+        'cloud/session-metadata-pending'
+      );
+      clearPendingSessionMetadata();
+      return { ok: true, at: localNow };
     }
 
     async function saveSessionChangesToCloud(changesInput = null) {
@@ -7381,17 +7812,74 @@ Notas importantes:
         (Array.isArray(changesInput) ? changesInput : getPendingSessionChanges())
           .filter((item) => item && item.estado === 'pendiente')
       );
-      if (!pendingChanges.length) {
-        return { ok: true, action: 'saveSessionChangesToCloud', code: 'cloud/no-session-changes', message: SESSION_SAVE_MESSAGES.noChanges, count: 0, confirmedChanges: [], failedChanges: [] };
+      const pendingMetadataBefore = loadPendingSessionMetadata();
+      if (!pendingChanges.length && !pendingMetadataBefore) {
+        return { ok: true, confirmed: true, action: 'saveSessionChangesToCloud', code: 'cloud/no-session-changes', message: SESSION_SAVE_MESSAGES.noChanges, count: 0, confirmedChanges: [], pendingConfirmationChanges: [], failedChanges: [] };
       }
 
       const { operationalChanges, cleanupChanges } = splitSessionChangesByPurpose(pendingChanges);
+      const browserOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+      if (browserOffline) {
+        if (!pendingChanges.length && pendingMetadataBefore) {
+          return {
+            ok: true,
+            confirmed: true,
+            action: 'saveSessionChangesToCloud',
+            code: 'cloud/session-metadata-pending',
+            errorCode: 'cloud/offline-metadata-pending',
+            message: SESSION_SAVE_MESSAGES.metadataPending,
+            count: 0,
+            confirmedChanges: [],
+            dataConfirmed: false,
+            pendingConfirmationChanges: [],
+            failedChanges: [],
+            operationalFailed: false,
+            confirmationPending: false,
+            metadataPending: true,
+            metadataFailed: true,
+            cleanupPending: false,
+            writeAttempted: false,
+            lastRealError: '',
+            lastError: ''
+          };
+        }
+        return {
+          ok: false,
+          confirmed: false,
+          action: 'saveSessionChangesToCloud',
+          code: 'cloud/offline-pending',
+          errorCode: 'cloud/offline-pending',
+          message: SESSION_SAVE_MESSAGES.offlinePending,
+          count: 0,
+          pendingCount: pendingChanges.length,
+          confirmedChanges: [],
+          dataConfirmed: false,
+          pendingConfirmationChanges: pendingChanges,
+          failedChanges: [],
+          operationalFailed: false,
+          confirmationPending: true,
+          metadataPending: Boolean(pendingMetadataBefore),
+          cleanupPending: cleanupChanges.length > 0,
+          writeAttempted: false,
+          writeSentAt: '',
+          lastRealError: '',
+          lastError: ''
+        };
+      }
       try {
         const { user, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: false });
         const metadataRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
-        const metadataSnap = await fs.getDoc(metadataRef);
-        const metadata = metadataSnap.exists() ? normalizeFirestoreDoc(metadataSnap) : {};
         const runtime = getKSAFirebaseRuntime();
+        let metadata = {};
+        try {
+          const metadataRead = typeof fs.getDocFromServer === 'function' ? fs.getDocFromServer(metadataRef) : fs.getDoc(metadataRef);
+          const metadataSnap = await withSessionConfirmationTimeout(metadataRead, SESSION_CONFIRMATION_READ_TIMEOUT_MS, 'cloud/session-metadata-read-pending');
+          metadata = metadataSnap.exists() ? normalizeFirestoreDoc(metadataSnap) : {};
+        } catch (metadataReadError) {
+          const runtimeReady = runtime?.cloudDataReady === true || runtime?.cloudReady === true;
+          const runtimeActive = runtime?.cloudActive === true || state.cloudActive === true;
+          if (!(getSessionConfirmationErrorClass(metadataReadError) === 'pending' && runtimeReady && runtimeActive)) throw metadataReadError;
+        }
         const ready = isCloudReadyMetadata(metadata) || runtime?.cloudDataReady === true || runtime?.cloudReady === true;
         const active = state.cloudActive || runtime?.cloudActive === true || metadata.cloudActive === true || cleanText(metadata.fuentePrincipal).toLowerCase() === 'firestore';
         if (!ready || !active) {
@@ -7400,16 +7888,51 @@ Notas importantes:
           const diagnosticLabel = cleanupOnly ? 'Limpieza de Facturas' : 'Cambios operativos';
           state.lastSyncError = `${formatDateTime(nowIso())} · ${diagnosticLabel} · cloud/firestore-unavailable · Firestore no está activo o preparado para escritura.`;
           publishKSAFirebaseRuntime({ lastSyncError: state.lastSyncError, message });
+          if (!pendingChanges.length && pendingMetadataBefore) {
+            const metadataMessage = SESSION_SAVE_MESSAGES.metadataPending;
+            publishKSAFirebaseRuntime({
+              lastSyncError: '',
+              sessionSaveStatus: 'cloud/session-metadata-pending',
+              confirmationPending: false,
+              metadataPending: true,
+              lastSessionSaveErrorCode: 'cloud/session-metadata-pending',
+              message: metadataMessage
+            });
+            return {
+              ok: true,
+              confirmed: true,
+              action: 'saveSessionChangesToCloud',
+              code: 'cloud/session-metadata-pending',
+              errorCode: 'cloud/session-metadata-pending',
+              message: metadataMessage,
+              count: 0,
+              confirmedChanges: [],
+              dataConfirmed: false,
+              pendingConfirmationChanges: [],
+              failedChanges: [],
+              operationalFailed: false,
+              confirmationPending: false,
+              metadataPending: true,
+              metadataFailed: true,
+              cleanupPending: false,
+              lastRealError: '',
+              lastError: ''
+            };
+          }
           return {
             ok: false,
             action: 'saveSessionChangesToCloud',
             code: cleanupOnly ? 'cloud/facturas-cleanup-failed' : 'cloud/firestore-unavailable',
+            errorCode: cleanupOnly ? 'cloud/facturas-cleanup-failed' : 'cloud/firestore-unavailable',
             message,
             count: pendingChanges.length,
             confirmedChanges: [],
+            pendingConfirmationChanges: [],
             failedChanges: pendingChanges,
             operationalFailed: operationalChanges.length > 0,
             cleanupPending: cleanupChanges.length > 0,
+            metadataPending: Boolean(pendingMetadataBefore),
+            lastRealError: state.lastSyncError,
             lastError: state.lastSyncError
           };
         }
@@ -7429,69 +7952,79 @@ Notas importantes:
           ...operationalResult.confirmedChanges,
           ...cleanupResult.confirmedChanges
         ]);
+        const pendingConfirmationChanges = uniqueSessionChangesById([
+          ...operationalResult.pendingConfirmationChanges,
+          ...cleanupResult.pendingConfirmationChanges
+        ]);
         const failedChanges = uniqueSessionChangesById([
           ...operationalResult.failedChanges,
           ...cleanupResult.failedChanges
         ]);
 
         let metadataError = '';
-        if (confirmedChanges.length) {
+        let metadataCode = '';
+        const metadataSummary = {
+          operationalWriteCount: operationalResult.writtenCount || pendingMetadataBefore?.operationalWriteCount || 0,
+          cleanupWriteCount: cleanupResult.writtenCount || pendingMetadataBefore?.cleanupWriteCount || 0
+        };
+        if (confirmedChanges.length || pendingMetadataBefore) {
           try {
-            await fs.setDoc(metadataRef, stripUndefinedForFirestore({
-              id: FIRESTORE_METADATA_SYSTEM_ID,
-              appName: APP_NAME,
-              appVersion: APP_VERSION,
-              schemaVersion: SCHEMA_VERSION,
-              datosMigrados: true,
-              importacionInicialCompletada: true,
-              cloudDataReady: true,
-              cloudReady: true,
-              cloudActive: true,
-              modo: 'online_controlada',
-              modoDatos: 'nube_activa',
-              fuentePrincipal: 'firestore',
-              lastSyncAt: stamp,
-              lastSyncAtLocal: nowIso(),
-              lastSessionPartialWriteAt: stamp,
-              lastSessionPartialWriteAtLocal: nowIso(),
-              lastSessionOperationalWriteCount: operationalResult.writtenCount || 0,
-              lastSessionCleanupWriteCount: cleanupResult.writtenCount || 0,
-              lastSyncBy: user.email,
-              updatedAt: stamp
-            }), { merge: true });
+            await writeSessionMetadata(metadataRef, fs, user, metadataSummary);
           } catch (error) {
-            metadataError = buildSessionCloudDiagnostic('Metadata de sincronización', error);
+            metadataCode = cleanText(error?.code || 'cloud/session-metadata-failed');
+            metadataError = buildSessionCloudDiagnostic('Metadata de sincronización', error, metadataCode);
+            setPendingSessionMetadata({
+              ...metadataSummary,
+              lastError: metadataError,
+              errorCode: metadataCode,
+              confirmedDataAt: confirmedChanges.length ? nowIso() : cleanText(pendingMetadataBefore?.confirmedDataAt)
+            });
           }
         }
 
         const operationalFailed = operationalResult.failedChanges.length > 0;
         const cleanupFailed = cleanupResult.failedChanges.length > 0;
+        const confirmationPending = operationalResult.pendingConfirmationChanges.length > 0 || cleanupResult.pendingConfirmationChanges.length > 0;
         const operationalSaved = operationalResult.confirmedChanges.length > 0;
-        const allErrors = [
+        const metadataPending = Boolean(metadataError || hasPendingSessionMetadata());
+        const realErrors = [
           ...operationalResult.errors,
-          ...cleanupResult.errors,
-          ...(metadataError ? [metadataError] : [])
+          ...cleanupResult.errors
         ];
-        const lastError = allErrors.join(' | ');
+        const confirmationNotes = [
+          ...operationalResult.confirmationNotes,
+          ...cleanupResult.confirmationNotes
+        ];
+        const lastRealError = realErrors.join(' | ');
         const writeTime = confirmedChanges.length ? nowIso() : '';
 
         let ok = true;
+        let confirmed = true;
         let code = 'cloud/session-write-ok';
         let message = SESSION_SAVE_MESSAGES.success;
         if (operationalFailed) {
           ok = false;
+          confirmed = false;
           code = 'cloud/session-operational-failed';
           message = SESSION_SAVE_MESSAGES.failure;
-        } else if (metadataError) {
+        } else if (confirmationPending) {
           ok = false;
-          code = 'cloud/session-metadata-failed';
-          message = SESSION_SAVE_MESSAGES.failure;
+          confirmed = false;
+          code = 'cloud/session-confirmation-pending';
+          message = SESSION_SAVE_MESSAGES.confirmationPending;
+        } else if (metadataPending) {
+          ok = true;
+          confirmed = true;
+          code = 'cloud/session-metadata-pending';
+          message = SESSION_SAVE_MESSAGES.metadataPending;
         } else if (cleanupFailed && operationalSaved) {
           ok = true;
+          confirmed = true;
           code = 'cloud/session-write-ok-cleanup-pending';
           message = SESSION_SAVE_MESSAGES.partialCleanupPending;
         } else if (cleanupFailed) {
           ok = false;
+          confirmed = false;
           code = 'cloud/facturas-cleanup-failed';
           message = SESSION_SAVE_MESSAGES.cleanupFailure;
         }
@@ -7501,7 +8034,7 @@ Notas importantes:
           state.lastCloudWriteAt = writeTime;
           state.lastSyncAt = writeTime;
         }
-        state.lastSyncError = lastError;
+        state.lastSyncError = lastRealError;
         publishKSAFirebaseRuntime({
           cloudActive: true,
           cloudWritesEnabled: true,
@@ -7515,52 +8048,107 @@ Notas importantes:
           workspaceInitialized: true,
           lastSyncAt: state.lastSyncAt,
           lastCloudWriteAt: state.lastCloudWriteAt,
-          lastSyncError: lastError,
+          lastSyncError: lastRealError,
+          sessionSaveStatus: code,
+          confirmationPending,
+          metadataPending,
+          lastSessionSaveAttemptAt: nowIso(),
+          lastSessionSaveErrorCode: operationalFailed || cleanupFailed || confirmationPending || metadataPending ? code : '',
           message
         });
 
         return {
           ok,
+          confirmed,
           action: 'saveSessionChangesToCloud',
           code,
+          errorCode: operationalFailed
+            ? (operationalResult.errorCode || code)
+            : (cleanupFailed ? (cleanupResult.errorCode || code) : (metadataPending ? metadataCode : '')),
           message,
           count: confirmedChanges.length,
-          pendingCount: failedChanges.length,
+          pendingCount: failedChanges.length + pendingConfirmationChanges.length,
           confirmedChanges,
+          dataConfirmed: confirmedChanges.length > 0,
+          cloudActive: true,
+          pendingConfirmationChanges,
           failedChanges,
           operationalFailed,
           operationalSaved,
+          confirmationPending,
+          metadataPending,
           metadataFailed: Boolean(metadataError),
+          metadataError,
           cleanupPending: cleanupFailed,
           cleanupPendingCount: cleanupResult.failedChanges.length,
           operationalResult,
           cleanupResult,
+          confirmationNotes,
+          writeAttempted: pendingConfirmationChanges.length > 0,
+          writeSentAt: pendingConfirmationChanges.length ? nowIso() : '',
           lastSyncAt: state.lastSyncAt,
           lastCloudWriteAt: state.lastCloudWriteAt,
-          lastError
+          lastRealError,
+          lastError: lastRealError
         };
       } catch (error) {
         const code = cleanText(error?.code || 'firebase/firestore-error');
-        const unavailableCodes = new Set(['firebase/init-error', 'unavailable', 'auth/network-request-failed', 'auth/no-current-user', 'unauthenticated']);
+        const unavailableCodes = new Set(['firebase/init-error', 'unavailable', 'auth/network-request-failed']);
         const unavailable = unavailableCodes.has(code);
         const cleanupOnly = operationalChanges.length === 0 && cleanupChanges.length > 0;
         const message = cleanupOnly
           ? SESSION_SAVE_MESSAGES.cleanupFailure
           : (unavailable ? SESSION_SAVE_MESSAGES.firestoreUnavailable : SESSION_SAVE_MESSAGES.failure);
-        const diagnosticLabel = cleanupOnly ? 'Limpieza de Facturas' : 'Cambios operativos';
+        const diagnosticLabel = cleanupOnly ? 'Limpieza de Facturas' : (pendingChanges.length ? 'Cambios operativos' : 'Metadata de sincronización');
         const lastError = buildSessionCloudDiagnostic(diagnosticLabel, error, code);
+        if (!pendingChanges.length && pendingMetadataBefore) {
+          setPendingSessionMetadata({
+            ...pendingMetadataBefore,
+            lastError,
+            errorCode: code
+          });
+          state.lastSyncError = '';
+          publishKSAFirebaseRuntime({ lastSyncError: '', lastSessionSaveErrorCode: code, confirmationPending: false, metadataPending: true, message: SESSION_SAVE_MESSAGES.metadataPending });
+          return {
+            ok: true,
+            confirmed: true,
+            action: 'saveSessionChangesToCloud',
+            code: 'cloud/session-metadata-pending',
+            errorCode: code,
+            message: SESSION_SAVE_MESSAGES.metadataPending,
+            count: 0,
+            confirmedChanges: [],
+            pendingConfirmationChanges: [],
+            failedChanges: [],
+            operationalFailed: false,
+            confirmationPending: false,
+            metadataPending: true,
+            metadataFailed: true,
+            metadataError: lastError,
+            cleanupPending: false,
+            lastRealError: '',
+            lastError: '',
+            error
+          };
+        }
         state.lastSyncError = lastError;
-        publishKSAFirebaseRuntime({ lastSyncError: state.lastSyncError, message });
+        publishKSAFirebaseRuntime({ lastSyncError: state.lastSyncError, lastSessionSaveErrorCode: code, confirmationPending: false, metadataPending: Boolean(pendingMetadataBefore), message });
         return {
           ok: false,
+          confirmed: false,
           action: 'saveSessionChangesToCloud',
           code: cleanupOnly ? 'cloud/facturas-cleanup-failed' : (unavailable ? 'cloud/firestore-unavailable' : code),
+          errorCode: code,
           message,
           count: pendingChanges.length,
           confirmedChanges: [],
+          pendingConfirmationChanges: [],
           failedChanges: pendingChanges,
           operationalFailed: operationalChanges.length > 0,
+          confirmationPending: false,
+          metadataPending: Boolean(pendingMetadataBefore),
           cleanupPending: cleanupChanges.length > 0,
+          lastRealError: lastError,
           lastError,
           error
         };
@@ -9296,6 +9884,8 @@ Notas importantes:
 
   const CLOUD_PARTIAL_SESSION_SAVE_MODE = true;
 
+  const initialSessionSaveDiagnostic = getSessionSaveDiagnosticState();
+
   let cloudOperationState = {
     runtimeReady: false,
     active: false,
@@ -9303,10 +9893,15 @@ Notas importantes:
     isWriting: false,
     isReading: false,
     timer: null,
-    lastSyncAt: '',
-    lastCloudWriteAt: '',
+    lastSyncAt: initialSessionSaveDiagnostic.lastConfirmedWriteAt || '',
+    lastCloudWriteAt: initialSessionSaveDiagnostic.lastConfirmedWriteAt || '',
     lastRefreshAt: '',
-    lastError: '',
+    lastError: initialSessionSaveDiagnostic.lastRealError || '',
+    confirmationPending: initialSessionSaveDiagnostic.confirmationPending === true,
+    metadataPending: initialSessionSaveDiagnostic.metadataPending === true || hasPendingSessionMetadata(),
+    lastSaveAttemptAt: initialSessionSaveDiagnostic.lastAttemptAt || '',
+    lastSaveStatus: initialSessionSaveDiagnostic.attemptStatus || SESSION_SAVE_RESULT_STATUS.idle,
+    lastSaveErrorCode: initialSessionSaveDiagnostic.errorCode || '',
     message: '',
     bootstrappedForUid: ''
   };
@@ -27407,6 +28002,9 @@ Notas importantes:
       lastSyncAt,
       lastCloudWriteAt: cloudOperationState.lastCloudWriteAt || runtimeStatus.lastCloudWriteAt || '',
       lastSyncError: cloudOperationState.lastError || runtimeStatus.lastSyncError || '',
+      sessionSaveDiagnostic: getSessionSaveDiagnosticState(),
+      confirmationPending: cloudOperationState.confirmationPending === true,
+      metadataPending: cloudOperationState.metadataPending === true || hasPendingSessionMetadata(),
       diagnosticsOk: diagnostics?.ok === true,
       localRecords,
       access: authStatus.accessLabel,
@@ -27453,9 +28051,15 @@ Notas importantes:
           <div class="status-item"><strong>Fuente principal</strong><span>${escapeHtml(info.sourcePrincipal || 'Local controlado')}</span></div>
           <div class="status-item"><strong>Datos migrados</strong><span>${escapeHtml(info.datosMigrados || 'No')}</span></div>
           <div class="status-item"><strong>Última sincronización</strong><span>${escapeHtml(info.lastSyncAt ? formatDateTime(info.lastSyncAt) : '—')}</span></div>
-          <div class="status-item"><strong>Última escritura exitosa</strong><span>${escapeHtml(info.lastCloudWriteAt ? formatDateTime(info.lastCloudWriteAt) : '—')}</span></div>
-          <div class="status-item"><strong>Último error</strong><span>${escapeHtml(info.lastSyncError || '—')}</span></div>
-          <div class="status-item"><strong>Cambios de sesión pendientes</strong><span data-session-change-count>${escapeHtml(String(info.sessionChangeCount || 0))}</span><small>Solo cambios hechos después de entrar.</small></div>
+          <div class="status-item"><strong>Última escritura confirmada</strong><span>${escapeHtml(info.sessionSaveDiagnostic?.lastConfirmedWriteAt ? formatDateTime(info.sessionSaveDiagnostic.lastConfirmedWriteAt) : (info.lastCloudWriteAt ? formatDateTime(info.lastCloudWriteAt) : '—'))}</span></div>
+          <div class="status-item"><strong>Último intento</strong><span>${escapeHtml(info.sessionSaveDiagnostic?.lastAttemptAt ? formatDateTime(info.sessionSaveDiagnostic.lastAttemptAt) : '—')}</span></div>
+          <div class="status-item"><strong>Estado del intento</strong><span>${escapeHtml(info.sessionSaveDiagnostic?.attemptStatus || SESSION_SAVE_RESULT_STATUS.idle)}</span></div>
+          <div class="status-item"><strong>Último error real</strong><span>${escapeHtml(info.sessionSaveDiagnostic?.lastRealError || '—')}</span></div>
+          <div class="status-item"><strong>Confirmación pendiente</strong><span>${escapeHtml(info.confirmationPending ? 'Sí' : 'No')}</span></div>
+          <div class="status-item"><strong>Metadata pendiente</strong><span>${escapeHtml(info.metadataPending ? 'Sí' : 'No')}</span></div>
+          <div class="status-item"><strong>Código del error</strong><span>${escapeHtml(info.sessionSaveDiagnostic?.errorCode || '—')}</span></div>
+          <div class="status-item"><strong>Fecha y hora</strong><span>${escapeHtml(info.sessionSaveDiagnostic?.updatedAt ? formatDateTime(info.sessionSaveDiagnostic.updatedAt) : '—')}</span></div>
+          <div class="status-item"><strong>Cambios de sesión pendientes</strong><span data-session-change-count>${escapeHtml(String(info.sessionChangeCount || 0))}</span><small>Incluye confirmaciones aún no resueltas.</small></div>
           ${Number.isFinite(info.localRecords) ? `<div class="status-item"><strong>Conteos locales</strong><span>${escapeHtml(String(info.localRecords))}</span><small>Solo informativo</small></div>` : ''}
           ${!opts.hideCloudRefresh && info.canRefreshCloud ? '<button type="button" class="secondary-action compact" data-cloud-refresh>Actualizar datos</button>' : ''}
         </div>
@@ -28295,7 +28899,7 @@ Notas importantes:
           <p class="compact-note">Guardar datos sube solo cambios de esta sesión. Actualizar datos refresca desde Firestore cuando la nube está activa.</p>
         </article>
 
-        ${configState.message ? `<div class="form-message ${configState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(configState.message)}</div>` : ''}
+        ${configState.message ? `<div class="form-message ${configState.messageType === 'error' ? 'is-error' : (configState.messageType === 'info' ? 'is-info' : 'is-success')}" role="status">${escapeHtml(configState.message)}</div>` : ''}
         ${jsonBackupState.message ? `<div class="form-message ${jsonBackupState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(jsonBackupState.message)}</div>` : ''}
 
         <div class="config-accordion-list entity-accordion-list">

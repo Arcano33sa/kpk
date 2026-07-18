@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_61_cierres_oficiales_reparacion_etapa3';
+const CACHE_VERSION = 'v0_18_63_guardar_nube_reparacion_etapa2_hardening_final';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
@@ -55,6 +55,23 @@ self.addEventListener('fetch', (event) => {
       fetch(request)
         .then((response) => response)
         .catch(() => caches.match('./index.html'))
+    );
+    return;
+  }
+
+  const isCoreRuntimeAsset = url.origin === self.location.origin
+    && /\/(app\.js|styles\.css|firebase-config\.js)$/.test(url.pathname);
+
+  if (isCoreRuntimeAsset) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (!response || response.status !== 200 || response.type === 'error') return response;
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          return response;
+        })
+        .catch(() => caches.match(request))
     );
     return;
   }

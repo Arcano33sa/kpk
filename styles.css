@@ -924,6 +924,12 @@ h3 {
   color: var(--danger);
 }
 
+.form-message.is-info {
+  background: #eff6ff;
+  border-color: rgba(29, 78, 216, 0.24);
+  color: #1d4ed8;
+}
+
 .count-pill {
   flex: 0 0 auto;
   padding: 8px 11px;

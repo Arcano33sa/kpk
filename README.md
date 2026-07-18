@@ -150,3 +150,21 @@ Bloque A / Etapa 3/6: se agregó una pantalla de acceso preparada para Firebase 
 - Las reexportaciones reutilizan el registro oficial del período; Excel Consulta y JSON mantienen numeraciones independientes.
 - La carga local continúa primero y la reconciliación remota permanece protegida para no bloquear el Menú ni provocar pantalla vacía.
 - Cache PWA actualizado a 0.18.61.
+
+
+## Guardar datos / Firebase — Reparación Etapa 1/2 (0.18.62)
+- Se separan los resultados CONFIRMADO, PENDIENTE DE CONFIRMACIÓN, FALLIDO y METADATA PENDIENTE.
+- Las lecturas temporales desde caché o con escrituras pendientes ya no se clasifican como rechazo definitivo.
+- Los documentos críticos de cierre se confirman con lectura de servidor y reintentos breves limitados.
+- Una falla exclusiva de metadata no invalida datos operativos confirmados ni vuelve a encolar todo.
+- Estado de datos conserva diagnóstico local independiente y no modifica cierres oficiales ni consecutivos.
+
+## Guardar datos / Firebase — Reparación Etapa 2/2 — Hardening final (0.18.63)
+- Cada cambio pendiente conserva revisión y token de operación para impedir que una confirmación antigua limpie una edición posterior.
+- Guardar datos reutiliza una sola operación en curso, evitando duplicados por doble clic o pulsaciones rápidas.
+- La confirmación de servidor valida el documento y la operación exacta antes de retirar pendientes; una lectura temporal desde caché permanece como confirmación pendiente.
+- El modo offline conserva datos locales y pendientes sin fingir que la escritura fue enviada.
+- Una falla exclusiva de metadata mantiene los datos confirmados y reintenta únicamente el diagnóstico pendiente.
+- La reconciliación oficial conserva mayo de 2026 como `0001- Mayo 2026.xlsx` y deja el próximo cierre en `0002`.
+- Los recursos principales de la PWA usan actualización de red con respaldo de caché para reducir la carga de versiones antiguas sin perder funcionamiento offline.
+- Cache PWA actualizado a 0.18.63.
