@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_51_notas_recordatorios_etapa3';
+const CACHE_VERSION = 'v0_18_56_calculadora_etapa5_comercial_hardening_final';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.51-notas-recordatorios-etapa3';
+  const APP_VERSION = '0.18.56-calculadora-etapa5-comercial-hardening-final';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -123,6 +123,14 @@
       short: 'Catálogos',
       description: 'Listas maestras para clientes, sucursales, proveedores, condiciones de pago, métodos de pago y bancos.',
       placeholder: 'Administra las listas maestras que alimentarán ventas, cobros, compras, pagos y gastos.'
+    },
+    {
+      id: 'calculadora',
+      icon: '123',
+      title: 'Calculadora',
+      short: 'Calculadora',
+      description: 'Herramienta temporal para cálculos básicos y comerciales con descuentos y retenciones activas, sin guardar operaciones ni resultados.',
+      placeholder: 'Calculadora activa con lógica básica y comercial, lectura de Retenciones y funcionamiento completamente temporal.'
     },
     {
       id: 'bdatos',
@@ -1222,6 +1230,7 @@ Notas importantes:
     ['notas-recordatorios', 'notas-recordatorios'],
     ['facturas', 'facturas'],
     ['catalogos', 'catalogos'],
+    ['calculadora', 'calculadora'],
     ['bdatos', 'bdatos'],
     ['excel', 'excel'],
     ['respaldo', 'respaldo'],
@@ -1348,6 +1357,44 @@ Notas importantes:
     message: null,
     messageType: 'success'
   };
+
+  const CALCULATOR_MAX_INPUT_DIGITS = 16;
+  const CALCULATOR_MAX_ABS_VALUE = 9999999999999999;
+
+  function createCalculatorState() {
+    return {
+      display: '0',
+      storedValue: null,
+      operator: '',
+      waitingForOperand: false,
+      justEvaluated: false,
+      currentInputLabel: '',
+      lastExpression: '',
+      error: '',
+      message: '',
+      messageType: 'success',
+      lastActionKey: '',
+      lastActionAt: 0
+    };
+  }
+
+  function createCommercialCalculatorState() {
+    return {
+      quantity: '',
+      unitPrice: '',
+      discountPercent: '',
+      discountAmount: '',
+      retentionId: '',
+      message: '',
+      messageType: 'success'
+    };
+  }
+
+  let calculatorState = createCalculatorState();
+  let commercialCalculatorState = createCommercialCalculatorState();
+  let calculatorKeyboardHandler = null;
+  let calculatorMessageTimer = null;
+  let commercialCalculatorMessageTimer = null;
 
   let moraState = {
     selectedKind: '',
@@ -10420,6 +10467,11 @@ Notas importantes:
     if (route === 'facturas' && previousRoute && previousRoute !== 'facturas') {
       resetFacturasPagedView();
     }
+    if (previousRoute === 'calculadora' && route !== 'calculadora') {
+      resetCalculatorState();
+      resetCommercialCalculatorState();
+      detachCalculatorKeyboard();
+    }
     lastRenderedRoute = route;
     setActiveNav(route);
     renderWorkPeriodSelector();
@@ -10454,6 +10506,16 @@ Notas importantes:
       gastosState.message = null;
       facturasState.message = null;
       viewRoot.innerHTML = renderCatalogos();
+    } else if (route === 'calculadora') {
+      catalogState.message = null;
+      bdatosState.message = null;
+      ventasState.message = null;
+      cobrosState.message = null;
+      proveedoresState.message = null;
+      pagosState.message = null;
+      gastosState.message = null;
+      facturasState.message = null;
+      viewRoot.innerHTML = renderCalculadora();
     } else if (route === 'bdatos') {
       catalogState.message = null;
       ventasState.message = null;
@@ -10902,6 +10964,10 @@ Notas importantes:
 
   function renderWorkPeriodSelector() {
     if (!periodWorkbar) return;
+    if (getRoute() === 'calculadora') {
+      periodWorkbar.innerHTML = '';
+      return;
+    }
     const periods = getAvailableWorkPeriods();
     const active = resolveActiveWorkPeriodInfo();
 
@@ -11158,7 +11224,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Post 12 / Casa · Fix Utilidad KPK por período</span>
           <h1>KSA PRÁCTIKA</h1>
-          <p class="lead">Webapp estática para convertir el control de OC, cobros, proveedores, pagos, gastos, Seguimiento, Casa y documentación en un sistema operativo continuo. Ya tiene menú, navegación fija, Catálogos editables, Ventas / OC, Cobros de clientes, Proveedores / Compras, Pagos a proveedores, Gastos, Casa independiente, Notas, Facturas, mora avanzada, alertas, historial por documento, Resumen / Tablero operativo, importación inicial desde Excel, Configuración, roles básicos locales y respaldo JSON validado, exportación Excel y cierre mensual.</p>
+          <p class="lead">Webapp estática para convertir el control de OC, cobros, proveedores, pagos, gastos, Seguimiento, Casa y documentación en un sistema operativo continuo. Ya tiene menú, navegación fija, Catálogos editables, Ventas / OC, Cobros de clientes, Proveedores / Compras, Pagos a proveedores, Gastos, Casa independiente, Notas, Facturas, Calculadora temporal, mora avanzada, alertas, historial por documento, Resumen / Tablero operativo, importación inicial desde Excel, Configuración, roles básicos locales y respaldo JSON validado, exportación Excel y cierre mensual.</p>
         </div>
         <aside class="hero-status" aria-label="Estado inicial de la app">
           <h3>Estado de la app</h3>
@@ -11179,7 +11245,7 @@ Notas importantes:
       <section class="panel-grid">
         <article class="panel-card">
           <h2>Estructura preparada</h2>
-          <p class="notice">Catálogos administra las listas maestras, Ventas / OC registra documentos con saldo por cobrar, Cobros aplica abonos a OC, Proveedores / Compras registra deudas con saldo por pagar, Pagos aplica abonos a facturas/referencias, Gastos registra egresos operativos, Seguimiento conserva llamadas locales por cliente y sucursal, Casa controla gastos familiares separados y Facturas ordena documentos manuales sin afectar cálculos.</p>
+          <p class="notice">Catálogos administra las listas maestras, Ventas / OC registra documentos con saldo por cobrar, Cobros aplica abonos a OC, Proveedores / Compras registra deudas con saldo por pagar, Pagos aplica abonos a facturas/referencias, Gastos registra egresos operativos, Seguimiento conserva llamadas locales por cliente y sucursal, Casa controla gastos familiares separados, Facturas ordena documentos manuales y Calculadora funciona como herramienta temporal sin persistencia.</p>
           <div class="data-list">
             ${DATA_KEYS.map((key) => `<div class="data-pill"><span>${escapeHtml(key)}</span><strong>${appData[key].length}</strong></div>`).join('')}
           </div>
@@ -11209,6 +11275,7 @@ Notas importantes:
             <span class="badge">Casa</span>
             <span class="badge">Notas</span>
             <span class="badge">Facturas</span>
+            <span class="badge">Calculadora</span>
             <span class="badge">Mora y Alertas</span>
             <span class="badge">Resumen / Tablero</span>
             <span class="badge">Excel / Cierre</span>
@@ -13012,6 +13079,8 @@ Notas importantes:
     facturasState.globalCliente = '';
     facturasState.globalSucursal = '';
     facturasState.globalEstado = '';
+    facturasState.historyOpenPeriod = '';
+    facturasState.historyPages = {};
   }
 
   function renderFacturas() {
@@ -13028,7 +13097,6 @@ Notas importantes:
     const searchBase = getFacturasSearchBase(data, periodInfo);
     const searchResults = getFacturasSearchResults(data, periodInfo);
     const historyGroups = buildFacturasHistoryGroups(data);
-    if (!facturasState.historyOpenPeriod && historyGroups.length) facturasState.historyOpenPeriod = historyGroups[0].periodo;
     const totalPages = Math.max(1, Math.ceil(periodRecords.length / FACTURAS_PAGE_SIZE));
     facturasState.page = Math.min(Math.max(1, Number.parseInt(facturasState.page, 10) || 1), totalPages);
     const start = (facturasState.page - 1) * FACTURAS_PAGE_SIZE;
@@ -15582,6 +15650,843 @@ Notas importantes:
     if (kind === 'recordatorios') notasState.historyRecordatoriosOpen = !notasState.historyRecordatoriosOpen;
     else notasState.historyNotasOpen = !notasState.historyNotasOpen;
     renderRoute();
+  }
+
+  function resetCalculatorState() {
+    calculatorState = createCalculatorState();
+    if (calculatorMessageTimer) {
+      window.clearTimeout(calculatorMessageTimer);
+      calculatorMessageTimer = null;
+    }
+  }
+
+  function resetCommercialCalculatorState() {
+    commercialCalculatorState = createCommercialCalculatorState();
+    if (commercialCalculatorMessageTimer) {
+      window.clearTimeout(commercialCalculatorMessageTimer);
+      commercialCalculatorMessageTimer = null;
+    }
+  }
+
+  function detachCalculatorKeyboard() {
+    if (!calculatorKeyboardHandler) return;
+    document.removeEventListener('keydown', calculatorKeyboardHandler);
+    calculatorKeyboardHandler = null;
+  }
+
+  function getCalculatorOperatorSymbol(operator) {
+    return ({ add: '+', subtract: '−', multiply: '×', divide: '÷' })[operator] || '';
+  }
+
+  function getCalculatorNumber() {
+    const value = Number(calculatorState.display);
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function roundCalculatorValue(value) {
+    if (!Number.isFinite(value)) return value;
+    if (Math.abs(value) < 1e-12) return 0;
+    return Number.parseFloat(Number(value).toPrecision(14));
+  }
+
+  function formatCalculatorNumber(value) {
+    const normalized = roundCalculatorValue(Number(value));
+    if (!Number.isFinite(normalized)) return '';
+    if (Math.abs(normalized) > CALCULATOR_MAX_ABS_VALUE) return '';
+    const absolute = Math.abs(normalized);
+    const decimals = absolute >= 1 ? 12 : 14;
+    return normalized
+      .toFixed(decimals)
+      .replace(/(\.\d*?[1-9])0+$/, '$1')
+      .replace(/\.0+$/, '')
+      .replace(/^-0$/, '0');
+  }
+
+  function getCalculatorExpressionText() {
+    if (calculatorState.error) {
+      return calculatorState.lastExpression || 'Operación detenida';
+    }
+    if (calculatorState.storedValue !== null && calculatorState.operator) {
+      const left = formatCalculatorNumber(calculatorState.storedValue) || '0';
+      const operator = getCalculatorOperatorSymbol(calculatorState.operator);
+      const right = calculatorState.waitingForOperand
+        ? ''
+        : (calculatorState.currentInputLabel || calculatorState.display);
+      return `${left} ${operator}${right ? ` ${right}` : ''}`;
+    }
+    if (calculatorState.justEvaluated && calculatorState.lastExpression) {
+      return calculatorState.lastExpression;
+    }
+    return calculatorState.currentInputLabel || calculatorState.display || '0';
+  }
+
+  function setCalculatorMessage(message, type = 'success', autoClearMs = 0) {
+    calculatorState.message = cleanText(message);
+    calculatorState.messageType = type === 'error' ? 'error' : 'success';
+    if (calculatorMessageTimer) {
+      window.clearTimeout(calculatorMessageTimer);
+      calculatorMessageTimer = null;
+    }
+    updateCalculatorDisplay();
+    if (autoClearMs > 0 && calculatorState.message) {
+      calculatorMessageTimer = window.setTimeout(() => {
+        calculatorState.message = '';
+        calculatorMessageTimer = null;
+        updateCalculatorDisplay();
+      }, autoClearMs);
+    }
+  }
+
+  function setCalculatorError(message) {
+    calculatorState.error = cleanText(message) || 'No se pudo completar la operación.';
+    calculatorState.message = calculatorState.error;
+    calculatorState.messageType = 'error';
+    calculatorState.storedValue = null;
+    calculatorState.operator = '';
+    calculatorState.waitingForOperand = false;
+    calculatorState.justEvaluated = false;
+    calculatorState.currentInputLabel = '';
+    updateCalculatorDisplay();
+  }
+
+  function clearCalculatorErrorForInput() {
+    if (!calculatorState.error) return;
+    resetCalculatorState();
+  }
+
+  function getCalculatorDigitCount(value) {
+    return String(value || '').replace(/[^0-9]/g, '').length;
+  }
+
+  function inputCalculatorDigit(digit) {
+    clearCalculatorErrorForInput();
+    const safeDigit = String(digit).replace(/\D/g, '').slice(0, 1);
+    if (!safeDigit) return;
+
+    if (calculatorState.justEvaluated) {
+      resetCalculatorState();
+    }
+
+    if (calculatorState.waitingForOperand || calculatorState.currentInputLabel) {
+      calculatorState.display = safeDigit;
+      calculatorState.waitingForOperand = false;
+      calculatorState.currentInputLabel = '';
+    } else if (calculatorState.display === '0') {
+      calculatorState.display = safeDigit;
+    } else if (calculatorState.display === '-0') {
+      calculatorState.display = `-${safeDigit}`;
+    } else if (getCalculatorDigitCount(calculatorState.display) < CALCULATOR_MAX_INPUT_DIGITS) {
+      calculatorState.display += safeDigit;
+    }
+
+    calculatorState.message = '';
+    updateCalculatorDisplay();
+  }
+
+  function inputCalculatorDecimal() {
+    clearCalculatorErrorForInput();
+    if (calculatorState.justEvaluated) resetCalculatorState();
+
+    if (calculatorState.waitingForOperand || calculatorState.currentInputLabel) {
+      calculatorState.display = '0.';
+      calculatorState.waitingForOperand = false;
+      calculatorState.currentInputLabel = '';
+    } else if (!calculatorState.display.includes('.')) {
+      calculatorState.display += '.';
+    }
+
+    calculatorState.message = '';
+    updateCalculatorDisplay();
+  }
+
+  function toggleCalculatorSign() {
+    clearCalculatorErrorForInput();
+    if (calculatorState.waitingForOperand) {
+      calculatorState.display = '-0';
+      calculatorState.waitingForOperand = false;
+    } else if (calculatorState.display.startsWith('-')) {
+      calculatorState.display = calculatorState.display.slice(1) || '0';
+    } else {
+      calculatorState.display = calculatorState.display === '0' ? '-0' : `-${calculatorState.display}`;
+    }
+
+    if (calculatorState.currentInputLabel) {
+      calculatorState.currentInputLabel = calculatorState.currentInputLabel.startsWith('-')
+        ? calculatorState.currentInputLabel.slice(1)
+        : `-${calculatorState.currentInputLabel}`;
+    }
+    calculatorState.justEvaluated = false;
+    calculatorState.message = '';
+    updateCalculatorDisplay();
+  }
+
+  function backspaceCalculatorInput() {
+    if (calculatorState.error) {
+      resetCalculatorState();
+      updateCalculatorDisplay();
+      return;
+    }
+    if (calculatorState.waitingForOperand) return;
+    if (calculatorState.justEvaluated) {
+      calculatorState.justEvaluated = false;
+      calculatorState.lastExpression = '';
+    }
+    calculatorState.currentInputLabel = '';
+    const current = calculatorState.display;
+    if (current.length <= 1 || (current.startsWith('-') && current.length === 2)) {
+      calculatorState.display = '0';
+    } else {
+      calculatorState.display = current.slice(0, -1);
+    }
+    calculatorState.message = '';
+    updateCalculatorDisplay();
+  }
+
+  function calculateCalculatorValues(left, right, operator) {
+    let value;
+    if (operator === 'add') value = left + right;
+    else if (operator === 'subtract') value = left - right;
+    else if (operator === 'multiply') value = left * right;
+    else if (operator === 'divide') {
+      if (right === 0) return { ok: false, error: 'No se puede dividir entre cero.' };
+      value = left / right;
+    } else return { ok: true, value: right };
+
+    value = roundCalculatorValue(value);
+    const formatted = formatCalculatorNumber(value);
+    if (!formatted) return { ok: false, error: 'El resultado es demasiado grande para mostrarse.' };
+    return { ok: true, value: Number(formatted), formatted };
+  }
+
+  function chooseCalculatorOperator(operator) {
+    if (calculatorState.error) return;
+    const currentValue = getCalculatorNumber();
+
+    if (calculatorState.storedValue !== null && calculatorState.operator && calculatorState.waitingForOperand) {
+      calculatorState.operator = operator;
+      calculatorState.lastExpression = '';
+      calculatorState.message = '';
+      updateCalculatorDisplay();
+      return;
+    }
+
+    if (calculatorState.storedValue !== null && calculatorState.operator && !calculatorState.waitingForOperand) {
+      const result = calculateCalculatorValues(calculatorState.storedValue, currentValue, calculatorState.operator);
+      if (!result.ok) {
+        calculatorState.lastExpression = `${formatCalculatorNumber(calculatorState.storedValue)} ${getCalculatorOperatorSymbol(calculatorState.operator)} ${calculatorState.currentInputLabel || calculatorState.display}`;
+        setCalculatorError(result.error);
+        return;
+      }
+      calculatorState.display = result.formatted;
+      calculatorState.storedValue = result.value;
+    } else {
+      calculatorState.storedValue = currentValue;
+    }
+
+    calculatorState.operator = operator;
+    calculatorState.waitingForOperand = true;
+    calculatorState.justEvaluated = false;
+    calculatorState.currentInputLabel = '';
+    calculatorState.lastExpression = '';
+    calculatorState.message = '';
+    updateCalculatorDisplay();
+  }
+
+  function applyCalculatorPercentage() {
+    clearCalculatorErrorForInput();
+    if (calculatorState.waitingForOperand) return;
+    const current = getCalculatorNumber();
+    const original = formatCalculatorNumber(current) || calculatorState.display;
+    let percentageValue = current / 100;
+
+    if (calculatorState.storedValue !== null && ['add', 'subtract'].includes(calculatorState.operator)) {
+      percentageValue = calculatorState.storedValue * current / 100;
+    }
+
+    percentageValue = roundCalculatorValue(percentageValue);
+    const formatted = formatCalculatorNumber(percentageValue);
+    if (!formatted) {
+      setCalculatorError('El porcentaje es demasiado grande para mostrarse.');
+      return;
+    }
+
+    calculatorState.display = formatted;
+    calculatorState.currentInputLabel = `${original}%`;
+    calculatorState.justEvaluated = false;
+    calculatorState.message = '';
+    updateCalculatorDisplay();
+  }
+
+  function evaluateCalculator() {
+    if (calculatorState.error || calculatorState.storedValue === null || !calculatorState.operator || calculatorState.waitingForOperand) return;
+    const rightValue = getCalculatorNumber();
+    const leftValue = calculatorState.storedValue;
+    const operator = calculatorState.operator;
+    const rightLabel = calculatorState.currentInputLabel || calculatorState.display;
+    calculatorState.lastExpression = `${formatCalculatorNumber(leftValue)} ${getCalculatorOperatorSymbol(operator)} ${rightLabel} =`;
+    const result = calculateCalculatorValues(leftValue, rightValue, operator);
+    if (!result.ok) {
+      setCalculatorError(result.error);
+      return;
+    }
+
+    calculatorState.display = result.formatted;
+    calculatorState.storedValue = null;
+    calculatorState.operator = '';
+    calculatorState.waitingForOperand = false;
+    calculatorState.justEvaluated = true;
+    calculatorState.currentInputLabel = '';
+    calculatorState.message = '';
+    updateCalculatorDisplay();
+  }
+
+  function clearCalculator() {
+    resetCalculatorState();
+    updateCalculatorDisplay();
+  }
+
+  async function copyCalculatorResult() {
+    if (calculatorState.error) return;
+    const value = calculatorState.display;
+    let copied = false;
+
+    try {
+      if (navigator.clipboard?.writeText && window.isSecureContext) {
+        await navigator.clipboard.writeText(value);
+        copied = true;
+      }
+    } catch (error) {
+      copied = false;
+    }
+
+    if (!copied) {
+      try {
+        const helper = document.createElement('textarea');
+        helper.value = value;
+        helper.setAttribute('readonly', '');
+        helper.style.position = 'fixed';
+        helper.style.opacity = '0';
+        helper.style.pointerEvents = 'none';
+        document.body.appendChild(helper);
+        helper.select();
+        helper.setSelectionRange(0, helper.value.length);
+        copied = document.execCommand('copy');
+        helper.remove();
+      } catch (error) {
+        copied = false;
+      }
+    }
+
+    setCalculatorMessage(
+      copied ? 'Resultado copiado.' : 'No se pudo copiar. Mantén presionado el resultado para copiarlo manualmente.',
+      copied ? 'success' : 'error',
+      copied ? 1800 : 3200
+    );
+  }
+
+  function updateCalculatorDisplay() {
+    const shell = viewRoot.querySelector('[data-calculator-basic]');
+    if (!shell) return;
+    const expression = shell.querySelector('[data-calculator-expression]');
+    const output = shell.querySelector('[data-calculator-output]');
+    const message = shell.querySelector('[data-calculator-message]');
+    const displayValue = calculatorState.error ? 'Error' : (calculatorState.display || '0');
+
+    if (expression) expression.textContent = getCalculatorExpressionText();
+    if (output) {
+      output.textContent = displayValue;
+      output.setAttribute('title', calculatorState.error ? calculatorState.error : displayValue);
+      output.classList.toggle('is-error', Boolean(calculatorState.error));
+    }
+    if (message) {
+      const visibleMessage = calculatorState.message || calculatorState.error;
+      message.textContent = visibleMessage;
+      message.hidden = !visibleMessage;
+      message.classList.toggle('is-error', calculatorState.messageType === 'error' || Boolean(calculatorState.error));
+      message.classList.toggle('is-success', calculatorState.messageType !== 'error' && !calculatorState.error);
+    }
+  }
+
+  function shouldIgnoreCalculatorAction(action, value = '') {
+    if (['digit', 'decimal', 'backspace'].includes(action)) return false;
+    const key = `${action}:${value}`;
+    const now = Date.now();
+    const repeatedTooFast = calculatorState.lastActionKey === key && (now - calculatorState.lastActionAt) < 140;
+    calculatorState.lastActionKey = key;
+    calculatorState.lastActionAt = now;
+    return repeatedTooFast;
+  }
+
+  function handleCalculatorAction(action, value = '') {
+    if (shouldIgnoreCalculatorAction(action, value)) return;
+    if (action === 'digit') inputCalculatorDigit(value);
+    else if (action === 'decimal') inputCalculatorDecimal();
+    else if (action === 'operator') chooseCalculatorOperator(value);
+    else if (action === 'percent') applyCalculatorPercentage();
+    else if (action === 'sign') toggleCalculatorSign();
+    else if (action === 'backspace') backspaceCalculatorInput();
+    else if (action === 'clear') clearCalculator();
+    else if (action === 'equals') evaluateCalculator();
+    else if (action === 'copy') copyCalculatorResult();
+  }
+
+  function getCommercialCalculatorRetentions() {
+    const catalog = CATALOGS.find((item) => item.id === 'retenciones');
+    if (!catalog) return [];
+    return getActiveCatalogRecords('retenciones')
+      .map((record) => normalizeCatalogRecord(record, catalog))
+      .filter((record) => record.activo);
+  }
+
+  function sanitizeCommercialDecimalInput(value, maxDecimals = 2, maxWholeDigits = 12) {
+    let normalized = String(value ?? '')
+      .replace(/,/g, '.')
+      .replace(/[^0-9.]/g, '');
+    const firstDot = normalized.indexOf('.');
+    if (firstDot >= 0) {
+      normalized = `${normalized.slice(0, firstDot + 1)}${normalized.slice(firstDot + 1).replace(/\./g, '')}`;
+    }
+    if (normalized.startsWith('.')) normalized = `0${normalized}`;
+    const [wholePart = '', decimalPart = ''] = normalized.split('.');
+    const safeWhole = wholePart.slice(0, maxWholeDigits);
+    if (firstDot >= 0) return `${safeWhole || '0'}.${decimalPart.slice(0, maxDecimals)}`;
+    return safeWhole;
+  }
+
+  function parseCommercialDecimal(value) {
+    const text = String(value ?? '').trim();
+    if (!text || text === '.') return 0;
+    const numeric = Number(text);
+    return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+  }
+
+  function getCommercialCalculatorResult() {
+    const quantity = parseCommercialDecimal(commercialCalculatorState.quantity);
+    const unitPrice = parseCommercialDecimal(commercialCalculatorState.unitPrice);
+    const discountPercent = parseCommercialDecimal(commercialCalculatorState.discountPercent);
+    const discountAmount = roundMoney(parseCommercialDecimal(commercialCalculatorState.discountAmount));
+    const retention = getCommercialCalculatorRetentions()
+      .find((record) => record.id === commercialCalculatorState.retentionId) || null;
+    const retentionPercent = retention ? normalizeCatalogPercentage(retention.porcentaje) : 0;
+    const subtotalRaw = quantity * unitPrice;
+
+    if (![quantity, unitPrice, discountPercent, discountAmount, retentionPercent, subtotalRaw].every(Number.isFinite)) {
+      return {
+        valid: false,
+        error: 'Revisa los valores ingresados.',
+        quantity: 0,
+        unitPrice: 0,
+        subtotal: 0,
+        discountPercent: 0,
+        percentageDiscount: 0,
+        discountAmount: 0,
+        totalDiscount: 0,
+        retention,
+        retentionPercent: 0,
+        retentionAmount: 0,
+        totalAfterDiscount: 0,
+        finalTotal: 0
+      };
+    }
+
+    const subtotal = roundMoney(Math.max(0, subtotalRaw));
+    const safePercent = roundMoney(Math.max(0, discountPercent));
+    const percentageDiscount = roundMoney(subtotal * safePercent / 100);
+    const totalDiscount = roundMoney(percentageDiscount + discountAmount);
+    let error = '';
+    let errorField = '';
+
+    if (safePercent > 100) {
+      error = 'El descuento porcentual no puede superar 100%.';
+      errorField = 'discountPercent';
+    } else if (totalDiscount > subtotal + COBRO_TOLERANCE) {
+      error = 'El descuento total no puede superar el subtotal.';
+      errorField = 'discountAmount';
+    }
+
+    const totalAfterDiscount = error ? 0 : roundMoney(Math.max(0, subtotal - totalDiscount));
+    const retentionAmount = error ? 0 : roundMoney(totalAfterDiscount * retentionPercent / 100);
+    const finalTotal = error ? 0 : roundMoney(Math.max(0, totalAfterDiscount - retentionAmount));
+
+    return {
+      valid: !error,
+      error,
+      errorField,
+      quantity,
+      unitPrice,
+      subtotal,
+      discountPercent: safePercent,
+      percentageDiscount,
+      discountAmount,
+      totalDiscount,
+      retention,
+      retentionPercent,
+      retentionAmount,
+      totalAfterDiscount,
+      finalTotal
+    };
+  }
+
+  function formatCommercialQuantity(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return '0';
+    return new Intl.NumberFormat('es-NI', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 4
+    }).format(numeric);
+  }
+
+  function setCommercialCalculatorMessage(message, type = 'success', autoClearMs = 0) {
+    commercialCalculatorState.message = cleanText(message);
+    commercialCalculatorState.messageType = type === 'error' ? 'error' : 'success';
+    if (commercialCalculatorMessageTimer) {
+      window.clearTimeout(commercialCalculatorMessageTimer);
+      commercialCalculatorMessageTimer = null;
+    }
+    updateCommercialCalculatorDisplay();
+    if (autoClearMs > 0 && commercialCalculatorState.message) {
+      commercialCalculatorMessageTimer = window.setTimeout(() => {
+        commercialCalculatorState.message = '';
+        commercialCalculatorMessageTimer = null;
+        updateCommercialCalculatorDisplay();
+      }, autoClearMs);
+    }
+  }
+
+  function updateCommercialCalculatorDisplay() {
+    const shell = viewRoot.querySelector('[data-calculator-commercial]');
+    if (!shell) return;
+    const result = getCommercialCalculatorResult();
+    const values = {
+      subtotal: formatMoney(result.subtotal),
+      percentageDiscount: formatMoney(result.percentageDiscount),
+      discountAmount: formatMoney(result.discountAmount),
+      totalDiscount: formatMoney(result.totalDiscount),
+      totalAfterDiscount: formatMoney(result.totalAfterDiscount),
+      retentionConcept: result.retention?.nombre || 'Sin retención',
+      retentionPercent: `${roundMoney(result.retentionPercent).toFixed(2)}%`,
+      retentionAmount: formatMoney(result.retentionAmount),
+      finalTotal: formatMoney(result.finalTotal)
+    };
+
+    Object.entries(values).forEach(([key, value]) => {
+      shell.querySelectorAll(`[data-commercial-result="${key}"]`).forEach((element) => {
+        element.textContent = value;
+        element.setAttribute('title', value);
+      });
+    });
+
+    shell.querySelectorAll('[data-commercial-field]').forEach((input) => {
+      const isInvalid = Boolean(result.errorField && input.dataset.commercialField === result.errorField);
+      input.setAttribute('aria-invalid', isInvalid ? 'true' : 'false');
+    });
+
+    const message = shell.querySelector('[data-commercial-message]');
+    if (message) {
+      const visibleMessage = result.error || commercialCalculatorState.message;
+      const isError = Boolean(result.error) || commercialCalculatorState.messageType === 'error';
+      message.textContent = visibleMessage;
+      message.hidden = !visibleMessage;
+      message.classList.toggle('is-error', isError);
+      message.classList.toggle('is-success', !isError && Boolean(visibleMessage));
+    }
+  }
+
+  function clearCommercialCalculator() {
+    resetCommercialCalculatorState();
+    const shell = viewRoot.querySelector('[data-calculator-commercial]');
+    if (shell) {
+      shell.querySelectorAll('[data-commercial-field]').forEach((input) => {
+        input.value = '';
+        input.setAttribute('aria-invalid', 'false');
+      });
+      const retention = shell.querySelector('[data-commercial-retention]');
+      if (retention) retention.value = '';
+    }
+    updateCommercialCalculatorDisplay();
+  }
+
+  async function copyCommercialCalculatorResult() {
+    const result = getCommercialCalculatorResult();
+    if (!result.valid) {
+      setCommercialCalculatorMessage(result.error, 'error', 3200);
+      return;
+    }
+
+    const retentionLine = result.retention
+      ? `Retención ${result.retention.nombre} (${roundMoney(result.retentionPercent).toFixed(2)}%): ${formatMoney(result.retentionAmount)}`
+      : 'Retención: Sin retención';
+    const summary = [
+      `Cantidad: ${formatCommercialQuantity(result.quantity)}`,
+      `Precio unitario: ${formatMoney(result.unitPrice)}`,
+      `Subtotal: ${formatMoney(result.subtotal)}`,
+      `Descuento porcentual: ${roundMoney(result.discountPercent).toFixed(2)}% (${formatMoney(result.percentageDiscount)})`,
+      `Descuento por monto: ${formatMoney(result.discountAmount)}`,
+      `Descuento total: ${formatMoney(result.totalDiscount)}`,
+      `Total después del descuento: ${formatMoney(result.totalAfterDiscount)}`,
+      retentionLine,
+      `Total final: ${formatMoney(result.finalTotal)}`
+    ].join('\n');
+
+    let copied = false;
+    try {
+      if (navigator.clipboard?.writeText && window.isSecureContext) {
+        await navigator.clipboard.writeText(summary);
+        copied = true;
+      }
+    } catch (error) {
+      copied = false;
+    }
+
+    if (!copied) {
+      try {
+        const helper = document.createElement('textarea');
+        helper.value = summary;
+        helper.setAttribute('readonly', '');
+        helper.style.position = 'fixed';
+        helper.style.opacity = '0';
+        helper.style.pointerEvents = 'none';
+        document.body.appendChild(helper);
+        helper.select();
+        helper.setSelectionRange(0, helper.value.length);
+        copied = document.execCommand('copy');
+        helper.remove();
+      } catch (error) {
+        copied = false;
+      }
+    }
+
+    setCommercialCalculatorMessage(
+      copied ? 'Resumen comercial copiado.' : 'No se pudo copiar. Mantén presionado el resultado para copiarlo manualmente.',
+      copied ? 'success' : 'error',
+      copied ? 1800 : 3200
+    );
+  }
+
+  function setupCommercialCalculatorControls() {
+    const shell = viewRoot.querySelector('[data-calculator-commercial]');
+    if (!shell) return;
+
+    shell.querySelectorAll('[data-commercial-field]').forEach((input) => {
+      const field = input.dataset.commercialField;
+      const maxDecimals = Number(input.dataset.maxDecimals || 2);
+      input.value = commercialCalculatorState[field] || '';
+      input.addEventListener('input', () => {
+        const sanitized = sanitizeCommercialDecimalInput(input.value, maxDecimals);
+        if (input.value !== sanitized) input.value = sanitized;
+        commercialCalculatorState[field] = sanitized;
+        commercialCalculatorState.message = '';
+        updateCommercialCalculatorDisplay();
+      });
+      input.addEventListener('focus', () => input.select());
+    });
+
+    const retention = shell.querySelector('[data-commercial-retention]');
+    if (retention) {
+      retention.value = commercialCalculatorState.retentionId || '';
+      retention.addEventListener('change', () => {
+        commercialCalculatorState.retentionId = cleanText(retention.value);
+        commercialCalculatorState.message = '';
+        updateCommercialCalculatorDisplay();
+      });
+    }
+
+    shell.querySelector('[data-commercial-clear]')?.addEventListener('click', clearCommercialCalculator);
+    shell.querySelector('[data-commercial-copy]')?.addEventListener('click', copyCommercialCalculatorResult);
+    updateCommercialCalculatorDisplay();
+  }
+
+  function setupCalculatorControls() {
+    detachCalculatorKeyboard();
+    if (getRoute() !== 'calculadora') return;
+    const calculator = viewRoot.querySelector('[data-calculator-basic]');
+    if (!calculator) return;
+
+    calculator.querySelectorAll('[data-calculator-action]').forEach((button) => {
+      button.addEventListener('click', () => {
+        handleCalculatorAction(button.dataset.calculatorAction, button.dataset.value || '');
+      });
+    });
+
+    calculatorKeyboardHandler = (event) => {
+      if (getRoute() !== 'calculadora') return;
+      const target = event.target;
+      if (target?.matches?.('input, textarea, select, [contenteditable="true"]')) return;
+
+      let action = '';
+      let value = '';
+      if (/^[0-9]$/.test(event.key)) {
+        action = 'digit';
+        value = event.key;
+      } else if (event.key === '.' || event.key === ',') action = 'decimal';
+      else if (event.key === '+') {
+        action = 'operator';
+        value = 'add';
+      } else if (event.key === '-') {
+        action = 'operator';
+        value = 'subtract';
+      } else if (event.key === '*' || event.key.toLowerCase() === 'x') {
+        action = 'operator';
+        value = 'multiply';
+      } else if (event.key === '/') {
+        action = 'operator';
+        value = 'divide';
+      } else if (event.key === '%') action = 'percent';
+      else if (event.key === 'Enter' || event.key === '=') action = 'equals';
+      else if (event.key === 'Backspace' || event.key === 'Delete') action = 'backspace';
+      else if (event.key === 'Escape') action = 'clear';
+
+      if (!action) return;
+      event.preventDefault();
+      handleCalculatorAction(action, value);
+    };
+    document.addEventListener('keydown', calculatorKeyboardHandler);
+    updateCalculatorDisplay();
+    setupCommercialCalculatorControls();
+  }
+
+  function renderCalculadora() {
+    const keypadButtons = [
+      { label: 'C', action: 'clear', kind: 'utility', aria: 'Limpiar operación' },
+      { label: '+/−', action: 'sign', kind: 'utility', aria: 'Cambiar signo positivo o negativo' },
+      { label: '%', action: 'percent', kind: 'utility', aria: 'Calcular porcentaje' },
+      { label: '⌫', action: 'backspace', kind: 'utility', aria: 'Borrar último dígito' },
+      { label: '7', action: 'digit', value: '7' },
+      { label: '8', action: 'digit', value: '8' },
+      { label: '9', action: 'digit', value: '9' },
+      { label: '÷', action: 'operator', value: 'divide', kind: 'operator', aria: 'Dividir' },
+      { label: '4', action: 'digit', value: '4' },
+      { label: '5', action: 'digit', value: '5' },
+      { label: '6', action: 'digit', value: '6' },
+      { label: '×', action: 'operator', value: 'multiply', kind: 'operator', aria: 'Multiplicar' },
+      { label: '1', action: 'digit', value: '1' },
+      { label: '2', action: 'digit', value: '2' },
+      { label: '3', action: 'digit', value: '3' },
+      { label: '−', action: 'operator', value: 'subtract', kind: 'operator', aria: 'Restar' },
+      { label: '0', action: 'digit', value: '0' },
+      { label: '.', action: 'decimal', aria: 'Punto decimal' },
+      { label: '=', action: 'equals', kind: 'equals', aria: 'Obtener resultado' },
+      { label: '+', action: 'operator', value: 'add', kind: 'operator', aria: 'Sumar' }
+    ];
+    const commercialRetentions = getCommercialCalculatorRetentions();
+    const commercialResult = getCommercialCalculatorResult();
+
+    return `
+      <section class="calculator-shell" aria-labelledby="calculatorTitle">
+        <header class="calculator-header">
+          <div>
+            <span class="eyebrow">Herramienta temporal</span>
+            <h1 id="calculatorTitle">Calculadora</h1>
+            <p class="lead">Cálculos rápidos e independientes. No guarda operaciones, resultados, campos ni preferencias.</p>
+          </div>
+          <div class="calculator-header-actions">
+            <span class="calculator-status-badge">Sin persistencia</span>
+            <button type="button" class="secondary-action compact" data-go="home">Volver al Menú</button>
+          </div>
+        </header>
+
+        <section class="calculator-grid" aria-label="Secciones de Calculadora">
+          <article class="calculator-panel calculator-basic-panel" data-calculator-basic>
+            <div class="calculator-panel-heading">
+              <div class="calculator-panel-icon" aria-hidden="true">123</div>
+              <div>
+                <span class="calculator-kicker">Sección 1</span>
+                <h2>Calculadora básica</h2>
+                <p>Suma, resta, multiplicación, división y porcentaje con controles táctiles y teclado físico.</p>
+              </div>
+            </div>
+
+            <div class="calculator-display" role="status" aria-live="polite" aria-atomic="true">
+              <div class="calculator-operation" data-calculator-expression>${escapeHtml(getCalculatorExpressionText())}</div>
+              <output class="calculator-output" data-calculator-output title="${escapeHtml(calculatorState.display)}">${escapeHtml(calculatorState.error ? 'Error' : calculatorState.display)}</output>
+              <p class="calculator-feedback ${calculatorState.messageType === 'error' ? 'is-error' : 'is-success'}" data-calculator-message ${calculatorState.message || calculatorState.error ? '' : 'hidden'}>${escapeHtml(calculatorState.message || calculatorState.error)}</p>
+            </div>
+
+            <div class="calculator-keypad" aria-label="Teclado de la calculadora básica">
+              ${keypadButtons.map((button) => `
+                <button
+                  type="button"
+                  class="calculator-key ${button.kind ? `is-${button.kind}` : ''}"
+                  data-calculator-action="${button.action}"
+                  ${button.value ? `data-value="${button.value}"` : ''}
+                  aria-label="${escapeHtml(button.aria || button.label)}"
+                >${escapeHtml(button.label)}</button>
+              `).join('')}
+            </div>
+
+            <button type="button" class="calculator-copy-action" data-calculator-action="copy">
+              <span aria-hidden="true">⧉</span>
+              <span>Copiar resultado</span>
+            </button>
+            <p class="calculator-keyboard-hint">Teclado: números, +, −, × (*), ÷ (/), %, Enter, Retroceso y Escape.</p>
+          </article>
+
+          <article class="calculator-panel calculator-commercial-panel" data-calculator-commercial>
+            <div class="calculator-panel-heading">
+              <div class="calculator-panel-icon" aria-hidden="true">%</div>
+              <div>
+                <span class="calculator-kicker">Sección 2</span>
+                <h2>Calculadora comercial</h2>
+                <p>Calcula descuentos y retenciones activas de Catálogos sin guardar operaciones ni afectar otros módulos.</p>
+              </div>
+            </div>
+
+            <div class="calculator-commercial-form" aria-label="Datos de cálculo comercial">
+              <label class="calculator-commercial-field">
+                <span>Cantidad</span>
+                <input type="text" inputmode="decimal" autocomplete="off" placeholder="Ej. 10" value="${escapeHtml(commercialCalculatorState.quantity)}" data-commercial-field="quantity" data-max-decimals="4" aria-label="Cantidad" />
+              </label>
+              <label class="calculator-commercial-field">
+                <span>Precio unitario C$</span>
+                <input type="text" inputmode="decimal" autocomplete="off" placeholder="Ej. 100.00" value="${escapeHtml(commercialCalculatorState.unitPrice)}" data-commercial-field="unitPrice" data-max-decimals="2" aria-label="Precio unitario" />
+              </label>
+              <label class="calculator-commercial-field">
+                <span>Descuento %</span>
+                <input type="text" inputmode="decimal" autocomplete="off" placeholder="Ej. 5" value="${escapeHtml(commercialCalculatorState.discountPercent)}" data-commercial-field="discountPercent" data-max-decimals="2" aria-label="Descuento por porcentaje" />
+              </label>
+              <label class="calculator-commercial-field">
+                <span>Descuento por monto C$</span>
+                <input type="text" inputmode="decimal" autocomplete="off" placeholder="Ej. 50.00" value="${escapeHtml(commercialCalculatorState.discountAmount)}" data-commercial-field="discountAmount" data-max-decimals="2" aria-label="Descuento por monto" />
+              </label>
+              <label class="calculator-commercial-field calculator-commercial-retention-field">
+                <span>Retención</span>
+                <select data-commercial-retention aria-label="Seleccionar retención">
+                  <option value="">Sin retención</option>
+                  ${commercialRetentions.map((retention) => `<option value="${escapeHtml(retention.id)}" ${retention.id === commercialCalculatorState.retentionId ? 'selected' : ''}>${escapeHtml(retention.nombre || 'Retención')} · ${escapeHtml(formatPercentageDisplay(retention.porcentaje))}</option>`).join('')}
+                </select>
+                <small>${commercialRetentions.length ? 'Origen: Catálogos → Retenciones.' : 'No hay retenciones activas; continúa disponible Sin retención.'}</small>
+              </label>
+            </div>
+
+            <div class="calculator-commercial-summary" aria-label="Resultados comerciales" aria-live="polite">
+              <div><span>Subtotal</span><strong data-commercial-result="subtotal">${escapeHtml(formatMoney(commercialResult.subtotal))}</strong></div>
+              <div><span>Descuento porcentual</span><strong data-commercial-result="percentageDiscount">${escapeHtml(formatMoney(commercialResult.percentageDiscount))}</strong></div>
+              <div><span>Descuento por monto</span><strong data-commercial-result="discountAmount">${escapeHtml(formatMoney(commercialResult.discountAmount))}</strong></div>
+              <div><span>Descuento total</span><strong data-commercial-result="totalDiscount">${escapeHtml(formatMoney(commercialResult.totalDiscount))}</strong></div>
+              <div class="is-emphasis"><span>Total después del descuento</span><strong data-commercial-result="totalAfterDiscount">${escapeHtml(formatMoney(commercialResult.totalAfterDiscount))}</strong></div>
+              <div><span>Concepto de retención</span><strong data-commercial-result="retentionConcept">${escapeHtml(commercialResult.retention?.nombre || 'Sin retención')}</strong></div>
+              <div><span>Porcentaje de retención</span><strong data-commercial-result="retentionPercent">${escapeHtml(`${roundMoney(commercialResult.retentionPercent).toFixed(2)}%`)}</strong></div>
+              <div><span>Monto retenido</span><strong data-commercial-result="retentionAmount">${escapeHtml(formatMoney(commercialResult.retentionAmount))}</strong></div>
+            </div>
+
+            <div class="calculator-commercial-final" role="status" aria-live="polite">
+              <span>Total final a recibir o pagar</span>
+              <strong data-commercial-result="finalTotal">${escapeHtml(formatMoney(commercialResult.finalTotal))}</strong>
+            </div>
+
+            <p class="calculator-commercial-feedback ${commercialCalculatorState.messageType === 'error' || commercialResult.error ? 'is-error' : 'is-success'}" data-commercial-message ${commercialCalculatorState.message || commercialResult.error ? '' : 'hidden'}>${escapeHtml(commercialResult.error || commercialCalculatorState.message)}</p>
+
+            <div class="calculator-commercial-actions">
+              <button type="button" class="secondary-action" data-commercial-clear>Limpiar cálculo</button>
+              <button type="button" class="card-action" data-commercial-copy>
+                <span aria-hidden="true">⧉</span>
+                <span>Copiar resultado</span>
+              </button>
+            </div>
+          </article>
+        </section>
+      </section>
+    `;
   }
 
   function renderPlaceholder(module) {
@@ -18311,7 +19216,7 @@ Notas importantes:
               </div>
               <div class="count-pill"><span data-bdatos-visible-count>${filteredRecords.length}</span> / ${allRecords.length} registros</div>
             </div>
-            ${renderBdatosList(filteredRecords, allRecords.length)}
+            ${renderBdatosList(allRecords, allRecords.length)}
           </article>
         </div>
         ${editingRecord ? renderEditModal(getBdatosModalId(), 'Editar artículo', 'Modifica Código, Descripción y Precio sin usar el formulario de ingreso.', renderBdatosForm(editingRecord, 'edit', !canEditBdatos)) : ''}
@@ -18364,27 +19269,33 @@ Notas importantes:
     }
 
     const rows = records.map((record) => renderBdatosRow(record)).join('');
-    return renderOperationalTableShell({
-      shellClass: 'bdatos-scroll-shell',
-      wrapClass: 'bdatos-table-wrap',
-      ariaLabel: 'Listado de artículos de Bdatos',
-      tableClass: 'operational-table-bdatos',
-      colgroup: `
-        <colgroup>
-          <col class="bdatos-col-codigo">
-          <col class="bdatos-col-descripcion">
-          <col class="bdatos-col-precio">
-          <col class="bdatos-col-acciones">
-        </colgroup>
-      `,
-      headers: `
-        <th>Código</th>
-        <th>Descripción</th>
-        <th>Precio</th>
-        <th>Acciones</th>
-      `,
-      rows
-    });
+    return `
+      ${renderOperationalTableShell({
+        shellClass: 'bdatos-scroll-shell',
+        wrapClass: 'bdatos-table-wrap',
+        ariaLabel: 'Listado de artículos de Bdatos',
+        tableClass: 'operational-table-bdatos',
+        colgroup: `
+          <colgroup>
+            <col class="bdatos-col-codigo">
+            <col class="bdatos-col-descripcion">
+            <col class="bdatos-col-precio">
+            <col class="bdatos-col-acciones">
+          </colgroup>
+        `,
+        headers: `
+          <th>Código</th>
+          <th>Descripción</th>
+          <th>Precio</th>
+          <th>Acciones</th>
+        `,
+        rows
+      })}
+      <div class="empty-state" data-bdatos-empty-filter hidden>
+        <strong>No hay coincidencias.</strong>
+        <p>Prueba con otro código o descripción. La búsqueda filtra, no borra datos.</p>
+      </div>
+    `;
   }
 
   function renderBdatosRow(record) {
@@ -18618,6 +19529,39 @@ Notas importantes:
     return fallbackCopyTextToClipboard(text);
   }
 
+  function focusBdatosSearchField() {
+    const search = viewRoot.querySelector('[data-bdatos-search]');
+    if (!search) return false;
+    try {
+      search.focus({ preventScroll: true });
+    } catch (error) {
+      try {
+        search.focus();
+      } catch (focusError) {
+        return false;
+      }
+    }
+    try {
+      const caret = search.value.length;
+      search.setSelectionRange(caret, caret);
+    } catch (error) {
+      // Algunos navegadores no permiten selección programática en input search.
+    }
+    return document.activeElement === search;
+  }
+
+  function scheduleBdatosSearchFocus() {
+    const focusSearch = () => focusBdatosSearchField();
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => {
+        focusSearch();
+        window.setTimeout(focusSearch, 0);
+      });
+      return;
+    }
+    window.setTimeout(focusSearch, 0);
+  }
+
   async function copyBdatosRecord(recordId) {
     const record = getBdatosRecords().find((item) => item.id === recordId);
     if (!record) {
@@ -18633,7 +19577,9 @@ Notas importantes:
     const copied = await copyTextToClipboard(copyText);
     bdatosState.message = copied ? 'Copiado' : 'No se pudo copiar';
     bdatosState.messageType = copied ? 'success' : 'error';
+    bdatosState.search = '';
     renderRoute({ preserveScroll: true });
+    scheduleBdatosSearchFocus();
   }
 
   function clearBdatosCreateForm() {
@@ -18650,19 +19596,32 @@ Notas importantes:
   function setupBdatosSearch() {
     const search = viewRoot.querySelector('[data-bdatos-search]');
     if (!search) return;
+
     const applyFilter = () => {
-      const query = normalizeKeyForCompare(search.value);
-      bdatosState.search = search.value;
+      const rawValue = String(search.value || '');
+      const query = normalizeKeyForCompare(rawValue);
+      bdatosState.search = rawValue;
+
+      const rows = Array.from(viewRoot.querySelectorAll('[data-bdatos-row]'));
       let visible = 0;
-      viewRoot.querySelectorAll('[data-bdatos-row]').forEach((row) => {
+      rows.forEach((row) => {
         const text = row.getAttribute('data-bdatos-search-text') || '';
         const shouldShow = !query || text.includes(query);
         row.hidden = !shouldShow;
         if (shouldShow) visible += 1;
       });
-      viewRoot.querySelectorAll('[data-bdatos-visible-count]').forEach((item) => { item.textContent = String(visible); });
+
+      viewRoot.querySelectorAll('[data-bdatos-visible-count]').forEach((item) => {
+        item.textContent = String(visible);
+      });
+
+      const emptyFilter = viewRoot.querySelector('[data-bdatos-empty-filter]');
+      if (emptyFilter) emptyFilter.hidden = rows.length === 0 || visible > 0;
     };
-    search.addEventListener('input', applyFilter);
+
+    ['input', 'search', 'change'].forEach((eventName) => {
+      search.addEventListener(eventName, applyFilter);
+    });
     applyFilter();
   }
 
@@ -30138,6 +31097,8 @@ ${rowsXml}
   }
 
   function bindViewActions() {
+    setupCalculatorControls();
+
     viewRoot.querySelectorAll('[data-go]').forEach((button) => {
       button.addEventListener('click', () => setRoute(button.dataset.go));
     });
