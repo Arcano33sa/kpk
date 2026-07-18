@@ -13159,13 +13159,72 @@ body,
   margin-top: 2px;
 }
 
-.excel-stage-shell > .excel-close-card,
-.excel-stage-shell > .excel-history-card {
+.excel-stage-shell > .panel-card.import-card.full-span.excel-close-card,
+.excel-stage-shell > .panel-card.import-card.full-span.excel-history-card {
   grid-column: 1 / -1;
 }
 
 @media (max-width: 620px) {
   .excel-manual-name-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .excel-file-name-field {
+    grid-column: auto;
+  }
+}
+
+
+/* Excel/Cierre responsive — Etapa 1/1: distribución estable en monitor, iPad y móvil */
+.import-shell,
+.excel-stage-shell {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+  align-items: start;
+}
+
+.import-shell > *,
+.excel-stage-shell > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.excel-stage-shell > .panel-card.import-card.full-span.excel-close-card,
+.excel-stage-shell > .panel-card.import-card.full-span.excel-history-card {
+  grid-column: 1 / -1;
+}
+
+.excel-manual-name-grid {
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  width: 100%;
+}
+
+.excel-close-card .compact-period-grid {
+  grid-template-columns: repeat(2, minmax(160px, 220px));
+  justify-content: start;
+}
+
+.excel-history-card .closing-compact-scroll-shell,
+.excel-history-card .closing-compact-table-wrap,
+.excel-history-card .closing-compact-table {
+  width: 100%;
+}
+
+@media (max-width: 900px) {
+  .import-shell,
+  .excel-stage-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .excel-stage-shell > .panel-card.import-card.full-span.excel-close-card,
+  .excel-stage-shell > .panel-card.import-card.full-span.excel-history-card {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 620px) {
+  .excel-manual-name-grid,
+  .excel-close-card .compact-period-grid {
     grid-template-columns: 1fr;
   }
 
