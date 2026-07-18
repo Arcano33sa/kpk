@@ -124,3 +124,29 @@ Bloque A / Etapa 3/6: se agregó una pantalla de acceso preparada para Firebase 
 - La migración idempotente consolida exportaciones de prueba duplicadas, conserva Excel Consulta y JSON independientes y deja tombstones pendientes para limpiar duplicados remotos sin borrar datos operativos.
 - “Guardar datos” incluye el documento `consecutivos/excelCierre`, junto con cierres y exportaciones, manteniendo los fallos pendientes y sin mostrar éxito falso.
 - Cache PWA actualizado a 0.18.58.
+
+## Cierres mensuales / Reparación Etapa 1/3 — Arranque seguro
+- Se eliminó la referencia fuera de alcance a `normalizeSessionChangeModuleKey` y se reutiliza el normalizador central de cambios de sesión.
+- La reconciliación de cierres/consecutivos dejó de ejecutarse como requisito previo al primer render.
+- El Menú se muestra primero y la inspección de arranque se ejecuta después, sobre una copia sin modificar datos, reservas ni consecutivos.
+- Las reconciliaciones posteriores desde Firestore cuentan con rollback local y registro contextual si fallan.
+- Las migraciones y validaciones no críticas de arranque ya no pueden derribar la interfaz completa.
+- Cache PWA actualizado a 0.18.59.
+
+## Cierres mensuales / Reparación Etapa 2/3 — Consecutivo oficial por período
+- Se centralizó la clave canónica del período para reconocer `YYYY-MM`, `MM-YYYY`, nombres de mes y variantes históricas sin duplicar registros.
+- Los períodos cerrados conservan `consecutivoCierre` y `nombreExcelOficial` como vínculo oficial permanente.
+- Mayo de 2026 se repara a `0001- Mayo 2026.xlsx` cuando los datos confirman el caso legado de la Etapa 1 y continúa cerrado.
+- Las reservas 0002/0003 incompatibles con mayo se conservan como historial ignorado, sin borrarlas ni contarlas para el próximo cierre.
+- El próximo consecutivo se calcula solo desde cierres oficiales reales; Consulta y JSON permanecen independientes.
+- La migración v3 es idempotente, conserva exportaciones históricas y prepara cambios para “Guardar datos” sin crear sincronización incremental.
+- Cache PWA actualizado a 0.18.60.
+
+## Cierres mensuales / Reparación Etapa 3/3 — Reconciliación Firebase y hardening final
+- La hidratación desde Firestore fusiona cierres y exportaciones por evidencia oficial del período, sin permitir que un contador remoto aislado sustituya un cierre válido.
+- Mayo de 2026 conserva `0001- Mayo 2026.xlsx` como nombre y consecutivo oficiales cuando es el primer cierre real; el próximo cierre queda en `0002`.
+- Los valores remotos inflados se convierten en correcciones pendientes para “Guardar datos”, en lugar de sobrescribir la base local reparada.
+- Las escrituras críticas de cierre, exportación oficial y consecutivo se verifican mediante lectura posterior de Firestore antes de retirar sus cambios pendientes.
+- Las reexportaciones reutilizan el registro oficial del período; Excel Consulta y JSON mantienen numeraciones independientes.
+- La carga local continúa primero y la reconciliación remota permanece protegida para no bloquear el Menú ni provocar pantalla vacía.
+- Cache PWA actualizado a 0.18.61.

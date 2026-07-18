@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_58_cierres_consecutivo_hardening_final';
+const CACHE_VERSION = 'v0_18_61_cierres_oficiales_reparacion_etapa3';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
