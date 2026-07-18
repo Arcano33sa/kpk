@@ -2,19 +2,14 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.63-guardar-nube-reparacion-etapa2-hardening-final';
+  const APP_VERSION = '0.18.56-calculadora-etapa5-comercial-hardening-final';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
   const ACTIVITY_LOG_STORAGE_KEY = 'KSA_PRACTIKA_ACTIVITY_LOG_v1';
-  const SESSION_CHANGE_QUEUE_STORAGE_KEY = 'KSA_PRACTIKA_SESSION_CHANGE_QUEUE_v1';
-  const SESSION_SAVE_DIAGNOSTIC_STORAGE_KEY = 'KSA_PRACTIKA_SESSION_SAVE_DIAGNOSTIC_v1';
-  const SESSION_METADATA_PENDING_STORAGE_KEY = 'KSA_PRACTIKA_SESSION_METADATA_PENDING_v1';
   const JSON_EXPORT_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_JSON_EXPORT_SEQUENCE_v1';
   const EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_EXCEL_CONSULTA_SEQUENCE_v1';
   const EXCEL_CIERRE_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_EXCEL_CIERRE_SEQUENCE_v1';
-  const EXCEL_CIERRE_RECONCILIATION_MIGRATION_ID = 'excel_cierre_firebase_reconciliation_v4';
-  const EXCEL_CIERRE_LEGACY_MIGRATION_IDS = Object.freeze(['excel_cierre_oficial_v2', 'excel_cierre_oficial_por_periodo_v3']);
   const JSON_APPLIED_STORAGE_KEY = 'KSA_PRACTIKA_LAST_JSON_APPLIED_v1';
   const JSON_IMPORT_HISTORY_STORAGE_KEY = 'KSA_PRACTIKA_JSON_IMPORT_HISTORY_v1';
   const NOTES_STORAGE_KEY = 'ksa_notas_v1';
@@ -2654,7 +2649,7 @@ Notas importantes:
       updatedAt: nowIso()
     };
 
-    return reconcileExcelCierreRecords(normalized).data;
+    return normalized;
   }
 
   function applyInitialBdatosSeedIfNeeded(normalized, source = {}) {
@@ -2777,155 +2772,17 @@ Notas importantes:
   const SESSION_SAVE_MESSAGES = Object.freeze({
     saving: 'Guardando datos...',
     success: 'Guardado correcto.',
-    confirmationPending: 'Los datos fueron enviados. La confirmación de la nube está pendiente y se intentará nuevamente.',
-    offlinePending: 'Sin conexión. Los cambios permanecen guardados localmente y pendientes de enviar.',
-    metadataPending: 'Datos guardados. La información de diagnóstico quedó pendiente.',
     partialCleanupPending: 'Guardado correcto. La limpieza de Facturas quedó pendiente para reintento.',
     cleanupFailure: 'No se pudo completar la limpieza de Facturas. Se intentará nuevamente.',
     noChanges: 'No hay cambios nuevos de esta sesión para guardar.',
-    failure: 'No se pudo guardar en la nube. Los cambios se conservaron para intentar nuevamente.',
+    failure: 'No se pudo guardar en la nube. Los cambios de sesión se conservaron para intentar nuevamente.',
     firestoreUnavailable: 'No se pudo guardar en la nube. Firestore no está disponible.'
   });
 
-  const SESSION_SAVE_RESULT_STATUS = Object.freeze({
-    confirmed: 'CONFIRMADO',
-    pending: 'PENDIENTE DE CONFIRMACIÓN',
-    failed: 'FALLIDO',
-    metadataPending: 'METADATA PENDIENTE',
-    idle: 'SIN INTENTO'
-  });
-
-  function loadSessionSaveDiagnosticState() {
-    const defaults = {
-      lastConfirmedWriteAt: '',
-      lastAttemptAt: '',
-      attemptStatus: SESSION_SAVE_RESULT_STATUS.idle,
-      lastRealError: '',
-      confirmationPending: false,
-      metadataPending: false,
-      errorCode: '',
-      updatedAt: ''
-    };
-    try {
-      const raw = window.localStorage.getItem(SESSION_SAVE_DIAGNOSTIC_STORAGE_KEY);
-      const parsed = raw ? JSON.parse(raw) : null;
-      return isPlainObject(parsed) ? { ...defaults, ...parsed } : defaults;
-    } catch (_) {
-      return defaults;
-    }
-  }
-
-  let sessionSaveDiagnosticState = loadSessionSaveDiagnosticState();
-
-  function persistSessionSaveDiagnosticState() {
-    try {
-      window.localStorage.setItem(SESSION_SAVE_DIAGNOSTIC_STORAGE_KEY, JSON.stringify(sessionSaveDiagnosticState));
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  function updateSessionSaveDiagnosticState(patch = {}) {
-    sessionSaveDiagnosticState = {
-      ...loadSessionSaveDiagnosticState(),
-      ...(isPlainObject(patch) ? patch : {}),
-      updatedAt: nowIso()
-    };
-    persistSessionSaveDiagnosticState();
-    return { ...sessionSaveDiagnosticState };
-  }
-
-  function getSessionSaveDiagnosticState() {
-    return { ...sessionSaveDiagnosticState };
-  }
-
-  function loadPendingSessionMetadata() {
-    try {
-      const raw = window.localStorage.getItem(SESSION_METADATA_PENDING_STORAGE_KEY);
-      const parsed = raw ? JSON.parse(raw) : null;
-      return isPlainObject(parsed) ? parsed : null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function setPendingSessionMetadata(payload = {}) {
-    const previous = loadPendingSessionMetadata() || {};
-    const next = {
-      ...previous,
-      ...(isPlainObject(payload) ? payload : {}),
-      pending: true,
-      attempts: Math.max(0, Number(previous.attempts) || 0) + 1,
-      firstPendingAt: previous.firstPendingAt || nowIso(),
-      lastAttemptAt: nowIso()
-    };
-    try { window.localStorage.setItem(SESSION_METADATA_PENDING_STORAGE_KEY, JSON.stringify(next)); } catch (_) {}
-    return next;
-  }
-
-  function clearPendingSessionMetadata() {
-    try { window.localStorage.removeItem(SESSION_METADATA_PENDING_STORAGE_KEY); } catch (_) {}
-  }
-
-  function hasPendingSessionMetadata() {
-    return Boolean(loadPendingSessionMetadata()?.pending);
-  }
-
-  function loadPersistedSessionChangeQueue() {
-    try {
-      const raw = window.localStorage.getItem(SESSION_CHANGE_QUEUE_STORAGE_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      const seen = new Set();
-      return parsed.filter((item) => {
-        if (!isPlainObject(item) || cleanText(item.estado) !== 'pendiente') return false;
-        const moduleName = cleanText(item.module || item.modulo || item.moduleName);
-        const recordId = cleanText(item.recordId || item.idRegistro || item.id || item.documentId);
-        if (!moduleName || !recordId) return false;
-        const key = cleanText(item.key) || getSessionChangeRecordKey(moduleName, recordId);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        item.key = key;
-        item.module = moduleName;
-        item.modulo = moduleName;
-        item.recordId = recordId;
-        item.idRegistro = recordId;
-        item.operation = normalizeSessionChangeOperation(item.operation || item.operacion || item.tipoOperacion);
-        item.operacion = item.operation;
-        item.estado = 'pendiente';
-        item.revision = Math.max(1, Number(item.revision) || 1);
-        item.cloudOperationToken = cleanText(item.cloudOperationToken) || `${cleanText(item.id) || key}::r${item.revision}`;
-        item.cloudWriteAttempted = item.cloudWriteAttempted === true;
-        return true;
-      });
-    } catch (error) {
-      console.warn('KSA PRÁCTIKA: no se pudo recuperar la cola local de Guardar datos.', error);
-      return [];
-    }
-  }
-
-  function persistSessionChangeQueue() {
-    try {
-      const pending = sessionChangeQueue.filter((item) => item && item.estado === 'pendiente');
-      if (pending.length) window.localStorage.setItem(SESSION_CHANGE_QUEUE_STORAGE_KEY, JSON.stringify(pending));
-      else window.localStorage.removeItem(SESSION_CHANGE_QUEUE_STORAGE_KEY);
-      return true;
-    } catch (error) {
-      console.warn('KSA PRÁCTIKA: no se pudo persistir la cola local de Guardar datos.', error);
-      return false;
-    }
-  }
-
-  let sessionChangeQueue = loadPersistedSessionChangeQueue();
-  let sessionChangeSequence = sessionChangeQueue.reduce((max, item) => {
-    const value = Number(String(item?.idInterno || '').replace(/[^0-9]/g, ''));
-    return Number.isFinite(value) ? Math.max(max, value) : max;
-  }, 0);
+  let sessionChangeQueue = [];
+  let sessionChangeSequence = 0;
 
   function syncSessionChangeQueueGlobal() {
-    persistSessionChangeQueue();
     if (typeof window !== 'undefined') {
       window.KSA_SESSION_CHANGE_QUEUE = sessionChangeQueue;
     }
@@ -2941,12 +2798,6 @@ Notas importantes:
     const moduleKey = cleanText(moduleName).toLowerCase();
     const recordKey = cleanText(recordId || fallback);
     return `${moduleKey}::${recordKey}`;
-  }
-
-  function getSessionChangeOperationToken(change = {}) {
-    const revision = Math.max(1, Number(change?.revision) || 1);
-    const identity = cleanText(change?.id) || cleanText(change?.key) || getSessionChangeRecordKey(change?.module || change?.modulo, change?.recordId || change?.idRegistro);
-    return cleanText(change?.cloudOperationToken) || `${identity}::r${revision}`;
   }
 
   function getSessionChangePendingCount() {
@@ -3010,52 +2861,13 @@ Notas importantes:
   }
 
   function clearConfirmedSessionChanges(changes = []) {
-    const confirmations = new Map();
-    (Array.isArray(changes) ? changes : []).forEach((item) => {
-      const id = cleanText(item?.id);
-      if (id) confirmations.set(id, getSessionChangeOperationToken(item));
-    });
-    if (!confirmations.size) return 0;
+    const confirmedIds = new Set((Array.isArray(changes) ? changes : []).map((item) => cleanText(item?.id)).filter(Boolean));
+    if (!confirmedIds.size) return 0;
     const before = sessionChangeQueue.length;
-    sessionChangeQueue = sessionChangeQueue.filter((item) => {
-      if (!item || item.estado !== 'pendiente') return true;
-      const expectedToken = confirmations.get(cleanText(item.id));
-      if (!expectedToken) return true;
-      return getSessionChangeOperationToken(item) !== expectedToken;
-    });
+    sessionChangeQueue = sessionChangeQueue.filter((item) => !(item && item.estado === 'pendiente' && confirmedIds.has(cleanText(item.id))));
     syncSessionChangeQueueGlobal();
     updateSessionChangeQueueDom();
     return before - sessionChangeQueue.length;
-  }
-
-  function markSessionChangesPendingConfirmation(changes = [], details = {}) {
-    const pendingTokens = new Map();
-    (Array.isArray(changes) ? changes : []).forEach((item) => {
-      const id = cleanText(item?.id);
-      if (id) pendingTokens.set(id, getSessionChangeOperationToken(item));
-    });
-    if (!pendingTokens.size) return 0;
-    let updated = 0;
-    sessionChangeQueue.forEach((item) => {
-      if (!item || item.estado !== 'pendiente') return;
-      const expectedToken = pendingTokens.get(cleanText(item.id));
-      if (!expectedToken || getSessionChangeOperationToken(item) !== expectedToken) return;
-      item.cloudConfirmationPending = true;
-      item.cloudWriteAttempted = details.writeAttempted !== false;
-      const sentAt = cleanText(details.sentAt);
-      if (sentAt) item.cloudWriteSentAt = sentAt;
-      else if (item.cloudWriteAttempted && !item.cloudWriteSentAt) item.cloudWriteSentAt = nowIso();
-      else if (!item.cloudWriteAttempted) delete item.cloudWriteSentAt;
-      item.cloudConfirmationCode = cleanText(details.code || 'cloud/session-confirmation-pending');
-      item.cloudConfirmationMessage = cleanText(details.message || SESSION_SAVE_MESSAGES.confirmationPending);
-      item.updatedAt = nowIso();
-      updated += 1;
-    });
-    if (updated) {
-      syncSessionChangeQueueGlobal();
-      updateSessionChangeQueueDom();
-    }
-    return updated;
   }
 
   function isCloudDeletedRecord(record) {
@@ -3111,13 +2923,6 @@ Notas importantes:
       existing.operacion = finalOperation;
       existing.fechaHoraLocal = timestamp;
       existing.updatedAt = timestamp;
-      existing.revision = Math.max(1, Number(existing.revision) || 1) + 1;
-      existing.cloudOperationToken = `${cleanText(existing.id) || key}::r${existing.revision}`;
-      delete existing.cloudConfirmationPending;
-      delete existing.cloudWriteAttempted;
-      delete existing.cloudWriteSentAt;
-      delete existing.cloudConfirmationCode;
-      delete existing.cloudConfirmationMessage;
       if (base.relatedId) existing.relatedId = base.relatedId;
       if (base.sourceModule) existing.sourceModule = base.sourceModule;
       syncSessionChangeQueueGlobal();
@@ -3126,13 +2931,10 @@ Notas importantes:
     }
 
     sessionChangeSequence += 1;
-    const changeId = generateId('sessionChange');
     const change = {
-      id: changeId,
+      id: generateId('sessionChange'),
       idInterno: `session-${String(sessionChangeSequence).padStart(4, '0')}`,
       ...base,
-      revision: 1,
-      cloudOperationToken: `${changeId}::r1`,
       createdAt: timestamp,
       updatedAt: timestamp
     };
@@ -3165,24 +2967,13 @@ Notas importantes:
     else if (action === 'annulled') registerSessionChange({ module: 'Gastos', operation: 'anular', recordId: result.gasto.id, sourceModule: 'Ventas / OC' });
   }
 
-  let sessionSaveInFlightPromise = null;
-
-  async function performSessionSavePreview(button = null) {
+  async function handleSessionSavePreview(button = null) {
     if (button) button.disabled = true;
     const pending = getPendingSessionChanges();
-    const metadataWasPending = hasPendingSessionMetadata();
-    const attemptAt = nowIso();
-    if (!pending.length && !metadataWasPending) {
+    if (!pending.length) {
       configState.message = SESSION_SAVE_MESSAGES.noChanges;
       configState.messageType = 'info';
       cloudOperationState.message = SESSION_SAVE_MESSAGES.noChanges;
-      updateSessionSaveDiagnosticState({
-        lastAttemptAt: attemptAt,
-        attemptStatus: SESSION_SAVE_RESULT_STATUS.idle,
-        confirmationPending: false,
-        metadataPending: false,
-        errorCode: ''
-      });
       renderRoute({ preserveScroll: true });
       return { ok: true, count: 0, message: SESSION_SAVE_MESSAGES.noChanges };
     }
@@ -3192,14 +2983,6 @@ Notas importantes:
       configState.messageType = 'error';
       cloudOperationState.lastError = SESSION_SAVE_MESSAGES.firestoreUnavailable;
       cloudOperationState.message = SESSION_SAVE_MESSAGES.firestoreUnavailable;
-      updateSessionSaveDiagnosticState({
-        lastAttemptAt: attemptAt,
-        attemptStatus: SESSION_SAVE_RESULT_STATUS.failed,
-        lastRealError: SESSION_SAVE_MESSAGES.firestoreUnavailable,
-        confirmationPending: pending.some((item) => item?.cloudConfirmationPending === true),
-        metadataPending: metadataWasPending,
-        errorCode: 'cloud/firestore-unavailable'
-      });
       renderRoute({ preserveScroll: true });
       return { ok: false, count: pending.length, message: SESSION_SAVE_MESSAGES.firestoreUnavailable };
     }
@@ -3212,116 +2995,50 @@ Notas importantes:
     try {
       const result = await KSAFirebaseAdapter.saveSessionChangesToCloud(pending);
       const confirmedChanges = Array.isArray(result?.confirmedChanges) ? result.confirmedChanges : [];
-      const pendingConfirmationChanges = Array.isArray(result?.pendingConfirmationChanges) ? result.pendingConfirmationChanges : [];
       if (confirmedChanges.length) {
         confirmFacturasCleanupCloudChanges(confirmedChanges.filter((change) => isFacturasCleanupSessionChange(change)));
         clearConfirmedSessionChanges(confirmedChanges);
       }
-      if (pendingConfirmationChanges.length) {
-        markSessionChangesPendingConfirmation(pendingConfirmationChanges, {
-          sentAt: result?.writeSentAt || '',
-          writeAttempted: result?.writeAttempted !== false,
-          code: result?.code,
-          message: result?.message
-        });
-      }
 
+      const message = cleanText(result?.message) || (result?.ok ? SESSION_SAVE_MESSAGES.success : SESSION_SAVE_MESSAGES.failure);
       const cleanupOnlyFailure = result?.code === 'cloud/facturas-cleanup-failed';
       const cleanupPendingAfterOperationalSuccess = result?.code === 'cloud/session-write-ok-cleanup-pending';
       const unavailable = result?.code === 'firebase/unavailable' || result?.code === 'cloud/firestore-unavailable';
-      const confirmationPending = result?.confirmationPending === true || result?.code === 'cloud/session-confirmation-pending' || result?.code === 'cloud/offline-pending';
-      const metadataPending = result?.metadataPending === true || result?.code === 'cloud/session-metadata-pending';
       const operationalFailure = result?.operationalFailed === true || result?.code === 'cloud/session-operational-failed';
-      const dataConfirmed = confirmedChanges.length > 0 || result?.dataConfirmed === true;
 
-      let message = cleanText(result?.message) || (result?.ok ? SESSION_SAVE_MESSAGES.success : SESSION_SAVE_MESSAGES.failure);
-      if (unavailable) message = SESSION_SAVE_MESSAGES.firestoreUnavailable;
-      else if (operationalFailure) message = SESSION_SAVE_MESSAGES.failure;
-      else if (result?.code === 'cloud/offline-pending') message = SESSION_SAVE_MESSAGES.offlinePending;
-      else if (confirmationPending) message = SESSION_SAVE_MESSAGES.confirmationPending;
-      else if (metadataPending) message = SESSION_SAVE_MESSAGES.metadataPending;
-      else if (cleanupPendingAfterOperationalSuccess) message = SESSION_SAVE_MESSAGES.partialCleanupPending;
-      else if (cleanupOnlyFailure) message = SESSION_SAVE_MESSAGES.cleanupFailure;
+      configState.message = unavailable
+        ? SESSION_SAVE_MESSAGES.firestoreUnavailable
+        : (cleanupPendingAfterOperationalSuccess
+          ? SESSION_SAVE_MESSAGES.partialCleanupPending
+          : (cleanupOnlyFailure
+            ? SESSION_SAVE_MESSAGES.cleanupFailure
+            : (operationalFailure ? SESSION_SAVE_MESSAGES.failure : message)));
+      configState.messageType = (result?.ok || cleanupPendingAfterOperationalSuccess) ? 'success' : 'error';
 
-      configState.message = message;
-      configState.messageType = (operationalFailure || unavailable || cleanupOnlyFailure) ? 'error' : (confirmationPending || metadataPending ? 'info' : 'success');
-
-      if (dataConfirmed || result?.cloudActive === true) {
+      if (result?.ok || confirmedChanges.length) {
         cloudOperationState.active = true;
-      }
-      if (dataConfirmed) {
         cloudOperationState.lastSyncAt = result?.lastSyncAt || cloudOperationState.lastSyncAt || nowIso();
         cloudOperationState.lastCloudWriteAt = result?.lastCloudWriteAt || result?.lastSyncAt || cloudOperationState.lastCloudWriteAt || nowIso();
       }
-      const realError = cleanText(result?.lastRealError || (operationalFailure || unavailable || cleanupOnlyFailure ? result?.lastError : ''));
-      cloudOperationState.lastError = realError;
-      cloudOperationState.confirmationPending = confirmationPending;
-      cloudOperationState.metadataPending = metadataPending;
-      cloudOperationState.lastSaveAttemptAt = attemptAt;
-      cloudOperationState.lastSaveStatus = operationalFailure || unavailable || cleanupOnlyFailure
-        ? SESSION_SAVE_RESULT_STATUS.failed
-        : (confirmationPending
-          ? SESSION_SAVE_RESULT_STATUS.pending
-          : (metadataPending ? SESSION_SAVE_RESULT_STATUS.metadataPending : SESSION_SAVE_RESULT_STATUS.confirmed));
-      cloudOperationState.lastSaveErrorCode = (operationalFailure || unavailable || cleanupOnlyFailure || confirmationPending || metadataPending)
-        ? cleanText(result?.errorCode || result?.code || '')
-        : '';
+      cloudOperationState.lastError = cleanText(result?.lastError || '');
+      if (!cloudOperationState.lastError && !result?.ok && !cleanupOnlyFailure) {
+        cloudOperationState.lastError = configState.message;
+      }
       cloudOperationState.message = configState.message;
-
-      const status = cloudOperationState.lastSaveStatus;
-      updateSessionSaveDiagnosticState({
-        lastConfirmedWriteAt: dataConfirmed
-          ? (result?.lastCloudWriteAt || result?.lastSyncAt || cloudOperationState.lastCloudWriteAt || nowIso())
-          : sessionSaveDiagnosticState.lastConfirmedWriteAt,
-        lastAttemptAt: attemptAt,
-        attemptStatus: status,
-        lastRealError: realError,
-        confirmationPending,
-        metadataPending,
-        errorCode: cloudOperationState.lastSaveErrorCode
-      });
 
       renderRoute({ preserveScroll: true });
       return result;
     } catch (error) {
       const message = SESSION_SAVE_MESSAGES.failure;
-      const code = cleanText(error?.code || 'firebase/firestore-error');
-      const realError = cleanText(error?.message || message);
       configState.message = message;
       configState.messageType = 'error';
-      cloudOperationState.lastError = realError;
+      cloudOperationState.lastError = cleanText(error?.message || message);
       cloudOperationState.message = message;
-      cloudOperationState.confirmationPending = pending.some((item) => item?.cloudConfirmationPending === true);
-      cloudOperationState.metadataPending = hasPendingSessionMetadata();
-      cloudOperationState.lastSaveAttemptAt = attemptAt;
-      cloudOperationState.lastSaveStatus = SESSION_SAVE_RESULT_STATUS.failed;
-      cloudOperationState.lastSaveErrorCode = code;
-      updateSessionSaveDiagnosticState({
-        lastAttemptAt: attemptAt,
-        attemptStatus: SESSION_SAVE_RESULT_STATUS.failed,
-        lastRealError: realError,
-        confirmationPending: cloudOperationState.confirmationPending,
-        metadataPending: cloudOperationState.metadataPending,
-        errorCode: code
-      });
       renderRoute({ preserveScroll: true });
       return { ok: false, count: pending.length, message, error };
     }
   }
 
-  function handleSessionSavePreview(button = null) {
-    if (sessionSaveInFlightPromise) {
-      if (button) button.disabled = true;
-      return sessionSaveInFlightPromise;
-    }
-    sessionSaveInFlightPromise = Promise.resolve()
-      .then(() => performSessionSavePreview(button))
-      .finally(() => {
-        sessionSaveInFlightPromise = null;
-        if (button?.isConnected) button.disabled = false;
-      });
-    return sessionSaveInFlightPromise;
-  }
 
 
   syncSessionChangeQueueGlobal();
@@ -4637,167 +4354,21 @@ Notas importantes:
   }
 
 
-  const EXCEL_CIERRE_MONTH_ALIASES = Object.freeze({
-    enero: '01',
-    febrero: '02',
-    marzo: '03',
-    abril: '04',
-    mayo: '05',
-    junio: '06',
-    julio: '07',
-    agosto: '08',
-    septiembre: '09',
-    setiembre: '09',
-    octubre: '10',
-    noviembre: '11',
-    diciembre: '12'
-  });
-
-  function normalizeExcelCierrePeriodToken(value) {
-    return cleanText(value)
-      .toLocaleLowerCase('es-NI')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[_/.,]+/g, '-')
-      .replace(/\s+/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '');
-  }
-
-  function parseExcelCierreCanonicalPeriod(value, monthHint = '', yearHint = '') {
-    const normalizeMonth = (monthValue) => {
-      const rawMonth = normalizeExcelCierrePeriodToken(monthValue);
-      if (!rawMonth) return '';
-      if (EXCEL_CIERRE_MONTH_ALIASES[rawMonth]) return EXCEL_CIERRE_MONTH_ALIASES[rawMonth];
-      const numeric = Number.parseInt(rawMonth, 10);
-      return Number.isFinite(numeric) && numeric >= 1 && numeric <= 12 ? String(numeric).padStart(2, '0') : '';
-    };
-    const normalizeYear = (yearValue) => {
-      const rawYear = cleanText(yearValue);
-      return /^\d{4}$/.test(rawYear) ? rawYear : '';
-    };
-
-    const hintedMonth = normalizeMonth(monthHint);
-    const hintedYear = normalizeYear(yearHint);
-    const token = normalizeExcelCierrePeriodToken(value);
-    if (!token) {
-      return hintedMonth && hintedYear ? { periodo: `${hintedYear}-${hintedMonth}`, month: hintedMonth, year: hintedYear } : null;
-    }
-
-    let match = token.match(/^(\d{4})-(\d{1,2})$/);
-    if (match) {
-      const month = normalizeMonth(match[2]);
-      const year = normalizeYear(match[1]);
-      if (month && year) return { periodo: `${year}-${month}`, month, year };
-    }
-
-    match = token.match(/^(\d{1,2})-(\d{4})$/);
-    if (match) {
-      const month = normalizeMonth(match[1]);
-      const year = normalizeYear(match[2]);
-      if (month && year) return { periodo: `${year}-${month}`, month, year };
-    }
-
-    match = token.match(/^([a-z]+)-(\d{4})$/);
-    if (match) {
-      const month = normalizeMonth(match[1]);
-      const year = normalizeYear(match[2]);
-      if (month && year) return { periodo: `${year}-${month}`, month, year };
-    }
-
-    match = token.match(/^(\d{4})-([a-z]+)$/);
-    if (match) {
-      const month = normalizeMonth(match[2]);
-      const year = normalizeYear(match[1]);
-      if (month && year) return { periodo: `${year}-${month}`, month, year };
-    }
-
-    match = token.match(/(?:^|-)(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)-(\d{4})(?:-|$)/);
-    if (match) {
-      const month = normalizeMonth(match[1]);
-      const year = normalizeYear(match[2]);
-      if (month && year) return { periodo: `${year}-${month}`, month, year };
-    }
-
-    match = token.match(/(?:^|-)(\d{4})-(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)(?:-|$)/);
-    if (match) {
-      const month = normalizeMonth(match[2]);
-      const year = normalizeYear(match[1]);
-      if (month && year) return { periodo: `${year}-${month}`, month, year };
-    }
-
-    match = token.match(/(?:^|-)(\d{1,2})-(\d{4})(?:-|$)/);
-    if (match) {
-      const month = normalizeMonth(match[1]);
-      const year = normalizeYear(match[2]);
-      if (month && year) return { periodo: `${year}-${month}`, month, year };
-    }
-
-    return hintedMonth && hintedYear ? { periodo: `${hintedYear}-${hintedMonth}`, month: hintedMonth, year: hintedYear } : null;
-  }
-
-  function resolveExcelCierreCanonicalPeriod(rawInput = {}) {
-    const raw = isPlainObject(rawInput) ? rawInput : { periodo: rawInput };
-    const monthHint = raw.month ?? raw.mes ?? raw.numeroMes ?? raw.monthNumber ?? '';
-    const yearHint = raw.year ?? raw.anio ?? raw.año ?? raw.numeroAnio ?? raw.numeroAño ?? '';
-    const candidates = [
-      raw.periodoCanonico,
-      raw.periodoOriginal,
-      raw.nombreExcelOficial,
-      raw.nombreArchivoExcel,
-      raw.nombreArchivo,
-      raw.archivoExcel,
-      raw.fileName,
-      raw.archivo,
-      raw.periodo,
-      raw.period,
-      raw.periodoKey,
-      raw.clavePeriodo,
-      raw.periodKey,
-      raw.periodoTexto,
-      raw.labelPeriodo,
-      raw.nombrePeriodo,
-      raw.fechaPeriodo
-    ];
-    for (const candidate of candidates) {
-      if (!cleanText(candidate)) continue;
-      const parsed = parseExcelCierreCanonicalPeriod(candidate, monthHint, yearHint);
-      if (parsed) return parsed;
-    }
-    const hinted = parseExcelCierreCanonicalPeriod('', monthHint, yearHint);
-    if (hinted) return hinted;
-    const now = new Date();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const year = String(now.getFullYear());
-    return { periodo: `${year}-${month}`, month, year };
-  }
-
   function normalizeCierreMensualRecord(record) {
     const raw = isPlainObject(record) ? record : {};
     const timestamp = nowIso();
-    const period = resolveExcelCierreCanonicalPeriod(raw);
-    const officialFileName = cleanText(raw.nombreExcelOficial || raw.nombreArchivoExcel || raw.archivoExcel || raw.fileName);
-    const officialSequence = getExcelCierreSequenceFromRecord(raw);
+    const month = /^\d{2}$/.test(String(raw.month || raw.mes || '')) ? String(raw.month || raw.mes) : String(new Date().getMonth() + 1).padStart(2, '0');
+    const year = /^\d{4}$/.test(String(raw.year || raw.anio || raw.año || '')) ? String(raw.year || raw.anio || raw.año) : String(new Date().getFullYear());
+    const periodo = `${year}-${month}`;
     return {
-      ...raw,
-      id: cleanText(raw.id) || `cierre_${period.periodo}`,
-      periodo: period.periodo,
-      month: period.month,
-      year: period.year,
+      id: cleanText(raw.id) || `cierre_${periodo}`,
+      periodo,
+      month,
+      year,
       fechaHoraCierre: cleanText(raw.fechaHoraCierre || raw.closedAt || raw.fechaCierre) || timestamp,
       usuarioRol: cleanText(raw.usuarioRol || raw.rol || 'Administrador'),
-      nombreArchivoExcel: officialFileName,
-      nombreExcelOficial: officialFileName,
+      nombreArchivoExcel: cleanText(raw.nombreArchivoExcel || raw.archivoExcel || raw.fileName),
       exportacionExcelId: cleanText(raw.exportacionExcelId),
-      consecutivo: officialSequence || 0,
-      consecutivoUtilizado: officialSequence || 0,
-      consecutivoCierre: officialSequence || 0,
-      consecutivoOficial: officialSequence || 0,
-      estado: cleanText(raw.estado || 'cerrado'),
-      cerrado: raw.cerrado !== false,
-      cierreOficial: raw.cierreOficial !== false,
-      vinculoOficialVerificado: raw.vinculoOficialVerificado === true || Number(raw.versionVinculoCierre || 0) >= 3,
-      versionVinculoCierre: Number(raw.versionVinculoCierre || 0) || 0,
       modoEdicion: cleanText(raw.modoEdicion || 'advertencia'),
       corteOficialAt: cleanText(raw.corteOficialAt || raw.fechaHoraCierre || raw.closedAt || raw.fechaCierre) || timestamp,
       snapshotCierre: normalizeExcelCierreSnapshotRecord(raw.snapshotCierre || raw.corteOficialSnapshot || raw.snapshotOficial || raw.corteOficial),
@@ -4811,826 +4382,24 @@ Notas importantes:
   function normalizeExcelExportRecord(record) {
     const raw = isPlainObject(record) ? record : {};
     const timestamp = nowIso();
-    const period = resolveExcelCierreCanonicalPeriod(raw);
-    const tipo = ['consulta', 'cierre'].includes(cleanText(raw.tipo || raw.mode || raw.modo).toLowerCase())
-      ? cleanText(raw.tipo || raw.mode || raw.modo).toLowerCase()
-      : 'cierre';
-    const sequence = tipo === 'cierre' ? getExcelCierreSequenceFromRecord(raw) : 0;
-    const ignored = raw.ignoradoParaConsecutivo === true || raw.reservaInvalida === true || ['ignorado', 'sustituido', 'invalido'].includes(cleanText(raw.estadoConsecutivo).toLowerCase());
+    const month = /^\d{2}$/.test(String(raw.month || raw.mes || '')) ? String(raw.month || raw.mes) : String(new Date().getMonth() + 1).padStart(2, '0');
+    const year = /^\d{4}$/.test(String(raw.year || raw.anio || raw.año || '')) ? String(raw.year || raw.anio || raw.año) : String(new Date().getFullYear());
+    const periodo = `${year}-${month}`;
     return {
-      ...raw,
       id: cleanText(raw.id) || generateId('exportExcel'),
-      periodo: period.periodo,
-      month: period.month,
-      year: period.year,
-      tipo,
+      periodo,
+      month,
+      year,
+      tipo: ['consulta', 'cierre'].includes(cleanText(raw.tipo || raw.mode || raw.modo).toLowerCase()) ? cleanText(raw.tipo || raw.mode || raw.modo).toLowerCase() : 'cierre',
       nombreArchivo: cleanText(raw.nombreArchivo || raw.fileName || raw.archivo),
       exportadoAt: cleanText(raw.exportadoAt || raw.fechaExportacion || raw.createdAt) || timestamp,
       corteOficialAt: cleanText(raw.corteOficialAt || raw.fechaCorteOficial || raw.exportadoAt || raw.fechaExportacion || raw.createdAt) || timestamp,
       snapshotCierre: normalizeExcelCierreSnapshotRecord(raw.snapshotCierre || raw.corteOficialSnapshot || raw.snapshotOficial || raw.corteOficial),
       totales: isPlainObject(raw.totales) ? raw.totales : {},
       hojas: Array.isArray(raw.hojas) ? raw.hojas : ['Resumen', 'Ventas', 'Cobros', 'Proveedores', 'Pagos', 'Gastos', 'Catálogos'],
-      consecutivo: sequence || 0,
-      consecutivoUtilizado: sequence || 0,
-      consecutivoOficial: tipo === 'cierre' && raw.cierreOficial === true ? sequence : parseExcelCierreSequenceValue(raw.consecutivoOficial),
-      ignoradoParaConsecutivo: ignored,
-      estadoConsecutivo: ignored ? (cleanText(raw.estadoConsecutivo) || 'ignorado') : cleanText(raw.estadoConsecutivo),
       createdAt: raw.createdAt || timestamp,
       updatedAt: raw.updatedAt || timestamp
     };
-  }
-
-  function parseExcelCierreSequenceValue(value) {
-    const parsed = Number.parseInt(String(value ?? '').trim(), 10);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-  }
-
-  function parseExcelCierreSequenceFromFileName(value) {
-    const fileName = cleanText(value);
-    if (!fileName || /\bconsulta\b/i.test(fileName)) return 0;
-    const match = fileName.match(/^(\d{1,})\s*-\s*/);
-    return match ? parseExcelCierreSequenceValue(match[1]) : 0;
-  }
-
-  function getExcelCierreSequenceFromRecord(record) {
-    const raw = isPlainObject(record) ? record : {};
-    const directCandidates = [
-      raw.consecutivoCierre,
-      raw.consecutivoOficial,
-      raw.consecutivoUtilizado,
-      raw.consecutivo
-    ];
-    for (const value of directCandidates) {
-      const parsed = parseExcelCierreSequenceValue(value);
-      if (parsed) return parsed;
-    }
-    return parseExcelCierreSequenceFromFileName(raw.nombreExcelOficial || raw.nombreArchivoExcel || raw.nombreArchivo || raw.archivoExcel || raw.fileName || raw.archivo);
-  }
-
-  function getNextAvailableExcelCierreSequence(usedSequences, startAt = 1) {
-    const used = usedSequences instanceof Set ? usedSequences : new Set();
-    let candidate = Math.max(1, Number.parseInt(startAt, 10) || 1);
-    while (used.has(candidate)) candidate += 1;
-    return candidate;
-  }
-
-  function getExcelCierreCanonicalExportId(periodo) {
-    const canonical = parseExcelCierreCanonicalPeriod(periodo)?.periodo || cleanText(periodo);
-    return `exportExcel_cierre_${canonical.replace(/[^0-9-]/g, '') || 'periodo'}`;
-  }
-
-  function isExcelCierreRecordIgnored(record) {
-    const raw = isPlainObject(record) ? record : {};
-    return raw.ignoradoParaConsecutivo === true
-      || raw.reservaInvalida === true
-      || ['ignorado', 'sustituido', 'invalido'].includes(cleanText(raw.estadoConsecutivo).toLowerCase());
-  }
-
-  function getExcelCierreRecordTimestamp(record) {
-    return cleanText(record?.exportadoAt || record?.fechaHoraCierre || record?.corteOficialAt || record?.createdAt || record?.updatedAt);
-  }
-
-  function hasLegacyExcelCierreMigrationEvidence(data) {
-    const migrations = isPlainObject(data?.metadata?.migrations) ? data.metadata.migrations : {};
-    return EXCEL_CIERRE_LEGACY_MIGRATION_IDS.some((id) => isPlainObject(migrations[id]));
-  }
-
-  function getTrustedExcelCierreSequence(record) {
-    const raw = isPlainObject(record) ? record : {};
-    if (raw.vinculoOficialVerificado !== true && Number(raw.versionVinculoCierre || 0) < 3) return 0;
-    const immutableSequence = parseExcelCierreSequenceValue(raw.consecutivoCierre);
-    const immutableNameSequence = parseExcelCierreSequenceFromFileName(raw.nombreExcelOficial);
-    if (immutableSequence && immutableNameSequence && immutableSequence === immutableNameSequence) return immutableSequence;
-    return 0;
-  }
-
-  function getExcelCierreClosureSignature(recordInput) {
-    const record = isPlainObject(recordInput) ? recordInput : {};
-    return JSON.stringify({
-      periodo: resolveExcelCierreCanonicalPeriod(record).periodo,
-      consecutivo: getExcelCierreSequenceFromRecord(record),
-      nombreArchivoExcel: cleanText(record.nombreExcelOficial || record.nombreArchivoExcel),
-      exportacionExcelId: cleanText(record.exportacionExcelId),
-      fechaHoraCierre: cleanText(record.fechaHoraCierre || record.closedAt || record.fechaCierre),
-      corteOficialAt: cleanText(record.corteOficialAt || record.fechaHoraCierre || record.closedAt || record.fechaCierre),
-      cerrado: record.cerrado !== false,
-      cierreOficial: record.cierreOficial !== false,
-      vinculoOficialVerificado: record.vinculoOficialVerificado === true,
-      versionVinculoCierre: Number(record.versionVinculoCierre || 0)
-    });
-  }
-
-  function getExcelCierreExportSignature(recordInput) {
-    const record = isPlainObject(recordInput) ? recordInput : {};
-    return JSON.stringify({
-      id: cleanText(record.id),
-      periodo: resolveExcelCierreCanonicalPeriod(record).periodo,
-      tipo: cleanText(record.tipo || record.mode || record.modo).toLowerCase() || 'cierre',
-      nombreArchivo: cleanText(record.nombreArchivo || record.nombreExcelOficial || record.fileName || record.archivo),
-      consecutivo: getExcelCierreSequenceFromRecord(record),
-      consecutivoOficial: parseExcelCierreSequenceValue(record.consecutivoOficial),
-      reservaOficial: record.reservaOficial === true,
-      cierreOficial: record.cierreOficial === true,
-      ignoradoParaConsecutivo: isExcelCierreRecordIgnored(record),
-      estadoConsecutivo: cleanText(record.estadoConsecutivo),
-      cierreMensualId: cleanText(record.cierreMensualId),
-      sustituidoPorExportacionId: cleanText(record.sustituidoPorExportacionId),
-      fechaHoraCierre: cleanText(record.fechaHoraCierre),
-      corteOficialAt: cleanText(record.corteOficialAt)
-    });
-  }
-
-  function getExcelCierreEvidenceScore(recordInput, exportsForPeriod = []) {
-    const record = isPlainObject(recordInput) ? recordInput : {};
-    const period = resolveExcelCierreCanonicalPeriod(record).periodo;
-    const sequence = getExcelCierreSequenceFromRecord(record);
-    const fileName = cleanText(record.nombreExcelOficial || record.nombreArchivoExcel || record.archivoExcel || record.fileName);
-    const fileSequence = parseExcelCierreSequenceFromFileName(fileName);
-    const filePeriod = fileName ? parseExcelCierreCanonicalPeriod(fileName)?.periodo : '';
-    const verified = record.vinculoOficialVerificado === true || Number(record.versionVinculoCierre || 0) >= 3;
-    const official = record.cierreOficial !== false && record.cerrado !== false && cleanText(record.estado || 'cerrado').toLowerCase() !== 'abierto';
-    const consistent = Boolean(sequence && fileSequence === sequence && (!filePeriod || filePeriod === period));
-    const linkedExport = (Array.isArray(exportsForPeriod) ? exportsForPeriod : []).some((item) => {
-      if (!isPlainObject(item) || isExcelCierreRecordIgnored(item)) return false;
-      const itemSequence = getExcelCierreSequenceFromRecord(item);
-      const linkedById = cleanText(record.exportacionExcelId) && cleanText(item.id) === cleanText(record.exportacionExcelId);
-      const linkedByClosure = cleanText(item.cierreMensualId) && cleanText(item.cierreMensualId) === cleanText(record.id);
-      const sameOfficialEvidence = item.cierreOficial === true && itemSequence === sequence && cleanText(item.nombreArchivo) === fileName;
-      return linkedById || linkedByClosure || sameOfficialEvidence;
-    });
-    let score = 0;
-    if (official && verified && consistent && linkedExport) score = 700;
-    else if (official && verified && consistent) score = 650;
-    else if (official && consistent && linkedExport) score = 600;
-    else if (official && consistent) score = 550;
-    else if (official && sequence) score = 450;
-    else if (linkedExport && sequence) score = 350;
-    else if (sequence) score = 250;
-    else score = 100;
-    if (period === '2026-05' && sequence === 1 && consistent) score += 120;
-    return score;
-  }
-
-  function getExcelCierreExportEvidenceScore(recordInput) {
-    const record = isPlainObject(recordInput) ? recordInput : {};
-    if (cleanText(record.tipo).toLowerCase() !== 'cierre') return 100;
-    const period = resolveExcelCierreCanonicalPeriod(record).periodo;
-    const sequence = getExcelCierreSequenceFromRecord(record);
-    const fileName = cleanText(record.nombreArchivo || record.nombreExcelOficial || record.fileName || record.archivo);
-    const fileSequence = parseExcelCierreSequenceFromFileName(fileName);
-    const filePeriod = fileName ? parseExcelCierreCanonicalPeriod(fileName)?.periodo : '';
-    const consistent = Boolean(sequence && fileSequence === sequence && (!filePeriod || filePeriod === period));
-    let score = 0;
-    if (record.cierreOficial === true && consistent && cleanText(record.cierreMensualId)) score = 650;
-    else if (record.cierreOficial === true && consistent) score = 600;
-    else if (record.reservaOficial === true && consistent && !isExcelCierreRecordIgnored(record)) score = 450;
-    else if (consistent && !isExcelCierreRecordIgnored(record)) score = 350;
-    else if (sequence && !isExcelCierreRecordIgnored(record)) score = 250;
-    else score = 50;
-    if (period === '2026-05' && sequence === 1 && consistent) score += 120;
-    return score;
-  }
-
-  function compareExcelCierreSourceCandidates(a, b, exportsByPeriod, pendingClosurePeriods) {
-    const period = resolveExcelCierreCanonicalPeriod(a.record).periodo;
-    const exportsForPeriod = exportsByPeriod.get(period) || [];
-    const aPending = a.source === 'local' && pendingClosurePeriods.has(period);
-    const bPending = b.source === 'local' && pendingClosurePeriods.has(period);
-    if (aPending !== bPending) return aPending ? -1 : 1;
-    const aScore = getExcelCierreEvidenceScore(a.record, exportsForPeriod);
-    const bScore = getExcelCierreEvidenceScore(b.record, exportsForPeriod);
-    if (aScore !== bScore) return bScore - aScore;
-
-    const aSequence = getExcelCierreSequenceFromRecord(a.record);
-    const bSequence = getExcelCierreSequenceFromRecord(b.record);
-    if (period === '2026-05' && aSequence !== bSequence) {
-      if (aSequence === 1) return -1;
-      if (bSequence === 1) return 1;
-    }
-
-    const aUpdated = cleanText(a.record.updatedAt || a.record.fechaHoraCierre || a.record.createdAt);
-    const bUpdated = cleanText(b.record.updatedAt || b.record.fechaHoraCierre || b.record.createdAt);
-    if (aUpdated !== bUpdated) return bUpdated.localeCompare(aUpdated);
-    if (a.source !== b.source) return a.source === 'local' ? -1 : 1;
-    if (aSequence !== bSequence) return (aSequence || Number.MAX_SAFE_INTEGER) - (bSequence || Number.MAX_SAFE_INTEGER);
-    return cleanText(a.record.id).localeCompare(cleanText(b.record.id));
-  }
-
-  function mergeExcelCierreDataSources(localInput, remoteInput, options = {}) {
-    const opts = isPlainObject(options) ? options : {};
-    const rawRemote = isPlainObject(remoteInput) ? remoteInput : createInitialData();
-    const local = normalizeData(localInput || createInitialData());
-    const remote = normalizeData(rawRemote);
-    const pendingChanges = Array.isArray(opts.pendingChanges) ? opts.pendingChanges : getPendingSessionChanges();
-    const pendingClosurePeriods = new Set();
-    const pendingExportIds = new Set();
-    pendingChanges.forEach((change) => {
-      const moduleKey = normalizeSessionChangeClassifierValue(change?.module || change?.modulo);
-      const recordId = cleanText(change?.recordId || change?.idRegistro || change?.id);
-      if (!recordId) return;
-      if (moduleKey === 'cierresmensuales' || moduleKey === 'cierremensual' || moduleKey === 'cierres') pendingClosurePeriods.add(recordId);
-      if (moduleKey === 'exportacionesexcel' || moduleKey === 'exportacionexcel' || moduleKey === 'excelcierre' || moduleKey === 'excelconsulta') pendingExportIds.add(recordId);
-    });
-
-    const combinedCierreExports = [
-      ...(Array.isArray(remote.exportacionesExcel) ? remote.exportacionesExcel : []),
-      ...(Array.isArray(local.exportacionesExcel) ? local.exportacionesExcel : [])
-    ].filter((record) => cleanText(record?.tipo).toLowerCase() === 'cierre');
-    const exportsByPeriod = new Map();
-    combinedCierreExports.forEach((record) => {
-      const period = resolveExcelCierreCanonicalPeriod(record).periodo;
-      if (!exportsByPeriod.has(period)) exportsByPeriod.set(period, []);
-      exportsByPeriod.get(period).push(record);
-    });
-
-    const closureCandidatesByPeriod = new Map();
-    const addClosureCandidates = (records, source) => {
-      (Array.isArray(records) ? records : []).forEach((record) => {
-        const normalized = normalizeCierreMensualRecord(record);
-        const period = cleanText(normalized.periodo);
-        if (!period) return;
-        if (!closureCandidatesByPeriod.has(period)) closureCandidatesByPeriod.set(period, []);
-        closureCandidatesByPeriod.get(period).push({ record: normalized, source });
-      });
-    };
-    addClosureCandidates(remote.cierresMensuales, 'remote');
-    addClosureCandidates(local.cierresMensuales, 'local');
-
-    const selectedClosures = [];
-    closureCandidatesByPeriod.forEach((candidates) => {
-      const sorted = candidates.slice().sort((a, b) => compareExcelCierreSourceCandidates(a, b, exportsByPeriod, pendingClosurePeriods));
-      if (sorted[0]?.record) selectedClosures.push(sorted[0].record);
-    });
-
-    const mergedExportsById = new Map();
-    const mergeExportRecord = (recordInput, source) => {
-      const record = normalizeExcelExportRecord(recordInput);
-      const id = cleanText(record.id) || `${record.tipo}:${record.periodo}:${record.nombreArchivo}`;
-      const current = mergedExportsById.get(id);
-      if (!current) {
-        mergedExportsById.set(id, { record, source });
-        return;
-      }
-      const localPending = source === 'local' && pendingExportIds.has(id);
-      const currentPending = current.source === 'local' && pendingExportIds.has(id);
-      if (localPending !== currentPending) {
-        if (localPending) mergedExportsById.set(id, { record, source });
-        return;
-      }
-      const score = getExcelCierreExportEvidenceScore(record);
-      const currentScore = getExcelCierreExportEvidenceScore(current.record);
-      const updatedAt = cleanText(record.updatedAt || record.exportadoAt || record.createdAt);
-      const currentUpdatedAt = cleanText(current.record.updatedAt || current.record.exportadoAt || current.record.createdAt);
-      if (score > currentScore || (score === currentScore && updatedAt > currentUpdatedAt) || (score === currentScore && updatedAt === currentUpdatedAt && source === 'local')) {
-        mergedExportsById.set(id, { record, source });
-      }
-    };
-
-    (Array.isArray(remote.exportacionesExcel) ? remote.exportacionesExcel : []).forEach((record) => mergeExportRecord(record, 'remote'));
-    (Array.isArray(local.exportacionesExcel) ? local.exportacionesExcel : []).forEach((record) => {
-      const normalized = normalizeExcelExportRecord(record);
-      if (normalized.tipo === 'cierre' || pendingExportIds.has(cleanText(normalized.id))) mergeExportRecord(normalized, 'local');
-    });
-
-    const merged = {
-      ...remote,
-      cierresMensuales: selectedClosures,
-      exportacionesExcel: Array.from(mergedExportsById.values()).map((item) => item.record),
-      metadata: {
-        ...(isPlainObject(remote.metadata) ? remote.metadata : {}),
-        migrations: {
-          ...(isPlainObject(remote.metadata?.migrations) ? remote.metadata.migrations : {}),
-          ...(isPlainObject(local.metadata?.migrations) ? local.metadata.migrations : {})
-        }
-      }
-    };
-
-    const reconciliation = reconcileExcelCierreRecords(merged);
-    const finalData = reconciliation.data;
-    const remoteClosuresByPeriod = new Map();
-    (Array.isArray(rawRemote.cierresMensuales) ? rawRemote.cierresMensuales : []).forEach((record) => {
-      const period = resolveExcelCierreCanonicalPeriod(record).periodo;
-      if (!period) return;
-      if (!remoteClosuresByPeriod.has(period)) remoteClosuresByPeriod.set(period, []);
-      remoteClosuresByPeriod.get(period).push(record);
-    });
-    const remoteExportsById = new Map();
-    (Array.isArray(rawRemote.exportacionesExcel) ? rawRemote.exportacionesExcel : []).forEach((record) => {
-      const id = cleanText(record?.id);
-      if (!id) return;
-      if (!remoteExportsById.has(id)) remoteExportsById.set(id, []);
-      remoteExportsById.get(id).push(record);
-    });
-    const pendingCloudClosurePeriods = [];
-    const pendingCloudReservationPeriods = [];
-    const pendingCloudExportIds = [];
-
-    (Array.isArray(finalData.cierresMensuales) ? finalData.cierresMensuales : []).forEach((record) => {
-      const remoteRecords = remoteClosuresByPeriod.get(cleanText(record.periodo)) || [];
-      const finalSignature = getExcelCierreClosureSignature(record);
-      const remoteAlreadyMatches = remoteRecords.some((remoteRecord) => getExcelCierreClosureSignature(remoteRecord) === finalSignature);
-      if (!remoteAlreadyMatches) pendingCloudClosurePeriods.push(cleanText(record.periodo));
-    });
-
-    (Array.isArray(finalData.exportacionesExcel) ? finalData.exportacionesExcel : [])
-      .filter((record) => cleanText(record.tipo).toLowerCase() === 'cierre')
-      .forEach((record) => {
-        const remoteRecords = remoteExportsById.get(cleanText(record.id)) || [];
-        const finalSignature = getExcelCierreExportSignature(record);
-        const remoteAlreadyMatches = remoteRecords.some((remoteRecord) => getExcelCierreExportSignature(remoteRecord) === finalSignature);
-        if (!remoteAlreadyMatches) {
-          pendingCloudExportIds.push(cleanText(record.id));
-          if (record.reservaOficial === true && !isExcelCierreRecordIgnored(record)) pendingCloudReservationPeriods.push(cleanText(record.periodo));
-        }
-      });
-
-    if (pendingCloudClosurePeriods.length || pendingCloudReservationPeriods.length || pendingCloudExportIds.length || reconciliation.changed) {
-      const timestamp = nowIso();
-      const metadata = isPlainObject(finalData.metadata) ? finalData.metadata : {};
-      const migrations = isPlainObject(metadata.migrations) ? metadata.migrations : {};
-      const previous = isPlainObject(migrations[EXCEL_CIERRE_RECONCILIATION_MIGRATION_ID]) ? migrations[EXCEL_CIERRE_RECONCILIATION_MIGRATION_ID] : {};
-      finalData.metadata = {
-        ...metadata,
-        migrations: {
-          ...migrations,
-          [EXCEL_CIERRE_RECONCILIATION_MIGRATION_ID]: {
-            ...previous,
-            version: 4,
-            appliedAt: previous.appliedAt || timestamp,
-            lastVerifiedAt: timestamp,
-            sourceReconciliation: 'local_firestore_priority',
-            pendingCloudClosurePeriods: Array.from(new Set([...(previous.pendingCloudClosurePeriods || []), ...pendingCloudClosurePeriods, ...(reconciliation.repairedClosurePeriods || [])])),
-            pendingCloudReservationPeriods: Array.from(new Set([...(previous.pendingCloudReservationPeriods || []), ...pendingCloudReservationPeriods, ...(reconciliation.repairedReservationPeriods || [])])),
-            pendingCloudExportIds: Array.from(new Set([...(previous.pendingCloudExportIds || []), ...pendingCloudExportIds, ...(reconciliation.updatedExportIds || [])])),
-            pendingCloudDeleteExportIds: []
-          }
-        },
-        excelCierreFirebaseReconciledAt: timestamp,
-        updatedAt: timestamp
-      };
-    }
-
-    return {
-      ...reconciliation,
-      data: finalData,
-      pendingCloudClosurePeriods: Array.from(new Set(pendingCloudClosurePeriods)),
-      pendingCloudReservationPeriods: Array.from(new Set(pendingCloudReservationPeriods)),
-      pendingCloudExportIds: Array.from(new Set(pendingCloudExportIds))
-    };
-  }
-
-  function selectOfficialExcelCierreSequence(cierre, exportsForPeriod, context = {}) {
-    const usedOfficialSequences = context.usedOfficialSequences instanceof Set ? context.usedOfficialSequences : new Set();
-    const isAuthoritativeMayFirstClosure = cleanText(cierre?.periodo) === '2026-05'
-      && context.isFirstChronologicalClosure === true
-      && context.hasEarlierClosure !== true
-      && !usedOfficialSequences.has(1);
-    if (isAuthoritativeMayFirstClosure) return 1;
-    const trusted = getTrustedExcelCierreSequence(cierre);
-    if (trusted && !usedOfficialSequences.has(trusted)) return trusted;
-
-    const exportCandidates = (Array.isArray(exportsForPeriod) ? exportsForPeriod : [])
-      .filter((record) => !isExcelCierreRecordIgnored(record))
-      .map((record) => ({ record, sequence: getExcelCierreSequenceFromRecord(record) }))
-      .filter((item) => item.sequence > 0)
-      .sort((a, b) => getExcelCierreRecordTimestamp(a.record).localeCompare(getExcelCierreRecordTimestamp(b.record)) || cleanText(a.record.id).localeCompare(cleanText(b.record.id)));
-    const distinctExportSequences = Array.from(new Set(exportCandidates.map((item) => item.sequence)));
-
-    if (distinctExportSequences.length > 1) {
-      const lowestAvailable = distinctExportSequences.slice().sort((a, b) => a - b).find((sequence) => !usedOfficialSequences.has(sequence));
-      if (lowestAvailable) return lowestAvailable;
-    }
-
-    const closureSequence = getExcelCierreSequenceFromRecord(cierre);
-    const closureNameSequence = parseExcelCierreSequenceFromFileName(cierre.nombreExcelOficial || cierre.nombreArchivoExcel);
-    if (closureSequence && closureNameSequence && closureSequence !== closureNameSequence) {
-      const lowestConsistentCandidate = [closureSequence, closureNameSequence]
-        .sort((a, b) => a - b)
-        .find((sequence) => !usedOfficialSequences.has(sequence));
-      if (lowestConsistentCandidate) return lowestConsistentCandidate;
-    }
-    if (closureSequence && !usedOfficialSequences.has(closureSequence)) {
-      const isLegacyMayInflation = cleanText(cierre.periodo) === '2026-05'
-        && closureSequence === 3
-        && context.isFirstChronologicalClosure === true
-        && context.hasEarlierClosure !== true
-        && context.hasSequenceOneClosure !== true
-        && context.hasLegacyMigrationEvidence === true;
-      if (!isLegacyMayInflation) return closureSequence;
-    }
-
-    const isRecoverableLegacyMay = cleanText(cierre.periodo) === '2026-05'
-      && getExcelCierreSequenceFromRecord(cierre) === 3
-      && context.isFirstChronologicalClosure === true
-      && context.hasEarlierClosure !== true
-      && context.hasSequenceOneClosure !== true
-      && context.hasLegacyMigrationEvidence === true
-      && !usedOfficialSequences.has(1);
-    if (isRecoverableLegacyMay) return 1;
-
-    const linked = exportCandidates.find((item) => cleanText(item.record.id) === cleanText(cierre.exportacionExcelId) && !usedOfficialSequences.has(item.sequence));
-    if (linked) return linked.sequence;
-    const firstAvailable = exportCandidates.find((item) => !usedOfficialSequences.has(item.sequence));
-    if (firstAvailable) return firstAvailable.sequence;
-
-    return getNextAvailableExcelCierreSequence(usedOfficialSequences, 1);
-  }
-
-  function reconcileExcelCierreRecords(dataInput, options = {}) {
-    const opts = isPlainObject(options) ? options : {};
-    const data = isPlainObject(dataInput) ? dataInput : createInitialData();
-    const timestamp = cleanText(opts.timestamp) || nowIso();
-    const originalClosures = Array.isArray(data.cierresMensuales) ? data.cierresMensuales : [];
-    const originalExports = Array.isArray(data.exportacionesExcel) ? data.exportacionesExcel : [];
-    const repairedClosurePeriods = [];
-    const repairedReservationPeriods = [];
-    const updatedExportIds = [];
-    let changed = false;
-
-    const normalizedExports = originalExports
-      .filter((record) => !isCloudDeletedRecord(record))
-      .map((record) => normalizeExcelExportRecord(record));
-    const nonCierreExports = normalizedExports.filter((record) => record.tipo !== 'cierre');
-    const cierreExportsByPeriod = new Map();
-    normalizedExports.filter((record) => record.tipo === 'cierre').forEach((record) => {
-      const period = resolveExcelCierreCanonicalPeriod(record).periodo;
-      if (!cierreExportsByPeriod.has(period)) cierreExportsByPeriod.set(period, []);
-      cierreExportsByPeriod.get(period).push(record);
-    });
-
-    const closureByPeriod = new Map();
-    originalClosures
-      .map((record) => normalizeCierreMensualRecord(record))
-      .sort((a, b) => getExcelCierreRecordTimestamp(a).localeCompare(getExcelCierreRecordTimestamp(b)) || cleanText(a.periodo).localeCompare(cleanText(b.periodo)))
-      .forEach((record) => {
-        const current = closureByPeriod.get(record.periodo);
-        if (!current) {
-          closureByPeriod.set(record.periodo, record);
-          return;
-        }
-        const exportsForPeriod = cierreExportsByPeriod.get(record.periodo) || [];
-        const currentScore = getExcelCierreEvidenceScore(current, exportsForPeriod);
-        const recordScore = getExcelCierreEvidenceScore(record, exportsForPeriod);
-        const currentSequence = getExcelCierreSequenceFromRecord(current);
-        const recordSequence = getExcelCierreSequenceFromRecord(record);
-        const shouldPreferMayOne = record.periodo === '2026-05' && recordSequence === 1 && currentSequence !== 1;
-        const shouldReplace = shouldPreferMayOne
-          || recordScore > currentScore
-          || (recordScore === currentScore && cleanText(record.updatedAt) > cleanText(current.updatedAt))
-          || (recordScore === currentScore && cleanText(record.updatedAt) === cleanText(current.updatedAt) && recordSequence > 0 && (!currentSequence || recordSequence < currentSequence));
-        if (shouldReplace) closureByPeriod.set(record.periodo, record);
-        changed = true;
-        repairedClosurePeriods.push(record.periodo);
-      });
-
-    const closuresChronological = Array.from(closureByPeriod.values())
-      .sort((a, b) => getExcelCierreRecordTimestamp(a).localeCompare(getExcelCierreRecordTimestamp(b)) || cleanText(a.periodo).localeCompare(cleanText(b.periodo)));
-    const usedOfficialSequences = new Set();
-    const existingClosureSequences = closuresChronological.map((record) => getExcelCierreSequenceFromRecord(record)).filter(Boolean);
-    const hasSequenceOneClosure = existingClosureSequences.includes(1);
-    const hasLegacyMigrationEvidence = hasLegacyExcelCierreMigrationEvidence(data);
-    const reconciledClosures = [];
-    const canonicalCierreExports = [];
-    const historicalCierreExports = [];
-
-    closuresChronological.forEach((record, index) => {
-      const group = (cierreExportsByPeriod.get(record.periodo) || [])
-        .slice()
-        .sort((a, b) => getExcelCierreRecordTimestamp(a).localeCompare(getExcelCierreRecordTimestamp(b)) || cleanText(a.id).localeCompare(cleanText(b.id)));
-      const sequence = selectOfficialExcelCierreSequence(record, group, {
-        usedOfficialSequences,
-        isFirstChronologicalClosure: index === 0,
-        hasEarlierClosure: index > 0,
-        hasSequenceOneClosure,
-        hasLegacyMigrationEvidence
-      });
-      usedOfficialSequences.add(sequence);
-      const officialFileName = buildExcelCierreFileName(record.month, record.year, sequence);
-      const linkedId = cleanText(record.exportacionExcelId);
-      let canonical = group.find((item) => cleanText(item.id) === linkedId && getExcelCierreSequenceFromRecord(item) === sequence && !isExcelCierreRecordIgnored(item))
-        || group.find((item) => getExcelCierreSequenceFromRecord(item) === sequence && !isExcelCierreRecordIgnored(item))
-        || group.find((item) => cleanText(item.id) === linkedId)
-        || group[0]
-        || null;
-      const canonicalId = cleanText(canonical?.id) || getExcelCierreCanonicalExportId(record.periodo);
-      const closureNeedsRepair = getExcelCierreSequenceFromRecord(record) !== sequence
-        || cleanText(record.nombreArchivoExcel) !== officialFileName
-        || cleanText(record.nombreExcelOficial) !== officialFileName
-        || cleanText(record.exportacionExcelId) !== canonicalId
-        || record.cerrado !== true
-        || record.cierreOficial !== true;
-      const cierre = normalizeCierreMensualRecord({
-        ...record,
-        id: cleanText(record.id) || `cierre_${record.periodo}`,
-        consecutivo: sequence,
-        consecutivoUtilizado: sequence,
-        consecutivoCierre: sequence,
-        consecutivoOficial: sequence,
-        nombreArchivoExcel: officialFileName,
-        nombreExcelOficial: officialFileName,
-        exportacionExcelId: canonicalId,
-        estado: 'cerrado',
-        cerrado: true,
-        cierreOficial: true,
-        vinculoOficialVerificado: true,
-        versionVinculoCierre: 3,
-        updatedAt: closureNeedsRepair ? timestamp : record.updatedAt
-      });
-      if (closureNeedsRepair) {
-        changed = true;
-        repairedClosurePeriods.push(cierre.periodo);
-      }
-
-      const canonicalNeedsRepair = !canonical
-        || getExcelCierreSequenceFromRecord(canonical) !== sequence
-        || cleanText(canonical.nombreArchivo) !== officialFileName
-        || canonical.cierreOficial !== true
-        || canonical.reservaOficial === true
-        || isExcelCierreRecordIgnored(canonical)
-        || cleanText(canonical.cierreMensualId) !== cleanText(cierre.id);
-      canonical = normalizeExcelExportRecord({
-        ...(canonical || {}),
-        id: canonicalId,
-        periodo: cierre.periodo,
-        month: cierre.month,
-        year: cierre.year,
-        tipo: 'cierre',
-        nombreArchivo: officialFileName,
-        consecutivo: sequence,
-        consecutivoUtilizado: sequence,
-        consecutivoOficial: sequence,
-        reservaOficial: false,
-        cierreOficial: true,
-        ignoradoParaConsecutivo: false,
-        reservaInvalida: false,
-        estadoConsecutivo: 'oficial',
-        sustituidoPorExportacionId: '',
-        cierreMensualId: cierre.id,
-        fechaHoraCierre: cierre.fechaHoraCierre,
-        corteOficialAt: cierre.corteOficialAt,
-        snapshotCierre: getExcelCierreSnapshotFromRecord(cierre) || canonical?.snapshotCierre,
-        totales: isPlainObject(cierre.totales) && Object.keys(cierre.totales).length ? cierre.totales : canonical?.totales,
-        exportadoAt: canonical?.exportadoAt || cierre.fechaHoraCierre,
-        updatedAt: canonicalNeedsRepair ? timestamp : canonical?.updatedAt
-      });
-      if (canonicalNeedsRepair) {
-        changed = true;
-        updatedExportIds.push(canonical.id);
-      }
-      canonicalCierreExports.push(canonical);
-
-      group.forEach((item) => {
-        if (cleanText(item.id) === canonicalId) return;
-        const alreadyIgnored = isExcelCierreRecordIgnored(item)
-          && cleanText(item.sustituidoPorExportacionId) === canonicalId
-          && item.cierreOficial !== true
-          && item.reservaOficial !== true;
-        const historical = normalizeExcelExportRecord({
-          ...item,
-          cierreOficial: false,
-          reservaOficial: false,
-          reservaInvalida: true,
-          ignoradoParaConsecutivo: true,
-          estadoConsecutivo: getExcelCierreSequenceFromRecord(item) === sequence ? 'sustituido' : 'ignorado',
-          sustituidoPorExportacionId: canonicalId,
-          updatedAt: alreadyIgnored ? item.updatedAt : timestamp
-        });
-        historicalCierreExports.push(historical);
-        if (!alreadyIgnored) {
-          changed = true;
-          updatedExportIds.push(historical.id);
-        }
-      });
-      cierreExportsByPeriod.delete(cierre.periodo);
-      reconciledClosures.push(cierre);
-    });
-
-    const officialMax = usedOfficialSequences.size ? Math.max(...usedOfficialSequences) : 0;
-    const validReservationSequences = new Set(usedOfficialSequences);
-    const openGroups = Array.from(cierreExportsByPeriod.entries())
-      .map(([periodo, group]) => ({
-        periodo,
-        group: group.slice().sort((a, b) => getExcelCierreRecordTimestamp(a).localeCompare(getExcelCierreRecordTimestamp(b)) || cleanText(a.id).localeCompare(cleanText(b.id)))
-      }))
-      .sort((a, b) => getExcelCierreRecordTimestamp(a.group[0]).localeCompare(getExcelCierreRecordTimestamp(b.group[0])) || a.periodo.localeCompare(b.periodo));
-
-    openGroups.forEach((entry) => {
-      const validSources = entry.group.filter((item) => !isExcelCierreRecordIgnored(item));
-      let canonicalSource = validSources.find((item) => item.reservaOficial === true && getExcelCierreSequenceFromRecord(item) > 0)
-        || validSources.find((item) => getExcelCierreSequenceFromRecord(item) > 0)
-        || entry.group[0];
-      let sequence = getExcelCierreSequenceFromRecord(canonicalSource);
-      if (!sequence || validReservationSequences.has(sequence)) {
-        sequence = getNextAvailableExcelCierreSequence(validReservationSequences, officialMax + 1);
-      }
-      validReservationSequences.add(sequence);
-      const canonicalId = cleanText(canonicalSource?.id) || getExcelCierreCanonicalExportId(entry.periodo);
-      const period = resolveExcelCierreCanonicalPeriod(canonicalSource || { periodo: entry.periodo });
-      const reservationFileName = buildExcelCierreFileName(period.month, period.year, sequence);
-      const reservationNeedsRepair = getExcelCierreSequenceFromRecord(canonicalSource) !== sequence
-        || cleanText(canonicalSource.nombreArchivo) !== reservationFileName
-        || canonicalSource.reservaOficial !== true
-        || canonicalSource.cierreOficial === true
-        || isExcelCierreRecordIgnored(canonicalSource);
-      const canonical = normalizeExcelExportRecord({
-        ...canonicalSource,
-        id: canonicalId,
-        periodo: period.periodo,
-        month: period.month,
-        year: period.year,
-        tipo: 'cierre',
-        nombreArchivo: reservationFileName,
-        consecutivo: sequence,
-        consecutivoUtilizado: sequence,
-        consecutivoOficial: 0,
-        reservaOficial: true,
-        cierreOficial: false,
-        reservaInvalida: false,
-        ignoradoParaConsecutivo: false,
-        estadoConsecutivo: 'reservado',
-        sustituidoPorExportacionId: '',
-        updatedAt: reservationNeedsRepair ? timestamp : canonicalSource.updatedAt
-      });
-      canonicalCierreExports.push(canonical);
-      if (reservationNeedsRepair) {
-        changed = true;
-        repairedReservationPeriods.push(period.periodo);
-        updatedExportIds.push(canonical.id);
-      }
-
-      entry.group.forEach((item) => {
-        if (cleanText(item.id) === canonicalId) return;
-        const alreadyIgnored = isExcelCierreRecordIgnored(item) && cleanText(item.sustituidoPorExportacionId) === canonicalId;
-        const historical = normalizeExcelExportRecord({
-          ...item,
-          cierreOficial: false,
-          reservaOficial: false,
-          reservaInvalida: true,
-          ignoradoParaConsecutivo: true,
-          estadoConsecutivo: 'sustituido',
-          sustituidoPorExportacionId: canonicalId,
-          updatedAt: alreadyIgnored ? item.updatedAt : timestamp
-        });
-        historicalCierreExports.push(historical);
-        if (!alreadyIgnored) {
-          changed = true;
-          updatedExportIds.push(historical.id);
-        }
-      });
-    });
-
-    data.cierresMensuales = reconciledClosures
-      .sort((a, b) => getExcelCierreRecordTimestamp(b).localeCompare(getExcelCierreRecordTimestamp(a)));
-    data.exportacionesExcel = [...nonCierreExports, ...canonicalCierreExports, ...historicalCierreExports]
-      .sort((a, b) => getExcelCierreRecordTimestamp(b).localeCompare(getExcelCierreRecordTimestamp(a)) || cleanText(b.id).localeCompare(cleanText(a.id)));
-
-    const uniqueRepairedClosures = Array.from(new Set(repairedClosurePeriods));
-    const uniqueRepairedReservations = Array.from(new Set(repairedReservationPeriods));
-    const uniqueUpdatedExportIds = Array.from(new Set(updatedExportIds.filter(Boolean)));
-    if (changed) {
-      const metadata = isPlainObject(data.metadata) ? data.metadata : {};
-      const migrations = isPlainObject(metadata.migrations) ? metadata.migrations : {};
-      const safeMigrations = { ...migrations };
-      EXCEL_CIERRE_LEGACY_MIGRATION_IDS.forEach((id) => {
-        if (!isPlainObject(safeMigrations[id])) return;
-        safeMigrations[id] = {
-          ...safeMigrations[id],
-          pendingCloudDeleteExportIds: [],
-          supersededBy: EXCEL_CIERRE_RECONCILIATION_MIGRATION_ID,
-          supersededAt: safeMigrations[id].supersededAt || timestamp
-        };
-      });
-      const previousMigration = isPlainObject(safeMigrations[EXCEL_CIERRE_RECONCILIATION_MIGRATION_ID]) ? safeMigrations[EXCEL_CIERRE_RECONCILIATION_MIGRATION_ID] : {};
-      data.metadata = {
-        ...metadata,
-        migrations: {
-          ...safeMigrations,
-          [EXCEL_CIERRE_RECONCILIATION_MIGRATION_ID]: {
-            ...previousMigration,
-            version: 4,
-            appliedAt: previousMigration.appliedAt || timestamp,
-            lastVerifiedAt: timestamp,
-            repairedClosures: uniqueRepairedClosures.length,
-            repairedReservations: uniqueRepairedReservations.length,
-            preservedHistoricalExports: historicalCierreExports.length,
-            pendingCloudClosurePeriods: Array.from(new Set([...(previousMigration.pendingCloudClosurePeriods || []), ...uniqueRepairedClosures])),
-            pendingCloudReservationPeriods: Array.from(new Set([...(previousMigration.pendingCloudReservationPeriods || []), ...uniqueRepairedReservations])),
-            pendingCloudExportIds: Array.from(new Set([...(previousMigration.pendingCloudExportIds || []), ...uniqueUpdatedExportIds])),
-            pendingCloudDeleteExportIds: []
-          }
-        },
-        excelCierreSequenceReconciledAt: timestamp,
-        updatedAt: timestamp
-      };
-    }
-
-    return {
-      data,
-      changed,
-      nextOfficialSequence: officialMax + 1,
-      officialMax,
-      officialByPeriod: new Map(reconciledClosures.map((record) => [record.periodo, record])),
-      removedExportIds: [],
-      updatedExportIds: uniqueUpdatedExportIds,
-      repairedClosurePeriods: uniqueRepairedClosures,
-      repairedReservationPeriods: uniqueRepairedReservations
-    };
-  }
-
-  function hasPendingExcelCierreSequenceChange() {
-    return (Array.isArray(sessionChangeQueue) ? sessionChangeQueue : []).some((change) => {
-      if (!change || change.estado !== 'pendiente') return false;
-      return normalizeSessionChangeClassifierValue(change.module || change.modulo) === 'consecutivos'
-        && cleanText(change.recordId || change.idRegistro) === 'excelCierre';
-    });
-  }
-
-  function reconcileExcelCierreSequenceStorage(dataInput, options = {}) {
-    const opts = isPlainObject(options) ? options : {};
-    const reconciliation = reconcileExcelCierreRecords(dataInput || (typeof appData !== 'undefined' ? appData : null));
-    const expected = reconciliation.nextOfficialSequence;
-    let stored = 0;
-    try {
-      stored = parseExcelCierreSequenceValue(window.localStorage.getItem(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY));
-      window.localStorage.setItem(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY, String(expected));
-    } catch (error) {
-      console.warn('KSA PRÁCTIKA: no se pudo reconciliar el consecutivo oficial de Excel de cierre.', error);
-    }
-    const remote = parseExcelCierreSequenceValue(opts.remoteValue);
-    const inconsistentStored = stored > 0 && stored !== expected;
-    const inconsistentRemote = remote > 0 && remote !== expected;
-    const missingRemote = opts.requireRemote === true && !remote;
-    if (opts.registerChange === true && (inconsistentStored || inconsistentRemote || missingRemote || opts.forceRegister === true)) {
-      registerSessionChange({
-        module: 'Consecutivos',
-        operation: 'editar',
-        recordId: 'excelCierre',
-        sourceModule: EXCEL_CIERRE_RECONCILIATION_MIGRATION_ID
-      });
-    }
-    return {
-      ...reconciliation,
-      expected,
-      stored,
-      remote,
-      corrected: inconsistentStored || inconsistentRemote || missingRemote
-    };
-  }
-
-  function registerExcelCierreReconciliationChanges(dataInput = null, options = {}) {
-    const data = isPlainObject(dataInput) ? dataInput : (typeof appData !== 'undefined' ? appData : null);
-    if (!isPlainObject(data)) return { registered: 0 };
-    const opts = isPlainObject(options) ? options : {};
-    const migration = data.metadata?.migrations?.[EXCEL_CIERRE_RECONCILIATION_MIGRATION_ID];
-    const closurePeriods = Array.isArray(migration?.pendingCloudClosurePeriods) ? migration.pendingCloudClosurePeriods.map(cleanText).filter(Boolean) : [];
-    const reservationPeriods = Array.isArray(migration?.pendingCloudReservationPeriods) ? migration.pendingCloudReservationPeriods.map(cleanText).filter(Boolean) : [];
-    const exportIds = Array.isArray(migration?.pendingCloudExportIds) ? migration.pendingCloudExportIds.map(cleanText).filter(Boolean) : [];
-    const queueBefore = Array.isArray(sessionChangeQueue) ? sessionChangeQueue.length : 0;
-    sessionChangeQueue = (Array.isArray(sessionChangeQueue) ? sessionChangeQueue : []).filter((change) => {
-      const sourceModule = cleanText(change?.sourceModule || change?.moduloOrigen);
-      const moduleKey = normalizeSessionChangeClassifierValue(change?.module || change?.modulo);
-      const operation = normalizeSessionChangeOperation(change?.operation || change?.operacion);
-      return !(operation === 'eliminar'
-        && (moduleKey === 'exportacionesexcel' || moduleKey === 'exportacionexcel')
-        && EXCEL_CIERRE_LEGACY_MIGRATION_IDS.includes(sourceModule));
-    });
-    if (sessionChangeQueue.length !== queueBefore) syncSessionChangeQueueGlobal();
-    let registered = 0;
-
-    closurePeriods.forEach((periodo) => {
-      if (registerSessionChange({ module: 'Cierres mensuales', operation: 'editar', recordId: periodo, sourceModule: EXCEL_CIERRE_RECONCILIATION_MIGRATION_ID })) registered += 1;
-      const cierre = (Array.isArray(data.cierresMensuales) ? data.cierresMensuales : []).find((item) => cleanText(item.periodo) === periodo);
-      const exportId = cleanText(cierre?.exportacionExcelId);
-      if (exportId && registerSessionChange({ module: 'Exportaciones Excel', operation: 'editar', recordId: exportId, relatedId: periodo, sourceModule: EXCEL_CIERRE_RECONCILIATION_MIGRATION_ID })) registered += 1;
-    });
-
-    reservationPeriods.forEach((periodo) => {
-      const record = (Array.isArray(data.exportacionesExcel) ? data.exportacionesExcel : []).find((item) => item.tipo === 'cierre' && cleanText(item.periodo) === periodo && !isExcelCierreRecordIgnored(item));
-      if (record?.id && registerSessionChange({ module: 'Exportaciones Excel', operation: 'editar', recordId: record.id, relatedId: periodo, sourceModule: EXCEL_CIERRE_RECONCILIATION_MIGRATION_ID })) registered += 1;
-    });
-
-    exportIds.forEach((id) => {
-      const record = (Array.isArray(data.exportacionesExcel) ? data.exportacionesExcel : []).find((item) => cleanText(item.id) === id);
-      if (record && registerSessionChange({ module: 'Exportaciones Excel', operation: 'editar', recordId: id, relatedId: cleanText(record.periodo), sourceModule: EXCEL_CIERRE_RECONCILIATION_MIGRATION_ID })) registered += 1;
-    });
-
-    const sequenceResult = reconcileExcelCierreSequenceStorage(data, {
-      remoteValue: opts.remoteValue,
-      requireRemote: opts.requireRemote,
-      registerChange: opts.registerSequence !== false
-    });
-    if (sequenceResult.corrected || hasPendingExcelCierreSequenceChange()) registered += 1;
-
-    if (migration && (closurePeriods.length || reservationPeriods.length || exportIds.length)) {
-      migration.pendingCloudDeleteExportIds = [];
-      migration.pendingCloudClosurePeriods = [];
-      migration.pendingCloudReservationPeriods = [];
-      migration.pendingCloudExportIds = [];
-      migration.queuedAt = nowIso();
-      data.metadata.excelCierreReconciliationQueuedAt = migration.queuedAt;
-      if (typeof appData !== 'undefined' && data === appData) saveData(appData);
-    }
-    return { registered, sequenceResult };
   }
 
   function clonePlainObject(value, fallback = null) {
@@ -5639,109 +4408,6 @@ Notas importantes:
       return JSON.parse(JSON.stringify(value));
     } catch (_) {
       return fallback;
-    }
-  }
-
-  function runNonCriticalStartupTask(label, task) {
-    try {
-      return typeof task === 'function' ? task() : null;
-    } catch (error) {
-      console.error(`KSA PRÁCTIKA: fallo no crítico durante ${cleanText(label) || 'el arranque'}; la interfaz continuará disponible.`, error);
-      return null;
-    }
-  }
-
-  function snapshotLocalStorageValues(keys = []) {
-    const snapshot = {};
-    if (typeof window === 'undefined' || !window.localStorage) return snapshot;
-    (Array.isArray(keys) ? keys : []).forEach((key) => {
-      try {
-        snapshot[key] = window.localStorage.getItem(key);
-      } catch (_) {
-        snapshot[key] = null;
-      }
-    });
-    return snapshot;
-  }
-
-  function restoreLocalStorageValues(snapshot = {}) {
-    if (typeof window === 'undefined' || !window.localStorage || !isPlainObject(snapshot)) return;
-    Object.entries(snapshot).forEach(([key, value]) => {
-      try {
-        if (value === null || value === undefined) window.localStorage.removeItem(key);
-        else window.localStorage.setItem(key, value);
-      } catch (error) {
-        console.error(`KSA PRÁCTIKA: no se pudo restaurar el valor local ${key} después de una reconciliación fallida.`, error);
-      }
-    });
-  }
-
-  function runExcelCierreReconciliationSafely(context, task) {
-    const dataSnapshot = (typeof appData !== 'undefined') ? clonePlainObject(appData, null) : null;
-    const queueSnapshot = clonePlainObject(sessionChangeQueue, []);
-    const sequenceSnapshot = sessionChangeSequence;
-    const storageSnapshot = snapshotLocalStorageValues([
-      STORAGE_KEY,
-      SESSION_CHANGE_QUEUE_STORAGE_KEY,
-      EXCEL_CIERRE_SEQUENCE_STORAGE_KEY,
-      EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY,
-      JSON_EXPORT_SEQUENCE_STORAGE_KEY
-    ]);
-    try {
-      return { ok: true, result: typeof task === 'function' ? task() : null };
-    } catch (error) {
-      if (dataSnapshot && typeof appData !== 'undefined') appData = dataSnapshot;
-      sessionChangeQueue = Array.isArray(queueSnapshot) ? queueSnapshot : [];
-      sessionChangeSequence = Number.isFinite(sequenceSnapshot) ? sequenceSnapshot : 0;
-      restoreLocalStorageValues(storageSnapshot);
-      if (typeof window !== 'undefined') window.KSA_SESSION_CHANGE_QUEUE = sessionChangeQueue;
-      console.error(`KSA PRÁCTIKA: reconciliación de cierres/consecutivo omitida de forma segura (${cleanText(context) || 'sin contexto'}). Los datos locales fueron conservados y la interfaz seguirá operativa.`, error);
-      return { ok: false, error };
-    }
-  }
-
-  function inspectExcelCierreStartupReconciliationSafely() {
-    return runNonCriticalStartupTask('la validación diferida de cierres y consecutivos', () => {
-      const probeData = clonePlainObject(appData, null);
-      if (!isPlainObject(probeData)) throw new Error('No fue posible crear una copia segura para la validación de arranque.');
-      const reconciliation = reconcileExcelCierreRecords(probeData);
-      let storedSequence = 0;
-      try {
-        storedSequence = parseExcelCierreSequenceValue(window.localStorage.getItem(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY));
-      } catch (error) {
-        console.warn('KSA PRÁCTIKA: no se pudo leer el consecutivo local durante la validación diferida.', error);
-      }
-      const pendingSequenceChange = hasPendingExcelCierreSequenceChange();
-      const needsDeferredReconciliation = reconciliation.changed
-        || (storedSequence > 0 && storedSequence !== reconciliation.nextOfficialSequence)
-        || pendingSequenceChange;
-      if (needsDeferredReconciliation) {
-        console.warn('KSA PRÁCTIKA: se detectó una reconciliación de cierres/consecutivo pendiente. Se difiere para una operación segura y no se modifica ningún dato durante el arranque.', {
-          expectedSequence: reconciliation.nextOfficialSequence,
-          storedSequence,
-          pendingSequenceChange
-        });
-      }
-      return {
-        ok: true,
-        needsDeferredReconciliation,
-        expectedSequence: reconciliation.nextOfficialSequence,
-        storedSequence,
-        pendingSequenceChange
-      };
-    });
-  }
-
-  let excelCierreStartupInspectionScheduled = false;
-
-  function scheduleExcelCierreStartupInspection() {
-    if (excelCierreStartupInspectionScheduled || typeof window === 'undefined') return;
-    excelCierreStartupInspectionScheduled = true;
-    const run = () => inspectExcelCierreStartupReconciliationSafely();
-    if (typeof window.requestIdleCallback === 'function') {
-      window.requestIdleCallback(run, { timeout: 1200 });
-    } else {
-      window.setTimeout(run, 0);
     }
   }
 
@@ -6795,7 +5461,7 @@ Notas importantes:
         consecutivos: {
           json: readCloudSequenceValue(JSON_EXPORT_SEQUENCE_STORAGE_KEY),
           excelConsulta: readCloudSequenceValue(EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY),
-          excelCierre: reconcileExcelCierreRecords(source).nextOfficialSequence
+          excelCierre: readCloudSequenceValue(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY)
         }
       };
     }
@@ -6814,17 +5480,13 @@ Notas importantes:
     function writeCloudSequenceMirror(consecutivos = {}) {
       const pairs = [
         ['json', JSON_EXPORT_SEQUENCE_STORAGE_KEY],
-        ['excelConsulta', EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY]
+        ['excelConsulta', EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY],
+        ['excelCierre', EXCEL_CIERRE_SEQUENCE_STORAGE_KEY]
       ];
       pairs.forEach(([key, storageKey]) => {
         const value = consecutivos?.[key];
         if (value === null || value === undefined || value === '') return;
         try { localStorage.setItem(storageKey, String(value)); } catch (_) {}
-      });
-      reconcileExcelCierreSequenceStorage(appData, {
-        remoteValue: consecutivos?.excelCierre,
-        requireRemote: true,
-        registerChange: true
       });
     }
 
@@ -7083,9 +5745,7 @@ Notas importantes:
         for (const [key, list, normalizer] of listWriters) {
           for (const rawRecord of list) {
             const record = normalizer(rawRecord);
-            const docId = key === 'cierresMensuales'
-              ? sanitizeFirestoreDocId(record.periodo, 'cierre')
-              : getCloudDocumentId(record, key);
+            const docId = getCloudDocumentId(record, key);
             await queueSet(fs.doc(db, 'workspaces', workspaceId, key, docId), {
               ...record,
               updatedAt: record.updatedAt || nowIso(),
@@ -7199,6 +5859,10 @@ Notas importantes:
       }
     }
 
+    function normalizeSessionChangeModuleKey(value) {
+      return normalizeKeyForCompare(cleanText(value)).replace(/[^a-z0-9]+/g, '');
+    }
+
     function buildSessionDeleteTombstone(recordId, change, stamp, user) {
       const deletedAtLocal = nowIso();
       return {
@@ -7216,9 +5880,6 @@ Notas importantes:
         _cloudSync: {
           source: 'session_partial_delete',
           operation: 'eliminar',
-          changeId: getSessionChangeOperationToken(change),
-          changeKey: cleanText(change?.key),
-          changeRevision: Math.max(1, Number(change?.revision) || 1),
           syncedAt: deletedAtLocal,
           syncedBy: user?.email || ''
         }
@@ -7237,9 +5898,6 @@ Notas importantes:
         _cloudSync: {
           source: 'session_partial_save',
           operation: normalizeSessionChangeOperation(change?.operation || change?.operacion),
-          changeId: getSessionChangeOperationToken(change),
-          changeKey: cleanText(change?.key),
-          changeRevision: Math.max(1, Number(change?.revision) || 1),
           syncedAt,
           syncedBy: user?.email || ''
         }
@@ -7261,7 +5919,7 @@ Notas importantes:
     }
 
     function findSessionRecordForChange(change) {
-      const moduleKey = normalizeSessionChangeClassifierValue(change?.module || change?.modulo);
+      const moduleKey = normalizeSessionChangeModuleKey(change?.module || change?.modulo);
       const recordId = cleanText(change?.recordId || change?.idRegistro || change?.id);
       const sourceModule = cleanText(change?.sourceModule || change?.moduloOrigen || change?.catalogoId);
       if (!moduleKey || !recordId) return null;
@@ -7283,22 +5941,6 @@ Notas importantes:
         casagastos: { collection: 'casaGastos', list: data.casaGastos, normalizer: normalizeCasaGastoRecord, fallback: 'casaGasto' },
         seguimiento: { collection: 'seguimiento', list: seguimientoData.registros, normalizer: normalizeSeguimientoGroup, fallback: 'seguimiento', kind: 'seguimiento' }
       };
-
-      if (moduleKey === 'consecutivos' || moduleKey === 'consecutivo') {
-        const tipo = cleanText(recordId);
-        let valor = null;
-        if (tipo === 'excelCierre') valor = getExcelCierreSequence();
-        else if (tipo === 'excelConsulta') valor = getExcelConsultaSequence();
-        else if (tipo === 'json') valor = getJsonExportSequence();
-        if (valor === null || valor === undefined || valor === '') return null;
-        return {
-          kind: 'consecutivo',
-          collection: 'consecutivos',
-          record: { id: tipo, tipo, valor },
-          normalizer: (record) => ({ ...record }),
-          fallback: 'consecutivo'
-        };
-      }
 
       if (moduleKey === 'catalogos') {
         const catalogId = sourceModule && CATALOGS.some((catalog) => catalog.id === sourceModule)
@@ -7347,30 +5989,6 @@ Notas importantes:
         };
       }
 
-      if (moduleKey === 'cierresmensuales' || moduleKey === 'cierremensual' || moduleKey === 'cierres') {
-        const list = Array.isArray(data.cierresMensuales) ? data.cierresMensuales : [];
-        return {
-          kind: 'cierreMensual',
-          collection: 'cierresMensuales',
-          list,
-          normalizer: normalizeCierreMensualRecord,
-          record: list.find((record) => cleanText(record.periodo) === recordId || cleanText(record.id) === recordId) || null,
-          fallback: 'cierre'
-        };
-      }
-
-      if (moduleKey === 'exportacionesexcel' || moduleKey === 'exportacionexcel' || moduleKey === 'excelcierre' || moduleKey === 'excelconsulta') {
-        const list = Array.isArray(data.exportacionesExcel) ? data.exportacionesExcel : [];
-        return {
-          kind: 'exportacionExcel',
-          collection: 'exportacionesExcel',
-          list,
-          normalizer: normalizeExcelExportRecord,
-          record: list.find((record) => cleanText(record.id) === recordId || cleanText(record.exportacionId) === recordId || cleanText(record.nombreArchivo) === recordId) || null,
-          fallback: 'exportExcel'
-        };
-      }
-
       const mapped = moduleMap[moduleKey];
       if (!mapped) return null;
       return {
@@ -7389,26 +6007,7 @@ Notas importantes:
       const isDelete = operation === 'eliminar';
       let ref = null;
       let payload = null;
-      if (target.kind === 'consecutivo') {
-        const docId = sanitizeFirestoreDocId(recordId, 'consecutivo');
-        ref = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'consecutivos', docId);
-        payload = {
-          id: docId,
-          tipo: recordId,
-          valor: target.record?.valor,
-          updatedAt: stamp,
-          updatedBy: cleanText(user?.email || user?.uid),
-          _cloudSync: {
-            source: 'guardar_datos',
-            operation: normalizeSessionChangeOperation(change?.operation || change?.operacion),
-            changeId: getSessionChangeOperationToken(change),
-            changeKey: cleanText(change?.key),
-            changeRevision: Math.max(1, Number(change?.revision) || 1),
-            syncedAt: nowIso(),
-            syncedBy: cleanText(user?.email || user?.uid)
-          }
-        };
-      } else if (target.kind === 'catalog') {
+      if (target.kind === 'catalog') {
         const docId = sanitizeFirestoreDocId(recordId, `${target.catalogId}_item`);
         ref = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'catalogos', target.catalogId, 'items', docId);
         payload = target.record
@@ -7428,22 +6027,11 @@ Notas importantes:
       } else {
         const docId = target.kind === 'seguimiento' && target.record
           ? getSeguimientoCloudDocId(target.record)
-          : (target.kind === 'cierreMensual'
-            ? sanitizeFirestoreDocId(target.record?.periodo || recordId, 'cierre')
-            : (target.record ? getCloudDocumentId(target.record, target.fallback) : sanitizeFirestoreDocId(recordId, target.fallback || 'doc')));
+          : (target.record ? getCloudDocumentId(target.record, target.fallback) : sanitizeFirestoreDocId(recordId, target.fallback || 'doc'));
         ref = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, target.collection, docId);
         payload = target.record
           ? buildSessionWritePayload(target.record, target.normalizer, change, stamp, user)
           : (isDelete ? buildSessionDeleteTombstone(recordId, change, stamp, user) : null);
-        if (payload && target.kind === 'cierreMensual') {
-          payload.periodo = cleanText(target.record?.periodo || recordId);
-          payload.idFirestore = docId;
-        }
-        if (payload && target.kind === 'exportacionExcel') {
-          payload.periodo = cleanText(target.record?.periodo || payload.periodo);
-          payload.tipo = cleanText(target.record?.tipo || payload.tipo).toLowerCase();
-          payload.idFirestore = docId;
-        }
       }
 
       if (!ref || !payload) return null;
@@ -7451,144 +6039,8 @@ Notas importantes:
         ref,
         payload: stripUndefinedForFirestore(payload),
         change,
-        kind: target.kind || 'simple',
-        collection: target.collection,
-        recordId,
         key: `${target.kind || 'simple'}:${target.collection}:${target.catalogId || ''}:${recordId}`
       };
-    }
-
-    function isCriticalExcelCierreSessionWrite(write) {
-      if (!isPlainObject(write)) return false;
-      if (write.kind === 'cierreMensual') return true;
-      if (write.kind === 'consecutivo') return cleanText(write.recordId) === 'excelCierre';
-      if (write.kind === 'exportacionExcel') return cleanText(write.payload?.tipo).toLowerCase() === 'cierre';
-      return false;
-    }
-
-    const SESSION_CONFIRMATION_RETRY_DELAYS = Object.freeze([0, 180, 420]);
-    const SESSION_CONFIRMATION_READ_TIMEOUT_MS = 1800;
-    const SESSION_WRITE_COMMIT_TIMEOUT_MS = 5000;
-
-    function delaySessionConfirmation(ms) {
-      return new Promise((resolve) => window.setTimeout(resolve, Math.max(0, Number(ms) || 0)));
-    }
-
-    function withSessionConfirmationTimeout(promise, timeoutMs, code = 'cloud/session-confirmation-timeout') {
-      return new Promise((resolve, reject) => {
-        let settled = false;
-        const timer = window.setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          reject({ code, message: 'La confirmación de Firestore excedió el tiempo breve permitido.' });
-        }, Math.max(1, Number(timeoutMs) || SESSION_CONFIRMATION_READ_TIMEOUT_MS));
-        Promise.resolve(promise).then((value) => {
-          if (settled) return;
-          settled = true;
-          window.clearTimeout(timer);
-          resolve(value);
-        }, (error) => {
-          if (settled) return;
-          settled = true;
-          window.clearTimeout(timer);
-          reject(error);
-        });
-      });
-    }
-
-    function getSessionConfirmationErrorClass(error) {
-      const code = cleanText(error?.code || error?.name || 'firebase/firestore-error').toLowerCase();
-      const realFailureCodes = new Set([
-        'permission-denied', 'firestore/permission-denied', 'unauthenticated', 'auth/no-current-user',
-        'firebase/not-initial-admin', 'firebase/user-inactive', 'firebase/user-not-registered',
-        'invalid-argument', 'failed-precondition'
-      ]);
-      if (realFailureCodes.has(code)) return 'failed';
-      return 'pending';
-    }
-
-    function compareSessionWriteConfirmation(write, actual) {
-      const expectedChangeId = cleanText(write?.payload?._cloudSync?.changeId);
-      const actualChangeId = cleanText(actual?._cloudSync?.changeId);
-      if (!expectedChangeId || expectedChangeId !== actualChangeId) return false;
-
-      if (write.kind === 'cierreMensual') {
-        return getExcelCierreClosureSignature(write.payload) === getExcelCierreClosureSignature(actual);
-      }
-      if (write.kind === 'exportacionExcel' && cleanText(write.payload?.tipo).toLowerCase() === 'cierre') {
-        return getExcelCierreExportSignature(write.payload) === getExcelCierreExportSignature(actual);
-      }
-      if (write.kind === 'consecutivo' && cleanText(write.recordId) === 'excelCierre') {
-        const expectedType = cleanText(write.payload?.tipo || write.recordId);
-        const actualType = cleanText(actual?.tipo || actual?.id);
-        const expectedValue = parseExcelCierreSequenceValue(write.payload?.valor);
-        const actualValue = parseExcelCierreSequenceValue(actual?.valor ?? actual?.value ?? actual?.consecutivo);
-        return expectedType === actualType && Boolean(expectedValue) && expectedValue === actualValue;
-      }
-      return true;
-    }
-
-    async function verifySessionWrite(write, fs, options = {}) {
-      const preflight = options?.preflight === true;
-      let sawServerSnapshot = false;
-      let sawServerMissingOrMismatch = false;
-      let lastPendingCode = 'cloud/session-write-not-server-confirmed';
-      let lastPendingMessage = 'Firestore todavía no confirmó en servidor el documento recién guardado.';
-
-      if (!preflight && typeof fs.waitForPendingWrites === 'function') {
-        try {
-          await withSessionConfirmationTimeout(fs.waitForPendingWrites(state.firestore), SESSION_CONFIRMATION_READ_TIMEOUT_MS);
-        } catch (error) {
-          if (getSessionConfirmationErrorClass(error) === 'failed') {
-            return { status: 'failed', code: cleanText(error?.code || 'cloud/session-write-verification-failed'), message: getSafeSessionCloudErrorMessage(error), error };
-          }
-          lastPendingCode = cleanText(error?.code || lastPendingCode);
-          lastPendingMessage = getSafeSessionCloudErrorMessage(error);
-        }
-      }
-
-      for (let attempt = 0; attempt < SESSION_CONFIRMATION_RETRY_DELAYS.length; attempt += 1) {
-        const delayMs = SESSION_CONFIRMATION_RETRY_DELAYS[attempt];
-        if (delayMs) await delaySessionConfirmation(delayMs);
-        try {
-          const readPromise = typeof fs.getDocFromServer === 'function'
-            ? fs.getDocFromServer(write.ref)
-            : fs.getDoc(write.ref);
-          const snap = await withSessionConfirmationTimeout(readPromise, SESSION_CONFIRMATION_READ_TIMEOUT_MS);
-          if (snap.metadata?.fromCache === true || snap.metadata?.hasPendingWrites === true) {
-            lastPendingCode = 'cloud/session-write-not-server-confirmed';
-            lastPendingMessage = 'La lectura inmediata todavía proviene de caché o conserva escrituras pendientes.';
-            continue;
-          }
-          sawServerSnapshot = true;
-          if (!snap.exists()) {
-            sawServerMissingOrMismatch = true;
-            lastPendingCode = 'cloud/session-write-not-found';
-            lastPendingMessage = 'Firestore todavía no devolvió el documento esperado.';
-            continue;
-          }
-          const actual = normalizeFirestoreDoc(snap);
-          if (compareSessionWriteConfirmation(write, actual)) {
-            return { status: 'confirmed', code: 'cloud/session-write-confirmed', message: 'Firestore confirmó el documento en servidor.', attempts: attempt + 1 };
-          }
-          sawServerMissingOrMismatch = true;
-          lastPendingCode = 'cloud/session-write-verification-mismatch';
-          lastPendingMessage = isCriticalExcelCierreSessionWrite(write)
-            ? 'El documento crítico leído todavía no coincide con el cierre, exportación o consecutivo oficial enviado.'
-            : 'El documento leído todavía no contiene la confirmación de esta operación.';
-        } catch (error) {
-          if (getSessionConfirmationErrorClass(error) === 'failed') {
-            return { status: 'failed', code: cleanText(error?.code || 'cloud/session-write-verification-failed'), message: getSafeSessionCloudErrorMessage(error), error };
-          }
-          lastPendingCode = cleanText(error?.code || lastPendingCode);
-          lastPendingMessage = getSafeSessionCloudErrorMessage(error);
-        }
-      }
-
-      if (preflight && sawServerSnapshot && sawServerMissingOrMismatch) {
-        return { status: 'needs_write', code: lastPendingCode, message: lastPendingMessage };
-      }
-      return { status: 'pending', code: lastPendingCode, message: lastPendingMessage };
     }
 
     function uniqueSessionChangesById(changes = []) {
@@ -7625,11 +6077,9 @@ Notas importantes:
           label,
           count: 0,
           confirmedChanges: [],
-          pendingConfirmationChanges: [],
           failedChanges: [],
           unresolvedChanges: [],
-          errors: [],
-          confirmationNotes: []
+          errors: []
         };
       }
 
@@ -7653,158 +6103,56 @@ Notas importantes:
       });
 
       const confirmedChanges = [];
-      const pendingConfirmationChanges = [];
       const failedChanges = [...unresolvedChanges];
       const errors = [];
-      const failureCodes = [];
-      const confirmationNotes = [];
       if (unresolvedChanges.length) {
-        failureCodes.push('cloud/session-change-unresolved');
         errors.push(`${formatDateTime(nowIso())} · ${label} · cloud/session-change-unresolved · ${unresolvedChanges.length} cambio(s) no pudieron resolverse contra el estado local.`);
       }
 
       const writeEntries = Array.from(writesByKey.values());
-      const entriesToWrite = [];
-
-      for (const entry of writeEntries) {
-        const verifyOnly = entry.changes.every((change) => change?.cloudConfirmationPending === true && change?.cloudWriteAttempted === true);
-        if (!verifyOnly) {
-          entriesToWrite.push(entry);
-          continue;
-        }
-        const preflight = await verifySessionWrite(entry.write, fs, { preflight: true });
-        if (preflight.status === 'confirmed') {
-          confirmedChanges.push(...entry.changes);
-        } else if (preflight.status === 'pending') {
-          pendingConfirmationChanges.push(...entry.changes);
-          confirmationNotes.push(buildSessionCloudDiagnostic(`${label} / confirmación pendiente`, preflight, preflight.code));
-        } else if (preflight.status === 'needs_write') {
-          entriesToWrite.push(entry);
-        } else {
-          failedChanges.push(...entry.changes);
-          failureCodes.push(cleanText(preflight.code || 'cloud/session-write-verification-failed'));
-          errors.push(buildSessionCloudDiagnostic(`${label} / verificación`, preflight, preflight.code));
-        }
-      }
-
-      const applyVerificationResult = (entry, verification) => {
-        if (verification.status === 'confirmed') {
-          confirmedChanges.push(...entry.changes);
-        } else if (verification.status === 'pending') {
-          pendingConfirmationChanges.push(...entry.changes);
-          confirmationNotes.push(buildSessionCloudDiagnostic(`${label} / confirmación pendiente`, verification, verification.code));
-        } else {
-          failedChanges.push(...entry.changes);
-          failureCodes.push(cleanText(verification.code || 'cloud/session-write-verification-failed'));
-          errors.push(buildSessionCloudDiagnostic(`${label} / verificación`, verification, verification.code));
-        }
-      };
-
       const batchLimit = Math.max(1, FIRESTORE_IMPORT_BATCH_LIMIT - 2);
-      for (let offset = 0; offset < entriesToWrite.length; offset += batchLimit) {
-        const chunk = entriesToWrite.slice(offset, offset + batchLimit);
+      for (let offset = 0; offset < writeEntries.length; offset += batchLimit) {
+        const chunk = writeEntries.slice(offset, offset + batchLimit);
         let batch = fs.writeBatch(db);
         chunk.forEach((entry) => batch.set(entry.write.ref, entry.write.payload, { merge: true }));
         try {
-          await withSessionConfirmationTimeout(batch.commit(), SESSION_WRITE_COMMIT_TIMEOUT_MS, 'cloud/session-write-commit-pending');
-          const verifications = await Promise.all(chunk.map((entry) => verifySessionWrite(entry.write, fs)));
-          verifications.forEach((verification, index) => applyVerificationResult(chunk[index], verification));
+          await batch.commit();
+          chunk.forEach((entry) => confirmedChanges.push(...entry.changes));
         } catch (batchError) {
-          if (getSessionConfirmationErrorClass(batchError) === 'pending') {
-            confirmationNotes.push(buildSessionCloudDiagnostic(`${label} / envío pendiente`, batchError, cleanText(batchError?.code || 'cloud/session-write-commit-pending')));
-            const verifications = await Promise.all(chunk.map((entry) => verifySessionWrite(entry.write, fs)));
-            verifications.forEach((verification, index) => applyVerificationResult(chunk[index], verification));
-            continue;
-          }
           if (chunk.length === 1) {
             failedChanges.push(...chunk[0].changes);
-            failureCodes.push(cleanText(batchError?.code || 'firebase/firestore-error'));
             errors.push(buildSessionCloudDiagnostic(label, batchError));
             continue;
           }
 
           for (const entry of chunk) {
             try {
-              await withSessionConfirmationTimeout(
-                fs.setDoc(entry.write.ref, entry.write.payload, { merge: true }),
-                SESSION_WRITE_COMMIT_TIMEOUT_MS,
-                'cloud/session-write-commit-pending'
-              );
-              const verification = await verifySessionWrite(entry.write, fs);
-              applyVerificationResult(entry, verification);
+              await fs.setDoc(entry.write.ref, entry.write.payload, { merge: true });
+              confirmedChanges.push(...entry.changes);
             } catch (itemError) {
-              if (getSessionConfirmationErrorClass(itemError) === 'pending') {
-                confirmationNotes.push(buildSessionCloudDiagnostic(`${label} / envío pendiente`, itemError, cleanText(itemError?.code || 'cloud/session-write-commit-pending')));
-                const verification = await verifySessionWrite(entry.write, fs);
-                applyVerificationResult(entry, verification);
-              } else {
-                failedChanges.push(...entry.changes);
-                failureCodes.push(cleanText(itemError?.code || 'firebase/firestore-error'));
-                errors.push(buildSessionCloudDiagnostic(label, itemError));
-              }
+              failedChanges.push(...entry.changes);
+              errors.push(buildSessionCloudDiagnostic(label, itemError));
             }
           }
         }
       }
 
       const uniqueConfirmed = uniqueSessionChangesById(confirmedChanges);
-      const confirmedIds = new Set(uniqueConfirmed.map((item) => cleanText(item?.id)).filter(Boolean));
-      const uniquePending = uniqueSessionChangesById(pendingConfirmationChanges).filter((item) => !confirmedIds.has(cleanText(item?.id)));
-      const pendingIds = new Set(uniquePending.map((item) => cleanText(item?.id)).filter(Boolean));
       const uniqueFailed = uniqueSessionChangesById(failedChanges).filter((failed) => {
         const failedId = cleanText(failed?.id);
-        return !failedId || (!confirmedIds.has(failedId) && !pendingIds.has(failedId));
+        return !failedId || !uniqueConfirmed.some((confirmed) => cleanText(confirmed?.id) === failedId);
       });
       return {
-        ok: uniqueFailed.length === 0 && uniquePending.length === 0,
-        partial: uniqueConfirmed.length > 0 && (uniqueFailed.length > 0 || uniquePending.length > 0),
-        confirmationPending: uniquePending.length > 0,
+        ok: uniqueFailed.length === 0,
+        partial: uniqueConfirmed.length > 0 && uniqueFailed.length > 0,
         label,
         count: groupChanges.length,
         writtenCount: uniqueConfirmed.length,
-        acceptedCount: uniqueConfirmed.length + uniquePending.length,
         confirmedChanges: uniqueConfirmed,
-        pendingConfirmationChanges: uniquePending,
         failedChanges: uniqueFailed,
         unresolvedChanges,
-        errorCode: cleanText(failureCodes.find(Boolean) || ''),
-        errors,
-        confirmationNotes
+        errors
       };
-    }
-
-    async function writeSessionMetadata(metadataRef, fs, user, summary = {}) {
-      const stamp = getFirestoreTimestampValue(fs);
-      const localNow = nowIso();
-      const payload = stripUndefinedForFirestore({
-        id: FIRESTORE_METADATA_SYSTEM_ID,
-        appName: APP_NAME,
-        appVersion: APP_VERSION,
-        schemaVersion: SCHEMA_VERSION,
-        datosMigrados: true,
-        importacionInicialCompletada: true,
-        cloudDataReady: true,
-        cloudReady: true,
-        cloudActive: true,
-        modo: 'online_controlada',
-        modoDatos: 'nube_activa',
-        fuentePrincipal: 'firestore',
-        lastSyncAt: stamp,
-        lastSyncAtLocal: localNow,
-        lastSessionPartialWriteAt: stamp,
-        lastSessionPartialWriteAtLocal: localNow,
-        lastSessionOperationalWriteCount: Math.max(0, Number(summary.operationalWriteCount) || 0),
-        lastSessionCleanupWriteCount: Math.max(0, Number(summary.cleanupWriteCount) || 0),
-        lastSyncBy: cleanText(user?.email || user?.uid),
-        updatedAt: stamp
-      });
-      await withSessionConfirmationTimeout(
-        fs.setDoc(metadataRef, payload, { merge: true }),
-        SESSION_WRITE_COMMIT_TIMEOUT_MS,
-        'cloud/session-metadata-pending'
-      );
-      clearPendingSessionMetadata();
-      return { ok: true, at: localNow };
     }
 
     async function saveSessionChangesToCloud(changesInput = null) {
@@ -7812,74 +6160,17 @@ Notas importantes:
         (Array.isArray(changesInput) ? changesInput : getPendingSessionChanges())
           .filter((item) => item && item.estado === 'pendiente')
       );
-      const pendingMetadataBefore = loadPendingSessionMetadata();
-      if (!pendingChanges.length && !pendingMetadataBefore) {
-        return { ok: true, confirmed: true, action: 'saveSessionChangesToCloud', code: 'cloud/no-session-changes', message: SESSION_SAVE_MESSAGES.noChanges, count: 0, confirmedChanges: [], pendingConfirmationChanges: [], failedChanges: [] };
+      if (!pendingChanges.length) {
+        return { ok: true, action: 'saveSessionChangesToCloud', code: 'cloud/no-session-changes', message: SESSION_SAVE_MESSAGES.noChanges, count: 0, confirmedChanges: [], failedChanges: [] };
       }
 
       const { operationalChanges, cleanupChanges } = splitSessionChangesByPurpose(pendingChanges);
-      const browserOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
-      if (browserOffline) {
-        if (!pendingChanges.length && pendingMetadataBefore) {
-          return {
-            ok: true,
-            confirmed: true,
-            action: 'saveSessionChangesToCloud',
-            code: 'cloud/session-metadata-pending',
-            errorCode: 'cloud/offline-metadata-pending',
-            message: SESSION_SAVE_MESSAGES.metadataPending,
-            count: 0,
-            confirmedChanges: [],
-            dataConfirmed: false,
-            pendingConfirmationChanges: [],
-            failedChanges: [],
-            operationalFailed: false,
-            confirmationPending: false,
-            metadataPending: true,
-            metadataFailed: true,
-            cleanupPending: false,
-            writeAttempted: false,
-            lastRealError: '',
-            lastError: ''
-          };
-        }
-        return {
-          ok: false,
-          confirmed: false,
-          action: 'saveSessionChangesToCloud',
-          code: 'cloud/offline-pending',
-          errorCode: 'cloud/offline-pending',
-          message: SESSION_SAVE_MESSAGES.offlinePending,
-          count: 0,
-          pendingCount: pendingChanges.length,
-          confirmedChanges: [],
-          dataConfirmed: false,
-          pendingConfirmationChanges: pendingChanges,
-          failedChanges: [],
-          operationalFailed: false,
-          confirmationPending: true,
-          metadataPending: Boolean(pendingMetadataBefore),
-          cleanupPending: cleanupChanges.length > 0,
-          writeAttempted: false,
-          writeSentAt: '',
-          lastRealError: '',
-          lastError: ''
-        };
-      }
       try {
         const { user, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: false });
         const metadataRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
+        const metadataSnap = await fs.getDoc(metadataRef);
+        const metadata = metadataSnap.exists() ? normalizeFirestoreDoc(metadataSnap) : {};
         const runtime = getKSAFirebaseRuntime();
-        let metadata = {};
-        try {
-          const metadataRead = typeof fs.getDocFromServer === 'function' ? fs.getDocFromServer(metadataRef) : fs.getDoc(metadataRef);
-          const metadataSnap = await withSessionConfirmationTimeout(metadataRead, SESSION_CONFIRMATION_READ_TIMEOUT_MS, 'cloud/session-metadata-read-pending');
-          metadata = metadataSnap.exists() ? normalizeFirestoreDoc(metadataSnap) : {};
-        } catch (metadataReadError) {
-          const runtimeReady = runtime?.cloudDataReady === true || runtime?.cloudReady === true;
-          const runtimeActive = runtime?.cloudActive === true || state.cloudActive === true;
-          if (!(getSessionConfirmationErrorClass(metadataReadError) === 'pending' && runtimeReady && runtimeActive)) throw metadataReadError;
-        }
         const ready = isCloudReadyMetadata(metadata) || runtime?.cloudDataReady === true || runtime?.cloudReady === true;
         const active = state.cloudActive || runtime?.cloudActive === true || metadata.cloudActive === true || cleanText(metadata.fuentePrincipal).toLowerCase() === 'firestore';
         if (!ready || !active) {
@@ -7888,51 +6179,16 @@ Notas importantes:
           const diagnosticLabel = cleanupOnly ? 'Limpieza de Facturas' : 'Cambios operativos';
           state.lastSyncError = `${formatDateTime(nowIso())} · ${diagnosticLabel} · cloud/firestore-unavailable · Firestore no está activo o preparado para escritura.`;
           publishKSAFirebaseRuntime({ lastSyncError: state.lastSyncError, message });
-          if (!pendingChanges.length && pendingMetadataBefore) {
-            const metadataMessage = SESSION_SAVE_MESSAGES.metadataPending;
-            publishKSAFirebaseRuntime({
-              lastSyncError: '',
-              sessionSaveStatus: 'cloud/session-metadata-pending',
-              confirmationPending: false,
-              metadataPending: true,
-              lastSessionSaveErrorCode: 'cloud/session-metadata-pending',
-              message: metadataMessage
-            });
-            return {
-              ok: true,
-              confirmed: true,
-              action: 'saveSessionChangesToCloud',
-              code: 'cloud/session-metadata-pending',
-              errorCode: 'cloud/session-metadata-pending',
-              message: metadataMessage,
-              count: 0,
-              confirmedChanges: [],
-              dataConfirmed: false,
-              pendingConfirmationChanges: [],
-              failedChanges: [],
-              operationalFailed: false,
-              confirmationPending: false,
-              metadataPending: true,
-              metadataFailed: true,
-              cleanupPending: false,
-              lastRealError: '',
-              lastError: ''
-            };
-          }
           return {
             ok: false,
             action: 'saveSessionChangesToCloud',
             code: cleanupOnly ? 'cloud/facturas-cleanup-failed' : 'cloud/firestore-unavailable',
-            errorCode: cleanupOnly ? 'cloud/facturas-cleanup-failed' : 'cloud/firestore-unavailable',
             message,
             count: pendingChanges.length,
             confirmedChanges: [],
-            pendingConfirmationChanges: [],
             failedChanges: pendingChanges,
             operationalFailed: operationalChanges.length > 0,
             cleanupPending: cleanupChanges.length > 0,
-            metadataPending: Boolean(pendingMetadataBefore),
-            lastRealError: state.lastSyncError,
             lastError: state.lastSyncError
           };
         }
@@ -7952,79 +6208,65 @@ Notas importantes:
           ...operationalResult.confirmedChanges,
           ...cleanupResult.confirmedChanges
         ]);
-        const pendingConfirmationChanges = uniqueSessionChangesById([
-          ...operationalResult.pendingConfirmationChanges,
-          ...cleanupResult.pendingConfirmationChanges
-        ]);
         const failedChanges = uniqueSessionChangesById([
           ...operationalResult.failedChanges,
           ...cleanupResult.failedChanges
         ]);
 
         let metadataError = '';
-        let metadataCode = '';
-        const metadataSummary = {
-          operationalWriteCount: operationalResult.writtenCount || pendingMetadataBefore?.operationalWriteCount || 0,
-          cleanupWriteCount: cleanupResult.writtenCount || pendingMetadataBefore?.cleanupWriteCount || 0
-        };
-        if (confirmedChanges.length || pendingMetadataBefore) {
+        if (confirmedChanges.length) {
           try {
-            await writeSessionMetadata(metadataRef, fs, user, metadataSummary);
+            await fs.setDoc(metadataRef, stripUndefinedForFirestore({
+              id: FIRESTORE_METADATA_SYSTEM_ID,
+              appName: APP_NAME,
+              appVersion: APP_VERSION,
+              schemaVersion: SCHEMA_VERSION,
+              datosMigrados: true,
+              importacionInicialCompletada: true,
+              cloudDataReady: true,
+              cloudReady: true,
+              cloudActive: true,
+              modo: 'online_controlada',
+              modoDatos: 'nube_activa',
+              fuentePrincipal: 'firestore',
+              lastSyncAt: stamp,
+              lastSyncAtLocal: nowIso(),
+              lastSessionPartialWriteAt: stamp,
+              lastSessionPartialWriteAtLocal: nowIso(),
+              lastSessionOperationalWriteCount: operationalResult.writtenCount || 0,
+              lastSessionCleanupWriteCount: cleanupResult.writtenCount || 0,
+              lastSyncBy: user.email,
+              updatedAt: stamp
+            }), { merge: true });
           } catch (error) {
-            metadataCode = cleanText(error?.code || 'cloud/session-metadata-failed');
-            metadataError = buildSessionCloudDiagnostic('Metadata de sincronización', error, metadataCode);
-            setPendingSessionMetadata({
-              ...metadataSummary,
-              lastError: metadataError,
-              errorCode: metadataCode,
-              confirmedDataAt: confirmedChanges.length ? nowIso() : cleanText(pendingMetadataBefore?.confirmedDataAt)
-            });
+            metadataError = buildSessionCloudDiagnostic('Metadata de sincronización', error);
           }
         }
 
         const operationalFailed = operationalResult.failedChanges.length > 0;
         const cleanupFailed = cleanupResult.failedChanges.length > 0;
-        const confirmationPending = operationalResult.pendingConfirmationChanges.length > 0 || cleanupResult.pendingConfirmationChanges.length > 0;
         const operationalSaved = operationalResult.confirmedChanges.length > 0;
-        const metadataPending = Boolean(metadataError || hasPendingSessionMetadata());
-        const realErrors = [
+        const allErrors = [
           ...operationalResult.errors,
-          ...cleanupResult.errors
+          ...cleanupResult.errors,
+          ...(metadataError ? [metadataError] : [])
         ];
-        const confirmationNotes = [
-          ...operationalResult.confirmationNotes,
-          ...cleanupResult.confirmationNotes
-        ];
-        const lastRealError = realErrors.join(' | ');
+        const lastError = allErrors.join(' | ');
         const writeTime = confirmedChanges.length ? nowIso() : '';
 
         let ok = true;
-        let confirmed = true;
         let code = 'cloud/session-write-ok';
         let message = SESSION_SAVE_MESSAGES.success;
         if (operationalFailed) {
           ok = false;
-          confirmed = false;
           code = 'cloud/session-operational-failed';
           message = SESSION_SAVE_MESSAGES.failure;
-        } else if (confirmationPending) {
-          ok = false;
-          confirmed = false;
-          code = 'cloud/session-confirmation-pending';
-          message = SESSION_SAVE_MESSAGES.confirmationPending;
-        } else if (metadataPending) {
-          ok = true;
-          confirmed = true;
-          code = 'cloud/session-metadata-pending';
-          message = SESSION_SAVE_MESSAGES.metadataPending;
         } else if (cleanupFailed && operationalSaved) {
           ok = true;
-          confirmed = true;
           code = 'cloud/session-write-ok-cleanup-pending';
           message = SESSION_SAVE_MESSAGES.partialCleanupPending;
         } else if (cleanupFailed) {
           ok = false;
-          confirmed = false;
           code = 'cloud/facturas-cleanup-failed';
           message = SESSION_SAVE_MESSAGES.cleanupFailure;
         }
@@ -8034,7 +6276,7 @@ Notas importantes:
           state.lastCloudWriteAt = writeTime;
           state.lastSyncAt = writeTime;
         }
-        state.lastSyncError = lastRealError;
+        state.lastSyncError = lastError;
         publishKSAFirebaseRuntime({
           cloudActive: true,
           cloudWritesEnabled: true,
@@ -8048,107 +6290,51 @@ Notas importantes:
           workspaceInitialized: true,
           lastSyncAt: state.lastSyncAt,
           lastCloudWriteAt: state.lastCloudWriteAt,
-          lastSyncError: lastRealError,
-          sessionSaveStatus: code,
-          confirmationPending,
-          metadataPending,
-          lastSessionSaveAttemptAt: nowIso(),
-          lastSessionSaveErrorCode: operationalFailed || cleanupFailed || confirmationPending || metadataPending ? code : '',
+          lastSyncError: lastError,
           message
         });
 
         return {
           ok,
-          confirmed,
           action: 'saveSessionChangesToCloud',
           code,
-          errorCode: operationalFailed
-            ? (operationalResult.errorCode || code)
-            : (cleanupFailed ? (cleanupResult.errorCode || code) : (metadataPending ? metadataCode : '')),
           message,
           count: confirmedChanges.length,
-          pendingCount: failedChanges.length + pendingConfirmationChanges.length,
+          pendingCount: failedChanges.length,
           confirmedChanges,
-          dataConfirmed: confirmedChanges.length > 0,
-          cloudActive: true,
-          pendingConfirmationChanges,
           failedChanges,
           operationalFailed,
           operationalSaved,
-          confirmationPending,
-          metadataPending,
-          metadataFailed: Boolean(metadataError),
-          metadataError,
           cleanupPending: cleanupFailed,
           cleanupPendingCount: cleanupResult.failedChanges.length,
           operationalResult,
           cleanupResult,
-          confirmationNotes,
-          writeAttempted: pendingConfirmationChanges.length > 0,
-          writeSentAt: pendingConfirmationChanges.length ? nowIso() : '',
           lastSyncAt: state.lastSyncAt,
           lastCloudWriteAt: state.lastCloudWriteAt,
-          lastRealError,
-          lastError: lastRealError
+          lastError
         };
       } catch (error) {
         const code = cleanText(error?.code || 'firebase/firestore-error');
-        const unavailableCodes = new Set(['firebase/init-error', 'unavailable', 'auth/network-request-failed']);
+        const unavailableCodes = new Set(['firebase/init-error', 'unavailable', 'auth/network-request-failed', 'auth/no-current-user', 'unauthenticated']);
         const unavailable = unavailableCodes.has(code);
         const cleanupOnly = operationalChanges.length === 0 && cleanupChanges.length > 0;
         const message = cleanupOnly
           ? SESSION_SAVE_MESSAGES.cleanupFailure
           : (unavailable ? SESSION_SAVE_MESSAGES.firestoreUnavailable : SESSION_SAVE_MESSAGES.failure);
-        const diagnosticLabel = cleanupOnly ? 'Limpieza de Facturas' : (pendingChanges.length ? 'Cambios operativos' : 'Metadata de sincronización');
+        const diagnosticLabel = cleanupOnly ? 'Limpieza de Facturas' : 'Cambios operativos';
         const lastError = buildSessionCloudDiagnostic(diagnosticLabel, error, code);
-        if (!pendingChanges.length && pendingMetadataBefore) {
-          setPendingSessionMetadata({
-            ...pendingMetadataBefore,
-            lastError,
-            errorCode: code
-          });
-          state.lastSyncError = '';
-          publishKSAFirebaseRuntime({ lastSyncError: '', lastSessionSaveErrorCode: code, confirmationPending: false, metadataPending: true, message: SESSION_SAVE_MESSAGES.metadataPending });
-          return {
-            ok: true,
-            confirmed: true,
-            action: 'saveSessionChangesToCloud',
-            code: 'cloud/session-metadata-pending',
-            errorCode: code,
-            message: SESSION_SAVE_MESSAGES.metadataPending,
-            count: 0,
-            confirmedChanges: [],
-            pendingConfirmationChanges: [],
-            failedChanges: [],
-            operationalFailed: false,
-            confirmationPending: false,
-            metadataPending: true,
-            metadataFailed: true,
-            metadataError: lastError,
-            cleanupPending: false,
-            lastRealError: '',
-            lastError: '',
-            error
-          };
-        }
         state.lastSyncError = lastError;
-        publishKSAFirebaseRuntime({ lastSyncError: state.lastSyncError, lastSessionSaveErrorCode: code, confirmationPending: false, metadataPending: Boolean(pendingMetadataBefore), message });
+        publishKSAFirebaseRuntime({ lastSyncError: state.lastSyncError, message });
         return {
           ok: false,
-          confirmed: false,
           action: 'saveSessionChangesToCloud',
           code: cleanupOnly ? 'cloud/facturas-cleanup-failed' : (unavailable ? 'cloud/firestore-unavailable' : code),
-          errorCode: code,
           message,
           count: pendingChanges.length,
           confirmedChanges: [],
-          pendingConfirmationChanges: [],
           failedChanges: pendingChanges,
           operationalFailed: operationalChanges.length > 0,
-          confirmationPending: false,
-          metadataPending: Boolean(pendingMetadataBefore),
           cleanupPending: cleanupChanges.length > 0,
-          lastRealError: lastError,
           lastError,
           error
         };
@@ -9859,8 +8045,10 @@ Notas importantes:
       saveData(normalized);
       return normalized;
     } catch (error) {
-      console.error('KSA PRÁCTIKA: no se pudieron normalizar los datos locales. Se conserva el almacenamiento original y se abre una estructura temporal segura sin sobrescribirlo.', error);
-      return createInitialData();
+      console.warn('KSA PRÁCTIKA: se reinició la estructura local por datos inválidos.', error);
+      const initial = createInitialData();
+      saveData(initial);
+      return initial;
     }
   }
 
@@ -9884,8 +8072,6 @@ Notas importantes:
 
   const CLOUD_PARTIAL_SESSION_SAVE_MODE = true;
 
-  const initialSessionSaveDiagnostic = getSessionSaveDiagnosticState();
-
   let cloudOperationState = {
     runtimeReady: false,
     active: false,
@@ -9893,15 +8079,10 @@ Notas importantes:
     isWriting: false,
     isReading: false,
     timer: null,
-    lastSyncAt: initialSessionSaveDiagnostic.lastConfirmedWriteAt || '',
-    lastCloudWriteAt: initialSessionSaveDiagnostic.lastConfirmedWriteAt || '',
+    lastSyncAt: '',
+    lastCloudWriteAt: '',
     lastRefreshAt: '',
-    lastError: initialSessionSaveDiagnostic.lastRealError || '',
-    confirmationPending: initialSessionSaveDiagnostic.confirmationPending === true,
-    metadataPending: initialSessionSaveDiagnostic.metadataPending === true || hasPendingSessionMetadata(),
-    lastSaveAttemptAt: initialSessionSaveDiagnostic.lastAttemptAt || '',
-    lastSaveStatus: initialSessionSaveDiagnostic.attemptStatus || SESSION_SAVE_RESULT_STATUS.idle,
-    lastSaveErrorCode: initialSessionSaveDiagnostic.errorCode || '',
+    lastError: '',
     message: '',
     bootstrappedForUid: ''
   };
@@ -9909,17 +8090,13 @@ Notas importantes:
   function applyCloudConsecutivosMirror(consecutivos = {}) {
     const pairs = [
       ['json', JSON_EXPORT_SEQUENCE_STORAGE_KEY],
-      ['excelConsulta', EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY]
+      ['excelConsulta', EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY],
+      ['excelCierre', EXCEL_CIERRE_SEQUENCE_STORAGE_KEY]
     ];
     pairs.forEach(([key, storageKey]) => {
       const value = consecutivos?.[key];
       if (value === null || value === undefined || value === '') return;
       try { localStorage.setItem(storageKey, String(value)); } catch (_) {}
-    });
-    reconcileExcelCierreSequenceStorage(appData, {
-      remoteValue: consecutivos?.excelCierre,
-      requireRemote: true,
-      registerChange: true
     });
   }
 
@@ -9958,66 +8135,11 @@ Notas importantes:
     }
   }
 
-  function mergePendingClosureChangesIntoCloudSnapshot(cloudSnapshot, options = {}) {
-    const remote = normalizeData(cloudSnapshot || createInitialData());
-    const local = normalizeData(appData || createInitialData());
-    const pending = getPendingSessionChanges();
-
-    const pendingNonClosureModules = new Map();
-    pending.forEach((change) => {
-      const moduleKey = normalizeSessionChangeClassifierValue(change?.module || change?.modulo);
-      const recordId = cleanText(change?.recordId || change?.idRegistro || change?.id);
-      if (!recordId) return;
-      if (moduleKey === 'cierresmensuales' || moduleKey === 'cierremensual' || moduleKey === 'cierres'
-        || moduleKey === 'exportacionesexcel' || moduleKey === 'exportacionexcel' || moduleKey === 'excelcierre'
-        || moduleKey === 'consecutivos' || moduleKey === 'consecutivo') return;
-      if (!pendingNonClosureModules.has(moduleKey)) pendingNonClosureModules.set(moduleKey, new Set());
-      pendingNonClosureModules.get(moduleKey).add(recordId);
-    });
-
-    const reconciliation = mergeExcelCierreDataSources(local, remote, {
-      pendingChanges: pending,
-      remoteConsecutivos: isPlainObject(options?.remoteConsecutivos) ? options.remoteConsecutivos : {}
-    });
-    const merged = reconciliation.data;
-
-    // La nube continúa siendo la fuente principal para módulos operativos.
-    // Solo se conservan registros locales pendientes que aún no han sido confirmados en Firestore.
-    const pendingModuleMap = {
-      ventasoc: ['ventas', normalizeVentaRecord],
-      ventas: ['ventas', normalizeVentaRecord],
-      oc: ['ventas', normalizeVentaRecord],
-      cobros: ['cobros', normalizeCobroRecord],
-      proveedorescompras: ['comprasProveedores', normalizeCompraProveedorRecord],
-      comprasproveedores: ['comprasProveedores', normalizeCompraProveedorRecord],
-      compras: ['comprasProveedores', normalizeCompraProveedorRecord],
-      pagosaproveedores: ['pagosProveedores', normalizePagoProveedorRecord],
-      pagosproveedores: ['pagosProveedores', normalizePagoProveedorRecord],
-      pagos: ['pagosProveedores', normalizePagoProveedorRecord],
-      gastos: ['gastos', normalizeGastoRecord],
-      casa: ['casaGastos', normalizeCasaGastoRecord],
-      casagastos: ['casaGastos', normalizeCasaGastoRecord]
-    };
-    pendingNonClosureModules.forEach((ids, moduleKey) => {
-      const target = pendingModuleMap[moduleKey];
-      if (!target) return;
-      const [dataKey, normalizer] = target;
-      const remoteById = new Map((Array.isArray(merged[dataKey]) ? merged[dataKey] : []).map((record) => [cleanText(record.id), record]));
-      (Array.isArray(local[dataKey]) ? local[dataKey] : []).forEach((record) => {
-        const id = cleanText(record.id);
-        if (id && ids.has(id)) remoteById.set(id, normalizer(record));
-      });
-      merged[dataKey] = Array.from(remoteById.values());
-    });
-
-    return merged;
-  }
-
   function applyCloudSnapshotToRuntime(result) {
     if (!result?.ok || !isPlainObject(result.snapshot)) return false;
     cloudOperationState.isHydrating = true;
     try {
-      appData = mergePendingClosureChangesIntoCloudSnapshot(result.snapshot, { remoteConsecutivos: result.consecutivos || {} });
+      appData = normalizeData(result.snapshot);
       appData.metadata = {
         ...(isPlainObject(appData.metadata) ? appData.metadata : {}),
         fuentePrincipal: 'firestore',
@@ -10033,23 +8155,14 @@ Notas importantes:
         appActivityLog = result.bitacora.map((entry) => normalizeActivityEntry(entry));
         saveActivityLog(appActivityLog);
       }
-      const cierreReconciliation = runExcelCierreReconciliationSafely('hidratación desde Firestore', () => {
-        applyCloudConsecutivosMirror(result.consecutivos || {});
-        return registerExcelCierreReconciliationChanges(appData, {
-          remoteValue: result.consecutivos?.excelCierre,
-          requireRemote: true,
-          registerSequence: true
-        });
-      });
-      runNonCriticalStartupTask('la selección del período después de cargar Firestore', () => reconcileWorkPeriodSelectionAfterDataChange());
-      runNonCriticalStartupTask('la sincronización de filtros de Casa después de cargar Firestore', () => syncCasaFiltersWithActiveWorkPeriod({ force: true, preserveCategory: true }));
+      applyCloudConsecutivosMirror(result.consecutivos || {});
+      reconcileWorkPeriodSelectionAfterDataChange();
+      syncCasaFiltersWithActiveWorkPeriod({ force: true, preserveCategory: true });
       cloudOperationState.active = true;
       cloudOperationState.lastRefreshAt = result.lastSyncAt || nowIso();
       cloudOperationState.lastSyncAt = result.lastSyncAt || cloudOperationState.lastSyncAt || nowIso();
-      cloudOperationState.lastError = cierreReconciliation.ok ? '' : 'La nube cargó, pero la reconciliación de cierres quedó pendiente y no modificó datos.';
-      cloudOperationState.message = cierreReconciliation.ok
-        ? (result.message || 'Datos actualizados desde Firestore.')
-        : cloudOperationState.lastError;
+      cloudOperationState.lastError = '';
+      cloudOperationState.message = result.message || 'Datos actualizados desde Firestore.';
       return true;
     } finally {
       cloudOperationState.isHydrating = false;
@@ -10204,7 +8317,7 @@ Notas importantes:
       return {
         json: readSequenceValue(JSON_EXPORT_SEQUENCE_STORAGE_KEY),
         excelConsulta: readSequenceValue(EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY),
-        excelCierre: reconcileExcelCierreRecords(appData).nextOfficialSequence
+        excelCierre: readSequenceValue(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY)
       };
     }
 
@@ -10411,13 +8524,10 @@ Notas importantes:
   }
 
   let appData = loadData();
-  runNonCriticalStartupTask('la migración oficial de consecutivos por período', () => {
-    registerExcelCierreReconciliationChanges(appData, { registerSequence: true });
-  });
   let seguimientoData = loadSeguimientoData();
-  runNonCriticalStartupTask('la migración de limpieza de Facturas', () => runFacturasProveedorCleanupMigration({ showMessage: true }));
-  runNonCriticalStartupTask('la selección del período de trabajo', () => reconcileWorkPeriodSelectionAfterDataChange());
-  runNonCriticalStartupTask('la sincronización de filtros de Casa', () => syncCasaFiltersWithActiveWorkPeriod({ force: true }));
+  runFacturasProveedorCleanupMigration({ showMessage: true });
+  reconcileWorkPeriodSelectionAfterDataChange();
+  syncCasaFiltersWithActiveWorkPeriod({ force: true });
   let appDeviceIdentity = loadDeviceIdentity();
   let appActivityLog = loadActivityLog();
   const KSAFirebaseAdapter = createKSAFirebaseAdapter();
@@ -10437,7 +8547,7 @@ Notas importantes:
     });
   }
   cloudOperationState.runtimeReady = true;
-  runNonCriticalStartupTask('la inicialización de Firebase', () => KSAFirebaseAdapter.initFirebase());
+  KSAFirebaseAdapter.initFirebase();
   const KSADataLayer = createKSADataLayer();
   if (typeof window !== 'undefined') window.KSADataLayer = KSADataLayer;
   const KSAFirestoreContract = getKSAFirestoreContract();
@@ -28002,9 +26112,6 @@ Notas importantes:
       lastSyncAt,
       lastCloudWriteAt: cloudOperationState.lastCloudWriteAt || runtimeStatus.lastCloudWriteAt || '',
       lastSyncError: cloudOperationState.lastError || runtimeStatus.lastSyncError || '',
-      sessionSaveDiagnostic: getSessionSaveDiagnosticState(),
-      confirmationPending: cloudOperationState.confirmationPending === true,
-      metadataPending: cloudOperationState.metadataPending === true || hasPendingSessionMetadata(),
       diagnosticsOk: diagnostics?.ok === true,
       localRecords,
       access: authStatus.accessLabel,
@@ -28051,15 +26158,9 @@ Notas importantes:
           <div class="status-item"><strong>Fuente principal</strong><span>${escapeHtml(info.sourcePrincipal || 'Local controlado')}</span></div>
           <div class="status-item"><strong>Datos migrados</strong><span>${escapeHtml(info.datosMigrados || 'No')}</span></div>
           <div class="status-item"><strong>Última sincronización</strong><span>${escapeHtml(info.lastSyncAt ? formatDateTime(info.lastSyncAt) : '—')}</span></div>
-          <div class="status-item"><strong>Última escritura confirmada</strong><span>${escapeHtml(info.sessionSaveDiagnostic?.lastConfirmedWriteAt ? formatDateTime(info.sessionSaveDiagnostic.lastConfirmedWriteAt) : (info.lastCloudWriteAt ? formatDateTime(info.lastCloudWriteAt) : '—'))}</span></div>
-          <div class="status-item"><strong>Último intento</strong><span>${escapeHtml(info.sessionSaveDiagnostic?.lastAttemptAt ? formatDateTime(info.sessionSaveDiagnostic.lastAttemptAt) : '—')}</span></div>
-          <div class="status-item"><strong>Estado del intento</strong><span>${escapeHtml(info.sessionSaveDiagnostic?.attemptStatus || SESSION_SAVE_RESULT_STATUS.idle)}</span></div>
-          <div class="status-item"><strong>Último error real</strong><span>${escapeHtml(info.sessionSaveDiagnostic?.lastRealError || '—')}</span></div>
-          <div class="status-item"><strong>Confirmación pendiente</strong><span>${escapeHtml(info.confirmationPending ? 'Sí' : 'No')}</span></div>
-          <div class="status-item"><strong>Metadata pendiente</strong><span>${escapeHtml(info.metadataPending ? 'Sí' : 'No')}</span></div>
-          <div class="status-item"><strong>Código del error</strong><span>${escapeHtml(info.sessionSaveDiagnostic?.errorCode || '—')}</span></div>
-          <div class="status-item"><strong>Fecha y hora</strong><span>${escapeHtml(info.sessionSaveDiagnostic?.updatedAt ? formatDateTime(info.sessionSaveDiagnostic.updatedAt) : '—')}</span></div>
-          <div class="status-item"><strong>Cambios de sesión pendientes</strong><span data-session-change-count>${escapeHtml(String(info.sessionChangeCount || 0))}</span><small>Incluye confirmaciones aún no resueltas.</small></div>
+          <div class="status-item"><strong>Última escritura exitosa</strong><span>${escapeHtml(info.lastCloudWriteAt ? formatDateTime(info.lastCloudWriteAt) : '—')}</span></div>
+          <div class="status-item"><strong>Último error</strong><span>${escapeHtml(info.lastSyncError || '—')}</span></div>
+          <div class="status-item"><strong>Cambios de sesión pendientes</strong><span data-session-change-count>${escapeHtml(String(info.sessionChangeCount || 0))}</span><small>Solo cambios hechos después de entrar.</small></div>
           ${Number.isFinite(info.localRecords) ? `<div class="status-item"><strong>Conteos locales</strong><span>${escapeHtml(String(info.localRecords))}</span><small>Solo informativo</small></div>` : ''}
           ${!opts.hideCloudRefresh && info.canRefreshCloud ? '<button type="button" class="secondary-action compact" data-cloud-refresh>Actualizar datos</button>' : ''}
         </div>
@@ -28899,7 +27000,7 @@ Notas importantes:
           <p class="compact-note">Guardar datos sube solo cambios de esta sesión. Actualizar datos refresca desde Firestore cuando la nube está activa.</p>
         </article>
 
-        ${configState.message ? `<div class="form-message ${configState.messageType === 'error' ? 'is-error' : (configState.messageType === 'info' ? 'is-info' : 'is-success')}" role="status">${escapeHtml(configState.message)}</div>` : ''}
+        ${configState.message ? `<div class="form-message ${configState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(configState.message)}</div>` : ''}
         ${jsonBackupState.message ? `<div class="form-message ${jsonBackupState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(jsonBackupState.message)}</div>` : ''}
 
         <div class="config-accordion-list entity-accordion-list">
@@ -29976,7 +28077,6 @@ Notas importantes:
           updatedAt: timestamp
         }
       });
-      registerExcelCierreReconciliationChanges(appData, { registerSequence: true });
       if (incomingNotas) saveNotasData({ ...incomingNotas, metadata: { ...incomingNotas.metadata, importedAt: timestamp, updatedAt: timestamp } });
       if (incomingFacturas) saveFacturasData({ ...incomingFacturas, metadata: { ...incomingFacturas.metadata, importedAt: timestamp, updatedAt: timestamp } });
       if (incomingSeguimiento) saveSeguimientoData({ ...incomingSeguimiento, metadata: { ...incomingSeguimiento.metadata, importedAt: timestamp, updatedAt: timestamp } });
@@ -30190,7 +28290,6 @@ Notas importantes:
         updatedAt: timestamp
       }
     });
-    registerExcelCierreReconciliationChanges(appData, { registerSequence: true });
     return { loaded, added, skipped };
   }
 
@@ -30829,63 +28928,12 @@ Notas importantes:
 
   function getLastExcelExportForPeriod(month, year) {
     const key = getPeriodKey(month, year);
-    const records = getExcelExports().filter((record) => record.periodo === key && (!record.tipo || record.tipo === 'cierre'));
-    const cierre = getCierresMensuales().find((record) => record.periodo === key) || null;
-    const linkedId = cleanText(cierre?.exportacionExcelId);
-    return records.find((record) => linkedId && cleanText(record.id) === linkedId && record.cierreOficial === true && !isExcelCierreRecordIgnored(record))
-      || records.find((record) => record.cierreOficial === true && !isExcelCierreRecordIgnored(record))
-      || records.find((record) => record.reservaOficial === true && !isExcelCierreRecordIgnored(record))
-      || records.find((record) => !isExcelCierreRecordIgnored(record))
-      || null;
+    return getExcelExports().find((record) => record.periodo === key && (!record.tipo || record.tipo === 'cierre')) || null;
   }
 
   function getCierreMensualForPeriod(month, year) {
     const key = getPeriodKey(month, year);
     return getCierresMensuales().find((record) => record.periodo === key) || null;
-  }
-
-  function getExcelCierreSequenceForPeriod(month, year) {
-    const periodo = getPeriodKey(month, year);
-    const cierre = getCierreMensualForPeriod(month, year);
-    if (cierre) return getExcelCierreSequenceFromRecord(cierre) || getExcelCierreSequence();
-    const existingReservation = getLastExcelExportForPeriod(month, year);
-    const reserved = getExcelCierreSequenceFromRecord(existingReservation);
-    if (reserved) return reserved;
-
-    const reconciliation = reconcileExcelCierreRecords(appData);
-    const used = new Set();
-    (Array.isArray(reconciliation.data.cierresMensuales) ? reconciliation.data.cierresMensuales : []).forEach((record) => {
-      const sequence = getExcelCierreSequenceFromRecord(record);
-      if (sequence) used.add(sequence);
-    });
-    (Array.isArray(reconciliation.data.exportacionesExcel) ? reconciliation.data.exportacionesExcel : []).forEach((record) => {
-      if (record.tipo !== 'cierre' || cleanText(record.periodo) === periodo || isExcelCierreRecordIgnored(record)) return;
-      if (record.cierreOficial !== true && record.reservaOficial !== true) return;
-      const sequence = getExcelCierreSequenceFromRecord(record);
-      if (sequence) used.add(sequence);
-    });
-    return getNextAvailableExcelCierreSequence(used, reconciliation.nextOfficialSequence);
-  }
-
-  function upsertExcelCierreExportRecord(recordInput) {
-    const record = normalizeExcelExportRecord(recordInput);
-    const existing = getLastExcelExportForPeriod(record.month, record.year);
-    const stableId = cleanText(existing?.id) || cleanText(record.id) || getExcelCierreCanonicalExportId(record.periodo);
-    const merged = normalizeExcelExportRecord({
-      ...(existing || {}),
-      ...record,
-      id: stableId,
-      tipo: 'cierre',
-      exportadoAt: existing?.exportadoAt || record.exportadoAt,
-      ultimaExportacionAt: record.ultimaExportacionAt || record.exportadoAt || nowIso(),
-      cantidadExportaciones: Math.max(1, Number(existing?.cantidadExportaciones || 0) + 1),
-      updatedAt: nowIso()
-    });
-    appData.exportacionesExcel = [
-      merged,
-      ...getExcelExports().filter((item) => cleanText(item.id) !== stableId)
-    ];
-    return merged;
   }
 
   function getPeriodFromForm(form) {
@@ -30929,26 +28977,23 @@ Notas importantes:
 
   function getExcelCierreSequence() {
     try {
-      return reconcileExcelCierreSequenceStorage(appData, { registerChange: false }).expected;
+      const raw = window.localStorage.getItem(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY);
+      const parsed = Number.parseInt(raw || '1', 10);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
     } catch (error) {
-      console.warn('KSA PRÁCTIKA: no se pudo calcular el consecutivo oficial de Excel de cierre.', error);
+      console.warn('KSA PRÁCTIKA: no se pudo leer el consecutivo local de Excel de cierre.', error);
       return 1;
     }
   }
 
   function saveExcelCierreSequence(sequence) {
     try {
-      const expected = reconcileExcelCierreRecords(appData).nextOfficialSequence;
-      const requested = Number.isFinite(Number(sequence)) && Number(sequence) > 0 ? Math.floor(Number(sequence)) : expected;
-      if (requested !== expected) {
-        console.warn(`KSA PRÁCTIKA: se ignoró el consecutivo ${requested}; el próximo oficial reconciliado es ${expected}.`);
-      }
-      window.localStorage.setItem(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY, String(expected));
-      registerSessionChange({ module: 'Consecutivos', operation: 'editar', recordId: 'excelCierre', sourceModule: 'Excel / Cierre' });
+      const safe = Number.isFinite(Number(sequence)) && Number(sequence) > 0 ? Math.floor(Number(sequence)) : 1;
+      window.localStorage.setItem(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY, String(safe));
       if (typeof scheduleCloudSnapshotSync === 'function') scheduleCloudSnapshotSync('excelCierreSequence');
       return true;
     } catch (error) {
-      console.warn('KSA PRÁCTIKA: no se pudo guardar el consecutivo oficial de Excel de cierre.', error);
+      console.warn('KSA PRÁCTIKA: no se pudo guardar el consecutivo local de Excel de cierre.', error);
       return false;
     }
   }
@@ -31004,64 +29049,43 @@ Notas importantes:
     }
 
     const { month, year, periodo } = getPeriodFromForm(form);
-    const existingClosure = getCierreMensualForPeriod(month, year);
-    const existingExport = getLastExcelExportForPeriod(month, year);
-    const sequence = getExcelCierreSequenceForPeriod(month, year);
-    const fileName = cleanText(existingClosure?.nombreExcelOficial || existingClosure?.nombreArchivoExcel || existingExport?.nombreArchivo)
-      || buildExcelCierreFileName(month, year, sequence);
+    const sequence = getExcelCierreSequence();
+    const fileName = buildExcelCierreFileName(month, year, sequence);
     excelExportState.month = month;
     excelExportState.year = year;
-    excelExportState.message = existingClosure ? 'Reexportando Excel oficial del período cerrado...' : 'Generando Excel oficial de cierre...';
+    excelExportState.message = 'Generando Excel oficial de cierre...';
     excelExportState.messageType = 'success';
     renderRoute();
 
     try {
       const result = await exportExcelForPeriod(month, year, { fileName, mode: 'cierre' });
-      const record = upsertExcelCierreExportRecord({
-        ...(existingExport || {}),
-        id: existingExport?.id || getExcelCierreCanonicalExportId(periodo),
+      if (!saveExcelCierreSequence(sequence + 1)) {
+        throw new Error('El Excel se generó, pero no se pudo avanzar el consecutivo local de cierre.');
+      }
+      const record = normalizeExcelExportRecord({
+        id: generateId('exportExcel'),
         periodo,
         month,
         year,
         tipo: 'cierre',
         nombreArchivo: result.fileName,
-        exportadoAt: existingExport?.exportadoAt || result.exportedAt,
-        ultimaExportacionAt: result.exportedAt,
-        corteOficialAt: existingClosure?.corteOficialAt || result.corteOficialAt || result.exportedAt,
-        snapshotCierre: getExcelCierreSnapshotFromRecord(existingClosure) || result.snapshotCierre,
-        totales: existingClosure?.totales || result.totales,
-        hojas: result.hojas,
-        consecutivo: sequence,
-        consecutivoUtilizado: sequence,
-        consecutivoOficial: existingClosure ? sequence : 0,
-        nombreExcelOficial: existingClosure ? fileName : '',
-        reservaOficial: !existingClosure,
-        cierreOficial: Boolean(existingClosure),
-        cierreMensualId: existingClosure?.id || '',
-        fechaHoraCierre: existingClosure?.fechaHoraCierre || ''
+        exportadoAt: result.exportedAt,
+        corteOficialAt: result.corteOficialAt || result.exportedAt,
+        snapshotCierre: result.snapshotCierre,
+        totales: result.totales,
+        hojas: result.hojas
       });
+      appData.exportacionesExcel = [record, ...getExcelExports()];
       saveData(appData);
-      registerSessionChange({
-        module: 'Exportaciones Excel',
-        operation: existingExport ? 'editar' : 'crear',
-        recordId: record.id,
-        relatedId: periodo
-      });
       registerActivity({
         module: 'Excel / Cierre',
-        action: existingClosure ? 'Reexportado' : (existingExport ? 'Reexportado' : 'Exportado'),
+        action: 'Exportado',
         entityType: 'Excel',
         entityRef: result.fileName,
-        detail: buildActivityDetail([
-          existingClosure ? 'Excel oficial reexportado sin consumir consecutivo' : 'Excel de cierre exportado con consecutivo reservado',
-          periodo,
-          result.fileName
-        ]),
+        detail: buildActivityDetail(['Excel exportado', periodo, result.fileName]),
         source: 'local'
       });
-      excelExportState.message = existingClosure
-        ? `Excel de cierre reexportado: ${result.fileName}. Consecutivo oficial conservado: ${formatExcelCierreSequence(sequence)}.`
-        : `Excel de cierre exportado: ${result.fileName}. Consecutivo ${formatExcelCierreSequence(sequence)} reservado para este período; reexportar no consume otro número. Hojas: ${result.hojas.join(', ')}.`;
+      excelExportState.message = `Excel de cierre exportado: ${result.fileName}. Próximo cierre: ${formatExcelCierreSequence(sequence + 1)}. Hojas: ${result.hojas.join(', ')}.`;
       excelExportState.messageType = 'success';
       cierreMensualState.month = month;
       cierreMensualState.year = year;
@@ -31121,8 +29145,6 @@ Notas importantes:
       ? reviveExcelCierreSummaryFromSnapshot(exportSnapshot)
       : buildExcelCierreSummaryForPeriod(month, year, { cutoffAt: fechaHoraCierre });
     const snapshotCierre = exportSnapshot || buildExcelCierreSnapshot(month, year, fechaHoraCierre, summary, lastExport.nombreArchivo);
-    const officialSequence = getExcelCierreSequenceFromRecord(lastExport) || getExcelCierreSequenceForPeriod(month, year);
-    const officialFileName = buildExcelCierreFileName(month, year, officialSequence);
     const cierre = normalizeCierreMensualRecord({
       id: `cierre_${periodo}`,
       periodo,
@@ -31131,65 +29153,22 @@ Notas importantes:
       fechaHoraCierre,
       corteOficialAt: snapshotCierre?.corteOficialAt || fechaHoraCierre,
       usuarioRol: getCurrentRoleDefinition().label,
-      nombreArchivoExcel: officialFileName,
+      nombreArchivoExcel: lastExport.nombreArchivo,
       exportacionExcelId: lastExport.id,
-      consecutivo: officialSequence,
-      consecutivoUtilizado: officialSequence,
-      consecutivoOficial: officialSequence,
-      nombreExcelOficial: officialFileName,
-      vinculoOficialVerificado: true,
-      versionVinculoCierre: 3,
-      estado: 'cerrado',
-      cerrado: true,
-      cierreOficial: true,
       modoEdicion: 'advertencia',
       snapshotCierre,
       totales: buildClosingTotals(summary),
       observacion: 'Cierre mensual con exportación Excel previa obligatoria. Corte oficial congelado para no recalcular movimientos posteriores.'
     });
 
-    appData.cierresMensuales = [cierre, ...getCierresMensuales().filter((item) => cleanText(item.periodo) !== periodo)];
-    const officialExport = upsertExcelCierreExportRecord({
-      ...lastExport,
-      id: lastExport.id,
-      periodo,
-      month,
-      year,
-      tipo: 'cierre',
-      nombreArchivo: officialFileName,
-      consecutivo: officialSequence,
-      consecutivoUtilizado: officialSequence,
-      consecutivoOficial: officialSequence,
-      nombreExcelOficial: officialFileName,
-      reservaOficial: false,
-      cierreOficial: true,
-      ignoradoParaConsecutivo: false,
-      reservaInvalida: false,
-      estadoConsecutivo: 'oficial',
-      cierreMensualId: cierre.id,
-      fechaHoraCierre,
-      corteOficialAt: cierre.corteOficialAt,
-      snapshotCierre,
-      totales: cierre.totales
-    });
-    cierre.exportacionExcelId = officialExport.id;
-    appData.cierresMensuales = [cierre, ...getCierresMensuales().filter((item) => cleanText(item.periodo) !== periodo)];
-    appData = reconcileExcelCierreRecords(appData).data;
-    if (!saveExcelCierreSequence(reconcileExcelCierreRecords(appData).nextOfficialSequence)) {
-      cierreMensualState.message = 'El cierre se preparó, pero no se pudo guardar el próximo consecutivo oficial.';
-      cierreMensualState.messageType = 'error';
-      renderRoute();
-      return;
-    }
+    appData.cierresMensuales = [cierre, ...getCierresMensuales()];
     saveData(appData);
-    registerSessionChange({ module: 'Cierres mensuales', operation: 'crear', recordId: periodo, relatedId: officialExport.id });
-    registerSessionChange({ module: 'Exportaciones Excel', operation: 'editar', recordId: officialExport.id, relatedId: periodo });
     registerActivity({
       module: 'Excel / Cierre',
       action: 'Cierre mensual',
       entityType: 'Cierre',
       entityRef: periodo,
-      detail: buildActivityDetail(['Cierre mensual registrado', getMonthLabel(month), year, officialFileName]),
+      detail: buildActivityDetail(['Cierre mensual registrado', getMonthLabel(month), year, lastExport.nombreArchivo]),
       source: 'sistema'
     });
     const workPeriodResult = reconcileWorkPeriodSelectionAfterDataChange();
@@ -32695,7 +30674,6 @@ ${rowsXml}
     target.ventas = recalculateVentasWithCobros(target.ventas, target.cobros);
     target.comprasProveedores = recalculateComprasProveedoresWithPagos(target.comprasProveedores, target.pagosProveedores);
     appData = normalizeData(target);
-    registerExcelCierreReconciliationChanges(appData, { registerSequence: true });
     return { added, skipped };
   }
 
@@ -33904,5 +31882,4 @@ ${rowsXml}
   initPreparedAccessScreen();
 
   setupPwaUpdateListeners();
-  scheduleExcelCierreStartupInspection();
 })();
