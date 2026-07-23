@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_59_excel_cierre_responsive_etapa1';
+const CACHE_VERSION = 'v0_18_61_toast_etapa2';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.59-excel-cierre-responsive-etapa1';
+  const APP_VERSION = '0.18.61-toast-etapa2';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -2774,6 +2774,278 @@ Notas importantes:
     return String(value ?? '').replace(/\s+/g, ' ').trim();
   }
 
+  const TOAST_TYPES = Object.freeze(['process', 'success', 'warning', 'error']);
+  const TOAST_DURATIONS = Object.freeze({ process: 0, success: 3000, warning: 4000, error: 5000 });
+  const TOAST_LABELS = Object.freeze({ process: 'Proceso en curso', success: 'Éxito', warning: 'Advertencia', error: 'Error' });
+  const TOAST_ICONS = Object.freeze({ process: '↻', success: '✓', warning: '!', error: '×' });
+  const TOAST_MAX_VISIBLE = 6;
+  const TOAST_DEDUPE_WINDOW_MS = 900;
+  const toastRegistry = new Map();
+  let toastSequence = 0;
+
+  function normalizeToastType(value) {
+    const type = cleanText(value).toLowerCase();
+    if (type === 'advertencia' || type === 'warn') return 'warning';
+    if (type === 'info') return 'success';
+    return TOAST_TYPES.includes(type) ? type : 'success';
+  }
+
+  function inferActionToastType(message, value = 'success') {
+    const rawType = cleanText(value).toLowerCase();
+    const text = cleanText(message).toLowerCase();
+    if (rawType === 'error') return 'error';
+    if (rawType === 'warning' || rawType === 'warn' || rawType === 'advertencia') return 'warning';
+    if (/\b(guardando|actualizando|verificando|activando|leyendo|cargando|procesando|importando|exportando|buscando|aplicando|preparando|inicializando|sincronizando|generando|probando|recargando|en curso)\b/.test(text) || /…$/.test(text)) return 'process';
+    if (/\b(cancelad[oa]|sin cambios|no hay cambios|pendiente de guardar|advertencia)\b/.test(text)) return 'warning';
+    return normalizeToastType(rawType);
+  }
+
+  function updateToastRegionOffset(region) {
+    if (!region || typeof document === 'undefined' || typeof window === 'undefined') return;
+    const topbar = document.querySelector('.app-topbar');
+    const topbarBottom = topbar?.getBoundingClientRect?.().bottom;
+    if (!Number.isFinite(topbarBottom)) return;
+    const compactGap = window.matchMedia?.('(max-width: 620px)')?.matches ? 8 : 12;
+    region.style.setProperty('--ksa-toast-top', `${Math.max(8, Math.ceil(topbarBottom + compactGap))}px`);
+  }
+
+  function ensureToastRegion() {
+    if (typeof document === 'undefined') return null;
+    let region = document.getElementById('ksaToastRegion');
+    if (!region) {
+      region = document.createElement('div');
+      region.id = 'ksaToastRegion';
+      region.className = 'ksa-toast-region';
+      region.setAttribute('role', 'region');
+      region.setAttribute('aria-live', 'polite');
+      region.setAttribute('aria-label', 'Notificaciones de la aplicación');
+      document.body.appendChild(region);
+    }
+    updateToastRegionOffset(region);
+    return region;
+  }
+
+  function pruneToastRegistry() {
+    toastRegistry.forEach((entry, id) => {
+      if (!entry?.node?.isConnected) {
+        if (entry?.timer) window.clearTimeout(entry.timer);
+        toastRegistry.delete(id);
+      }
+    });
+  }
+
+  function getToastDuration(type, options = {}) {
+    if (Number.isFinite(options.duration) && options.duration >= 0) return options.duration;
+    return TOAST_DURATIONS[type] ?? TOAST_DURATIONS.success;
+  }
+
+  function setToastNodeContent(node, message, type) {
+    if (!node) return;
+    const safeType = normalizeToastType(type);
+    const safeMessage = cleanText(message) || TOAST_LABELS[safeType];
+    node.className = `ksa-toast is-${safeType}`;
+    node.dataset.toastType = safeType;
+    node.setAttribute('role', safeType === 'error' ? 'alert' : 'status');
+    node.setAttribute('aria-label', `${TOAST_LABELS[safeType]}: ${safeMessage}`);
+    node.innerHTML = '';
+
+    const icon = document.createElement('span');
+    icon.className = 'ksa-toast-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = TOAST_ICONS[safeType];
+
+    const content = document.createElement('div');
+    content.className = 'ksa-toast-content';
+    const label = document.createElement('strong');
+    label.textContent = TOAST_LABELS[safeType];
+    const text = document.createElement('span');
+    text.textContent = safeMessage;
+    content.append(label, text);
+    node.append(icon, content);
+
+    if (safeType === 'process') {
+      const activity = document.createElement('span');
+      activity.className = 'ksa-toast-activity';
+      activity.setAttribute('aria-hidden', 'true');
+      activity.appendChild(document.createElement('span'));
+      node.appendChild(activity);
+    }
+  }
+
+  function scheduleToastDismiss(id, type, options = {}) {
+    const entry = toastRegistry.get(id);
+    if (!entry) return;
+    if (entry.timer) window.clearTimeout(entry.timer);
+    const duration = getToastDuration(type, options);
+    entry.timer = duration > 0 ? window.setTimeout(() => dismissToast(id), duration) : null;
+  }
+
+  function findRecentDuplicateToast(signature) {
+    const now = Date.now();
+    for (const [id, entry] of Array.from(toastRegistry.entries()).reverse()) {
+      if (entry?.signature === signature && (now - Number(entry.updatedAt || 0)) <= TOAST_DEDUPE_WINDOW_MS) return id;
+    }
+    return '';
+  }
+
+  function trimToastStack() {
+    pruneToastRegistry();
+    if (toastRegistry.size <= TOAST_MAX_VISIBLE) return;
+    const removable = Array.from(toastRegistry.entries()).filter(([, entry]) => entry?.node?.dataset?.toastType !== 'process');
+    while (toastRegistry.size > TOAST_MAX_VISIBLE && removable.length) {
+      const [id] = removable.shift();
+      dismissToast(id, { immediate: true });
+    }
+  }
+
+  function showToast(message, type = 'success', options = {}) {
+    const region = ensureToastRegion();
+    if (!region) return '';
+    pruneToastRegistry();
+    const safeType = normalizeToastType(type);
+    const safeMessage = cleanText(message) || TOAST_LABELS[safeType];
+    const signature = `${safeType}|${safeMessage}`;
+    const explicitId = cleanText(options.id);
+    const duplicateId = explicitId ? '' : findRecentDuplicateToast(signature);
+    if (duplicateId) {
+      replaceToast(duplicateId, safeMessage, safeType, options);
+      return duplicateId;
+    }
+
+    toastSequence += 1;
+    const id = explicitId || `ksa-toast-${Date.now().toString(36)}-${toastSequence}`;
+    const existing = toastRegistry.get(id);
+    if (existing?.node) {
+      setToastNodeContent(existing.node, safeMessage, safeType);
+      existing.signature = signature;
+      existing.updatedAt = Date.now();
+      existing.node.classList.add('is-visible');
+      scheduleToastDismiss(id, safeType, options);
+      return id;
+    }
+
+    const node = document.createElement('article');
+    node.dataset.toastId = id;
+    setToastNodeContent(node, safeMessage, safeType);
+    region.appendChild(node);
+    toastRegistry.set(id, { node, timer: null, signature, updatedAt: Date.now() });
+    const reveal = () => node.classList.add('is-visible');
+    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(reveal);
+    else window.setTimeout(reveal, 0);
+    scheduleToastDismiss(id, safeType, options);
+    trimToastStack();
+    return id;
+  }
+
+  function dismissToast(id, options = {}) {
+    const safeId = cleanText(id);
+    const entry = toastRegistry.get(safeId);
+    if (!entry) return false;
+    if (entry.timer) window.clearTimeout(entry.timer);
+    toastRegistry.delete(safeId);
+    if (options.immediate) {
+      entry.node.remove();
+      return true;
+    }
+    entry.node.classList.remove('is-visible');
+    entry.node.classList.add('is-leaving');
+    const removeNode = () => entry.node.remove();
+    entry.node.addEventListener('transitionend', removeNode, { once: true });
+    window.setTimeout(removeNode, 240);
+    return true;
+  }
+
+  function replaceToast(id, message, type = 'success', options = {}) {
+    const safeId = cleanText(id);
+    const entry = toastRegistry.get(safeId);
+    if (!entry) return showToast(message, type, { ...options, id: safeId || options.id });
+    const safeType = normalizeToastType(type);
+    const safeMessage = cleanText(message) || TOAST_LABELS[safeType];
+    if (entry.timer) window.clearTimeout(entry.timer);
+    setToastNodeContent(entry.node, safeMessage, safeType);
+    entry.signature = `${safeType}|${safeMessage}`;
+    entry.updatedAt = Date.now();
+    entry.node.classList.remove('is-leaving');
+    entry.node.classList.add('is-visible');
+    scheduleToastDismiss(safeId, safeType, options);
+    return safeId;
+  }
+
+  function clearAllToasts() {
+    Array.from(toastRegistry.keys()).forEach((id) => dismissToast(id, { immediate: true }));
+  }
+
+  function clearActionMessage(state) {
+    if (!state || typeof state !== 'object') return;
+    state.message = null;
+    state.messageType = 'success';
+  }
+
+  function notifyAction(state, message, type = 'success', options = {}) {
+    clearActionMessage(state);
+    return showToast(message, inferActionToastType(message, type), options);
+  }
+
+  function relayStateFieldToToast(state, messageField, typeField, toastId, options = {}) {
+    if (!state || typeof state !== 'object') return false;
+    const message = cleanText(state[messageField]);
+    if (!message) return false;
+    const rawType = typeField ? state[typeField] : 'success';
+    const preservePattern = options.preservePattern;
+    if (preservePattern instanceof RegExp && preservePattern.test(message)) return false;
+    state[messageField] = null;
+    if (typeField) state[typeField] = 'success';
+    if (options.ignorePattern instanceof RegExp && options.ignorePattern.test(message)) return true;
+    const type = inferActionToastType(message, rawType);
+    const existing = toastRegistry.has(toastId);
+    if (existing) replaceToast(toastId, message, type);
+    else showToast(message, type, { id: toastId });
+    return true;
+  }
+
+  function flushLegacyActionMessagesToToasts() {
+    const specs = [
+      [catalogState, 'message', 'messageType', 'ksa-action-catalogos'],
+      [bdatosState, 'message', 'messageType', 'ksa-action-bdatos'],
+      [ventasState, 'message', 'messageType', 'ksa-action-ventas'],
+      [cobrosState, 'message', 'messageType', 'ksa-action-cobros'],
+      [proveedoresState, 'message', 'messageType', 'ksa-action-compras'],
+      [pagosState, 'message', 'messageType', 'ksa-action-pagos'],
+      [gastosState, 'message', 'messageType', 'ksa-action-gastos'],
+      [casaState, 'message', 'messageType', 'ksa-action-casa'],
+      [seguimientoState, 'message', 'messageType', 'ksa-action-seguimiento'],
+      [notasState, 'message', 'messageType', 'ksa-action-notas'],
+      [facturasState, 'message', 'messageType', 'ksa-action-facturas'],
+      [excelImportState, 'message', 'messageType', 'ksa-action-excel-import'],
+      [jsonBackupState, 'message', 'messageType', 'ksa-action-json', { preservePattern: /nube ya está activa|no se reimporta json/i }],
+      [cloudInitialImportState, 'message', 'messageType', 'ksa-action-cloud-import', { preservePattern: /importación inicial completada|reimportar puede crear duplicados/i }],
+      [usersAuthState, 'message', 'messageType', 'ksa-action-usuarios', { ignorePattern: /^editando autorización/i }],
+      [configState, 'message', 'messageType', 'ksa-action-configuracion'],
+      [pwaState, 'message', 'statusType', 'ksa-action-pwa'],
+      [excelExportState, 'consultaMessage', 'consultaMessageType', 'ksa-action-excel-consulta'],
+      [excelExportState, 'cierreMessage', 'cierreMessageType', 'ksa-action-excel-cierre', { preservePattern: /no se puede exportar el excel de cierre|pendientes en clientes|pendientes en proveedores/i }],
+      [cierreMensualState, 'message', 'messageType', 'ksa-action-cierre', { preservePattern: /no se puede cerrar|bloqueo:|snapshot oficial/i }]
+    ];
+    specs.forEach(([state, messageField, typeField, toastId, options]) => relayStateFieldToToast(state, messageField, typeField, toastId, options || {}));
+  }
+
+  if (typeof window !== 'undefined') {
+    const refreshToastOffset = () => updateToastRegionOffset(document.getElementById('ksaToastRegion'));
+    window.addEventListener('resize', refreshToastOffset, { passive: true });
+    window.addEventListener('orientationchange', refreshToastOffset, { passive: true });
+    window.addEventListener('pagehide', clearAllToasts, { once: true });
+    window.KSAToast = Object.freeze({
+      show: showToast,
+      process: (message, options = {}) => showToast(message, 'process', options),
+      success: (message, options = {}) => showToast(message, 'success', options),
+      warning: (message, options = {}) => showToast(message, 'warning', options),
+      error: (message, options = {}) => showToast(message, 'error', options),
+      replace: replaceToast,
+      dismiss: dismissToast,
+      clear: clearAllToasts
+    });
+  }
+
   const SESSION_CHANGE_OPERATION_PRIORITY = {
     crear: 1,
     editar: 2,
@@ -2983,25 +3255,25 @@ Notas importantes:
     if (button) button.disabled = true;
     const pending = getPendingSessionChanges();
     if (!pending.length) {
-      configState.message = SESSION_SAVE_MESSAGES.noChanges;
-      configState.messageType = 'info';
+      clearActionMessage(configState);
       cloudOperationState.message = SESSION_SAVE_MESSAGES.noChanges;
       renderRoute({ preserveScroll: true });
+      showToast(SESSION_SAVE_MESSAGES.noChanges, 'warning');
       return { ok: true, count: 0, message: SESSION_SAVE_MESSAGES.noChanges };
     }
 
     if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.saveSessionChangesToCloud) {
-      configState.message = SESSION_SAVE_MESSAGES.firestoreUnavailable;
-      configState.messageType = 'error';
+      clearActionMessage(configState);
       cloudOperationState.lastError = SESSION_SAVE_MESSAGES.firestoreUnavailable;
       cloudOperationState.message = SESSION_SAVE_MESSAGES.firestoreUnavailable;
       renderRoute({ preserveScroll: true });
+      showToast(SESSION_SAVE_MESSAGES.firestoreUnavailable, 'error');
       return { ok: false, count: pending.length, message: SESSION_SAVE_MESSAGES.firestoreUnavailable };
     }
 
-    configState.message = SESSION_SAVE_MESSAGES.saving;
-    configState.messageType = 'success';
+    clearActionMessage(configState);
     cloudOperationState.message = SESSION_SAVE_MESSAGES.saving;
+    const processToastId = showToast(SESSION_SAVE_MESSAGES.saving, 'process');
     renderRoute({ preserveScroll: true });
 
     try {
@@ -3017,15 +3289,17 @@ Notas importantes:
       const cleanupPendingAfterOperationalSuccess = result?.code === 'cloud/session-write-ok-cleanup-pending';
       const unavailable = result?.code === 'firebase/unavailable' || result?.code === 'cloud/firestore-unavailable';
       const operationalFailure = result?.operationalFailed === true || result?.code === 'cloud/session-operational-failed';
-
-      configState.message = unavailable
+      const resultMessage = unavailable
         ? SESSION_SAVE_MESSAGES.firestoreUnavailable
         : (cleanupPendingAfterOperationalSuccess
           ? SESSION_SAVE_MESSAGES.partialCleanupPending
           : (cleanupOnlyFailure
             ? SESSION_SAVE_MESSAGES.cleanupFailure
             : (operationalFailure ? SESSION_SAVE_MESSAGES.failure : message)));
-      configState.messageType = (result?.ok || cleanupPendingAfterOperationalSuccess) ? 'success' : 'error';
+      const resultType = cleanupPendingAfterOperationalSuccess
+        ? 'warning'
+        : ((result?.ok && !operationalFailure && !unavailable) ? 'success' : 'error');
+      clearActionMessage(configState);
 
       if (result?.ok || confirmedChanges.length) {
         cloudOperationState.active = true;
@@ -3034,23 +3308,23 @@ Notas importantes:
       }
       cloudOperationState.lastError = cleanText(result?.lastError || '');
       if (!cloudOperationState.lastError && !result?.ok && !cleanupOnlyFailure) {
-        cloudOperationState.lastError = configState.message;
+        cloudOperationState.lastError = resultMessage;
       }
-      cloudOperationState.message = configState.message;
+      cloudOperationState.message = resultMessage;
 
       renderRoute({ preserveScroll: true });
+      replaceToast(processToastId, resultMessage, resultType);
       return result;
     } catch (error) {
       const message = SESSION_SAVE_MESSAGES.failure;
-      configState.message = message;
-      configState.messageType = 'error';
+      clearActionMessage(configState);
       cloudOperationState.lastError = cleanText(error?.message || message);
       cloudOperationState.message = message;
       renderRoute({ preserveScroll: true });
+      replaceToast(processToastId, message, 'error');
       return { ok: false, count: pending.length, message, error };
     }
   }
-
 
 
   syncSessionChangeQueueGlobal();
@@ -8468,10 +8742,11 @@ Notas importantes:
       return result;
     } catch (error) {
       cloudOperationState.isReading = false;
-      configState.message = isOperationTimeoutError(error) ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : (cleanText(error?.message) || 'No se pudieron actualizar los datos.');
+      const failureMessage = isOperationTimeoutError(error) ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : (cleanText(error?.message) || 'No se pudieron actualizar los datos.');
+      configState.message = failureMessage;
       configState.messageType = 'error';
       renderRoute({ preserveScroll: true });
-      return { ok: false, message: configState.message };
+      return { ok: false, message: failureMessage };
     }
   }
 
@@ -10053,11 +10328,7 @@ Notas importantes:
 
   function setPermissionDeniedMessage(targetState = null, options = {}) {
     const opts = isPlainObject(options) ? options : {};
-    const stateTarget = targetState || configState;
-    if (stateTarget) {
-      stateTarget.message = ADMIN_RESTRICTED_MESSAGE;
-      stateTarget.messageType = 'error';
-    }
+    notifyAction(targetState || configState, ADMIN_RESTRICTED_MESSAGE, 'error', { id: 'ksa-action-permission' });
     if (opts.render !== false) renderRoute({ preserveScroll: opts.preserveScroll === true });
     return { ok: false, code: 'app/admin-only', message: ADMIN_RESTRICTED_MESSAGE };
   }
@@ -10086,8 +10357,7 @@ Notas importantes:
 
   function setRoleMessage(state, message) {
     if (!state) return;
-    state.message = message;
-    state.messageType = 'error';
+    notifyAction(state, message, 'error', { id: 'ksa-action-role' });
     renderRoute();
   }
 
@@ -10661,6 +10931,7 @@ Notas importantes:
 
   function renderRoute(options = {}) {
     const route = getRoute();
+    flushLegacyActionMessagesToToasts();
     const previousRoute = lastRenderedRoute;
     const isConfigScreen = isConfigRoute(route);
     const wasConfigScreen = isConfigRoute(previousRoute);
@@ -11801,8 +12072,7 @@ Notas importantes:
   }
 
   function setNotasMessage(message, type = 'success') {
-    notasState.message = message;
-    notasState.messageType = type;
+    notifyAction(notasState, message, type, { id: 'ksa-action-notas' });
   }
 
   function getNotasPriorityClass(prioridad) {
@@ -12658,8 +12928,7 @@ Notas importantes:
   }
 
   function setFacturasMessage(message, type = 'success') {
-    facturasState.message = message;
-    facturasState.messageType = type;
+    notifyAction(facturasState, message, type, { id: 'ksa-action-facturas' });
   }
 
   function sortFacturasModulo(records) {
@@ -14852,8 +15121,7 @@ Notas importantes:
     const fecha = toDateInputValue(formData.get('fecha'));
     const observacion = cleanText(formData.get('observacion'));
     if (!fecha) {
-      seguimientoState.message = 'Selecciona una fecha válida.';
-      seguimientoState.messageType = 'error';
+      notifyAction(seguimientoState, 'Selecciona una fecha válida.', 'error');
       renderRoute({ preserveScroll: true });
       return;
     }
@@ -14862,8 +15130,7 @@ Notas importantes:
       const groupIndex = seguimientoData.registros.findIndex((record) => record.ultimaLlamada?.id === editingId);
       if (groupIndex < 0) {
         seguimientoState.editingCallId = null;
-        seguimientoState.message = 'La llamada que intentabas editar ya no está disponible.';
-        seguimientoState.messageType = 'error';
+        notifyAction(seguimientoState, 'La llamada que intentabas editar ya no está disponible.', 'error');
         renderRoute();
         return;
       }
@@ -14890,19 +15157,18 @@ Notas importantes:
       seguimientoState.editingCallId = null;
       seguimientoState.draftClienteId = '';
       seguimientoState.draftSucursalId = '';
-      seguimientoState.message = saved
+      const resultMessage = saved
         ? (cloudOperationState.active ? 'Llamada actualizada. Pendiente de Guardar datos.' : 'Llamada actualizada y guardada localmente.')
         : 'No se pudo guardar la llamada.';
-      seguimientoState.messageType = saved ? 'success' : 'error';
-      renderRoute();
+      notifyAction(seguimientoState, resultMessage, saved ? 'success' : 'error');
+      renderRoute({ preserveScroll: true });
       return;
     }
 
     const clienteId = cleanText(formData.get('clienteId'));
     const cliente = getCatalogRecordById('clientes', clienteId);
     if (!cliente) {
-      seguimientoState.message = 'Selecciona un cliente válido.';
-      seguimientoState.messageType = 'error';
+      notifyAction(seguimientoState, 'Selecciona un cliente válido.', 'error');
       renderRoute({ preserveScroll: true });
       return;
     }
@@ -14910,8 +15176,7 @@ Notas importantes:
     const sucursalId = cleanText(formData.get('sucursalId'));
     const sucursal = sucursalId ? availableBranches.find((record) => record.id === sucursalId) : null;
     if (availableBranches.length && !sucursal) {
-      seguimientoState.message = 'Selecciona una sucursal válida para el cliente.';
-      seguimientoState.messageType = 'error';
+      notifyAction(seguimientoState, 'Selecciona una sucursal válida para el cliente.', 'error');
       renderRoute({ preserveScroll: true });
       return;
     }
@@ -14958,13 +15223,13 @@ Notas importantes:
     }
     seguimientoState.draftClienteId = '';
     seguimientoState.draftSucursalId = '';
-    seguimientoState.message = saved
+    const resultMessage = saved
       ? (groupIndex >= 0
         ? `Nueva llamada guardada. La llamada anterior pasó al Histórico.${cloudOperationState.active ? ' Pendiente de Guardar datos.' : ''}`
         : (cloudOperationState.active ? 'Primera llamada guardada. Pendiente de Guardar datos.' : 'Primera llamada guardada localmente.'))
       : 'No se pudo guardar la llamada.';
-    seguimientoState.messageType = saved ? 'success' : 'error';
-    renderRoute();
+    notifyAction(seguimientoState, resultMessage, saved ? 'success' : 'error');
+    renderRoute({ preserveScroll: true });
   }
 
   function startSeguimientoCall(clienteId, sucursalId = '') {
@@ -15695,8 +15960,8 @@ Notas importantes:
     const existing = notasState.editingNoteType === 'nota' ? getNotasRecordByType('nota', notasState.editingNoteId, data) : null;
     const titulo = cleanText(formData.get('titulo'));
     if (!titulo) {
-      setNotasMessage('La Nota general necesita título.', 'error');
-      renderRoute();
+      notifyAction(notasState, 'La Nota general necesita título.', 'error');
+      renderRoute({ preserveScroll: true });
       return;
     }
     const estado = normalizeNotasEstado(formData.get('estado'), 'Pendiente');
@@ -15718,8 +15983,12 @@ Notas importantes:
     saveNotasData(data);
     registerSessionChange({ module: 'Notas / pendientes', operation: existing ? 'editar' : 'crear', recordId: record.id });
     clearNotasForms();
-    setNotasMessage(completed ? 'Nota general guardada en Histórico.' : 'Nota general guardada.');
-    renderRoute();
+    const resultMessage = completed
+      ? 'Nota general guardada en Histórico.'
+      : (existing ? 'Nota general actualizada.' : 'Nota general guardada.');
+    clearActionMessage(notasState);
+    renderRoute({ preserveScroll: true });
+    showToast(resultMessage, 'success');
   }
 
   function savePendienteRecord(form) {
@@ -15729,15 +15998,15 @@ Notas importantes:
     const existing = notasState.editingNoteType === 'pendiente' ? getNotasRecordByType('pendiente', notasState.editingNoteId, data) : null;
     const descripcion = cleanText(formData.get('descripcion'));
     if (!descripcion) {
-      setNotasMessage('El Pendiente de registrar necesita descripción.', 'error');
-      renderRoute();
+      notifyAction(notasState, 'El Pendiente de registrar necesita descripción.', 'error');
+      renderRoute({ preserveScroll: true });
       return;
     }
     const rawMonto = formData.get('monto');
     const monto = rawMonto === null || rawMonto === '' ? 0 : parseMoney(rawMonto);
     if (Number.isNaN(monto) || monto < 0) {
-      setNotasMessage('El monto del pendiente debe ser válido.', 'error');
-      renderRoute();
+      notifyAction(notasState, 'El monto del pendiente debe ser válido.', 'error');
+      renderRoute({ preserveScroll: true });
       return;
     }
     const record = normalizePendienteRecord({
@@ -15757,8 +16026,12 @@ Notas importantes:
     saveNotasData(data);
     registerSessionChange({ module: 'Notas / pendientes', operation: existing ? 'editar' : 'crear', recordId: record.id });
     clearNotasForms();
-    setNotasMessage('Pendiente de registrar guardado sin afectar Gastos ni Resumen. Así sí: apunte es apunte.');
-    renderRoute();
+    const resultMessage = existing
+      ? 'Pendiente de registrar actualizado sin afectar Gastos ni Resumen.'
+      : 'Pendiente de registrar guardado sin afectar Gastos ni Resumen.';
+    clearActionMessage(notasState);
+    renderRoute({ preserveScroll: true });
+    showToast(resultMessage, 'success');
   }
 
   function saveRecordatorioRecord(form) {
@@ -15769,13 +16042,13 @@ Notas importantes:
     const titulo = cleanText(formData.get('titulo'));
     const fecha = toDateInputValue(formData.get('fecha'));
     if (!titulo) {
-      setNotasMessage('El recordatorio necesita título.', 'error');
-      renderRoute();
+      notifyAction(notasState, 'El recordatorio necesita título.', 'error');
+      renderRoute({ preserveScroll: true });
       return;
     }
     if (!fecha) {
-      setNotasMessage('La fecha del recordatorio es obligatoria.', 'error');
-      renderRoute();
+      notifyAction(notasState, 'La fecha del recordatorio es obligatoria.', 'error');
+      renderRoute({ preserveScroll: true });
       return;
     }
     const estado = normalizeNotasEstado(formData.get('estado'), 'Pendiente');
@@ -15800,8 +16073,12 @@ Notas importantes:
     saveNotasData(data);
     registerSessionChange({ module: 'Notas / pendientes', operation: existing ? 'editar' : 'crear', recordId: record.id });
     clearNotasForms();
-    setNotasMessage(completed ? 'Recordatorio guardado en Histórico.' : 'Recordatorio guardado.');
-    renderRoute();
+    const resultMessage = completed
+      ? 'Recordatorio guardado en Histórico.'
+      : (existing ? 'Recordatorio actualizado.' : 'Recordatorio guardado.');
+    clearActionMessage(notasState);
+    renderRoute({ preserveScroll: true });
+    showToast(resultMessage, 'success');
   }
 
   function editNotaRecord(type, id) {
@@ -15957,26 +16234,21 @@ Notas importantes:
   }
 
   function setCalculatorMessage(message, type = 'success', autoClearMs = 0) {
-    calculatorState.message = cleanText(message);
+    calculatorState.message = '';
     calculatorState.messageType = type === 'error' ? 'error' : 'success';
     if (calculatorMessageTimer) {
       window.clearTimeout(calculatorMessageTimer);
       calculatorMessageTimer = null;
     }
+    showToast(message, type === 'error' ? 'error' : 'success', { id: 'ksa-action-calculadora', duration: autoClearMs > 0 ? autoClearMs : undefined });
     updateCalculatorDisplay();
-    if (autoClearMs > 0 && calculatorState.message) {
-      calculatorMessageTimer = window.setTimeout(() => {
-        calculatorState.message = '';
-        calculatorMessageTimer = null;
-        updateCalculatorDisplay();
-      }, autoClearMs);
-    }
   }
 
   function setCalculatorError(message) {
     calculatorState.error = cleanText(message) || 'No se pudo completar la operación.';
-    calculatorState.message = calculatorState.error;
+    calculatorState.message = '';
     calculatorState.messageType = 'error';
+    showToast(calculatorState.error, 'error', { id: 'ksa-action-calculadora' });
     calculatorState.storedValue = null;
     calculatorState.operator = '';
     calculatorState.waitingForOperand = false;
@@ -16373,20 +16645,14 @@ Notas importantes:
   }
 
   function setCommercialCalculatorMessage(message, type = 'success', autoClearMs = 0) {
-    commercialCalculatorState.message = cleanText(message);
+    commercialCalculatorState.message = '';
     commercialCalculatorState.messageType = type === 'error' ? 'error' : 'success';
     if (commercialCalculatorMessageTimer) {
       window.clearTimeout(commercialCalculatorMessageTimer);
       commercialCalculatorMessageTimer = null;
     }
+    showToast(message, type === 'error' ? 'error' : 'success', { id: 'ksa-action-calculadora-comercial', duration: autoClearMs > 0 ? autoClearMs : undefined });
     updateCommercialCalculatorDisplay();
-    if (autoClearMs > 0 && commercialCalculatorState.message) {
-      commercialCalculatorMessageTimer = window.setTimeout(() => {
-        commercialCalculatorState.message = '';
-        commercialCalculatorMessageTimer = null;
-        updateCommercialCalculatorDisplay();
-      }, autoClearMs);
-    }
   }
 
   function updateCommercialCalculatorDisplay() {
@@ -19610,16 +19876,14 @@ Notas importantes:
 
   function saveBdatosCreate(form) {
     if (!canCurrentRole('editCatalogs')) {
-      bdatosState.message = ADMIN_RESTRICTED_MESSAGE;
-      bdatosState.messageType = 'error';
+      notifyAction(bdatosState, ADMIN_RESTRICTED_MESSAGE, 'error');
       renderRoute({ preserveScroll: true });
       return;
     }
     const payload = readBdatosForm(form);
     const validationError = validateBdatosPayload(payload);
     if (validationError) {
-      bdatosState.message = validationError;
-      bdatosState.messageType = 'error';
+      notifyAction(bdatosState, validationError, 'error');
       renderRoute({ preserveScroll: true });
       return;
     }
@@ -19636,8 +19900,8 @@ Notas importantes:
     appData.bdatos = sortBdatosRecords([record, ...getBdatosRecords()]);
     appData.bdatosUpdatedAt = timestamp;
     bdatosState.editingId = null;
-    bdatosState.message = `Artículo “${record.descripcion}” agregado.`;
-    bdatosState.messageType = 'success';
+    const resultMessage = `Artículo “${record.descripcion}” agregado.`;
+    clearActionMessage(bdatosState);
     saveData(appData);
     registerActivity({
       module: 'Bdatos',
@@ -19649,12 +19913,12 @@ Notas importantes:
       source: 'local'
     });
     renderRoute({ preserveScroll: true });
+    showToast(resultMessage, 'success');
   }
 
   function saveBdatosEdit(form) {
     if (!canCurrentRole('editCatalogs')) {
-      bdatosState.message = ADMIN_RESTRICTED_MESSAGE;
-      bdatosState.messageType = 'error';
+      notifyAction(bdatosState, ADMIN_RESTRICTED_MESSAGE, 'error');
       renderRoute({ preserveScroll: true });
       return;
     }
@@ -19662,17 +19926,15 @@ Notas importantes:
     const currentId = payload.id || bdatosState.editingId;
     const existing = getBdatosRecords().find((record) => record.id === currentId);
     if (!existing) {
-      bdatosState.message = 'No se encontró el artículo para editar.';
-      bdatosState.messageType = 'error';
       bdatosState.editingId = null;
+      notifyAction(bdatosState, 'No se encontró el artículo para editar.', 'error');
       renderRoute({ preserveScroll: true });
       return;
     }
 
     const validationError = validateBdatosPayload(payload, currentId);
     if (validationError) {
-      bdatosState.message = validationError;
-      bdatosState.messageType = 'error';
+      notifyAction(bdatosState, validationError, 'error');
       renderRoute({ preserveScroll: true });
       return;
     }
@@ -19688,8 +19950,8 @@ Notas importantes:
     appData.bdatos = sortBdatosRecords(getBdatosRecords().map((record) => record.id === currentId ? updated : record));
     appData.bdatosUpdatedAt = timestamp;
     bdatosState.editingId = null;
-    bdatosState.message = `Artículo “${updated.descripcion}” actualizado.`;
-    bdatosState.messageType = 'success';
+    const resultMessage = `Artículo “${updated.descripcion}” actualizado.`;
+    clearActionMessage(bdatosState);
     saveData(appData);
     registerActivity({
       module: 'Bdatos',
@@ -19701,6 +19963,7 @@ Notas importantes:
       source: 'local'
     });
     renderRoute({ preserveScroll: true });
+    showToast(resultMessage, 'success');
   }
 
   function editBdatosRecord(recordId) {
@@ -28617,17 +28880,15 @@ Notas importantes:
 
   function updateConfigFromForm(form) {
     if (!canCurrentRole('changeConfig')) {
-      configState.message = ADMIN_RESTRICTED_MESSAGE;
-      configState.messageType = 'error';
-      renderRoute();
+      notifyAction(configState, ADMIN_RESTRICTED_MESSAGE, 'error');
+      renderRoute({ preserveScroll: true });
       return;
     }
     const formData = new FormData(form);
     const alertDays = parsePositiveInteger(formData.get('diasAlertaVencimiento'));
     if (Number.isNaN(alertDays) || alertDays <= 0) {
-      configState.message = 'Los días de alerta deben ser un entero mayor que cero.';
-      configState.messageType = 'error';
-      renderRoute();
+      notifyAction(configState, 'Los días de alerta deben ser un entero mayor que cero.', 'error');
+      renderRoute({ preserveScroll: true });
       return;
     }
     appData.configuracion = normalizeConfiguracion({
@@ -28638,11 +28899,12 @@ Notas importantes:
       excelReferencia: cleanText(formData.get('excelReferencia')) || '0000- CONTROL.xlsx',
       updatedAt: nowIso()
     });
-    configState.message = 'Configuración general actualizada.';
-    configState.messageType = 'success';
+    clearActionMessage(configState);
     saveData(appData);
-    renderRoute();
+    renderRoute({ preserveScroll: true });
+    showToast('Configuración general actualizada.', 'success');
   }
+
 
   function updateDeviceIdentityFromForm(form) {
     const formData = new FormData(form);
@@ -31408,9 +31670,8 @@ ${rowsXml}
 
   function saveCatalogRecord(form) {
     if (!canCurrentRole('editCatalogs')) {
-      catalogState.message = ADMIN_RESTRICTED_MESSAGE;
-      catalogState.messageType = 'error';
-      renderRoute();
+      notifyAction(catalogState, ADMIN_RESTRICTED_MESSAGE, 'error');
+      renderRoute({ preserveScroll: true });
       return;
     }
     const catalog = getActiveCatalog();
@@ -31421,28 +31682,30 @@ ${rowsXml}
     const validationError = validateCatalogRecord(catalog, newRecord, existingId);
 
     if (validationError) {
-      catalogState.message = validationError;
-      catalogState.messageType = 'error';
-      renderRoute();
+      notifyAction(catalogState, validationError, 'error');
+      renderRoute({ preserveScroll: true });
       return;
     }
 
     const recordToSave = catalog.id === 'retenciones' ? normalizeCatalogRecord(newRecord, catalog) : newRecord;
+    const resultMessage = existingRecord
+      ? `${catalog.label}: registro actualizado.`
+      : `${catalog.label}: registro agregado.`;
 
     if (existingRecord) {
       appData[catalog.id] = records.map((record) => record.id === existingId ? recordToSave : record);
-      catalogState.message = `${catalog.label}: registro actualizado.`;
     } else {
       appData[catalog.id] = [recordToSave, ...records];
-      catalogState.message = `${catalog.label}: registro agregado.`;
     }
 
     catalogState.editingId = null;
-    catalogState.messageType = 'success';
+    clearActionMessage(catalogState);
     saveData(appData);
     registerSessionChange({ module: 'Catálogos', operation: existingRecord ? 'editar' : 'crear', recordId: recordToSave.id, sourceModule: catalog.id });
-    renderRoute();
+    renderRoute({ preserveScroll: true });
+    showToast(resultMessage, 'success');
   }
+
 
   function setCatalogTab(catalogId) {
     if (!CATALOGS.some((catalog) => catalog.id === catalogId)) return;

@@ -1,3 +1,12 @@
+# KSA PRÁCTIKA — Sistema Global de Toast — Etapa 2/2
+
+- Integración global del Toast en módulos operativos, Catálogos, Configuración, Calculadora, Excel, JSON, Firebase, PWA, cierres y respaldos.
+- Procesos largos usan Toast azul persistente y el mismo mensaje se reemplaza por éxito, advertencia o error al finalizar.
+- Se eliminaron duplicados entre mensajes superiores y Toast para avisos operativos simples.
+- Confirmaciones, eliminaciones, cierre de período, preguntas Sí/No y bloqueos detallados permanecen fuera del sistema Toast.
+- Hardening: deduplicación temporal, límite de pila, limpieza de temporizadores/nodos y preservación del scroll.
+- Versión/cache PWA: 0.18.61-toast-etapa2.
+
 # KSA PRÁCTIKA — Excel con nombre manual Etapa 2/2 — Hardening final
 
 - El cierre mensual exige una exportación válida de tipo Cierre para el mismo mes/año, con ID, nombre manual, fecha, estado completado y snapshot consistente.
