@@ -1,3 +1,12 @@
+# KSA PRÁCTIKA — Condición de compra — Etapa 2/2 — Hardening final
+
+- Las compras marcadas como Contado crean o actualizan un único pago automático ligado a la compra.
+- El pago automático deja saldo C$0.00, estado Pagado, sin mora y sin bloqueo de cierre; Crédito conserva la lógica anterior.
+- La edición, anulación, reactivación y cambio de condición reconcilian el pago automático sin duplicarlo y conservan trazabilidad.
+- Integración completa con Pagos, Resumen, Flujo, históricos, Excel Consulta/Cierre, JSON y sincronización Firebase.
+- Compatibilidad histórica: las compras anteriores no se migran ni modifican automáticamente.
+- Versión/cache PWA: 0.18.63-condicion-compra-etapa2.
+
 # KSA PRÁCTIKA — Sistema Global de Toast — Etapa 2/2
 
 - Integración global del Toast en módulos operativos, Catálogos, Configuración, Calculadora, Excel, JSON, Firebase, PWA, cierres y respaldos.
