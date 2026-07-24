@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.64-json-export-fix';
+  const APP_VERSION = '0.18.65-cobros-selector-sucursal';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -22552,7 +22552,8 @@ Notas importantes:
               <option value="" ${selectedVenta ? '' : 'selected'}>${ventasDisponibles.length ? 'Ninguna' : 'No hay OC con saldo'}</option>
               ${ventasDisponibles.map((venta) => {
                 const ventaCliente = getCatalogRecordById('clientes', venta.clienteId);
-                return `<option value="${escapeHtml(venta.id)}" ${venta.id === selectedVenta?.id ? 'selected' : ''}>${escapeHtml(venta.numeroDocumento || 'Sin número')} · ${escapeHtml(ventaCliente?.nombre || 'Cliente')} · saldo ${escapeHtml(formatMoney(venta.saldoPorCobrar))}</option>`;
+                const ventaSucursal = getCatalogRecordById('sucursales', venta.sucursalId);
+                return `<option value="${escapeHtml(venta.id)}" ${venta.id === selectedVenta?.id ? 'selected' : ''}>${escapeHtml(venta.numeroDocumento || 'Sin número')} · ${escapeHtml(ventaCliente?.nombre || 'Cliente')} · ${escapeHtml(ventaSucursal?.nombre || 'Sin sucursal')} · saldo ${escapeHtml(formatMoney(venta.saldoPorCobrar))}</option>`;
               }).join('')}
             </select>
           </label>
