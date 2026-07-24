@@ -924,6 +924,18 @@ h3 {
   color: var(--danger);
 }
 
+.form-message.is-warning {
+  background: #fffbeb;
+  border-color: rgba(180, 83, 9, 0.28);
+  color: #92400e;
+}
+
+.form-message.is-info {
+  background: #eff6ff;
+  border-color: rgba(29, 78, 216, 0.22);
+  color: #1e40af;
+}
+
 .count-pill {
   flex: 0 0 auto;
   padding: 8px 11px;
@@ -13348,4 +13360,254 @@ body,
   .ksa-toast,
   .ksa-toast-icon,
   .ksa-toast-activity span { animation: none !important; transition: none !important; }
+}
+
+
+/* ACTUALIZACIÓN DE NUBE — ETAPA 2/4: progreso por bloques */
+.cloud-refresh-progress {
+  display: grid;
+  gap: 9px;
+  padding: 11px 12px;
+  border: 1px solid rgba(29, 78, 216, 0.20);
+  border-radius: 14px;
+  background: rgba(239, 246, 255, 0.86);
+  min-width: 0;
+}
+
+.cloud-refresh-progress.is-partial {
+  border-color: rgba(180, 83, 9, 0.28);
+  background: rgba(255, 251, 235, 0.92);
+}
+
+.cloud-refresh-progress.is-failed {
+  border-color: rgba(159, 18, 57, 0.25);
+  background: rgba(255, 241, 242, 0.92);
+}
+
+.cloud-refresh-progress.is-complete {
+  border-color: rgba(22, 101, 52, 0.24);
+  background: rgba(240, 253, 244, 0.92);
+}
+
+.cloud-refresh-progress-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.cloud-refresh-progress-head strong {
+  min-width: 0;
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
+
+.cloud-refresh-progress-head span {
+  flex: 0 0 auto;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.cloud-refresh-progress-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.10);
+}
+
+.cloud-refresh-progress-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: currentColor;
+  transition: width 180ms ease;
+}
+
+.cloud-refresh-progress-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.cloud-refresh-progress-grid > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.cloud-refresh-progress-grid small {
+  font-size: 0.68rem;
+  font-weight: 800;
+  opacity: 0.76;
+}
+
+.cloud-refresh-progress-grid strong {
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+.cloud-refresh-progress-details {
+  display: grid;
+  gap: 4px;
+  padding-top: 2px;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.cloud-refresh-progress-details p {
+  margin: 0;
+}
+
+@media (max-width: 760px) {
+  .cloud-refresh-progress-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Etapa 3/4 · Carga de respaldo únicamente en este dispositivo */
+.local-json-load-card {
+  border-color: color-mix(in srgb, var(--accent, #8f6a2a) 42%, var(--border, #d9d2c5));
+}
+
+.local-only-warning {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.8rem 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid color-mix(in srgb, #b98216 48%, var(--border, #d9d2c5));
+  border-radius: 14px;
+  background: color-mix(in srgb, #f5c969 16%, var(--surface, #ffffff));
+  line-height: 1.45;
+}
+
+.local-only-warning strong,
+.local-only-warning span {
+  overflow-wrap: anywhere;
+}
+
+.local-json-preview-card {
+  margin-top: 1rem;
+}
+
+.local-json-confirm-box {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.local-json-load-card input[type="file"] {
+  width: 100%;
+  max-width: 100%;
+}
+
+@media (max-width: 760px) {
+  .local-only-warning {
+    padding: 0.8rem;
+  }
+
+  .local-json-confirm-box .form-actions {
+    align-items: stretch;
+  }
+
+  .local-json-confirm-box .form-actions > button {
+    width: 100%;
+  }
+}
+
+/* ACTUALIZACIÓN DE NUBE — ETAPA 4/4: reintentos selectivos e historial local */
+.cloud-refresh-progress-actions {
+  display: flex;
+  justify-content: flex-start;
+  padding-top: 5px;
+}
+
+.cloud-refresh-progress-actions .secondary-action {
+  min-height: 34px;
+}
+
+.local-json-history-card {
+  min-width: 0;
+}
+
+.local-json-history-scroll-shell {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: visible;
+}
+
+.local-json-history-scroll-shell .operational-top-scroll {
+  position: sticky;
+  top: calc(var(--topbar-height) + var(--safe-top) + 8px);
+  z-index: 28;
+  display: block;
+  height: 22px;
+  min-height: 22px;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: thin;
+}
+
+.local-json-history-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.local-json-history-table {
+  min-width: 1260px;
+  table-layout: fixed;
+}
+
+.local-json-history-table th,
+.local-json-history-table td {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.local-json-history-table th:nth-child(1),
+.local-json-history-table td:nth-child(1) { width: 220px; }
+.local-json-history-table th:nth-child(2),
+.local-json-history-table td:nth-child(2) { width: 155px; }
+.local-json-history-table th:nth-child(3),
+.local-json-history-table td:nth-child(3) { width: 155px; }
+.local-json-history-table th:nth-child(4),
+.local-json-history-table td:nth-child(4) { width: 95px; }
+.local-json-history-table th:nth-child(5),
+.local-json-history-table td:nth-child(5) { width: 190px; }
+.local-json-history-table th:nth-child(6),
+.local-json-history-table td:nth-child(6) { width: 235px; }
+.local-json-history-table th:nth-child(7),
+.local-json-history-table td:nth-child(7) { width: 260px; }
+
+.local-json-history-table td > span,
+.local-json-history-table td > small {
+  display: block;
+}
+
+.local-json-history-table td > small {
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+@media (max-width: 760px) {
+  .cloud-refresh-progress-actions .secondary-action {
+    width: 100%;
+  }
+
+  .local-json-history-table {
+    min-width: 1180px;
+  }
 }

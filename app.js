@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.65-cobros-selector-sucursal';
+  const APP_VERSION = '0.18.69-reintentos-hardening';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -12,6 +12,9 @@
   const EXCEL_CIERRE_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_EXCEL_CIERRE_SEQUENCE_v1';
   const JSON_APPLIED_STORAGE_KEY = 'KSA_PRACTIKA_LAST_JSON_APPLIED_v1';
   const JSON_IMPORT_HISTORY_STORAGE_KEY = 'KSA_PRACTIKA_JSON_IMPORT_HISTORY_v1';
+  const LOCAL_JSON_LOAD_METADATA_STORAGE_KEY = 'KSA_PRACTIKA_LOCAL_JSON_LOAD_METADATA_v1';
+  const LOCAL_JSON_LOAD_HISTORY_STORAGE_KEY = 'KSA_PRACTIKA_LOCAL_JSON_LOAD_HISTORY_v1';
+  const LOCAL_JSON_LOAD_HISTORY_MAX_ENTRIES = 30;
   const NOTES_STORAGE_KEY = 'ksa_notas_v1';
   const SEGUIMIENTO_STORAGE_KEY = 'ksa_seguimiento_v1';
   const FACTURAS_STORAGE_KEY = 'ksa_facturas_v1';
@@ -1021,9 +1024,85 @@
   const FIRESTORE_RULES_FILENAME = 'FIRESTORE_RULES_KSA_PRACTIKA.rules';
   const FIRESTORE_GUIDE_FILENAME = 'GUIA_APLICAR_REGLAS_FIRESTORE.txt';
   const JSON_AUXILIAR_NUBE_GUIDE_FILENAME = 'GUIA_JSON_AUXILIAR_NUBE_KSA_PRACTIKA.txt';
-  const FIRESTORE_OPERATION_TIMEOUT_MS = 25000;
+  const FIRESTORE_OPERATION_TIMEOUT_MS = 120000;
+  const FIRESTORE_REFRESH_BLOCK_TIMEOUT_MS = 20000;
+  const FIRESTORE_REFRESH_SLOW_WARNING_MS = 60000;
+  const FIRESTORE_REFRESH_SLOW_WARNING_MESSAGE = 'La actualización está tardando más de lo habitual. Tus datos locales permanecen disponibles.';
   const FIRESTORE_TIMEOUT_SAVE_USER_MESSAGE = 'Tiempo de espera agotado. Revisa conexión, reglas de Firestore o UID.';
-  const FIRESTORE_TIMEOUT_REFRESH_MESSAGE = 'Tiempo de espera agotado al actualizar datos.';
+  const FIRESTORE_TIMEOUT_REFRESH_MESSAGE = 'La actualización alcanzó el tiempo máximo de 120 segundos. Tus datos locales permanecen intactos y la nube continúa activa.';
+
+  const CLOUD_REFRESH_BLOCK_DEFINITIONS = Object.freeze([
+    { key: 'catalogos_configuracion', label: 'Catálogos y configuración operativa', status: 'Actualizando Catálogos…' },
+    { key: 'ventas_cobros', label: 'Ventas y Cobros', status: 'Actualizando Ventas y Cobros…' },
+    { key: 'compras_pagos', label: 'Compras y Pagos', status: 'Actualizando Compras y Pagos…' },
+    { key: 'gastos_casa', label: 'Gastos y Casa', status: 'Actualizando Gastos y Casa…' },
+    { key: 'facturas', label: 'Facturas', status: 'Actualizando Facturas…' },
+    { key: 'notas_recordatorios', label: 'Notas, Recordatorios y Pendientes de registrar', status: 'Actualizando Notas y Recordatorios…' },
+    { key: 'seguimiento_bitacora', label: 'Seguimiento y bitácora', status: 'Actualizando Seguimiento y bitácora…' },
+    { key: 'cierres_excel', label: 'Cierres, Excel e históricos', status: 'Actualizando Cierres e históricos…' },
+    { key: 'consecutivos_metadata', label: 'Consecutivos y metadata', status: 'Actualizando Consecutivos y metadata…' }
+  ]);
+
+  function createCloudRefreshProgressState(overrides = {}) {
+    const base = {
+      active: false,
+      total: CLOUD_REFRESH_BLOCK_DEFINITIONS.length,
+      completed: 0,
+      current: '',
+      currentKey: '',
+      pending: CLOUD_REFRESH_BLOCK_DEFINITIONS.map((item) => item.label),
+      pendingKeys: CLOUD_REFRESH_BLOCK_DEFINITIONS.map((item) => item.key),
+      failed: [],
+      failedKeys: [],
+      completedBlocks: [],
+      completedBlockKeys: [],
+      result: 'idle',
+      message: '',
+      startedAt: '',
+      finishedAt: ''
+    };
+    const source = isPlainObject(overrides) ? overrides : {};
+    return {
+      ...base,
+      ...source,
+      current: cleanText(source.current),
+      currentKey: cleanText(source.currentKey),
+      pending: Array.isArray(source.pending) ? source.pending.map(cleanText).filter(Boolean) : base.pending,
+      pendingKeys: Array.isArray(source.pendingKeys) ? source.pendingKeys.map(cleanText).filter(Boolean) : base.pendingKeys,
+      failed: Array.isArray(source.failed) ? source.failed.map(cleanText).filter(Boolean) : base.failed,
+      failedKeys: Array.isArray(source.failedKeys) ? source.failedKeys.map(cleanText).filter(Boolean) : base.failedKeys,
+      completedBlocks: Array.isArray(source.completedBlocks) ? source.completedBlocks.map(cleanText).filter(Boolean) : base.completedBlocks,
+      completedBlockKeys: Array.isArray(source.completedBlockKeys) ? source.completedBlockKeys.map(cleanText).filter(Boolean) : base.completedBlockKeys
+    };
+  }
+
+  function getCloudRefreshBlockDefinition(key) {
+    const safeKey = cleanText(key);
+    return CLOUD_REFRESH_BLOCK_DEFINITIONS.find((item) => item.key === safeKey) || null;
+  }
+
+  function normalizeCloudRefreshBlockKeys(keys, fallbackAll = false) {
+    const allowed = new Set(CLOUD_REFRESH_BLOCK_DEFINITIONS.map((item) => item.key));
+    const normalized = Array.from(new Set((Array.isArray(keys) ? keys : [])
+      .map(cleanText)
+      .filter((key) => allowed.has(key))));
+    return normalized.length || !fallbackAll
+      ? normalized
+      : CLOUD_REFRESH_BLOCK_DEFINITIONS.map((item) => item.key);
+  }
+
+  function getCloudRefreshBlockKeysFromLabels(labels) {
+    const requested = new Set((Array.isArray(labels) ? labels : []).map(cleanText).filter(Boolean));
+    return CLOUD_REFRESH_BLOCK_DEFINITIONS
+      .filter((item) => requested.has(item.label))
+      .map((item) => item.key);
+  }
+
+  function getCloudRefreshBlockLabels(keys) {
+    return normalizeCloudRefreshBlockKeys(keys, false)
+      .map((key) => getCloudRefreshBlockDefinition(key)?.label || key)
+      .filter(Boolean);
+  }
 
   function createOperationTimeoutError(message, code = 'app/operation-timeout') {
     const error = new Error(cleanText(message) || 'Tiempo de espera agotado.');
@@ -1037,6 +1116,64 @@
     const code = cleanText(error?.code || '').toLowerCase();
     const name = cleanText(error?.name || '').toLowerCase();
     return Boolean(error?.isTimeout || code.includes('timeout') || code.includes('deadline') || name.includes('timeout'));
+  }
+
+  function getCloudRefreshErrorCode(error) {
+    return cleanText(error?.code || error?.name || 'firebase/firestore-error').toLowerCase();
+  }
+
+  function isCloudRefreshOfflineError(error) {
+    const code = getCloudRefreshErrorCode(error);
+    const browserOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    return Boolean(browserOffline || code === 'unavailable' || code === 'firebase/unavailable' || code === 'auth/network-request-failed' || code.includes('network-request-failed'));
+  }
+
+  function isCloudRefreshAuthConfigError(error) {
+    const code = getCloudRefreshErrorCode(error);
+    return new Set([
+      'permission-denied',
+      'firestore/permission-denied',
+      'unauthenticated',
+      'auth/no-current-user',
+      'firebase/not-initial-admin',
+      'firebase/user-inactive',
+      'firebase/user-not-registered',
+      'firebase/init-error',
+      'auth/configuration-not-found',
+      'auth/invalid-api-key',
+      'auth/app-deleted',
+      'failed-precondition'
+    ]).has(code);
+  }
+
+  function classifyCloudRefreshError(error) {
+    const code = getCloudRefreshErrorCode(error);
+    if (isOperationTimeoutError(error)) {
+      return {
+        kind: 'timeout',
+        code,
+        message: cleanText(error?.message) || FIRESTORE_TIMEOUT_REFRESH_MESSAGE
+      };
+    }
+    if (isCloudRefreshOfflineError(error)) {
+      return {
+        kind: 'offline',
+        code,
+        message: 'Sin conexión. No se actualizaron los bloques afectados; tus datos locales permanecen disponibles y la nube no fue desactivada.'
+      };
+    }
+    if (isCloudRefreshAuthConfigError(error)) {
+      return {
+        kind: 'auth-config',
+        code,
+        message: 'Error real de autenticación o configuración de Firebase. Revisa la sesión, permisos y configuración; tus datos locales permanecen intactos.'
+      };
+    }
+    return {
+      kind: 'error',
+      code,
+      message: cleanText(error?.message) || 'Error real al leer Firestore. Tus datos locales permanecen intactos y la nube no fue desactivada.'
+    };
   }
 
   function withOperationTimeout(operation, options = {}) {
@@ -1461,6 +1598,17 @@ Notas importantes:
     messageType: 'success'
   };
 
+  let localJsonLoadState = {
+    fileName: '',
+    isProcessing: false,
+    preview: null,
+    payload: null,
+    activityLog: [],
+    consecutivos: {},
+    message: null,
+    messageType: 'success'
+  };
+
   let cloudInitialImportState = {
     fileName: '',
     rawText: '',
@@ -1676,6 +1824,211 @@ Notas importantes:
       console.warn('KSA PRÁCTIKA: la importación terminó, pero no se pudo guardar la metadata local de JSON aplicado.', error);
       return null;
     }
+  }
+
+  function normalizeLocalJsonBlockSources(value, defaultSource = '') {
+    const raw = isPlainObject(value) ? value : {};
+    const safeDefault = ['json', 'firestore'].includes(cleanText(defaultSource)) ? cleanText(defaultSource) : '';
+    return CLOUD_REFRESH_BLOCK_DEFINITIONS.reduce((acc, block) => {
+      const source = cleanText(raw[block.key]);
+      acc[block.key] = ['json', 'firestore'].includes(source) ? source : safeDefault;
+      return acc;
+    }, {});
+  }
+
+  function normalizeLocalJsonLoadMetadata(value) {
+    const raw = isPlainObject(value) ? value : {};
+    const loadedAt = cleanText(raw.loadedAt || raw.appliedAt || raw.importedAt);
+    const backupExportedAt = cleanText(raw.backupExportedAt || raw.exportedAt || raw.fechaExportacion);
+    const fileName = cleanText(raw.fileName || raw.nombreArchivo);
+    if (!loadedAt && !fileName) return null;
+    const counts = normalizeBackupCounts(raw.counts || {});
+    const inferredDefaultSource = raw.blockSources ? '' : 'json';
+    const blockSources = normalizeLocalJsonBlockSources(raw.blockSources, inferredDefaultSource);
+    const pendingBlockKeys = normalizeCloudRefreshBlockKeys(
+      Array.isArray(raw.pendingBlockKeys)
+        ? raw.pendingBlockKeys
+        : CLOUD_REFRESH_BLOCK_DEFINITIONS.filter((item) => blockSources[item.key] === 'json').map((item) => item.key),
+      false
+    );
+    return {
+      id: cleanText(raw.id) || `local-json-${loadedAt || Date.now().toString(36)}`,
+      fileName: fileName || 'Respaldo local',
+      loadedAt,
+      loadedAtDisplay: cleanText(raw.loadedAtDisplay) || (loadedAt ? formatDateTime(loadedAt) : ''),
+      backupExportedAt,
+      backupExportedAtDisplay: cleanText(raw.backupExportedAtDisplay) || (backupExportedAt ? formatDateTime(backupExportedAt) : ''),
+      sourceDeviceName: cleanText(raw.sourceDeviceName || raw.origen),
+      sourceDeviceId: cleanText(raw.sourceDeviceId),
+      counts,
+      totalRecords: Math.max(0, Number(raw.totalRecords) || getBackupCountsTotal(counts)),
+      warningCount: Math.max(0, Number(raw.warningCount) || 0),
+      loadResult: cleanText(raw.loadResult) || 'Datos locales cargados desde respaldo.',
+      lastCloudUpdateAt: cleanText(raw.lastCloudUpdateAt),
+      lastCloudUpdateAtDisplay: cleanText(raw.lastCloudUpdateAtDisplay) || (raw.lastCloudUpdateAt ? formatDateTime(raw.lastCloudUpdateAt) : ''),
+      lastCloudUpdateResult: cleanText(raw.lastCloudUpdateResult) || 'Pendiente de actualización desde Firestore',
+      pendingBlockKeys,
+      blockSources,
+      mode: 'replace-local-only'
+    };
+  }
+
+  function loadLocalJsonLoadMetadata() {
+    try {
+      const raw = localStorage.getItem(LOCAL_JSON_LOAD_METADATA_STORAGE_KEY);
+      return raw ? normalizeLocalJsonLoadMetadata(JSON.parse(raw)) : null;
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo leer la metadata de carga local de respaldo.', error);
+      return null;
+    }
+  }
+
+  function saveLocalJsonLoadMetadata(summary) {
+    try {
+      const normalized = normalizeLocalJsonLoadMetadata(summary);
+      if (!normalized) return null;
+      localStorage.setItem(LOCAL_JSON_LOAD_METADATA_STORAGE_KEY, JSON.stringify(normalized));
+      return normalized;
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: los datos locales se cargaron, pero no se pudo guardar su metadata.', error);
+      return null;
+    }
+  }
+
+  function normalizeLocalJsonLoadHistoryEntry(value) {
+    return normalizeLocalJsonLoadMetadata(value);
+  }
+
+  function loadLocalJsonLoadHistory() {
+    try {
+      const raw = localStorage.getItem(LOCAL_JSON_LOAD_HISTORY_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return (Array.isArray(parsed) ? parsed : [])
+        .map(normalizeLocalJsonLoadHistoryEntry)
+        .filter(Boolean)
+        .sort((a, b) => String(b.loadedAt).localeCompare(String(a.loadedAt)))
+        .slice(0, LOCAL_JSON_LOAD_HISTORY_MAX_ENTRIES);
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo leer el historial local de respaldos aplicados.', error);
+      return [];
+    }
+  }
+
+  function saveLocalJsonLoadHistory(entries) {
+    try {
+      const normalized = (Array.isArray(entries) ? entries : [])
+        .map(normalizeLocalJsonLoadHistoryEntry)
+        .filter(Boolean)
+        .sort((a, b) => String(b.loadedAt).localeCompare(String(a.loadedAt)))
+        .slice(0, LOCAL_JSON_LOAD_HISTORY_MAX_ENTRIES);
+      localStorage.setItem(LOCAL_JSON_LOAD_HISTORY_STORAGE_KEY, JSON.stringify(normalized));
+      return normalized;
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo guardar el historial local de respaldos aplicados.', error);
+      return loadLocalJsonLoadHistory();
+    }
+  }
+
+  function appendLocalJsonLoadHistoryEntry(entry) {
+    const normalized = normalizeLocalJsonLoadHistoryEntry(entry);
+    if (!normalized) return null;
+    const current = loadLocalJsonLoadHistory().filter((item) => item.id !== normalized.id);
+    saveLocalJsonLoadHistory([normalized, ...current]);
+    return normalized;
+  }
+
+  function updateLocalJsonLoadHistoryEntry(id, patch = {}) {
+    const safeId = cleanText(id);
+    if (!safeId) return null;
+    let updated = null;
+    const next = loadLocalJsonLoadHistory().map((entry) => {
+      if (entry.id !== safeId) return entry;
+      updated = normalizeLocalJsonLoadHistoryEntry({ ...entry, ...(isPlainObject(patch) ? patch : {}) });
+      return updated || entry;
+    });
+    saveLocalJsonLoadHistory(next);
+    return updated;
+  }
+
+  function updateLocalJsonLoadAfterCloudRefresh(result) {
+    const current = loadLocalJsonLoadMetadata();
+    if (!current) return null;
+    const report = isPlainObject(result?.report) ? result.report : {};
+    const completedKeys = normalizeCloudRefreshBlockKeys(
+      report.completedBlockKeys || getCloudRefreshBlockKeysFromLabels(report.completedBlocks),
+      false
+    );
+    const blockSources = normalizeLocalJsonBlockSources(current.blockSources, 'json');
+    completedKeys.forEach((key) => { blockSources[key] = 'firestore'; });
+    const pendingBlockKeys = CLOUD_REFRESH_BLOCK_DEFINITIONS
+      .filter((item) => blockSources[item.key] === 'json')
+      .map((item) => item.key);
+    const updatedAt = nowIso();
+    const updateResult = result?.ok
+      ? (pendingBlockKeys.length ? 'Actualización parcial. Algunos bloques continúan usando la copia local.' : 'Actualización completada.')
+      : cleanText(result?.message || 'No se pudo completar la actualización desde Firestore.');
+    const updated = saveLocalJsonLoadMetadata({
+      ...current,
+      lastCloudUpdateAt: updatedAt,
+      lastCloudUpdateResult: updateResult,
+      pendingBlockKeys,
+      blockSources
+    });
+    if (updated) updateLocalJsonLoadHistoryEntry(updated.id, updated);
+    return updated;
+  }
+
+  function renderLocalJsonLoadHistoryList() {
+    const entries = loadLocalJsonLoadHistory();
+    const headers = `
+      <th>JSON cargado</th>
+      <th>Fecha respaldo</th>
+      <th>Aplicado</th>
+      <th>Registros</th>
+      <th>Resultado carga</th>
+      <th>Actualización posterior</th>
+      <th>Bloques aún locales</th>
+    `;
+    const rows = entries.length
+      ? entries.map((entry) => {
+        const pendingLabels = getCloudRefreshBlockLabels(entry.pendingBlockKeys);
+        return `
+          <tr class="compact-record-row local-json-history-row">
+            <td><span title="${escapeHtml(entry.fileName)}">${escapeHtml(entry.fileName)}</span></td>
+            <td><span>${escapeHtml(entry.backupExportedAtDisplay || '—')}</span></td>
+            <td><span>${escapeHtml(entry.loadedAtDisplay || '—')}</span></td>
+            <td><span>${escapeHtml(String(entry.totalRecords || 0))}</span></td>
+            <td><span>${escapeHtml(entry.loadResult || 'Datos locales cargados desde respaldo.')}</span></td>
+            <td><span>${escapeHtml(entry.lastCloudUpdateResult || 'Pendiente')}</span>${entry.lastCloudUpdateAtDisplay ? `<small>${escapeHtml(entry.lastCloudUpdateAtDisplay)}</small>` : ''}</td>
+            <td><span title="${escapeHtml(pendingLabels.join(' · '))}">${escapeHtml(pendingLabels.length ? pendingLabels.join(' · ') : 'Ninguno')}</span></td>
+          </tr>
+        `;
+      }).join('')
+      : `
+        <tr class="compact-record-row">
+          <td colspan="7"><span class="compact-primary">Todavía no se han cargado respaldos únicamente en este dispositivo.</span></td>
+        </tr>
+      `;
+    return `
+      <article class="panel-card config-card full-span local-json-history-card">
+        <div class="section-title-row compact-title-row">
+          <div>
+            <span class="eyebrow mini">Recuperación local</span>
+            <h2>Historial local de respaldos</h2>
+          </div>
+          <span class="compact-note">${entries.length} registro${entries.length === 1 ? '' : 's'}</span>
+        </div>
+        <p class="notice compact-notice">Registro informativo guardado únicamente en este dispositivo. No modifica Firestore.</p>
+        ${renderOperationalTableShell({
+          shellClass: 'local-json-history-scroll-shell',
+          wrapClass: 'local-json-history-table-wrap',
+          ariaLabel: 'Historial local de respaldos cargados',
+          tableClass: 'local-json-history-table',
+          headers,
+          rows
+        })}
+      </article>
+    `;
   }
 
 
@@ -3020,6 +3373,7 @@ Notas importantes:
       [facturasState, 'message', 'messageType', 'ksa-action-facturas'],
       [excelImportState, 'message', 'messageType', 'ksa-action-excel-import'],
       [jsonBackupState, 'message', 'messageType', 'ksa-action-json', { preservePattern: /nube ya está activa|no se reimporta json/i }],
+      [localJsonLoadState, 'message', 'messageType', 'ksa-action-json-local', { preservePattern: /datos locales cargados desde respaldo/i }],
       [cloudInitialImportState, 'message', 'messageType', 'ksa-action-cloud-import', { preservePattern: /importación inicial completada|reimportar puede crear duplicados/i }],
       [usersAuthState, 'message', 'messageType', 'ksa-action-usuarios', { ignorePattern: /^editando autorización/i }],
       [configState, 'message', 'messageType', 'ksa-action-configuracion'],
@@ -3046,6 +3400,35 @@ Notas importantes:
       dismiss: dismissToast,
       clear: clearAllToasts
     });
+  }
+
+  let localOnlyBackupApplicationDepth = 0;
+  let localOnlyBackupCloudSyncSuppressedUntil = 0;
+
+  function isLocalOnlyBackupApplicationActive() {
+    return localOnlyBackupApplicationDepth > 0;
+  }
+
+  function suppressCloudSyncAfterLocalBackup(durationMs = 5000) {
+    const safeDuration = Math.max(1000, Number(durationMs) || 5000);
+    localOnlyBackupCloudSyncSuppressedUntil = Date.now() + safeDuration;
+    if (cloudOperationState?.timer && typeof window !== 'undefined') {
+      window.clearTimeout(cloudOperationState.timer);
+      cloudOperationState.timer = null;
+    }
+  }
+
+  function isLocalOnlyBackupCloudSyncSuppressed() {
+    return isLocalOnlyBackupApplicationActive() || Date.now() < localOnlyBackupCloudSyncSuppressedUntil;
+  }
+
+  function withLocalOnlyBackupApplication(callback) {
+    localOnlyBackupApplicationDepth += 1;
+    try {
+      return callback();
+    } finally {
+      localOnlyBackupApplicationDepth = Math.max(0, localOnlyBackupApplicationDepth - 1);
+    }
   }
 
   const SESSION_CHANGE_OPERATION_PRIORITY = {
@@ -3174,6 +3557,7 @@ Notas importantes:
   }
 
   function registerSessionChange(payload = {}) {
+    if (isLocalOnlyBackupApplicationActive()) return null;
     if (!isPlainObject(payload)) return null;
     const moduleName = cleanText(payload.module || payload.modulo || payload.moduleName);
     const recordId = cleanText(payload.recordId || payload.idRegistro || payload.id || payload.documentId);
@@ -5946,11 +6330,195 @@ Notas importantes:
 
     async function readCloudOperationalSnapshot(options = {}) {
       const opts = isPlainObject(options) ? options : {};
+      const globalTimeoutMs = Number(opts.globalTimeoutMs) > 0 ? Number(opts.globalTimeoutMs) : FIRESTORE_OPERATION_TIMEOUT_MS;
+      const blockTimeoutMs = Number(opts.blockTimeoutMs) > 0 ? Number(opts.blockTimeoutMs) : FIRESTORE_REFRESH_BLOCK_TIMEOUT_MS;
+      const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
+      const requestedBlockKeys = normalizeCloudRefreshBlockKeys(opts.blockKeys, true);
+      const priorCompletedBlockKeys = normalizeCloudRefreshBlockKeys(opts.priorCompletedBlockKeys, false)
+        .filter((key) => !requestedBlockKeys.includes(key));
+      const startedAt = Date.now();
+      const deadlineAt = startedAt + globalTimeoutMs;
+      const priorRuntime = getKSAFirebaseRuntime();
+      const wasCloudActive = Boolean(
+        state.cloudActive
+        || priorRuntime?.cloudActive === true
+        || appData?.metadata?.cloudActive === true
+        || cleanText(appData?.metadata?.fuentePrincipal).toLowerCase() === 'firestore'
+      );
+      const report = {
+        total: CLOUD_REFRESH_BLOCK_DEFINITIONS.length,
+        completed: priorCompletedBlockKeys.length,
+        completedBlockKeys: priorCompletedBlockKeys.slice(),
+        completedBlocks: getCloudRefreshBlockLabels(priorCompletedBlockKeys),
+        pendingBlockKeys: requestedBlockKeys.slice(),
+        pendingBlocks: getCloudRefreshBlockLabels(requestedBlockKeys),
+        currentBlock: '',
+        currentBlockKey: '',
+        failed: [],
+        timedOut: [],
+        offline: [],
+        globalExpired: false,
+        startedAt: new Date(startedAt).toISOString(),
+        finishedAt: ''
+      };
+
+      function getRemainingMs() {
+        return Math.max(0, deadlineAt - Date.now());
+      }
+
+      function emitProgress(stage = 'update', blockDef = null, detail = null) {
+        if (!onProgress) return;
+        const currentDefinition = blockDef || getCloudRefreshBlockDefinition(detail?.key) || null;
+        const failedLabels = report.failed.map((item) => item.label).filter(Boolean);
+        const statusMessage = stage === 'start' && currentDefinition
+          ? currentDefinition.status
+          : (stage === 'complete' && currentDefinition
+            ? `${currentDefinition.label} actualizado.`
+            : (stage === 'error' && currentDefinition
+              ? `${currentDefinition.label} quedó pendiente.`
+              : 'Actualizando datos desde Firestore…'));
+        try {
+          onProgress({
+            stage,
+            active: !['finished', 'failed'].includes(stage),
+            total: report.total,
+            completed: report.completed,
+            current: report.currentBlock,
+            currentKey: report.currentBlockKey,
+            pending: report.pendingBlocks.slice(),
+            pendingKeys: report.pendingBlockKeys.slice(),
+            failed: failedLabels,
+            failedKeys: report.failed.map((item) => item.key).filter(Boolean),
+            completedBlocks: report.completedBlocks.slice(),
+            completedBlockKeys: report.completedBlockKeys.slice(),
+            globalExpired: report.globalExpired,
+            statusMessage,
+            detail: detail || null,
+            startedAt: report.startedAt,
+            finishedAt: report.finishedAt
+          });
+        } catch (error) {
+          console.warn('KSA PRÁCTIKA: no se pudo publicar progreso de actualización.', error);
+        }
+      }
+
+      function recordReadFailure(label, error, blockDef = null) {
+        const classified = classifyCloudRefreshError(error);
+        const detail = {
+          key: cleanText(blockDef?.key),
+          label: cleanText(label) || 'Bloque Firestore',
+          kind: classified.kind,
+          code: classified.code,
+          message: classified.message
+        };
+        report.failed.push(detail);
+        if (classified.kind === 'timeout') report.timedOut.push(detail);
+        if (classified.kind === 'offline') report.offline.push(detail);
+        if (getRemainingMs() <= 0) report.globalExpired = true;
+        return detail;
+      }
+
+      async function readPrerequisite(label, operation) {
+        const remaining = getRemainingMs();
+        if (remaining <= 0) throw createOperationTimeoutError(FIRESTORE_TIMEOUT_REFRESH_MESSAGE, 'app/refresh-global-timeout');
+        return withOperationTimeout(operation, {
+          ms: Math.max(1, Math.min(blockTimeoutMs, remaining)),
+          message: `Tiempo de espera agotado al leer ${cleanText(label) || 'la preparación de Firestore'}.`,
+          code: 'app/refresh-prerequisite-timeout'
+        });
+      }
+
+      async function readBlock(blockDef, operation) {
+        const definition = blockDef || { key: '', label: 'Bloque Firestore', status: 'Actualizando datos…' };
+        report.currentBlock = definition.label;
+        report.currentBlockKey = definition.key;
+        emitProgress('start', definition);
+        const remaining = getRemainingMs();
+        if (remaining <= 0) {
+          report.globalExpired = true;
+          const error = createOperationTimeoutError(FIRESTORE_TIMEOUT_REFRESH_MESSAGE, 'app/refresh-global-timeout');
+          const detail = recordReadFailure(definition.label, error, definition);
+          report.currentBlock = '';
+          report.currentBlockKey = '';
+          emitProgress('error', definition, detail);
+          return { ok: false, error, detail };
+        }
+        try {
+          const value = await withOperationTimeout(operation, {
+            ms: Math.max(1, Math.min(blockTimeoutMs, remaining)),
+            message: `Tiempo de espera agotado al leer ${definition.label}.`,
+            code: `app/refresh-block-timeout-${definition.key || 'general'}`
+          });
+          report.completed = Math.min(report.total, report.completed + 1);
+          if (!report.completedBlockKeys.includes(definition.key)) report.completedBlockKeys.push(definition.key);
+          if (!report.completedBlocks.includes(definition.label)) report.completedBlocks.push(definition.label);
+          report.pendingBlockKeys = report.pendingBlockKeys.filter((key) => key !== definition.key);
+          report.pendingBlocks = report.pendingBlocks.filter((label) => label !== definition.label);
+          report.currentBlock = '';
+          report.currentBlockKey = '';
+          emitProgress('complete', definition);
+          return { ok: true, value };
+        } catch (error) {
+          const detail = recordReadFailure(definition.label, error, definition);
+          report.currentBlock = '';
+          report.currentBlockKey = '';
+          emitProgress('error', definition, detail);
+          return { ok: false, error, detail };
+        }
+      }
+
+      async function mapWithConcurrency(items, limit, worker) {
+        const source = Array.isArray(items) ? items : [];
+        const results = new Array(source.length);
+        let nextIndex = 0;
+        const workerCount = Math.max(1, Math.min(Number(limit) || 1, source.length || 1));
+        async function runWorker() {
+          while (nextIndex < source.length) {
+            const currentIndex = nextIndex;
+            nextIndex += 1;
+            results[currentIndex] = await worker(source[currentIndex], currentIndex);
+          }
+        }
+        await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+        return results;
+      }
+
+      function publishReadFailure(error, extra = {}) {
+        const classified = classifyCloudRefreshError(error);
+        report.finishedAt = nowIso();
+        state.lastSyncError = classified.message;
+        publishKSAFirebaseRuntime({
+          cloudActive: wasCloudActive,
+          cloudReadsEnabled: wasCloudActive,
+          cloudWritesEnabled: wasCloudActive,
+          dataMode: wasCloudActive ? 'Nube activa' : (priorRuntime?.dataMode || 'Local'),
+          fuentePrincipal: wasCloudActive ? 'firestore' : (priorRuntime?.fuentePrincipal || 'local'),
+          lastSyncError: classified.message,
+          message: classified.message
+        });
+        emitProgress('failed', null, { kind: classified.kind, code: classified.code, message: classified.message });
+        return {
+          ok: false,
+          action: 'readCloudOperationalSnapshot',
+          code: classified.code,
+          failureKind: classified.kind,
+          message: classified.message,
+          snapshot: null,
+          report,
+          ...extra,
+          error
+        };
+      }
+
       try {
-        const { user, role, db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: false });
+        const readyValue = await readPrerequisite(
+          'sesión y configuración Firebase',
+          () => ensureFirebaseFirestoreReady({ requireAdmin: false })
+        );
+        const { user, role, db, fs } = readyValue;
         const workspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
         const metadataRef = fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
-        const metadataSnap = await fs.getDoc(metadataRef);
+        const metadataSnap = await readPrerequisite('metadata de nube', () => fs.getDoc(metadataRef));
         const metadata = metadataSnap.exists() ? normalizeFirestoreDoc(metadataSnap) : {};
         const ready = isCloudReadyMetadata(metadata);
         const activeByMetadata = cleanText(metadata.fuentePrincipal).toLowerCase() === 'firestore' || metadata.cloudActive === true;
@@ -5967,7 +6535,7 @@ Notas importantes:
             workspaceInitialized: Boolean(metadataSnap.exists()),
             message: state.lastSyncError
           });
-          return { ok: false, action: 'readCloudOperationalSnapshot', code: 'cloud/not-ready', message: state.lastSyncError, snapshot: null, metadata, user, role };
+          return { ok: false, action: 'readCloudOperationalSnapshot', code: 'cloud/not-ready', failureKind: 'not-ready', message: state.lastSyncError, snapshot: null, metadata, user, role, report };
         }
         if (!activeByMetadata && opts.requireActive !== false) {
           state.cloudActive = false;
@@ -5982,62 +6550,216 @@ Notas importantes:
             workspaceInitialized: true,
             message: state.lastSyncError
           });
-          return { ok: false, action: 'readCloudOperationalSnapshot', code: 'cloud/not-active', message: state.lastSyncError, snapshot: null, metadata, user, role };
+          return { ok: false, action: 'readCloudOperationalSnapshot', code: 'cloud/not-active', failureKind: 'not-active', message: state.lastSyncError, snapshot: null, metadata, user, role, report };
         }
 
-        const snapshot = createInitialData();
-        CATALOGS.forEach((catalog) => { snapshot[catalog.id] = []; });
-        for (const catalog of CATALOGS) {
-          const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'catalogos', catalog.id, 'items');
-          snapshot[catalog.id] = records.filter((record) => !isCloudDeletedRecord(record)).map((record) => normalizeCatalogRecord(record, catalog));
-        }
-
-        const listReaders = [
-          ['ventas', normalizeVentaRecord],
-          ['cobros', normalizeCobroRecord],
-          ['comprasProveedores', normalizeCompraProveedorRecord],
-          ['pagosProveedores', normalizePagoProveedorRecord],
-          ['gastos', normalizeGastoRecord],
-          ['casaGastos', normalizeCasaGastoRecord],
-          ['cierresMensuales', normalizeCierreMensualRecord],
-          ['exportacionesExcel', normalizeExcelExportRecord]
-        ];
-        for (const [key, normalizer] of listReaders) {
-          const records = await readCollectionDocs(db, fs, 'workspaces', workspaceId, key);
-          snapshot[key] = records.filter((record) => !isCloudDeletedRecord(record)).map((record) => normalizer(record));
-        }
-
-        const configSnap = await fs.getDoc(fs.doc(db, 'workspaces', workspaceId, 'configuracion', 'sistema'));
-        snapshot.configuracion = configSnap.exists()
-          ? normalizeConfiguracion(normalizeFirestoreDoc(configSnap))
-          : normalizeConfiguracion(appData?.configuracion || {});
-        snapshot.metadata = {
-          ...(isPlainObject(appData?.metadata) ? appData.metadata : {}),
-          ...metadata,
-          fuentePrincipal: 'firestore',
-          cloudActive: true,
-          lastCloudReadAt: nowIso()
-        };
-
-        const facturasRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'facturasModulo');
-        const seguimientoRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'seguimiento');
-        const notasRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'notasModulo');
-        const bitacoraRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'bitacora');
-        const consecutivosRecords = await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'consecutivos');
-        const consecutivos = {};
-        consecutivosRecords.forEach((record) => {
-          const key = cleanText(record.tipo || record.id);
-          if (key) consecutivos[key] = record.valor ?? record.value ?? record.consecutivo ?? '';
+        // La lectura parte de copias locales completas. Cada bloque se valida entero y
+        // solo entonces reemplaza su equivalente; un fallo conserva el bloque local.
+        const snapshot = normalizeData(appData || createInitialData());
+        CATALOGS.forEach((catalog) => {
+          if (!Array.isArray(snapshot[catalog.id])) snapshot[catalog.id] = [];
         });
+        let facturasModulo = cloneFacturasModuleData();
+        let seguimiento = cloneSeguimientoModuleData();
+        let notasModulo = cloneNotasModuleData();
+        let bitacora = Array.isArray(appActivityLog) ? appActivityLog.map((entry) => normalizeActivityEntry(entry)) : [];
+        const consecutivos = {
+          json: readCloudSequenceValue(JSON_EXPORT_SEQUENCE_STORAGE_KEY),
+          excelConsulta: readCloudSequenceValue(EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY),
+          excelCierre: readCloudSequenceValue(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY)
+        };
+        let successfulDataBlocks = 0;
+
+        const blockTasks = [
+          {
+            def: getCloudRefreshBlockDefinition('catalogos_configuracion'),
+            run: async () => {
+              const catalogEntries = await mapWithConcurrency(CATALOGS, 3, async (catalog) => ({
+                catalog,
+                records: await readCollectionDocs(db, fs, 'workspaces', workspaceId, 'catalogos', catalog.id, 'items')
+              }));
+              const configSnap = await fs.getDoc(fs.doc(db, 'workspaces', workspaceId, 'configuracion', 'sistema'));
+              return { catalogEntries, configSnap };
+            },
+            apply: ({ catalogEntries, configSnap }) => {
+              catalogEntries.forEach(({ catalog, records }) => {
+                snapshot[catalog.id] = records
+                  .filter((record) => !isCloudDeletedRecord(record))
+                  .map((record) => normalizeCatalogRecord(record, catalog));
+              });
+              if (configSnap?.exists()) snapshot.configuracion = normalizeConfiguracion(normalizeFirestoreDoc(configSnap));
+            }
+          },
+          {
+            def: getCloudRefreshBlockDefinition('ventas_cobros'),
+            run: async () => {
+              const [ventas, cobros] = await Promise.all([
+                readCollectionDocs(db, fs, 'workspaces', workspaceId, 'ventas'),
+                readCollectionDocs(db, fs, 'workspaces', workspaceId, 'cobros')
+              ]);
+              return { ventas, cobros };
+            },
+            apply: ({ ventas, cobros }) => {
+              snapshot.ventas = ventas.filter((record) => !isCloudDeletedRecord(record)).map(normalizeVentaRecord);
+              snapshot.cobros = cobros.filter((record) => !isCloudDeletedRecord(record)).map(normalizeCobroRecord);
+            }
+          },
+          {
+            def: getCloudRefreshBlockDefinition('compras_pagos'),
+            run: async () => {
+              const [compras, pagos] = await Promise.all([
+                readCollectionDocs(db, fs, 'workspaces', workspaceId, 'comprasProveedores'),
+                readCollectionDocs(db, fs, 'workspaces', workspaceId, 'pagosProveedores')
+              ]);
+              return { compras, pagos };
+            },
+            apply: ({ compras, pagos }) => {
+              snapshot.comprasProveedores = compras.filter((record) => !isCloudDeletedRecord(record)).map(normalizeCompraProveedorRecord);
+              snapshot.pagosProveedores = pagos.filter((record) => !isCloudDeletedRecord(record)).map(normalizePagoProveedorRecord);
+            }
+          },
+          {
+            def: getCloudRefreshBlockDefinition('gastos_casa'),
+            run: async () => {
+              const [gastos, casa] = await Promise.all([
+                readCollectionDocs(db, fs, 'workspaces', workspaceId, 'gastos'),
+                readCollectionDocs(db, fs, 'workspaces', workspaceId, 'casaGastos')
+              ]);
+              return { gastos, casa };
+            },
+            apply: ({ gastos, casa }) => {
+              snapshot.gastos = gastos.filter((record) => !isCloudDeletedRecord(record)).map(normalizeGastoRecord);
+              snapshot.casaGastos = casa.filter((record) => !isCloudDeletedRecord(record)).map(normalizeCasaGastoRecord);
+            }
+          },
+          {
+            def: getCloudRefreshBlockDefinition('facturas'),
+            run: () => readCollectionDocs(db, fs, 'workspaces', workspaceId, 'facturasModulo'),
+            apply: (records) => {
+              facturasModulo = buildFacturasClientesCloudSnapshot(records.filter((record) => !isCloudDeletedRecord(record)));
+            }
+          },
+          {
+            def: getCloudRefreshBlockDefinition('notas_recordatorios'),
+            run: () => readCollectionDocs(db, fs, 'workspaces', workspaceId, 'notasModulo'),
+            apply: (records) => {
+              notasModulo = rebuildNotasDataFromCloud(records.filter((record) => !isCloudDeletedRecord(record)));
+            }
+          },
+          {
+            def: getCloudRefreshBlockDefinition('seguimiento_bitacora'),
+            run: async () => {
+              const [seguimientoRecords, bitacoraRecords] = await Promise.all([
+                readCollectionDocs(db, fs, 'workspaces', workspaceId, 'seguimiento'),
+                readCollectionDocs(db, fs, 'workspaces', workspaceId, 'bitacora')
+              ]);
+              return { seguimientoRecords, bitacoraRecords };
+            },
+            apply: ({ seguimientoRecords, bitacoraRecords }) => {
+              seguimiento = mergeSeguimientoModuleData(createInitialSeguimientoData(), {
+                registros: seguimientoRecords.filter((record) => !isCloudDeletedRecord(record))
+              }).data;
+              bitacora = bitacoraRecords
+                .filter((record) => !isCloudDeletedRecord(record))
+                .map((entry) => normalizeActivityEntry(entry));
+            }
+          },
+          {
+            def: getCloudRefreshBlockDefinition('cierres_excel'),
+            run: async () => {
+              const [cierres, exportaciones] = await Promise.all([
+                readCollectionDocs(db, fs, 'workspaces', workspaceId, 'cierresMensuales'),
+                readCollectionDocs(db, fs, 'workspaces', workspaceId, 'exportacionesExcel')
+              ]);
+              return { cierres, exportaciones };
+            },
+            apply: ({ cierres, exportaciones }) => {
+              snapshot.cierresMensuales = cierres.filter((record) => !isCloudDeletedRecord(record)).map(normalizeCierreMensualRecord);
+              snapshot.exportacionesExcel = exportaciones.filter((record) => !isCloudDeletedRecord(record)).map(normalizeExcelExportRecord);
+            }
+          },
+          {
+            def: getCloudRefreshBlockDefinition('consecutivos_metadata'),
+            run: async () => {
+              const [freshMetadataSnap, records] = await Promise.all([
+                fs.getDoc(metadataRef),
+                readCollectionDocs(db, fs, 'workspaces', workspaceId, 'consecutivos')
+              ]);
+              return { freshMetadataSnap, records };
+            },
+            apply: ({ freshMetadataSnap, records }) => {
+              const freshMetadata = freshMetadataSnap?.exists() ? normalizeFirestoreDoc(freshMetadataSnap) : metadata;
+              snapshot.metadata = {
+                ...(isPlainObject(snapshot.metadata) ? snapshot.metadata : {}),
+                ...freshMetadata,
+                fuentePrincipal: 'firestore',
+                cloudActive: true,
+                lastCloudReadAt: nowIso()
+              };
+              records.filter((record) => !isCloudDeletedRecord(record)).forEach((record) => {
+                const sequenceKey = cleanText(record.tipo || record.id);
+                if (sequenceKey) consecutivos[sequenceKey] = record.valor ?? record.value ?? record.consecutivo ?? '';
+              });
+            }
+          }
+        ];
+
+        emitProgress('start');
+        const selectedBlockTasks = blockTasks.filter((task) => requestedBlockKeys.includes(task.def?.key));
+        for (const task of selectedBlockTasks) {
+          if (getRemainingMs() <= 0) {
+            report.globalExpired = true;
+            break;
+          }
+          const result = await readBlock(task.def, task.run);
+          if (result.ok) {
+            task.apply(result.value);
+            successfulDataBlocks += 1;
+          }
+        }
+
+        if (!isPlainObject(snapshot.metadata) || cleanText(snapshot.metadata.fuentePrincipal).toLowerCase() !== 'firestore') {
+          snapshot.metadata = {
+            ...(isPlainObject(snapshot.metadata) ? snapshot.metadata : {}),
+            fuentePrincipal: 'firestore',
+            cloudActive: true,
+            cloudDataReady: true,
+            lastCloudReadAt: nowIso()
+          };
+        }
+
+        if (report.globalExpired && !report.failed.some((item) => item.code === 'app/refresh-global-timeout')) {
+          const timeoutError = createOperationTimeoutError(FIRESTORE_TIMEOUT_REFRESH_MESSAGE, 'app/refresh-global-timeout');
+          recordReadFailure('Límite global de actualización', timeoutError);
+        }
+
+        if (successfulDataBlocks <= 0 && (report.failed.length || report.globalExpired)) {
+          const firstFailure = report.failed[0] || { kind: 'timeout', code: 'app/refresh-global-timeout', message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE };
+          const fallbackError = new Error(
+            firstFailure.kind === 'timeout'
+              ? 'Timeout al actualizar desde Firestore. La copia local permanece intacta y la nube continúa activa.'
+              : firstFailure.message
+          );
+          fallbackError.name = firstFailure.kind === 'timeout' ? 'KSAOperationTimeoutError' : 'KSACloudRefreshError';
+          fallbackError.code = firstFailure.code || 'firebase/firestore-error';
+          fallbackError.isTimeout = firstFailure.kind === 'timeout';
+          return publishReadFailure(fallbackError, { user, role, metadata });
+        }
 
         const normalized = normalizeData(snapshot);
         normalized.bdatos = normalizeBdatosList(snapshot.bdatos || normalized.bdatos);
         normalized.bdatosUpdatedAt = cleanText(snapshot.bdatosUpdatedAt || normalized.bdatosUpdatedAt);
+        const pendingNames = report.pendingBlocks.slice();
+        const isPartial = pendingNames.length > 0 || report.failed.length > 0 || report.globalExpired;
+        const partialMessage = 'Actualización parcial. Algunos bloques continúan usando la copia local.';
+        const completeMessage = 'Actualización completada.';
+        report.finishedAt = nowIso();
+
         state.cloudActive = true;
         state.cloudMetadata = snapshot.metadata;
         state.lastCloudReadAt = nowIso();
         state.lastSyncAt = state.lastCloudReadAt;
-        state.lastSyncError = '';
+        state.lastSyncError = isPartial ? partialMessage : '';
         publishKSAFirebaseRuntime({
           cloudActive: true,
           cloudReadsEnabled: true,
@@ -6050,34 +6772,50 @@ Notas importantes:
           workspace: workspaceId,
           workspaceInitialized: true,
           lastSyncAt: state.lastSyncAt,
-          message: 'Firestore activo como fuente principal.'
+          lastSyncError: isPartial ? partialMessage : '',
+          message: isPartial ? partialMessage : 'Firestore activo como fuente principal.'
         });
+
+        emitProgress('finished', null, { partial: isPartial, pending: pendingNames.slice() });
+        if (isPartial && opts.allowPartial !== true) {
+          const partialFailureKind = report.globalExpired || report.timedOut.length
+            ? 'timeout'
+            : (report.offline.length ? 'offline' : 'error');
+          return {
+            ok: false,
+            partial: true,
+            action: 'readCloudOperationalSnapshot',
+            code: 'cloud/read-partial-not-applied',
+            failureKind: partialFailureKind,
+            message: `${partialMessage} No se aplicó fuera de la acción Actualizar datos.`,
+            snapshot: null,
+            metadata: snapshot.metadata,
+            user,
+            role,
+            report,
+            lastSyncAt: state.lastSyncAt
+          };
+        }
         return {
           ok: true,
+          partial: isPartial,
           action: 'readCloudOperationalSnapshot',
-          code: 'cloud/read-ok',
-          message: 'Datos leídos desde Firestore.',
+          code: isPartial ? 'cloud/read-partial' : 'cloud/read-ok',
+          message: isPartial ? partialMessage : completeMessage,
           snapshot: normalized,
-          notasModulo: rebuildNotasDataFromCloud(notasRecords.filter((record) => !isCloudDeletedRecord(record))),
-          facturasModulo: buildFacturasClientesCloudSnapshot(facturasRecords),
-          seguimiento: mergeSeguimientoModuleData(createInitialSeguimientoData(), { registros: seguimientoRecords.filter((record) => !isCloudDeletedRecord(record)) }).data,
-          bitacora: bitacoraRecords.map((entry) => normalizeActivityEntry(entry)),
+          notasModulo,
+          facturasModulo,
+          seguimiento,
+          bitacora,
           consecutivos,
           metadata: snapshot.metadata,
           user,
           role,
+          report,
           lastSyncAt: state.lastSyncAt
         };
       } catch (error) {
-        const message = translateFirestorePrepError(error);
-        state.lastSyncError = message;
-        publishKSAFirebaseRuntime({
-          cloudActive: false,
-          cloudReadsEnabled: false,
-          cloudWritesEnabled: false,
-          message
-        });
-        return { ok: false, action: 'readCloudOperationalSnapshot', code: cleanText(error?.code || 'firebase/firestore-error'), message, snapshot: null, error };
+        return publishReadFailure(error);
       }
     }
 
@@ -8624,8 +9362,56 @@ Notas importantes:
     lastRefreshAt: '',
     lastError: '',
     message: '',
-    bootstrappedForUid: ''
+    bootstrappedForUid: '',
+    progress: createCloudRefreshProgressState()
   };
+
+  function normalizeCloudRefreshProgress(progressInput = {}) {
+    const source = isPlainObject(progressInput) ? progressInput : {};
+    const total = Math.max(1, Number(source.total) || CLOUD_REFRESH_BLOCK_DEFINITIONS.length);
+    const completed = Math.max(0, Math.min(total, Number(source.completed) || 0));
+    return createCloudRefreshProgressState({
+      active: source.active === true,
+      total,
+      completed,
+      current: cleanText(source.current),
+      currentKey: cleanText(source.currentKey),
+      pending: Array.isArray(source.pending) ? source.pending : [],
+      pendingKeys: Array.isArray(source.pendingKeys) ? source.pendingKeys : getCloudRefreshBlockKeysFromLabels(source.pending),
+      failed: Array.isArray(source.failed) ? source.failed : [],
+      failedKeys: Array.isArray(source.failedKeys) ? source.failedKeys : getCloudRefreshBlockKeysFromLabels(source.failed),
+      completedBlocks: Array.isArray(source.completedBlocks) ? source.completedBlocks : [],
+      completedBlockKeys: Array.isArray(source.completedBlockKeys) ? source.completedBlockKeys : getCloudRefreshBlockKeysFromLabels(source.completedBlocks),
+      result: cleanText(source.result || (source.active ? 'running' : 'idle')),
+      message: cleanText(source.message || source.statusMessage),
+      startedAt: cleanText(source.startedAt),
+      finishedAt: cleanText(source.finishedAt)
+    });
+  }
+
+  function buildCloudRefreshProgressMessage(progressInput = {}) {
+    const progress = normalizeCloudRefreshProgress(progressInput);
+    const currentText = progress.current ? `Bloque actual: ${progress.current}. ` : '';
+    const statusText = progress.message || (progress.active ? 'Actualizando datos desde Firestore…' : 'Estado de actualización.');
+    return `${statusText} ${progress.completed}/${progress.total} bloques completados. ${currentText}${progress.pending.length} pendientes. ${progress.failed.length} con error.`.replace(/\s+/g, ' ').trim();
+  }
+
+  function updateCloudRefreshProgress(progressInput = {}, options = {}) {
+    const opts = isPlainObject(options) ? options : {};
+    const progress = normalizeCloudRefreshProgress(progressInput);
+    cloudOperationState.progress = progress;
+    cloudOperationState.message = buildCloudRefreshProgressMessage(progress);
+    if (opts.updateConfig !== false) {
+      configState.message = cloudOperationState.message;
+      configState.messageType = progress.failed.length ? 'warning' : (progress.active ? 'info' : 'success');
+    }
+    if (opts.toastId) {
+      const toastType = progress.failed.length ? 'warning' : (progress.active ? 'process' : 'success');
+      replaceToast(opts.toastId, cloudOperationState.message, toastType, { duration: progress.active ? 0 : undefined });
+    }
+    if (opts.render === true && typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
+    return progress;
+  }
 
   function applyCloudConsecutivosMirror(consecutivos = {}) {
     const pairs = [
@@ -8641,6 +9427,7 @@ Notas importantes:
   }
 
   function scheduleCloudSnapshotSync(reason = '') {
+    if (isLocalOnlyBackupCloudSyncSuppressed()) return;
     if (CLOUD_PARTIAL_SESSION_SAVE_MODE) {
       // La operación diaria usa “Guardar datos” con subida parcial por cola de sesión.
       // Se evita el snapshot completo automático para no recorrer toda la base ni congelar la página.
@@ -8720,72 +9507,260 @@ Notas importantes:
 
   async function activateAndLoadCloudOperation(options = {}) {
     const opts = isPlainObject(options) ? options : {};
-    if (!cloudOperationState.runtimeReady) return { ok: false, message: 'Firebase todavía está preparando el runtime.' };
+    if (!cloudOperationState.runtimeReady) return { ok: false, failureKind: 'auth-config', message: 'Firebase todavía está preparando el runtime.' };
     if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.readCloudOperationalSnapshot) {
-      return { ok: false, message: 'Adaptador Firestore no disponible.' };
+      return { ok: false, failureKind: 'auth-config', message: 'Adaptador Firestore no disponible.' };
     }
-    if (cloudOperationState.isReading) return { ok: false, message: 'Ya hay una actualización de nube en curso.' };
+    if (cloudOperationState.isReading) return { ok: false, failureKind: 'busy', message: 'Ya hay una actualización de nube en curso.' };
+
+    const wasActive = Boolean(cloudOperationState.active || isCloudDataSourceActive());
+    const refreshStartedAt = Date.now();
+    const refreshDeadlineAt = refreshStartedAt + FIRESTORE_OPERATION_TIMEOUT_MS;
+    const getRefreshRemainingMs = () => Math.max(0, refreshDeadlineAt - Date.now());
+    const toastId = cleanText(opts.toastId || 'ksa-cloud-refresh-status');
+    const requestedBlockKeys = normalizeCloudRefreshBlockKeys(opts.blockKeys, true);
+    const priorCompletedBlockKeys = normalizeCloudRefreshBlockKeys(opts.priorCompletedBlockKeys, false)
+      .filter((key) => !requestedBlockKeys.includes(key));
+    let slowWarningTimer = null;
     cloudOperationState.isReading = true;
-    cloudOperationState.message = 'Verificando Firestore…';
+    updateCloudRefreshProgress(createCloudRefreshProgressState({
+      active: true,
+      total: CLOUD_REFRESH_BLOCK_DEFINITIONS.length,
+      completed: priorCompletedBlockKeys.length,
+      completedBlocks: getCloudRefreshBlockLabels(priorCompletedBlockKeys),
+      completedBlockKeys: priorCompletedBlockKeys,
+      pending: getCloudRefreshBlockLabels(requestedBlockKeys),
+      pendingKeys: requestedBlockKeys,
+      result: 'running',
+      message: opts.isRetry ? 'Reintentando bloques pendientes…' : 'Verificando Firestore…',
+      startedAt: nowIso()
+    }), { toastId, render: opts.render === true });
+    const onProgress = (progress) => {
+      updateCloudRefreshProgress({
+        ...progress,
+        active: progress?.stage !== 'finished' && progress?.stage !== 'failed',
+        result: progress?.stage === 'finished' ? 'finished' : (progress?.stage === 'failed' ? 'failed' : 'running'),
+        message: progress?.statusMessage || 'Actualizando datos desde Firestore…'
+      }, { toastId, render: true });
+      if (progress?.stage === 'error' && progress?.detail?.label) {
+        showToast(`No se pudo actualizar el bloque ${progress.detail.label}. Tus datos locales no fueron modificados.`, 'error');
+      }
+    };
+
+    if (opts.notifySlow === true && typeof window !== 'undefined') {
+      slowWarningTimer = window.setTimeout(() => {
+        if (!cloudOperationState.isReading) return;
+        cloudOperationState.message = FIRESTORE_REFRESH_SLOW_WARNING_MESSAGE;
+        configState.message = FIRESTORE_REFRESH_SLOW_WARNING_MESSAGE;
+        configState.messageType = 'warning';
+        replaceToast(toastId, FIRESTORE_REFRESH_SLOW_WARNING_MESSAGE, 'warning', { duration: 0 });
+        if (typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
+      }, FIRESTORE_REFRESH_SLOW_WARNING_MS);
+    }
+
     try {
-      let result = await withOperationTimeout(
-        () => KSAFirebaseAdapter.readCloudOperationalSnapshot({ requireActive: true }),
-        { message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
-      );
+      let result = await KSAFirebaseAdapter.readCloudOperationalSnapshot({
+        requireActive: true,
+        allowPartial: true,
+        globalTimeoutMs: getRefreshRemainingMs(),
+        blockTimeoutMs: FIRESTORE_REFRESH_BLOCK_TIMEOUT_MS,
+        blockKeys: requestedBlockKeys,
+        priorCompletedBlockKeys,
+        onProgress
+      });
       if (!result.ok && result.code === 'cloud/not-active' && opts.activateIfReady !== false && KSAFirebaseAdapter.activateCloudOperation) {
+        const activationRemainingMs = getRefreshRemainingMs();
+        if (activationRemainingMs <= 0) {
+          throw createOperationTimeoutError(FIRESTORE_TIMEOUT_REFRESH_MESSAGE, 'app/refresh-global-timeout');
+        }
         const activated = await withOperationTimeout(
           () => KSAFirebaseAdapter.activateCloudOperation({ source: 'auto_bootstrap' }),
-          { message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
+          { ms: activationRemainingMs, message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
         );
         if (activated.ok) {
-          result = await withOperationTimeout(
-            () => KSAFirebaseAdapter.readCloudOperationalSnapshot({ requireActive: true }),
-            { message: FIRESTORE_TIMEOUT_REFRESH_MESSAGE, code: 'app/refresh-cloud-timeout' }
-          );
-        } else result = { ...result, message: activated.message || result.message };
+          const readRemainingMs = getRefreshRemainingMs();
+          if (readRemainingMs <= 0) throw createOperationTimeoutError(FIRESTORE_TIMEOUT_REFRESH_MESSAGE, 'app/refresh-global-timeout');
+          result = await KSAFirebaseAdapter.readCloudOperationalSnapshot({
+            requireActive: true,
+            allowPartial: true,
+            globalTimeoutMs: readRemainingMs,
+            blockTimeoutMs: FIRESTORE_REFRESH_BLOCK_TIMEOUT_MS,
+            blockKeys: requestedBlockKeys,
+            priorCompletedBlockKeys,
+            onProgress
+          });
+        } else result = { ...result, failureKind: activated.failureKind || 'auth-config', message: activated.message || result.message };
       }
+
       if (result.ok) {
         applyCloudSnapshotToRuntime(result);
+        updateLocalJsonLoadAfterCloudRefresh(result);
+        cloudOperationState.active = true;
+        cloudOperationState.lastError = result.partial ? cleanText(result.message) : '';
+        cloudOperationState.message = result.message || (result.partial ? 'Actualización parcial.' : 'Actualización completada.');
+        updateCloudRefreshProgress({
+          active: false,
+          total: result.report?.total || CLOUD_REFRESH_BLOCK_DEFINITIONS.length,
+          completed: result.report?.completed || 0,
+          current: '',
+          pending: result.report?.pendingBlocks || [],
+          pendingKeys: result.report?.pendingBlockKeys || [],
+          failed: (result.report?.failed || []).map((item) => item.label),
+          failedKeys: (result.report?.failed || []).map((item) => item.key).filter(Boolean),
+          completedBlocks: result.report?.completedBlocks || [],
+          completedBlockKeys: result.report?.completedBlockKeys || [],
+          result: result.partial ? 'partial' : 'complete',
+          message: cloudOperationState.message,
+          startedAt: result.report?.startedAt || '',
+          finishedAt: result.report?.finishedAt || nowIso()
+        }, { toastId, render: opts.render === true });
       } else {
-        cloudOperationState.active = false;
-        cloudOperationState.lastError = cleanText(result.message || 'No se pudo activar nube.');
+        const definitiveInactive = result.code === 'cloud/not-ready' || result.code === 'cloud/not-active';
+        cloudOperationState.active = definitiveInactive ? false : wasActive;
+        updateLocalJsonLoadAfterCloudRefresh(result);
+        cloudOperationState.lastError = cleanText(result.message || 'No se pudo actualizar desde Firestore.');
         cloudOperationState.message = cloudOperationState.lastError;
+        updateCloudRefreshProgress({
+          active: false,
+          total: result.report?.total || CLOUD_REFRESH_BLOCK_DEFINITIONS.length,
+          completed: result.report?.completed || 0,
+          current: '',
+          pending: result.report?.pendingBlocks || getCloudRefreshBlockLabels(requestedBlockKeys),
+          pendingKeys: result.report?.pendingBlockKeys || requestedBlockKeys,
+          failed: (result.report?.failed || []).map((item) => item.label),
+          failedKeys: (result.report?.failed || []).map((item) => item.key).filter(Boolean),
+          completedBlocks: result.report?.completedBlocks || getCloudRefreshBlockLabels(priorCompletedBlockKeys),
+          completedBlockKeys: result.report?.completedBlockKeys || priorCompletedBlockKeys,
+          result: 'failed',
+          message: cloudOperationState.lastError,
+          startedAt: result.report?.startedAt || '',
+          finishedAt: result.report?.finishedAt || nowIso()
+        }, { toastId, render: opts.render === true });
       }
       if (opts.render === true && typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
       return result;
     } catch (error) {
-      cloudOperationState.active = false;
-      cloudOperationState.lastError = cleanText(error?.message || 'No se pudo leer Firestore.');
+      const classified = classifyCloudRefreshError(error);
+      cloudOperationState.active = wasActive;
+      updateLocalJsonLoadAfterCloudRefresh({
+        ok: false,
+        message: classified.message,
+        report: {
+          completedBlockKeys: priorCompletedBlockKeys,
+          completedBlocks: getCloudRefreshBlockLabels(priorCompletedBlockKeys),
+          pendingBlockKeys: requestedBlockKeys,
+          pendingBlocks: getCloudRefreshBlockLabels(requestedBlockKeys)
+        }
+      });
+      cloudOperationState.lastError = classified.message;
+      cloudOperationState.message = classified.message;
+      updateCloudRefreshProgress({
+        ...(cloudOperationState.progress || createCloudRefreshProgressState()),
+        active: false,
+        result: 'failed',
+        message: classified.message,
+        finishedAt: nowIso()
+      }, { toastId, render: opts.render === true });
       if (opts.render === true && typeof renderRoute === 'function') renderRoute({ preserveScroll: true });
-      return { ok: false, message: cloudOperationState.lastError, error };
+      return { ok: false, code: classified.code, failureKind: classified.kind, message: classified.message, error };
     } finally {
+      if (slowWarningTimer && typeof window !== 'undefined') window.clearTimeout(slowWarningTimer);
       cloudOperationState.isReading = false;
     }
   }
 
   async function handleCloudDataRefresh(button = null) {
     if (!requireRolePermission('updateData', configState, { preserveScroll: true })) return null;
-    if (cloudOperationState.isReading) return { ok: false, message: 'Ya hay una actualización de nube en curso.' };
+    if (cloudOperationState.isReading) return { ok: false, failureKind: 'busy', message: 'Ya hay una actualización de nube en curso.' };
     if (button) button.disabled = true;
-    configState.message = 'Actualizando datos desde Firestore...';
+    const toastId = showToast('Actualizando datos desde Firestore… 0/9 bloques completados.', 'process', { id: 'ksa-cloud-refresh-status', duration: 0 });
+    configState.message = 'Actualizando datos desde Firestore… 0/9 bloques completados.';
     configState.messageType = 'success';
     renderRoute({ preserveScroll: true });
     try {
-      const result = await activateAndLoadCloudOperation({ activateIfReady: false, render: false });
+      const result = await activateAndLoadCloudOperation({ activateIfReady: false, render: false, notifySlow: true, toastId });
       const message = cleanText(result?.message || '');
-      configState.message = result?.ok
-        ? 'Datos actualizados correctamente.'
-        : (message === FIRESTORE_TIMEOUT_REFRESH_MESSAGE ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : (message || 'No se pudieron actualizar los datos.'));
-      configState.messageType = result?.ok ? 'success' : 'error';
+      if (result?.ok && result?.partial) {
+        configState.message = 'Actualización parcial. Algunos bloques continúan usando la copia local.';
+        configState.messageType = 'warning';
+        replaceToast(toastId, configState.message, 'warning');
+      } else if (result?.ok) {
+        configState.message = 'Actualización completada.';
+        configState.messageType = 'success';
+        replaceToast(toastId, configState.message, 'success');
+      } else {
+        const failureKind = cleanText(result?.failureKind || 'error');
+        configState.message = message || (failureKind === 'timeout' ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : 'No se pudieron actualizar los datos.');
+        configState.messageType = ['timeout', 'offline', 'busy'].includes(failureKind) ? 'warning' : 'error';
+        replaceToast(toastId, configState.message, configState.messageType);
+      }
       renderRoute({ preserveScroll: true });
       return result;
     } catch (error) {
+      const classified = classifyCloudRefreshError(error);
       cloudOperationState.isReading = false;
-      const failureMessage = isOperationTimeoutError(error) ? FIRESTORE_TIMEOUT_REFRESH_MESSAGE : (cleanText(error?.message) || 'No se pudieron actualizar los datos.');
-      configState.message = failureMessage;
-      configState.messageType = 'error';
+      configState.message = classified.message;
+      configState.messageType = ['timeout', 'offline'].includes(classified.kind) ? 'warning' : 'error';
+      replaceToast(toastId, configState.message, configState.messageType);
       renderRoute({ preserveScroll: true });
-      return { ok: false, message: failureMessage };
+      return { ok: false, code: classified.code, failureKind: classified.kind, message: classified.message };
+    }
+  }
+
+  async function handleCloudPendingRetry(button = null) {
+    if (!requireRolePermission('updateData', configState, { preserveScroll: true })) return null;
+    if (cloudOperationState.isReading) return { ok: false, failureKind: 'busy', message: 'Ya hay una actualización de nube en curso.' };
+    const progress = normalizeCloudRefreshProgress(cloudOperationState.progress || {});
+    const pendingBlockKeys = normalizeCloudRefreshBlockKeys(
+      progress.pendingKeys.length ? progress.pendingKeys : getCloudRefreshBlockKeysFromLabels(progress.pending),
+      false
+    );
+    if (!pendingBlockKeys.length) {
+      configState.message = 'No hay bloques pendientes para reintentar.';
+      configState.messageType = 'info';
+      renderRoute({ preserveScroll: true });
+      return { ok: true, skipped: true, message: configState.message };
+    }
+    const priorCompletedBlockKeys = normalizeCloudRefreshBlockKeys(progress.completedBlockKeys, false)
+      .filter((key) => !pendingBlockKeys.includes(key));
+    if (button) button.disabled = true;
+    const toastId = showToast('Reintentando bloques pendientes…', 'info', { id: 'ksa-cloud-refresh-status', duration: 0 });
+    configState.message = 'Reintentando bloques pendientes…';
+    configState.messageType = 'info';
+    renderRoute({ preserveScroll: true });
+    try {
+      const result = await activateAndLoadCloudOperation({
+        activateIfReady: false,
+        render: false,
+        notifySlow: true,
+        toastId,
+        isRetry: true,
+        blockKeys: pendingBlockKeys,
+        priorCompletedBlockKeys
+      });
+      if (result?.ok && result?.partial) {
+        configState.message = 'Actualización parcial. Algunos bloques continúan usando la copia local.';
+        configState.messageType = 'warning';
+        replaceToast(toastId, configState.message, 'warning');
+      } else if (result?.ok) {
+        configState.message = 'Actualización completada.';
+        configState.messageType = 'success';
+        replaceToast(toastId, configState.message, 'success');
+      } else {
+        const failureKind = cleanText(result?.failureKind || 'error');
+        configState.message = cleanText(result?.message) || 'No se pudieron actualizar los bloques pendientes.';
+        configState.messageType = ['timeout', 'offline', 'busy'].includes(failureKind) ? 'warning' : 'error';
+        replaceToast(toastId, configState.message, configState.messageType);
+      }
+      renderRoute({ preserveScroll: true });
+      return result;
+    } catch (error) {
+      const classified = classifyCloudRefreshError(error);
+      configState.message = classified.message;
+      configState.messageType = ['timeout', 'offline'].includes(classified.kind) ? 'warning' : 'error';
+      replaceToast(toastId, configState.message, configState.messageType);
+      renderRoute({ preserveScroll: true });
+      return { ok: false, code: classified.code, failureKind: classified.kind, message: classified.message };
     }
   }
 
@@ -26678,6 +27653,55 @@ Notas importantes:
   }
 
 
+  function renderCloudRefreshProgressPanel() {
+    const progress = normalizeCloudRefreshProgress(cloudOperationState.progress || {});
+    const shouldRender = progress.active || ['partial', 'complete', 'failed'].includes(progress.result);
+    if (!shouldRender) return '';
+    const percentage = Math.max(0, Math.min(100, Math.round((progress.completed / Math.max(1, progress.total)) * 100)));
+    const resultClass = progress.result === 'complete'
+      ? 'is-complete'
+      : (progress.result === 'failed'
+        ? 'is-failed'
+        : (progress.result === 'partial' || progress.failed.length ? 'is-partial' : 'is-running'));
+    const pendingDetail = progress.pending.length ? progress.pending.join(' · ') : 'Ninguno';
+    const failedDetail = progress.failed.length ? progress.failed.join(' · ') : 'Ninguno';
+    const localLoadMetadata = loadLocalJsonLoadMetadata();
+    const jsonLocalKeys = localLoadMetadata
+      ? normalizeCloudRefreshBlockKeys(localLoadMetadata.pendingBlockKeys, false)
+      : [];
+    const jsonLocalLabels = getCloudRefreshBlockLabels(jsonLocalKeys);
+    const canRetryPending = !progress.active && progress.pendingKeys.length > 0 && isCloudDataSourceActive();
+    return `
+      <div class="cloud-refresh-progress ${resultClass}" role="status" aria-live="polite">
+        <div class="cloud-refresh-progress-head">
+          <strong>${escapeHtml(progress.message || (progress.active ? 'Actualizando datos desde Firestore…' : 'Resultado de actualización'))}</strong>
+          <span>${escapeHtml(`${progress.completed}/${progress.total}`)}</span>
+        </div>
+        <div class="cloud-refresh-progress-track" aria-label="Progreso de actualización">
+          <span style="width:${percentage}%"></span>
+        </div>
+        <div class="cloud-refresh-progress-grid">
+          <div><small>Completados</small><strong>${escapeHtml(`${progress.completed}/${progress.total}`)}</strong></div>
+          <div><small>Bloque actual</small><strong>${escapeHtml(progress.current || '—')}</strong></div>
+          <div><small>Pendientes</small><strong>${escapeHtml(String(progress.pending.length))}</strong></div>
+          <div><small>Con error</small><strong>${escapeHtml(String(progress.failed.length))}</strong></div>
+        </div>
+        ${(progress.result === 'partial' || progress.result === 'failed' || progress.failed.length) ? `
+          <div class="cloud-refresh-progress-details">
+            <p><strong>Bloques pendientes:</strong> ${escapeHtml(pendingDetail)}</p>
+            <p><strong>Bloques con error:</strong> ${escapeHtml(failedDetail)}</p>
+            ${localLoadMetadata ? `<p><strong>Continúan usando copia JSON:</strong> ${escapeHtml(jsonLocalLabels.length ? jsonLocalLabels.join(' · ') : 'Ninguno')}</p>` : ''}
+            ${canRetryPending ? '<div class="cloud-refresh-progress-actions"><button type="button" class="secondary-action compact" data-cloud-retry-pending>Reintentar pendientes</button></div>' : ''}
+          </div>
+        ` : (localLoadMetadata ? `
+          <div class="cloud-refresh-progress-details">
+            <p><strong>Continúan usando copia JSON:</strong> ${escapeHtml(jsonLocalLabels.length ? jsonLocalLabels.join(' · ') : 'Ninguno')}</p>
+          </div>
+        ` : '')}
+      </div>
+    `;
+  }
+
   function getDataSyncStatusInfo() {
     let status = { mode: 'local', localOnly: true, cloudConnected: false, firebaseConnected: false };
     let diagnostics = null;
@@ -27457,8 +28481,12 @@ Notas importantes:
     const jsonImportLockedByCloud = jsonAuxInfo.cloudActive;
     const preview = jsonBackupState.preview;
     const hasPreview = Boolean(preview);
+    const localLoadPreview = localJsonLoadState.preview;
+    const hasLocalLoadPreview = Boolean(localLoadPreview);
+    const lastLocalLoad = loadLocalJsonLoadMetadata();
     const canExport = canCurrentRole('exportJson');
     const canImport = canCurrentRole('importJson') && !jsonImportLockedByCloud;
+    const canLoadLocalBackup = canCurrentRole('importJson') && jsonAuxInfo.cloudActive;
     const canConfig = canCurrentRole('changeConfig');
     const canRefreshData = canCurrentRole('updateData');
     const topRefreshEnabled = Boolean(dataSyncInfo.canRefreshCloud && canRefreshData);
@@ -27554,6 +28582,46 @@ Notas importantes:
       </article>
     `;
 
+    const localJsonLoadCard = `
+      <article class="panel-card config-card full-span local-json-load-card">
+        <div class="section-title-row">
+          <div>
+            <span class="eyebrow mini">Recuperación local segura</span>
+            <h2>Cargar respaldo en este dispositivo</h2>
+          </div>
+          ${hasLocalLoadPreview ? '<button type="button" class="secondary-action compact" data-local-json-cancel>Cancelar vista previa</button>' : ''}
+        </div>
+        ${renderRolePermissionNotice('importJson', 'Cargar un respaldo local queda reservado para Administrador.')}
+        <div class="local-only-warning" role="note">
+          <strong>Este respaldo actualizará únicamente los datos almacenados en este dispositivo. No modificará ni reemplazará la información de Firestore.</strong>
+          <span>Firestore continúa siendo la fuente principal. Esta herramienta no ejecuta Guardar datos ni sincronización automática.</span>
+        </div>
+        ${jsonAuxInfo.cloudActive ? '' : '<div class="form-message is-warning" role="status">Disponible únicamente cuando la app muestra Nube activa.</div>'}
+        <div class="import-summary-grid compact-summary">
+          <div class="status-item"><strong>Nube</strong><span>${escapeHtml(jsonAuxInfo.cloudActive ? 'Nube activa' : 'No activa')}</span></div>
+          <div class="status-item"><strong>Modo permitido</strong><span>Reemplazar copia local</span></div>
+          <div class="status-item"><strong>Cambios pendientes</strong><span>${escapeHtml(String(getSessionChangePendingCount()))}</span></div>
+          <div class="status-item"><strong>Última carga local</strong><span>${escapeHtml(lastLocalLoad?.loadedAtDisplay || '—')}</span></div>
+          <div class="status-item"><strong>Archivo cargado</strong><span>${escapeHtml(lastLocalLoad?.fileName || '—')}</span></div>
+          <div class="status-item"><strong>Respaldo original</strong><span>${escapeHtml(lastLocalLoad?.backupExportedAtDisplay || '—')}</span></div>
+          <div class="status-item"><strong>Actualización posterior</strong><span>${escapeHtml(lastLocalLoad?.lastCloudUpdateResult || '—')}</span></div>
+          <div class="status-item"><strong>Bloques aún locales</strong><span>${escapeHtml(lastLocalLoad ? String(lastLocalLoad.pendingBlockKeys.length) : '0')}</span></div>
+        </div>
+        <label class="form-field">
+          <span>Seleccionar respaldo .json para este dispositivo</span>
+          <input type="file" accept=".json,application/json" data-local-json-file ${canLoadLocalBackup ? '' : 'disabled'} />
+        </label>
+        ${localJsonLoadState.isProcessing ? '<div class="form-message is-info" role="status">Validando respaldo local…</div>' : ''}
+        ${localJsonLoadState.message ? `<div class="form-message ${localJsonLoadState.messageType === 'error' ? 'is-error' : (localJsonLoadState.messageType === 'warning' ? 'is-warning' : 'is-success')}" role="status">${escapeHtml(localJsonLoadState.message)}</div>` : ''}
+        ${hasLocalLoadPreview ? renderLocalJsonLoadPreview(localLoadPreview, canLoadLocalBackup) : `
+          <div class="empty-state">
+            <strong>${jsonAuxInfo.cloudActive ? 'Selecciona un respaldo para validar y reemplazar solo la copia local.' : 'Activa la nube para habilitar esta recuperación local.'}</strong>
+            <p>No hay fusión: el contenido operativo local anterior se reemplaza únicamente después de revisar la vista previa y confirmar.</p>
+          </div>
+        `}
+      </article>
+    `;
+
     const jsonImportCard = `
       <article class="panel-card config-card full-span">
         <div class="section-title-row">
@@ -27644,10 +28712,11 @@ Notas importantes:
             <div class="status-item"><strong>Última actualización de datos</strong><span>${escapeHtml(lastDataRefreshAt ? formatDateTime(lastDataRefreshAt) : '—')}</span></div>
             <div class="status-item"><strong>Cambios de sesión pendientes</strong><span data-session-change-count>${escapeHtml(String(getSessionChangePendingCount()))}</span></div>
           </div>
+          ${renderCloudRefreshProgressPanel()}
           <p class="compact-note">Guardar datos sube solo cambios de esta sesión. Actualizar datos refresca desde Firestore cuando la nube está activa.</p>
         </article>
 
-        ${configState.message ? `<div class="form-message ${configState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(configState.message)}</div>` : ''}
+        ${configState.message ? `<div class="form-message ${configState.messageType === 'error' ? 'is-error' : (configState.messageType === 'warning' ? 'is-warning' : (configState.messageType === 'info' ? 'is-info' : 'is-success'))}" role="status">${escapeHtml(configState.message)}</div>` : ''}
         ${jsonBackupState.message ? `<div class="form-message ${jsonBackupState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(jsonBackupState.message)}</div>` : ''}
 
         <div class="config-accordion-list entity-accordion-list">
@@ -27681,7 +28750,7 @@ Notas importantes:
             eyebrow: 'Respaldo',
             badgeText: jsonAuxInfo.jsonTipo,
             badgeClass: jsonAuxInfo.cloudActive ? 'is-cloud' : 'is-pending',
-            body: jsonExportCard
+            body: `${jsonExportCard}${localJsonLoadCard}${renderLocalJsonLoadHistoryList()}`
           })}
 
           ${renderConfigAccordionItem({
@@ -27919,6 +28988,69 @@ Notas importantes:
     `;
   }
 
+  function renderLocalJsonLoadPreview(preview, canLoad) {
+    const errors = Array.isArray(preview?.errors) ? preview.errors : [];
+    const warnings = Array.isArray(preview?.warnings) ? preview.warnings : [];
+    const counts = normalizeBackupCounts(preview?.counts || {});
+    const otherModules = (counts.notasModulo || 0) + (counts.seguimiento || 0) + (counts.bdatos || 0) + (counts.bitacora || 0);
+    const pendingChanges = getSessionChangePendingCount();
+    const canConfirm = Boolean(preview?.isValid && canLoad && pendingChanges === 0);
+    const metadata = preview?.metadata || {};
+    const warningBlock = warnings.length
+      ? `<ul class="import-warning-list">${warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+      : '<p class="muted-text">Sin advertencias adicionales.</p>';
+    const errorBlock = errors.length
+      ? `<ul class="import-warning-list is-error-list">${errors.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+      : '<p class="muted-text">Validación crítica aprobada.</p>';
+
+    return `
+      <div class="json-preview-card local-json-preview-card">
+        <div class="import-summary-grid compact-summary">
+          <div class="status-item"><strong>Archivo</strong><span>${escapeHtml(preview.fileName || localJsonLoadState.fileName || '—')}</span></div>
+          <div class="status-item"><strong>Estado</strong><span>${preview.isValid ? 'Válido para carga local' : 'Bloqueado'}</span></div>
+          <div class="status-item"><strong>Fecha y hora del respaldo</strong><span>${escapeHtml(metadata.exportedAtDisplay || formatDateTime(preview.backupDate))}</span></div>
+          <div class="status-item"><strong>Total de registros</strong><span>${escapeHtml(String(counts.total || 0))}</span></div>
+          <div class="status-item"><strong>Origen</strong><span>${escapeHtml(metadata.sourceDeviceName || metadata.source || 'No indicado')}</span></div>
+          <div class="status-item"><strong>Versión</strong><span>${escapeHtml(`Backup ${metadata.backupVersion || '—'} · Schema ${preview.schemaVersion || '—'}`)}</span></div>
+        </div>
+
+        <h3>Contenido del respaldo</h3>
+        <div class="import-summary-grid compact-summary">
+          <div class="status-item"><strong>Ventas / OC</strong><span>${counts.ventas || 0}</span></div>
+          <div class="status-item"><strong>Cobros</strong><span>${counts.cobros || 0}</span></div>
+          <div class="status-item"><strong>Compras</strong><span>${counts.comprasProveedores || 0}</span></div>
+          <div class="status-item"><strong>Pagos</strong><span>${counts.pagosProveedores || 0}</span></div>
+          <div class="status-item"><strong>Gastos</strong><span>${counts.gastos || 0}</span></div>
+          <div class="status-item"><strong>Casa</strong><span>${counts.casaGastos || 0}</span></div>
+          <div class="status-item"><strong>Facturas</strong><span>${counts.facturasModulo || 0}</span></div>
+          <div class="status-item"><strong>Cierres</strong><span>${counts.cierresMensuales || 0}</span></div>
+          <div class="status-item"><strong>Notas y otros módulos</strong><span>${otherModules}</span></div>
+          <div class="status-item"><strong>Excel registrados</strong><span>${counts.exportacionesExcel || 0}</span></div>
+        </div>
+
+        ${renderJsonImportComparison(preview.comparison)}
+
+        <h3>Errores críticos</h3>
+        ${errorBlock}
+        <h3>Advertencias encontradas</h3>
+        ${warningBlock}
+
+        <div class="local-only-warning" role="note">
+          <strong>Este respaldo actualizará únicamente los datos almacenados en este dispositivo. No modificará ni reemplazará la información de Firestore.</strong>
+          <span>Modo único: Reemplazar copia local. No se fusionarán datos ni se enviará información a la nube.</span>
+        </div>
+        ${pendingChanges > 0 ? `<div class="form-message is-error" role="alert">Hay ${pendingChanges} cambio(s) local(es) pendientes de Guardar datos. Debes guardarlos o descartarlos antes de cargar el respaldo local.</div>` : ''}
+        <div class="import-confirm-box local-json-confirm-box">
+          <div class="status-item is-danger-soft"><strong>Reemplazar copia local</strong><span>Elimina la copia operativa local anterior y carga únicamente el contenido validado del respaldo. Firestore no se toca.</span></div>
+          <div class="form-actions">
+            <button type="button" class="card-action" data-local-json-confirm ${canConfirm ? '' : 'disabled'}>Reemplazar copia local</button>
+            <button type="button" class="secondary-action" data-local-json-cancel>Cancelar</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function renderJsonPreview(preview, modeOptions, canImport) {
     const errorBlock = preview.errors?.length
       ? `<ul class="import-warning-list is-error-list">${preview.errors.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
@@ -28127,6 +29259,12 @@ Notas importantes:
     const sourceLabel = cloudSource ? 'Firestore' : 'Local';
     const fuentePrincipal = cloudSource ? 'cloud' : 'local';
     const respaldoTipo = cloudSource ? 'auxiliar' : 'manual';
+    const rawConsecutivos = isPlainObject(opts.consecutivos) ? opts.consecutivos : {};
+    const consecutivos = {
+      json: Number.isFinite(Number(rawConsecutivos.json)) ? Number(rawConsecutivos.json) : getJsonExportSequence(),
+      excelConsulta: Number.isFinite(Number(rawConsecutivos.excelConsulta)) ? Number(rawConsecutivos.excelConsulta) : Number(localStorage.getItem(EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY) || 0),
+      excelCierre: Number.isFinite(Number(rawConsecutivos.excelCierre)) ? Number(rawConsecutivos.excelCierre) : Number(localStorage.getItem(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY) || 0)
+    };
 
     return {
       metadata: {
@@ -28145,6 +29283,7 @@ Notas importantes:
         periodoTrabajoSeleccionado: workPeriodInfo.periodo,
         counts,
         recordCounts: counts,
+        consecutivos,
         source: sourceLabel,
         workspaceId,
         projectId,
@@ -28169,6 +29308,7 @@ Notas importantes:
       exportedByUid: exportUser.uid,
       exportedByCorreo: exportUser.correo,
       counts,
+      consecutivos,
       fuentePrincipal,
       respaldoTipo,
       registros: {
@@ -28190,6 +29330,7 @@ Notas importantes:
         moduloFacturas: facturasModulo,
         seguimiento,
         seguimientoModulo: seguimiento,
+        consecutivos,
         configuracion: normalizeConfiguracion(snapshot.configuracion),
         bitacora: activityEntries
       }
@@ -28266,6 +29407,7 @@ Notas importantes:
     let exportSeguimiento = null;
     let exportActivityEntries = null;
     let exportUser = null;
+    let exportConsecutivos = null;
     let exportProjectId = cleanText(getRawKSAFirebaseConfig().projectId || 'ksakpk-ecb6d');
     let exportWorkspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
     let sequence = initialSequence;
@@ -28294,6 +29436,7 @@ Notas importantes:
       exportSeguimiento = cloudResult.seguimiento;
       exportActivityEntries = Array.isArray(cloudResult.bitacora) ? cloudResult.bitacora : null;
       exportUser = cloudResult.user;
+      exportConsecutivos = isPlainObject(cloudResult.consecutivos) ? cloudResult.consecutivos : null;
       exportWorkspaceId = cleanText(cloudResult.metadata?.workspaceId || FIRESTORE_WORKSPACE_ID_PLACEHOLDER) || FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
       exportProjectId = cleanText(cloudResult.metadata?.projectId || getRawKSAFirebaseConfig().projectId || 'ksakpk-ecb6d') || 'ksakpk-ecb6d';
       sequence = Math.max(initialSequence, getCloudJsonSequence(cloudResult.consecutivos || {}));
@@ -28315,6 +29458,10 @@ Notas importantes:
       source: cloudExport ? 'Firestore' : 'Local',
       cloudSource: cloudExport,
       user: exportUser,
+      consecutivos: {
+        ...(isPlainObject(exportConsecutivos) ? exportConsecutivos : {}),
+        json: sequence + 1
+      },
       workspaceId: exportWorkspaceId,
       projectId: exportProjectId
     });
@@ -28390,6 +29537,351 @@ Notas importantes:
     configState.messageType = 'success';
     saveData(appData);
     renderRoute();
+  }
+
+  function isCompatibleSchemaVersion(candidate, current = SCHEMA_VERSION) {
+    const candidateParts = cleanText(candidate).split('.');
+    const currentParts = cleanText(current).split('.');
+    if (!candidateParts[0] || !currentParts[0]) return false;
+    return candidateParts[0] === currentParts[0];
+  }
+
+  function readConsecutivoCandidate(source, keys = []) {
+    const raw = isPlainObject(source) ? source : {};
+    for (const key of keys) {
+      const candidate = raw[key];
+      const value = isPlainObject(candidate) ? (candidate.valor ?? candidate.value ?? candidate.consecutivo ?? candidate.numero) : candidate;
+      if (value === null || value === undefined || value === '') continue;
+      const numeric = Number.parseInt(value, 10);
+      if (Number.isFinite(numeric) && numeric >= 0) return numeric;
+    }
+    return null;
+  }
+
+  function extractLocalBackupConsecutivos(raw) {
+    const sources = [
+      raw?.registros?.consecutivos,
+      raw?.consecutivos,
+      raw?.metadata?.consecutivos,
+      raw?.registros?.metadata?.consecutivos
+    ].filter(isPlainObject);
+    const result = {};
+    for (const source of sources) {
+      if (result.json === undefined) result.json = readConsecutivoCandidate(source, ['json', 'JSON', 'consecutivoJson']);
+      if (result.excelConsulta === undefined) result.excelConsulta = readConsecutivoCandidate(source, ['excelConsulta', 'consulta', 'EXCEL_CONSULTA']);
+      if (result.excelCierre === undefined) result.excelCierre = readConsecutivoCandidate(source, ['excelCierre', 'cierre', 'EXCEL_CIERRE']);
+    }
+    Object.keys(result).forEach((key) => {
+      if (result[key] === null || result[key] === undefined) delete result[key];
+    });
+    return result;
+  }
+
+  function validateLocalJsonBackupPayload(raw, rawText = '', fileName = '') {
+    const baseResult = validateJsonBackupPayload(raw);
+    const preview = {
+      ...baseResult.preview,
+      fileName: cleanText(fileName),
+      errors: [...(baseResult.preview?.errors || [])],
+      warnings: [...(baseResult.preview?.warnings || [])]
+    };
+    const metadata = isPlainObject(raw?.metadata) ? raw.metadata : null;
+    const appName = cleanText(raw?.appName || metadata?.appName);
+    const schemaVersion = cleanText(raw?.schemaVersion || metadata?.schemaVersion);
+    const backupVersion = Number.parseInt(metadata?.backupVersion, 10);
+    const backupDate = cleanText(raw?.fechaExportacion || raw?.exportedAt || metadata?.exportedAt || metadata?.fechaExportacion);
+    const totalMetadata = Number(metadata?.counts?.total ?? metadata?.recordCounts?.total);
+    const actualTotal = Number(preview.counts?.total || 0);
+    const pendingChanges = getSessionChangePendingCount();
+
+    if (!cleanText(rawText)) preview.errors.push('El archivo está vacío.');
+    if (!metadata) preview.errors.push('El respaldo debe incluir metadata de exportación.');
+    if (appName !== APP_NAME) preview.errors.push('El archivo no pertenece a KSA PRÁCTIKA.');
+    if (!schemaVersion) preview.errors.push('El respaldo no incluye schemaVersion.');
+    else if (!isCompatibleSchemaVersion(schemaVersion, SCHEMA_VERSION)) preview.errors.push(`Schema incompatible: ${schemaVersion}. La app requiere una versión compatible con ${SCHEMA_VERSION}.`);
+    if (!Number.isFinite(backupVersion) || backupVersion < 2) preview.errors.push('La versión del respaldo no es compatible con la carga local segura.');
+    if (!backupDate || Number.isNaN(new Date(backupDate).getTime())) preview.errors.push('La metadata no incluye una fecha y hora de exportación válida.');
+    if (!Number.isFinite(totalMetadata)) preview.errors.push('La metadata no incluye la cantidad total de registros.');
+    if (actualTotal <= 0) preview.errors.push('El respaldo no contiene registros operativos y no puede reemplazar la copia local.');
+    if (baseResult.data?.__partialImport) preview.errors.push('Un respaldo parcial no puede reemplazar la copia operativa local completa.');
+    if (pendingChanges > 0) preview.errors.push(`Hay ${pendingChanges} cambio(s) local(es) pendientes de Guardar datos.`);
+    if (Number.isFinite(totalMetadata) && Math.abs(totalMetadata - actualTotal) > 0) {
+      preview.warnings.push(`La metadata indica ${totalMetadata} registros y la validación detectó ${actualTotal}. Se usará el conteo validado.`);
+    }
+    if (preview.comparison?.recency?.status === 'local-newer') {
+      preview.warnings.push('El respaldo parece más antiguo que la copia local actual. Revisa la fecha antes de reemplazar.');
+    }
+    const consecutivos = extractLocalBackupConsecutivos(raw);
+    if (!Object.keys(consecutivos).length) {
+      preview.warnings.push('El respaldo no incluye consecutivos locales. Se conservarán los consecutivos actuales de este dispositivo.');
+    }
+    const origin = cleanText(metadata?.sourceDeviceName || metadata?.deviceName || raw?.source);
+    if (!origin) preview.warnings.push('El origen del respaldo no está identificado.');
+
+    preview.metadata = {
+      ...(preview.metadata || {}),
+      backupVersion: Number.isFinite(backupVersion) ? String(backupVersion) : '',
+      exportedAt: backupDate,
+      exportedAtDisplay: cleanText(metadata?.exportedAtDisplay) || (backupDate ? formatDateTime(backupDate) : ''),
+      source: cleanText(metadata?.source || raw?.source),
+      sourceDeviceName: cleanText(metadata?.sourceDeviceName || metadata?.deviceName),
+      sourceDeviceId: cleanText(metadata?.sourceDeviceId || metadata?.deviceId)
+    };
+    preview.backupDate = backupDate;
+    preview.schemaVersion = schemaVersion;
+    preview.isValid = preview.errors.length === 0;
+    return { preview, data: baseResult.data, activityLog: baseResult.activityLog || [], consecutivos };
+  }
+
+  async function handleLocalJsonFileSelected(file) {
+    if (!file) return;
+    if (!canCurrentRole('importJson')) {
+      localJsonLoadState.message = ADMIN_RESTRICTED_MESSAGE;
+      localJsonLoadState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (!isCloudDataSourceActive()) {
+      localJsonLoadState.message = 'Esta función está disponible únicamente cuando la app muestra Nube activa.';
+      localJsonLoadState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+
+    localJsonLoadState = {
+      fileName: file.name || '',
+      isProcessing: true,
+      preview: null,
+      payload: null,
+      activityLog: [],
+      consecutivos: {},
+      message: 'Validando respaldo para carga local…',
+      messageType: 'success'
+    };
+    renderRoute({ preserveScroll: true });
+
+    try {
+      const text = await file.text();
+      if (!cleanText(text)) throw new Error('El archivo JSON está vacío.');
+      const parsed = JSON.parse(text);
+      const result = validateLocalJsonBackupPayload(parsed, text, file.name || '');
+      localJsonLoadState = {
+        fileName: file.name || '',
+        isProcessing: false,
+        preview: result.preview,
+        payload: result.data,
+        activityLog: result.activityLog,
+        consecutivos: result.consecutivos,
+        message: result.preview.isValid
+          ? 'Respaldo validado. Revisa la vista previa antes de reemplazar la copia local.'
+          : 'El respaldo quedó bloqueado por errores de validación.',
+        messageType: result.preview.isValid ? 'success' : 'error'
+      };
+    } catch (error) {
+      localJsonLoadState = {
+        fileName: file.name || '',
+        isProcessing: false,
+        preview: null,
+        payload: null,
+        activityLog: [],
+        consecutivos: {},
+        message: error instanceof SyntaxError ? 'El archivo no contiene JSON válido o está corrupto.' : cleanText(error?.message || 'No se pudo leer el respaldo local.'),
+        messageType: 'error'
+      };
+    }
+    renderRoute({ preserveScroll: true });
+  }
+
+  function applyLocalBackupConsecutivos(consecutivos = {}) {
+    const pairs = [
+      ['json', JSON_EXPORT_SEQUENCE_STORAGE_KEY],
+      ['excelConsulta', EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY],
+      ['excelCierre', EXCEL_CIERRE_SEQUENCE_STORAGE_KEY]
+    ];
+    const applied = {};
+    pairs.forEach(([key, storageKey]) => {
+      const value = Number.parseInt(consecutivos?.[key], 10);
+      if (!Number.isFinite(value) || value < 0) return;
+      localStorage.setItem(storageKey, String(value));
+      applied[key] = value;
+    });
+    return applied;
+  }
+
+  function applyLocalJsonBackupToDevice(importData, options = {}) {
+    const opts = isPlainObject(options) ? options : {};
+    if (!isPlainObject(importData)) throw new Error('No hay datos validados para cargar.');
+    if (getSessionChangePendingCount() > 0) throw new Error('Hay cambios locales pendientes de Guardar datos.');
+
+    const loadedAt = nowIso();
+    const currentConfig = normalizeConfiguracion(appData.configuracion);
+    const currentMetadata = isPlainObject(appData.metadata) ? { ...appData.metadata } : {};
+    const incoming = normalizeData(importData);
+    const incomingNotas = getNotasBackupFromSource(importData) || createInitialNotasData();
+    const incomingFacturas = getFacturasBackupFromSource(importData) || createInitialFacturasData();
+    const incomingSeguimiento = getSeguimientoBackupFromSource(importData) || createInitialSeguimientoData();
+    const importedPeriod = normalizeWorkPeriodKey(importData?.configuracion?.periodoTrabajoSeleccionado || importData?.metadata?.periodoTrabajoSeleccionado || importData?.metadata?.periodoTrabajo?.periodo || '');
+    const cloudWasActive = Boolean(cloudOperationState.active || currentMetadata.cloudActive || cleanText(currentMetadata.fuentePrincipal).toLowerCase() === 'firestore');
+    const incomingActivity = (Array.isArray(opts.activityLog) ? opts.activityLog : [])
+      .map((entry) => normalizeActivityEntry(entry))
+      .sort((a, b) => String(b.ts).localeCompare(String(a.ts)))
+      .slice(0, ACTIVITY_LOG_MAX_ENTRIES);
+
+    withLocalOnlyBackupApplication(() => {
+      appData = normalizeData({
+        ...incoming,
+        configuracion: {
+          ...currentConfig,
+          periodoTrabajoSeleccionado: importedPeriod || currentConfig.periodoTrabajoSeleccionado,
+          lastLocalJsonLoadAt: loadedAt,
+          updatedAt: loadedAt
+        },
+        metadata: {
+          ...incoming.metadata,
+          appName: APP_NAME,
+          appVersion: APP_VERSION,
+          schemaVersion: SCHEMA_VERSION,
+          createdAt: incoming.metadata?.createdAt || currentMetadata.createdAt || loadedAt,
+          updatedAt: loadedAt,
+          cloudActive: cloudWasActive,
+          fuentePrincipal: cloudWasActive ? 'firestore' : cleanText(currentMetadata.fuentePrincipal || incoming.metadata?.fuentePrincipal || 'local'),
+          localCopyLoadedFromBackup: true,
+          localCopyLoadedAt: loadedAt,
+          localCopyBackupFileName: cleanText(opts.fileName),
+          localCopyBackupExportedAt: cleanText(opts.backupExportedAt)
+        }
+      });
+      saveData(appData);
+      saveNotasData({ ...normalizeNotasData(incomingNotas), metadata: { ...normalizeNotasData(incomingNotas).metadata, localCopyLoadedAt: loadedAt } });
+      saveFacturasData({ ...sanitizeFacturasClientesData(incomingFacturas, { mark: false }), metadata: { ...sanitizeFacturasClientesData(incomingFacturas, { mark: false }).metadata, localCopyLoadedAt: loadedAt } });
+      saveSeguimientoData({ ...normalizeSeguimientoData(incomingSeguimiento), metadata: { ...normalizeSeguimientoData(incomingSeguimiento).metadata, localCopyLoadedAt: loadedAt } });
+      saveActivityLog(incomingActivity);
+      applyLocalBackupConsecutivos(opts.consecutivos || {});
+      reconcileWorkPeriodSelectionAfterDataChange(importedPeriod);
+      syncCasaFiltersWithActiveWorkPeriod({ force: true });
+    });
+
+    suppressCloudSyncAfterLocalBackup();
+    cloudOperationState.active = cloudWasActive;
+    cloudOperationState.message = 'Datos locales cargados desde respaldo. Firestore continúa siendo la fuente principal.';
+    cloudOperationState.lastError = '';
+    return {
+      loadedAt,
+      counts: getJsonRecordCounts(appData, incomingActivity),
+      importedPeriod,
+      consecutivos: opts.consecutivos || {},
+      cloudActive: cloudWasActive
+    };
+  }
+
+  function confirmLocalJsonLoad() {
+    if (!canCurrentRole('importJson')) {
+      localJsonLoadState.message = ADMIN_RESTRICTED_MESSAGE;
+      localJsonLoadState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (!isCloudDataSourceActive()) {
+      localJsonLoadState.message = 'La nube debe permanecer activa para usar esta función.';
+      localJsonLoadState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (!localJsonLoadState.payload || !localJsonLoadState.preview?.isValid) {
+      localJsonLoadState.message = 'Primero selecciona y valida un respaldo compatible.';
+      localJsonLoadState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (getSessionChangePendingCount() > 0) {
+      localJsonLoadState.message = 'Hay cambios locales pendientes de Guardar datos. La carga local fue bloqueada.';
+      localJsonLoadState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+
+    const confirmed = window.confirm('Se reemplazará únicamente la copia operativa local de este dispositivo. Firestore, la sesión Firebase, el UID, el usuario, el rol y los permisos no se modificarán. ¿Continuar?');
+    if (!confirmed) return;
+
+    const fileName = localJsonLoadState.fileName;
+    const preview = localJsonLoadState.preview;
+    try {
+      const result = applyLocalJsonBackupToDevice(localJsonLoadState.payload, {
+        fileName,
+        backupExportedAt: preview.backupDate,
+        activityLog: localJsonLoadState.activityLog,
+        consecutivos: localJsonLoadState.consecutivos
+      });
+      const localLoadId = generateId('localjson');
+      const summary = saveLocalJsonLoadMetadata({
+        id: localLoadId,
+        fileName,
+        loadedAt: result.loadedAt,
+        backupExportedAt: preview.backupDate,
+        sourceDeviceName: preview.metadata?.sourceDeviceName,
+        sourceDeviceId: preview.metadata?.sourceDeviceId,
+        counts: result.counts,
+        totalRecords: result.counts.total || 0,
+        warningCount: preview.warnings?.length || 0,
+        loadResult: 'Datos locales cargados desde respaldo.',
+        lastCloudUpdateResult: 'Pendiente de actualización desde Firestore',
+        pendingBlockKeys: CLOUD_REFRESH_BLOCK_DEFINITIONS.map((item) => item.key),
+        blockSources: normalizeLocalJsonBlockSources({}, 'json')
+      });
+      if (summary) appendLocalJsonLoadHistoryEntry(summary);
+      saveJsonAppliedMetadata(fileName, result.loadedAt);
+      appendJsonImportHistoryEntry(buildJsonImportHistoryEntry(
+        buildJsonImportSummary(preview, 'replace', fileName),
+        preview,
+        preview.warnings?.length ? 'Cargado localmente con advertencias' : 'Cargado localmente'
+      ));
+      withLocalOnlyBackupApplication(() => registerActivity({
+        module: 'JSON',
+        action: 'Cargado localmente',
+        entityType: 'Respaldo local',
+        entityRef: fileName,
+        detail: buildActivityDetail([
+          'Copia local reemplazada sin escribir en Firestore',
+          fileName,
+          preview.backupDate ? `Respaldo original ${formatDateTime(preview.backupDate)}` : '',
+          `${result.counts.total || 0} registros`
+        ]),
+        source: 'local-only'
+      }));
+      localJsonLoadState = {
+        fileName: '',
+        isProcessing: false,
+        preview: null,
+        payload: null,
+        activityLog: [],
+        consecutivos: {},
+        message: 'Datos locales cargados desde respaldo.',
+        messageType: 'success'
+      };
+      configState.message = 'Datos locales cargados desde respaldo.';
+      configState.messageType = 'success';
+      renderRoute({ preserveScroll: true });
+      showToast('Datos locales cargados desde respaldo.', 'success');
+    } catch (error) {
+      localJsonLoadState.message = cleanText(error?.message || 'No se pudo cargar el respaldo.');
+      localJsonLoadState.messageType = 'error';
+      renderRoute({ preserveScroll: true });
+      showToast(localJsonLoadState.message, 'error');
+    }
+  }
+
+  function clearLocalJsonLoadState() {
+    localJsonLoadState = {
+      fileName: '',
+      isProcessing: false,
+      preview: null,
+      payload: null,
+      activityLog: [],
+      consecutivos: {},
+      message: null,
+      messageType: 'success'
+    };
+    renderRoute({ preserveScroll: true });
   }
 
   async function handleJsonFileSelected(file) {
@@ -32678,6 +34170,10 @@ ${rowsXml}
       button.addEventListener('click', () => handleCloudDataRefresh(button));
     });
 
+    viewRoot.querySelectorAll('[data-cloud-retry-pending]').forEach((button) => {
+      button.addEventListener('click', () => handleCloudPendingRetry(button));
+    });
+
     viewRoot.querySelectorAll('[data-online-diagnostic-read]').forEach((button) => {
       button.addEventListener('click', () => handleOnlineDiagnosticRead(button));
     });
@@ -32749,6 +34245,21 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-json-export]').forEach((button) => {
       button.addEventListener('click', exportJsonBackup);
+    });
+
+    viewRoot.querySelectorAll('[data-local-json-file]').forEach((input) => {
+      input.addEventListener('change', (event) => {
+        const file = event.target.files && event.target.files[0];
+        handleLocalJsonFileSelected(file);
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-local-json-confirm]').forEach((button) => {
+      button.addEventListener('click', confirmLocalJsonLoad);
+    });
+
+    viewRoot.querySelectorAll('[data-local-json-cancel]').forEach((button) => {
+      button.addEventListener('click', clearLocalJsonLoadState);
     });
 
     viewRoot.querySelectorAll('[data-json-file]').forEach((input) => {

@@ -1,3 +1,12 @@
+## Actualización de nube y respaldo local — Etapa 2/4
+
+- La actualización Firestore se organiza en 9 bloques lógicos y atómicos.
+- Se muestra progreso real con bloque actual, completados, pendientes y errores.
+- Cada bloque usa timeout individual de 20 segundos y la operación mantiene el límite global de 120 segundos.
+- Los bloques independientes leen en paralelo con concurrencia controlada; Catálogos limita la concurrencia a 3 lecturas.
+- Un bloque fallido conserva íntegra su copia local y no impide aplicar los demás bloques válidos.
+- Los resultados parciales identifican por nombre los bloques pendientes sin desactivar Firebase.
+
 # KSA PRÁCTIKA — Condición de compra — Etapa 2/2 — Hardening final
 
 - Las compras marcadas como Contado crean o actualizan un único pago automático ligado a la compra.
@@ -132,3 +141,12 @@ Bloque A / Etapa 3/6: se agregó una pantalla de acceso preparada para Firebase 
 - Se agregó `GUIA_JSON_AUXILIAR_NUBE_KSA_PRACTIKA.txt`.
 - Consecutivo JSON permanece separado de Excel Consulta y Excel Cierre; no avanza si se cancela o falla la exportación.
 - Cache PWA actualizado a 0.18.16.
+
+
+## Etapa 3/4 — Cargar respaldo únicamente en este dispositivo
+
+- Agrega una herramienta separada en Configuración → Respaldo JSON auxiliar para cargar un JSON con Nube activa sin escribir en Firestore.
+- Valida metadata, versión, estructura, fecha, conteos, antigüedad y cambios de sesión pendientes.
+- Solo permite Reemplazar copia local; conserva sesión Firebase, UID, usuario, rol, permisos, configuración Firebase, identidad del dispositivo y estado de Nube activa.
+- Registra archivo, fecha de carga, fecha original del respaldo y mantiene disponible Actualizar datos.
+- Los respaldos nuevos incluyen consecutivos locales de JSON, Excel Consulta y Excel Cierre.
