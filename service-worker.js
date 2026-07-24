@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_63_condicion_compra_etapa2_hardening_final';
+const CACHE_VERSION = 'v0_18_64_json_export_fix';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

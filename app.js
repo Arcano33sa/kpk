@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.63-condicion-compra-etapa2';
+  const APP_VERSION = '0.18.64-json-export-fix';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -28026,11 +28026,12 @@ Notas importantes:
     return counts;
   }
 
-  async function saveJsonBackupBlob(blob, fileName) {
+  async function prepareJsonBackupDestination(fileName) {
+    const safeFileName = cleanText(fileName) || 'KSA_PRACTIKA_Respaldo.json';
     if (typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function') {
       try {
         const handle = await window.showSaveFilePicker({
-          suggestedName: fileName,
+          suggestedName: safeFileName,
           types: [
             {
               description: 'Respaldo JSON de KSA PRÁCTIKA',
@@ -28038,30 +28039,53 @@ Notas importantes:
             }
           ]
         });
-        const writable = await handle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-        return { saved: true, method: 'file-picker' };
+        return {
+          ready: true,
+          handle,
+          fileName: cleanText(handle?.name) || safeFileName,
+          method: 'file-picker'
+        };
       } catch (error) {
         if (error && (error.name === 'AbortError' || error.name === 'NotAllowedError')) {
-          return { saved: false, cancelled: true, method: 'file-picker' };
+          return { ready: false, cancelled: true, method: 'file-picker' };
         }
         throw error;
       }
     }
 
     const confirmed = typeof window === 'undefined' || window.confirm('Se preparará el respaldo JSON para guardar/descargar. El consecutivo avanzará solo al confirmar esta acción final. ¿Continuar?');
-    if (!confirmed) return { saved: false, cancelled: true, method: 'download-fallback' };
+    if (!confirmed) return { ready: false, cancelled: true, method: 'download-fallback' };
+    return { ready: true, fileName: safeFileName, method: 'download-fallback' };
+  }
+
+  async function saveJsonBackupBlob(blob, fileName, preparedDestination = null) {
+    const destination = isPlainObject(preparedDestination) ? preparedDestination : {};
+    if (destination.method === 'file-picker' && destination.handle) {
+      const writable = await destination.handle.createWritable();
+      try {
+        await writable.write(blob);
+        await writable.close();
+      } catch (error) {
+        try {
+          await writable.abort();
+        } catch (_) {}
+        throw error;
+      }
+      return { saved: true, method: 'file-picker', fileName: cleanText(destination.fileName) || fileName };
+    }
 
     const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = fileName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
-    return { saved: true, method: 'download-fallback' };
+    try {
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+    } finally {
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+    return { saved: true, method: 'download-fallback', fileName };
   }
 
   function buildJsonBackupPayload(exportOptions = {}) {
@@ -28209,6 +28233,30 @@ Notas importantes:
       return;
     }
 
+    const destinationRequestedAt = nowIso();
+    const initialSequence = getJsonExportSequence();
+    const initialFileInfo = buildJsonExportFileName(destinationRequestedAt, { sequence: initialSequence });
+    let preparedDestination = null;
+
+    try {
+      // Debe ejecutarse antes de cualquier await de Firestore para conservar la activación directa del clic.
+      preparedDestination = await prepareJsonBackupDestination(initialFileInfo.fileName);
+      if (!preparedDestination?.ready) {
+        configState.message = 'Exportación JSON cancelada. El consecutivo no cambió.';
+        configState.messageType = 'info';
+        renderRoute();
+        return;
+      }
+    } catch (error) {
+      console.error('KSA PRÁCTIKA: no se pudo preparar el destino del respaldo JSON.', error);
+      configState.message = error?.name === 'SecurityError'
+        ? 'El navegador bloqueó el selector de archivo. Vuelve a pulsar Exportar JSON; el consecutivo no cambió.'
+        : 'No se pudo preparar el archivo JSON. El consecutivo no cambió.';
+      configState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+
     const cloudExport = isCloudDataSourceActive();
     let cloudResult = null;
     let exportSourceData = appData;
@@ -28219,7 +28267,7 @@ Notas importantes:
     let exportUser = null;
     let exportProjectId = cleanText(getRawKSAFirebaseConfig().projectId || 'ksakpk-ecb6d');
     let exportWorkspaceId = FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
-    let sequence = getJsonExportSequence();
+    let sequence = initialSequence;
 
     if (cloudExport) {
       if (typeof KSAFirebaseAdapter === 'undefined' || !KSAFirebaseAdapter?.readCloudOperationalSnapshot) {
@@ -28247,11 +28295,14 @@ Notas importantes:
       exportUser = cloudResult.user;
       exportWorkspaceId = cleanText(cloudResult.metadata?.workspaceId || FIRESTORE_WORKSPACE_ID_PLACEHOLDER) || FIRESTORE_WORKSPACE_ID_PLACEHOLDER;
       exportProjectId = cleanText(cloudResult.metadata?.projectId || getRawKSAFirebaseConfig().projectId || 'ksakpk-ecb6d') || 'ksakpk-ecb6d';
-      sequence = getCloudJsonSequence(cloudResult.consecutivos || {});
+      sequence = Math.max(initialSequence, getCloudJsonSequence(cloudResult.consecutivos || {}));
     }
 
-    const exportedAt = nowIso();
-    const { fileName } = buildJsonExportFileName(exportedAt, { sequence });
+    const exportedAt = destinationRequestedAt;
+    const generatedFileInfo = buildJsonExportFileName(exportedAt, { sequence });
+    const fileName = preparedDestination.method === 'file-picker'
+      ? (cleanText(preparedDestination.fileName) || generatedFileInfo.fileName)
+      : generatedFileInfo.fileName;
     const payload = buildJsonBackupPayload({
       exportedAt,
       fileName,
@@ -28270,7 +28321,7 @@ Notas importantes:
     const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
 
     try {
-      const saveResult = await saveJsonBackupBlob(blob, fileName);
+      const saveResult = await saveJsonBackupBlob(blob, fileName, preparedDestination);
       if (!saveResult.saved) {
         configState.message = 'Exportación JSON cancelada. El consecutivo no cambió.';
         configState.messageType = 'info';
@@ -28279,7 +28330,9 @@ Notas importantes:
       }
     } catch (error) {
       console.error('KSA PRÁCTIKA: error al guardar respaldo JSON.', error);
-      configState.message = 'No se pudo guardar/exportar el JSON. El consecutivo no cambió.';
+      configState.message = cleanText(error?.message)
+        ? `No se pudo guardar/exportar el JSON: ${cleanText(error.message)}. El consecutivo no cambió.`
+        : 'No se pudo guardar/exportar el JSON. El consecutivo no cambió.';
       configState.messageType = 'error';
       renderRoute();
       return;
