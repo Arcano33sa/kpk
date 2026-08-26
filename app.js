@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.71-campos-monetarios-etapa2-hardening-final';
+  const APP_VERSION = '0.18.74-notas-etapa3-hardening-final';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -16,6 +16,9 @@
   const LOCAL_JSON_LOAD_HISTORY_STORAGE_KEY = 'KSA_PRACTIKA_LOCAL_JSON_LOAD_HISTORY_v1';
   const LOCAL_JSON_LOAD_HISTORY_MAX_ENTRIES = 30;
   const NOTES_STORAGE_KEY = 'ksa_notas_v1';
+  const NOTES_PENDING_STORAGE_KEY = 'ksa_notas_pendientes_v1';
+  const NOTES_LOANS_STORAGE_KEY = 'ksa_notas_prestamos_v1';
+  const NOTES_STAGE3_CLOUD_BASELINE_STORAGE_KEY = 'KSA_PRACTIKA_NOTAS_STAGE3_CLOUD_BASELINE_v1';
   const SEGUIMIENTO_STORAGE_KEY = 'ksa_seguimiento_v1';
   const FACTURAS_STORAGE_KEY = 'ksa_facturas_v1';
   const FACTURAS_CLIENTES_CLEANUP_MIGRATION_ID = 'facturas_clientes_cleanup_v1';
@@ -1037,7 +1040,7 @@
     { key: 'compras_pagos', label: 'Compras y Pagos', status: 'Actualizando Compras y Pagos…' },
     { key: 'gastos_casa', label: 'Gastos y Casa', status: 'Actualizando Gastos y Casa…' },
     { key: 'facturas', label: 'Facturas', status: 'Actualizando Facturas…' },
-    { key: 'notas_recordatorios', label: 'Notas, Recordatorios y Pendientes de registrar', status: 'Actualizando Notas y Recordatorios…' },
+    { key: 'notas_recordatorios', label: 'Notas, Recordatorios, Pendientes y Préstamos', status: 'Actualizando Notas, Pendientes y Préstamos…' },
     { key: 'seguimiento_bitacora', label: 'Seguimiento y bitácora', status: 'Actualizando Seguimiento y bitácora…' },
     { key: 'cierres_excel', label: 'Cierres, Excel e históricos', status: 'Actualizando Cierres e históricos…' },
     { key: 'consecutivos_metadata', label: 'Consecutivos y metadata', status: 'Actualizando Consecutivos y metadata…' }
@@ -1324,7 +1327,7 @@ Notas importantes:
     { key: 'gastos', path: 'workspaces/{workspaceId}/gastos/{gastoId}', label: 'Gastos productivos', source: 'gastos', idPolicy: 'Conservar gasto.id, vínculos y anulaciones.' },
     { key: 'casaGastos', path: 'workspaces/{workspaceId}/casaGastos/{casaGastoId}', label: 'Casa gastos', source: 'casaGastos', idPolicy: 'Conservar casaGasto.id y categoriaCasaId.' },
     { key: 'facturasModulo', path: 'workspaces/{workspaceId}/facturasModulo/{facturaModuloId}', label: 'Facturas', source: 'facturasModulo', idPolicy: 'Conservar id interno y vínculos ventaId/clienteId/sucursalId.' },
-    { key: 'notasModulo', path: 'workspaces/{workspaceId}/notasModulo/{notaId}', label: 'Notas', source: 'notasModulo', idPolicy: 'Conservar ids de notas, pendientes, recordatorios e históricos.' },
+    { key: 'notasModulo', path: 'workspaces/{workspaceId}/notasModulo/{notaId}', label: 'Notas', source: 'notasModulo', idPolicy: 'Conservar ids de notas, pendientes, recordatorios, libros y movimientos de préstamos.' },
     { key: 'seguimiento', path: 'workspaces/{workspaceId}/seguimiento/{seguimientoId}', label: 'Seguimiento', source: 'seguimiento', idPolicy: 'Un documento estable por Cliente + Sucursal, conservando última llamada e histórico.' },
     { key: 'cierresMensuales', path: 'workspaces/{workspaceId}/cierresMensuales/{periodo}', label: 'Cierres mensuales', source: 'cierresMensuales', idPolicy: 'Usar período YYYY-MM como id o campo estable, sin reabrir históricos.' },
     { key: 'exportacionesExcel', path: 'workspaces/{workspaceId}/exportacionesExcel/{exportacionId}', label: 'Exportaciones Excel', source: 'exportacionesExcel', idPolicy: 'Conservar id de exportación, tipo consulta/cierre y consecutivo correspondiente.' },
@@ -1363,6 +1366,11 @@ Notas importantes:
     ['notas', 'notas'],
     ['notas-inicio', 'notas'],
     ['notas-apuntes', 'notas-apuntes'],
+    ['pendientes', 'notas-pendientes'],
+    ['notas-pendientes', 'notas-pendientes'],
+    ['prestamos', 'notas-prestamos'],
+    ['préstamos', 'notas-prestamos'],
+    ['notas-prestamos', 'notas-prestamos'],
     ['recordatorios', 'notas-recordatorios'],
     ['notas-recordatorios', 'notas-recordatorios'],
     ['facturas', 'facturas'],
@@ -1466,6 +1474,11 @@ Notas importantes:
     editingNoteId: null,
     editingNoteType: '',
     editingReminderId: null,
+    editingOperationalPendingId: null,
+    loanBookFormOpen: false,
+    loanMovementBookId: '',
+    editingLoanMovementId: '',
+    openLoanBookIds: [],
     historyNotasOpen: false,
     historyRecordatoriosOpen: false,
     detailType: '',
@@ -3637,8 +3650,46 @@ Notas importantes:
     else if (action === 'annulled') registerSessionChange({ module: 'Gastos', operation: 'anular', recordId: result.gasto.id, sourceModule: 'Ventas / OC' });
   }
 
+  function ensureNotasStage3BaselineQueued() {
+    try {
+      if (localStorage.getItem(NOTES_STAGE3_CLOUD_BASELINE_STORAGE_KEY)) return 0;
+    } catch (_) {}
+
+    let queued = 0;
+    const pendientesOperativos = getNotasPendientesData();
+    pendientesOperativos.registros.forEach((record) => {
+      if (!cleanText(record.id)) return;
+      registerSessionChange({ module: 'Notas Pendientes Operativos', operation: 'editar', recordId: record.id, sourceModule: 'Migración Etapa 3' });
+      queued += 1;
+    });
+
+    const prestamos = getNotasPrestamosData();
+    prestamos.libros.forEach((rawBook) => {
+      const book = normalizeNotasPrestamoLibro(rawBook);
+      if (cleanText(book.id)) {
+        registerSessionChange({ module: 'Notas Préstamos', operation: 'editar', recordId: book.id, sourceModule: 'Migración Etapa 3' });
+        queued += 1;
+      }
+      book.movimientos.forEach((movement) => {
+        if (!cleanText(movement.id)) return;
+        registerSessionChange({ module: 'Notas Préstamos', operation: 'editar', recordId: movement.id, relatedId: book.id, sourceModule: 'Migración Etapa 3' });
+        queued += 1;
+      });
+    });
+
+    if (queued === 0) {
+      try { localStorage.setItem(NOTES_STAGE3_CLOUD_BASELINE_STORAGE_KEY, APP_VERSION); } catch (_) {}
+    }
+    return queued;
+  }
+
+  function markNotasStage3BaselineSynced() {
+    try { localStorage.setItem(NOTES_STAGE3_CLOUD_BASELINE_STORAGE_KEY, APP_VERSION); } catch (_) {}
+  }
+
   async function handleSessionSavePreview(button = null) {
     if (button) button.disabled = true;
+    ensureNotasStage3BaselineQueued();
     const pending = getPendingSessionChanges();
     if (!pending.length) {
       clearActionMessage(configState);
@@ -3697,6 +3748,7 @@ Notas importantes:
         cloudOperationState.lastError = resultMessage;
       }
       cloudOperationState.message = resultMessage;
+      if (result?.ok && !operationalFailure && !unavailable) markNotasStage3BaselineSynced();
 
       renderRoute({ preserveScroll: true });
       replaceToast(processToastId, resultMessage, resultType);
@@ -6269,23 +6321,96 @@ Notas importantes:
     }
 
     function buildCloudNotasRecords(notasData) {
-      const normalized = normalizeNotasData(notasData || {});
-      return [
+      const normalized = normalizeNotasModuleSnapshot(notasData || {});
+      const pendientesOperativos = getNotasPendientesOperativosFromSnapshot(normalized);
+      const prestamos = getNotasPrestamosFromSnapshot(normalized);
+      const records = [
         ...normalized.notas.map((record) => ({ ...record, tipoRegistro: 'nota', _docPrefix: 'nota' })),
         ...normalized.pendientes.map((record) => ({ ...record, tipoRegistro: 'pendiente', _docPrefix: 'pendiente' })),
         ...normalized.recordatorios.map((record) => ({ ...record, tipoRegistro: 'recordatorio', _docPrefix: 'recordatorio' }))
       ];
+      if (pendientesOperativos) {
+        records.push(...pendientesOperativos.registros.map((record) => ({
+          ...record,
+          tipoRegistro: 'pendiente_operativo',
+          _docPrefix: 'pendiente_operativo'
+        })));
+      }
+      if (prestamos) {
+        prestamos.libros.forEach((book) => {
+          const normalizedBook = normalizeNotasPrestamoLibro(book);
+          const { movimientos, ...bookFields } = normalizedBook;
+          records.push({ ...bookFields, tipoRegistro: 'prestamo_libro', _docPrefix: 'prestamo_libro' });
+          movimientos.forEach((movement) => {
+            records.push({
+              ...normalizeNotasPrestamoMovimiento(movement),
+              libroId: normalizedBook.id,
+              deudor: normalizedBook.deudor,
+              acreedor: normalizedBook.acreedor,
+              tipoRegistro: 'prestamo_movimiento',
+              _docPrefix: 'prestamo_movimiento'
+            });
+          });
+        });
+      }
+      return records;
     }
 
     function rebuildNotasDataFromCloud(records = []) {
       const buckets = { notas: [], pendientes: [], recordatorios: [] };
+      const operational = [];
+      const loanBooks = new Map();
+      const loanMovements = [];
+      let sawOperational = false;
+      let sawLoans = false;
+
       (Array.isArray(records) ? records : []).forEach((record) => {
         const rawType = cleanText(record.tipoRegistro || record.tipo || record.kind || record._docPrefix).toLowerCase();
-        if (rawType.includes('pendiente')) buckets.pendientes.push(record);
-        else if (rawType.includes('recordatorio')) buckets.recordatorios.push(record);
+        if (rawType === 'pendiente_operativo') {
+          sawOperational = true;
+          if (!isCloudDeletedRecord(record)) operational.push(record);
+          return;
+        }
+        if (rawType === 'prestamo_libro') {
+          sawLoans = true;
+          if (!isCloudDeletedRecord(record)) {
+            const book = normalizeNotasPrestamoLibro({ ...record, movimientos: [] });
+            loanBooks.set(book.id, book);
+          }
+          return;
+        }
+        if (rawType === 'prestamo_movimiento') {
+          sawLoans = true;
+          if (!isCloudDeletedRecord(record)) loanMovements.push(record);
+          return;
+        }
+        if (isCloudDeletedRecord(record)) return;
+        if (rawType.includes('recordatorio')) buckets.recordatorios.push(record);
+        else if (rawType === 'pendiente' || rawType === 'pendientes') buckets.pendientes.push(record);
         else buckets.notas.push(record);
       });
-      return normalizeNotasData(buckets);
+
+      if (sawLoans) {
+        loanMovements.forEach((movementRecord) => {
+          const bookId = cleanText(movementRecord.libroId || movementRecord.bookId);
+          let book = loanBooks.get(bookId);
+          if (!book) {
+            book = normalizeNotasPrestamoLibro({
+              id: bookId || generateId('prestamo_libro'),
+              deudor: cleanText(movementRecord.deudor),
+              acreedor: cleanText(movementRecord.acreedor),
+              movimientos: []
+            });
+            loanBooks.set(book.id, book);
+          }
+          book.movimientos.push(normalizeNotasPrestamoMovimiento(movementRecord));
+        });
+      }
+
+      const result = normalizeNotasData(buckets);
+      if (sawOperational) result.pendientesOperativos = normalizeNotasPendientesData({ registros: operational });
+      if (sawLoans) result.prestamos = normalizeNotasPrestamosData({ libros: Array.from(loanBooks.values()) });
+      return result;
     }
 
     function buildCloudSnapshotPayload(dataInput = null) {
@@ -6643,7 +6768,7 @@ Notas importantes:
             def: getCloudRefreshBlockDefinition('notas_recordatorios'),
             run: () => readCollectionDocs(db, fs, 'workspaces', workspaceId, 'notasModulo'),
             apply: (records) => {
-              notasModulo = rebuildNotasDataFromCloud(records.filter((record) => !isCloudDeletedRecord(record)));
+              notasModulo = rebuildNotasDataFromCloud(records);
             }
           },
           {
@@ -7105,6 +7230,9 @@ Notas importantes:
 
     function inferNotasCloudPrefixFromId(recordId = '') {
       const id = cleanText(recordId).toLowerCase();
+      if (id.startsWith('pendiente_operativo')) return 'pendiente_operativo';
+      if (id.startsWith('prestamo_libro')) return 'prestamo_libro';
+      if (id.startsWith('prestamo_movimiento')) return 'prestamo_movimiento';
       if (id.startsWith('pendiente_')) return 'pendiente';
       if (id.startsWith('recordatorio_')) return 'recordatorio';
       return 'nota';
@@ -7171,7 +7299,15 @@ Notas importantes:
         };
       }
 
-      if (moduleKey === 'notaspendientes' || moduleKey === 'notas' || moduleKey === 'pendientes') {
+      if ([
+        'notaspendientes',
+        'notas',
+        'pendientes',
+        'notaspendientesoperativos',
+        'pendientesoperativos',
+        'notasprestamos',
+        'prestamos'
+      ].includes(moduleKey)) {
         const list = buildCloudNotasRecords(cloneNotasModuleData());
         return {
           kind: 'notas',
@@ -7218,8 +7354,8 @@ Notas importantes:
         payload = target.record
           ? buildSessionWritePayload(target.record, target.normalizer, change, stamp, user)
           : (isDelete ? buildSessionDeleteTombstone(recordId, change, stamp, user) : null);
-        if (payload && target.record) {
-          payload.tipoRegistro = cleanText(target.record.tipoRegistro || target.record._docPrefix || inferNotasCloudPrefixFromId(recordId));
+        if (payload) {
+          payload.tipoRegistro = cleanText(target.record?.tipoRegistro || target.record?._docPrefix || inferNotasCloudPrefixFromId(recordId));
           delete payload._docPrefix;
         }
       } else {
@@ -9484,7 +9620,7 @@ Notas importantes:
         lastCloudHydratedAt: nowIso()
       };
       saveData(appData);
-      if (result.notasModulo) saveNotasData(result.notasModulo);
+      if (result.notasModulo) saveNotasModuleSnapshot(result.notasModulo);
       if (result.facturasModulo) absorbCloudFacturasCleanupResult(result.facturasModulo);
       if (result.seguimiento) saveSeguimientoData(result.seguimiento);
       if (Array.isArray(result.bitacora)) {
@@ -9952,6 +10088,8 @@ Notas importantes:
           primaryKey: STORAGE_KEY,
           facturasKey: FACTURAS_STORAGE_KEY,
           notasKey: NOTES_STORAGE_KEY,
+          notasPendientesKey: NOTES_PENDING_STORAGE_KEY,
+          notasPrestamosKey: NOTES_LOANS_STORAGE_KEY,
           seguimientoKey: SEGUIMIENTO_STORAGE_KEY,
           activityLogKey: ACTIVITY_LOG_STORAGE_KEY
         },
@@ -9990,7 +10128,7 @@ Notas importantes:
       const incomingFacturas = getFacturasBackupFromSource(nextData);
       appData = normalized;
       saveData(appData);
-      if (incomingNotas && writeOptions.includeAuxiliary !== false) saveNotasData(incomingNotas);
+      if (incomingNotas && writeOptions.includeAuxiliary !== false) saveNotasModuleSnapshot(incomingNotas);
       if (incomingFacturas && writeOptions.includeAuxiliary !== false) saveFacturasData(sanitizeFacturasClientesData(incomingFacturas, { mark: false }));
       if (writeOptions.render === true && typeof renderRoute === 'function') renderRoute();
       return {
@@ -11052,6 +11190,34 @@ Notas importantes:
       const stableId = cleanText(record.id) || `recordatorio_${index + 1}`;
       addCloudImportRecord(records, duplicates, 'notasModulo', 'Recordatorios', ['workspaces', workspaceId, 'notasModulo', `recordatorio_${stableId}`], { ...record, tipoRegistro: 'recordatorio' }, stableId);
     });
+    const notasSnapshot = normalizeNotasModuleSnapshot(snapshot.notasModulo || {});
+    const pendientesOperativos = getNotasPendientesOperativosFromSnapshot(notasSnapshot);
+    if (pendientesOperativos) {
+      pendientesOperativos.registros.forEach((record, index) => {
+        const stableId = cleanText(record.id) || `pendiente_operativo_${index + 1}`;
+        addCloudImportRecord(records, duplicates, 'notasModulo', 'Pendientes operativos', ['workspaces', workspaceId, 'notasModulo', `pendiente_operativo_${stableId}`], { ...record, tipoRegistro: 'pendiente_operativo' }, stableId);
+      });
+    }
+    const prestamos = getNotasPrestamosFromSnapshot(notasSnapshot);
+    if (prestamos) {
+      prestamos.libros.forEach((rawBook, bookIndex) => {
+        const book = normalizeNotasPrestamoLibro(rawBook);
+        const stableBookId = cleanText(book.id) || `prestamo_libro_${bookIndex + 1}`;
+        const { movimientos, ...bookFields } = book;
+        addCloudImportRecord(records, duplicates, 'notasModulo', 'Libros de Préstamos', ['workspaces', workspaceId, 'notasModulo', `prestamo_libro_${stableBookId}`], { ...bookFields, tipoRegistro: 'prestamo_libro' }, stableBookId);
+        movimientos.forEach((movement, movementIndex) => {
+          const normalizedMovement = normalizeNotasPrestamoMovimiento(movement);
+          const stableMovementId = cleanText(normalizedMovement.id) || `prestamo_movimiento_${bookIndex + 1}_${movementIndex + 1}`;
+          addCloudImportRecord(records, duplicates, 'notasModulo', 'Movimientos de Préstamos', ['workspaces', workspaceId, 'notasModulo', `prestamo_movimiento_${stableMovementId}`], {
+            ...normalizedMovement,
+            libroId: stableBookId,
+            deudor: book.deudor,
+            acreedor: book.acreedor,
+            tipoRegistro: 'prestamo_movimiento'
+          }, stableMovementId);
+        });
+      });
+    }
     getFacturasClienteRecords(snapshot.facturasModulo || {}).forEach((record, index) => {
       const stableId = cleanText(record.id) || cleanText(record.no) || `factura_${index + 1}`;
       addCloudImportRecord(records, duplicates, 'facturasModulo', 'Facturas', ['workspaces', workspaceId, 'facturasModulo', stableId], record, stableId);
@@ -11111,10 +11277,17 @@ Notas importantes:
     inspectList('Casa', data.casaGastos);
     inspectList('Cierres', data.cierresMensuales, (record) => record?.periodo || record?.id || (record?.year && record?.month ? `${record.year}-${record.month}` : ''));
     inspectList('Exportaciones Excel', data.exportacionesExcel, (record) => record?.id || record?.exportacionId || record?.nombreArchivo);
-    const notas = normalizeNotasData(snapshot?.notasModulo || {});
+    const notas = normalizeNotasModuleSnapshot(snapshot?.notasModulo || {});
     inspectList('Notas', notas.notas);
     inspectList('Pendientes', notas.pendientes);
     inspectList('Recordatorios', notas.recordatorios);
+    const pendientesOperativos = getNotasPendientesOperativosFromSnapshot(notas);
+    if (pendientesOperativos) inspectList('Pendientes operativos', pendientesOperativos.registros);
+    const prestamos = getNotasPrestamosFromSnapshot(notas);
+    if (prestamos) {
+      inspectList('Libros de Préstamos', prestamos.libros);
+      prestamos.libros.forEach((book) => inspectList(`Movimientos de Préstamos ${book.deudor}→${book.acreedor}`, book.movimientos));
+    }
     inspectList('Seguimiento', normalizeSeguimientoData(snapshot?.seguimiento || {}).registros, (record) => getSeguimientoCloudDocId(record));
     inspectList('Facturas', getFacturasClienteRecords(snapshot?.facturasModulo || {}), (record) => record?.id || record?.no);
     return warnings;
@@ -11682,6 +11855,12 @@ Notas importantes:
 
   function setRoute(route) {
     const safeRoute = routeAliases.get(String(route).toLowerCase()) || 'home';
+    if (safeRoute === 'notas-prestamos' && getRoute() !== safeRoute) {
+      notasState.openLoanBookIds = [];
+      notasState.loanBookFormOpen = false;
+      notasState.loanMovementBookId = '';
+      notasState.editingLoanMovementId = '';
+    }
     if (getRoute() === safeRoute) {
       renderRoute({ resetScroll: true });
       return;
@@ -11692,7 +11871,7 @@ Notas importantes:
   function setActiveNav(route) {
     navButtons.forEach((button) => {
       const target = button.dataset.route;
-      const isNotasRoute = target === 'notas' && (route === 'notas' || route === 'notas-apuntes' || route === 'notas-recordatorios');
+      const isNotasRoute = target === 'notas' && (route === 'notas' || route === 'notas-apuntes' || route === 'notas-pendientes' || route === 'notas-prestamos' || route === 'notas-recordatorios');
       const isActive = target === route || isNotasRoute || (route === 'excel' && target === 'excel') || ((route === 'respaldo' || route === 'configuracion') && target === 'configuracion');
       button.classList.toggle('is-active', isActive);
       button.setAttribute('aria-current', isActive ? 'page' : 'false');
@@ -12135,6 +12314,24 @@ Notas importantes:
       gastosState.message = null;
       facturasState.message = null;
       viewRoot.innerHTML = renderNotasApuntes();
+    } else if (route === 'notas-pendientes') {
+      catalogState.message = null;
+      ventasState.message = null;
+      cobrosState.message = null;
+      proveedoresState.message = null;
+      pagosState.message = null;
+      gastosState.message = null;
+      facturasState.message = null;
+      viewRoot.innerHTML = renderNotasPendientes();
+    } else if (route === 'notas-prestamos') {
+      catalogState.message = null;
+      ventasState.message = null;
+      cobrosState.message = null;
+      proveedoresState.message = null;
+      pagosState.message = null;
+      gastosState.message = null;
+      facturasState.message = null;
+      viewRoot.innerHTML = renderNotasPrestamos();
     } else if (route === 'notas-recordatorios') {
       catalogState.message = null;
       ventasState.message = null;
@@ -12810,6 +13007,204 @@ Notas importantes:
     `;
   }
 
+  function createInitialNotasPendientesData() {
+    return {
+      version: 1,
+      registros: [],
+      metadata: {
+        createdAt: nowIso(),
+        updatedAt: nowIso()
+      }
+    };
+  }
+
+  function normalizeNotasPendienteCategoria(value) {
+    const normalized = normalizeKeyForCompare(value || 'Casa');
+    return normalized === 'gastos' ? 'Gastos' : 'Casa';
+  }
+
+  function getNotasPendienteCatalogId(categoria) {
+    return normalizeNotasPendienteCategoria(categoria) === 'Gastos' ? 'tiposGasto' : 'categoriasCasa';
+  }
+
+  function normalizeNotasPendienteOperativoRecord(raw = {}) {
+    const timestamp = nowIso();
+    const categoria = normalizeNotasPendienteCategoria(raw.categoria || raw.tipo || 'Casa');
+    return {
+      id: cleanText(raw.id) || generateId('pendiente_operativo'),
+      fecha: toDateInputValue(raw.fecha) || todayInputValue(),
+      referencia: cleanText(raw.referencia || raw.ref || raw.descripcion || ''),
+      categoria,
+      subcategoriaId: cleanText(raw.subcategoriaId || raw.categoriaId || raw.tipoGastoId || raw.categoriaCasaId || ''),
+      monto: roundMoney(parseMoney(raw.monto ?? raw.total ?? 0) || 0),
+      createdAt: cleanText(raw.createdAt) || timestamp,
+      updatedAt: cleanText(raw.updatedAt) || cleanText(raw.createdAt) || timestamp
+    };
+  }
+
+  function normalizeNotasPendientesData(raw) {
+    const base = createInitialNotasPendientesData();
+    const source = isPlainObject(raw) ? raw : {};
+    return {
+      version: 1,
+      registros: Array.isArray(source.registros) ? source.registros.map(normalizeNotasPendienteOperativoRecord) : [],
+      metadata: {
+        ...base.metadata,
+        ...(isPlainObject(source.metadata) ? source.metadata : {}),
+        updatedAt: cleanText(source.metadata?.updatedAt) || nowIso()
+      }
+    };
+  }
+
+  function loadNotasPendientesData() {
+    try {
+      const raw = window.localStorage.getItem(NOTES_PENDING_STORAGE_KEY);
+      return raw ? normalizeNotasPendientesData(JSON.parse(raw)) : createInitialNotasPendientesData();
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo leer Pendientes locales de Notas.', error);
+      return createInitialNotasPendientesData();
+    }
+  }
+
+  function saveNotasPendientesData(data) {
+    try {
+      const normalized = normalizeNotasPendientesData(data);
+      normalized.metadata = {
+        ...(isPlainObject(normalized.metadata) ? normalized.metadata : {}),
+        updatedAt: nowIso()
+      };
+      window.localStorage.setItem(NOTES_PENDING_STORAGE_KEY, JSON.stringify(normalized));
+      return normalized;
+    } catch (error) {
+      console.error('KSA PRÁCTIKA: no se pudo guardar Pendientes locales de Notas.', error);
+      return normalizeNotasPendientesData(data);
+    }
+  }
+
+  function getNotasPendientesData() {
+    return loadNotasPendientesData();
+  }
+
+  function getNotasPendienteOperativoById(id, data = getNotasPendientesData()) {
+    const safeId = cleanText(id);
+    return normalizeNotasPendientesData(data).registros.find((record) => record.id === safeId) || null;
+  }
+
+  function getNotasPendienteSubcategorias(categoria, currentId = '') {
+    return getSelectableCatalogRecords(getNotasPendienteCatalogId(categoria), currentId);
+  }
+
+  function createInitialNotasPrestamosData() {
+    return {
+      version: 1,
+      libros: [],
+      metadata: {
+        createdAt: nowIso(),
+        updatedAt: nowIso()
+      }
+    };
+  }
+
+  function normalizeNotasPrestamoMovimiento(raw = {}) {
+    const timestamp = nowIso();
+    const debe = roundMoney(parseMoney(raw.debe ?? 0) || 0);
+    const haber = roundMoney(parseMoney(raw.haber ?? 0) || 0);
+    return {
+      id: cleanText(raw.id) || generateId('prestamo_movimiento'),
+      fecha: toDateInputValue(raw.fecha) || todayInputValue(),
+      referencia: cleanText(raw.referencia || raw.ref || raw.descripcion || ''),
+      debe: Math.max(0, debe),
+      haber: Math.max(0, haber),
+      createdAt: cleanText(raw.createdAt) || timestamp,
+      updatedAt: cleanText(raw.updatedAt) || cleanText(raw.createdAt) || timestamp
+    };
+  }
+
+  function normalizeNotasPrestamoLibro(raw = {}) {
+    const timestamp = nowIso();
+    return {
+      id: cleanText(raw.id) || generateId('prestamo_libro'),
+      deudor: cleanText(raw.deudor || ''),
+      acreedor: cleanText(raw.acreedor || ''),
+      movimientos: Array.isArray(raw.movimientos) ? raw.movimientos.map(normalizeNotasPrestamoMovimiento) : [],
+      createdAt: cleanText(raw.createdAt) || timestamp,
+      updatedAt: cleanText(raw.updatedAt) || cleanText(raw.createdAt) || timestamp
+    };
+  }
+
+  function normalizeNotasPrestamosData(raw) {
+    const base = createInitialNotasPrestamosData();
+    const source = isPlainObject(raw) ? raw : {};
+    return {
+      version: 1,
+      libros: Array.isArray(source.libros) ? source.libros.map(normalizeNotasPrestamoLibro) : [],
+      metadata: {
+        ...base.metadata,
+        ...(isPlainObject(source.metadata) ? source.metadata : {}),
+        updatedAt: cleanText(source.metadata?.updatedAt) || nowIso()
+      }
+    };
+  }
+
+  function loadNotasPrestamosData() {
+    try {
+      const raw = window.localStorage.getItem(NOTES_LOANS_STORAGE_KEY);
+      return raw ? normalizeNotasPrestamosData(JSON.parse(raw)) : createInitialNotasPrestamosData();
+    } catch (error) {
+      console.warn('KSA PRÁCTIKA: no se pudo leer Préstamos locales de Notas.', error);
+      return createInitialNotasPrestamosData();
+    }
+  }
+
+  function saveNotasPrestamosData(data) {
+    try {
+      const normalized = normalizeNotasPrestamosData(data);
+      normalized.metadata = {
+        ...(isPlainObject(normalized.metadata) ? normalized.metadata : {}),
+        updatedAt: nowIso()
+      };
+      window.localStorage.setItem(NOTES_LOANS_STORAGE_KEY, JSON.stringify(normalized));
+      return normalized;
+    } catch (error) {
+      console.error('KSA PRÁCTIKA: no se pudo guardar Préstamos locales de Notas.', error);
+      return normalizeNotasPrestamosData(data);
+    }
+  }
+
+  function getNotasPrestamosData() {
+    return loadNotasPrestamosData();
+  }
+
+  function getNotasPrestamoLibroById(id, data = getNotasPrestamosData()) {
+    const safeId = cleanText(id);
+    return normalizeNotasPrestamosData(data).libros.find((libro) => libro.id === safeId) || null;
+  }
+
+  function getNotasPrestamoMovimientoById(libro, movimientoId) {
+    const safeId = cleanText(movimientoId);
+    return normalizeNotasPrestamoLibro(libro || {}).movimientos.find((movimiento) => movimiento.id === safeId) || null;
+  }
+
+  function getNotasPrestamoCombinationKey(deudor, acreedor) {
+    return `${normalizeKeyForCompare(deudor)}→${normalizeKeyForCompare(acreedor)}`;
+  }
+
+  function getNotasPrestamoLedger(libro) {
+    let saldo = 0;
+    return normalizeNotasPrestamoLibro(libro || {}).movimientos
+      .slice()
+      .sort((a, b) => String(a.fecha || '').localeCompare(String(b.fecha || '')) || String(a.createdAt || '').localeCompare(String(b.createdAt || '')) || String(a.id || '').localeCompare(String(b.id || '')))
+      .map((movimiento) => {
+        saldo = roundMoney(saldo + (Number(movimiento.debe) || 0) - (Number(movimiento.haber) || 0));
+        return { ...movimiento, saldo };
+      });
+  }
+
+  function getNotasPrestamoSaldo(libro) {
+    const ledger = getNotasPrestamoLedger(libro);
+    return ledger.length ? ledger[ledger.length - 1].saldo : 0;
+  }
+
   function createInitialNotasData() {
     return {
       version: 1,
@@ -12960,29 +13355,91 @@ Notas importantes:
   }
 
 
-  function countNotasModuleRecords(data = getNotasData()) {
-    const normalized = normalizeNotasData(data);
-    return normalized.notas.length + normalized.pendientes.length + normalized.recordatorios.length;
+  function hasNotasModuleField(source, keys = []) {
+    const raw = isPlainObject(source) ? source : {};
+    return (Array.isArray(keys) ? keys : [keys]).some((key) => Object.prototype.hasOwnProperty.call(raw, key));
   }
 
-  function cloneNotasModuleData(data = getNotasData()) {
-    return normalizeNotasData(JSON.parse(JSON.stringify(normalizeNotasData(data))));
+  function getNotasPendientesOperativosFromSnapshot(source) {
+    const raw = isPlainObject(source) ? source : {};
+    const candidate = raw.pendientesOperativos ?? raw.pendientesNotas ?? raw.pendientesOperativosData;
+    return isPlainObject(candidate) ? normalizeNotasPendientesData(candidate) : null;
+  }
+
+  function getNotasPrestamosFromSnapshot(source) {
+    const raw = isPlainObject(source) ? source : {};
+    const candidate = raw.prestamos ?? raw.prestamosNotas ?? raw.prestamosData;
+    return isPlainObject(candidate) ? normalizeNotasPrestamosData(candidate) : null;
+  }
+
+  function normalizeNotasModuleSnapshot(source) {
+    const raw = isPlainObject(source) ? source : {};
+    const core = normalizeNotasData(raw);
+    const result = { ...core };
+    const pendientesOperativos = getNotasPendientesOperativosFromSnapshot(raw);
+    const prestamos = getNotasPrestamosFromSnapshot(raw);
+    if (pendientesOperativos) result.pendientesOperativos = pendientesOperativos;
+    if (prestamos) result.prestamos = prestamos;
+    return result;
+  }
+
+  function saveNotasModuleSnapshot(data, options = {}) {
+    const source = isPlainObject(data) ? data : {};
+    const opts = isPlainObject(options) ? options : {};
+    const core = saveNotasData(source);
+    const pendingKeys = ['pendientesOperativos', 'pendientesNotas', 'pendientesOperativosData'];
+    const loanKeys = ['prestamos', 'prestamosNotas', 'prestamosData'];
+    const pendingPresent = hasNotasModuleField(source, pendingKeys);
+    const loansPresent = hasNotasModuleField(source, loanKeys);
+    if (pendingPresent || opts.forceAuxiliary === true) {
+      saveNotasPendientesData(getNotasPendientesOperativosFromSnapshot(source) || createInitialNotasPendientesData());
+    }
+    if (loansPresent || opts.forceAuxiliary === true) {
+      saveNotasPrestamosData(getNotasPrestamosFromSnapshot(source) || createInitialNotasPrestamosData());
+    }
+    const result = { ...core };
+    if (pendingPresent || opts.forceAuxiliary === true) result.pendientesOperativos = getNotasPendientesData();
+    if (loansPresent || opts.forceAuxiliary === true) result.prestamos = getNotasPrestamosData();
+    return result;
+  }
+
+  function countNotasModuleRecords(data = null) {
+    const normalized = data ? normalizeNotasModuleSnapshot(data) : cloneNotasModuleData();
+    const pendientesOperativos = getNotasPendientesOperativosFromSnapshot(normalized);
+    const prestamos = getNotasPrestamosFromSnapshot(normalized);
+    const loanBookCount = prestamos?.libros?.length || 0;
+    const loanMovementCount = (prestamos?.libros || []).reduce((sum, libro) => sum + (Array.isArray(libro.movimientos) ? libro.movimientos.length : 0), 0);
+    return normalized.notas.length
+      + normalized.pendientes.length
+      + normalized.recordatorios.length
+      + (pendientesOperativos?.registros?.length || 0)
+      + loanBookCount
+      + loanMovementCount;
+  }
+
+  function cloneNotasModuleData(data = null) {
+    const core = normalizeNotasData(JSON.parse(JSON.stringify(normalizeNotasData(data || getNotasData()))));
+    return {
+      ...core,
+      pendientesOperativos: normalizeNotasPendientesData(JSON.parse(JSON.stringify(getNotasPendientesData()))),
+      prestamos: normalizeNotasPrestamosData(JSON.parse(JSON.stringify(getNotasPrestamosData())))
+    };
   }
 
   function getNotasBackupFromSource(source) {
     const raw = isPlainObject(source) ? source : {};
     const candidate = raw.notasModulo || raw.moduloNotas || raw.notasModule || raw.notesModule;
-    if (isPlainObject(candidate)) return normalizeNotasData(candidate);
+    if (isPlainObject(candidate)) return normalizeNotasModuleSnapshot(candidate);
     const nestedNotas = isPlainObject(raw.notas) && (Array.isArray(raw.notas.notas) || Array.isArray(raw.notas.pendientes) || Array.isArray(raw.notas.recordatorios))
       ? raw.notas
       : null;
-    if (nestedNotas) return normalizeNotasData(nestedNotas);
+    if (nestedNotas) return normalizeNotasModuleSnapshot(nestedNotas);
     return null;
   }
 
   function mergeNotasModuleData(currentData, incomingData) {
-    const current = normalizeNotasData(currentData);
-    const incoming = normalizeNotasData(incomingData);
+    const current = normalizeNotasModuleSnapshot(currentData);
+    const incoming = normalizeNotasModuleSnapshot(incomingData);
     const mergeById = (localList, incomingList, normalizer) => {
       const merged = Array.isArray(localList) ? localList.map(normalizer) : [];
       let addedCount = 0;
@@ -13000,20 +13457,69 @@ Notas importantes:
     const notasResult = mergeById(current.notas, incoming.notas, normalizeNotaGeneralRecord);
     const pendientesResult = mergeById(current.pendientes, incoming.pendientes, normalizePendienteRecord);
     const recordatoriosResult = mergeById(current.recordatorios, incoming.recordatorios, normalizeRecordatorioRecord);
-    return {
-      data: normalizeNotasData({
+    const result = normalizeNotasData({
+      version: 1,
+      notas: notasResult.merged,
+      pendientes: pendientesResult.merged,
+      recordatorios: recordatoriosResult.merged,
+      metadata: {
+        ...current.metadata,
+        lastMergedAt: nowIso()
+      }
+    });
+
+    let added = notasResult.addedCount + pendientesResult.addedCount + recordatoriosResult.addedCount;
+    let skipped = incoming.notas.length + incoming.pendientes.length + incoming.recordatorios.length - notasResult.addedCount - pendientesResult.addedCount - recordatoriosResult.addedCount;
+
+    const currentOperational = getNotasPendientesOperativosFromSnapshot(currentData) || getNotasPendientesData();
+    const incomingOperational = getNotasPendientesOperativosFromSnapshot(incomingData);
+    if (incomingOperational) {
+      const operationalResult = mergeById(currentOperational.registros, incomingOperational.registros, normalizeNotasPendienteOperativoRecord);
+      result.pendientesOperativos = normalizeNotasPendientesData({
         version: 1,
-        notas: notasResult.merged,
-        pendientes: pendientesResult.merged,
-        recordatorios: recordatoriosResult.merged,
-        metadata: {
-          ...current.metadata,
-          lastMergedAt: nowIso()
+        registros: operationalResult.merged,
+        metadata: { ...currentOperational.metadata, lastMergedAt: nowIso() }
+      });
+      added += operationalResult.addedCount;
+      skipped += incomingOperational.registros.length - operationalResult.addedCount;
+    } else {
+      result.pendientesOperativos = normalizeNotasPendientesData(currentOperational);
+    }
+
+    const currentLoans = getNotasPrestamosFromSnapshot(currentData) || getNotasPrestamosData();
+    const incomingLoans = getNotasPrestamosFromSnapshot(incomingData);
+    if (incomingLoans) {
+      const mergedBooks = currentLoans.libros.map(normalizeNotasPrestamoLibro);
+      incomingLoans.libros.map(normalizeNotasPrestamoLibro).forEach((incomingBook) => {
+        const existingIndex = mergedBooks.findIndex((book) => cleanText(book.id) === cleanText(incomingBook.id)
+          || getNotasPrestamoCombinationKey(book.deudor, book.acreedor) === getNotasPrestamoCombinationKey(incomingBook.deudor, incomingBook.acreedor));
+        if (existingIndex < 0) {
+          mergedBooks.push(incomingBook);
+          added += 1 + incomingBook.movimientos.length;
+          return;
         }
-      }),
-      added: notasResult.addedCount + pendientesResult.addedCount + recordatoriosResult.addedCount,
-      skipped: incoming.notas.length + incoming.pendientes.length + incoming.recordatorios.length - notasResult.addedCount - pendientesResult.addedCount - recordatoriosResult.addedCount
-    };
+        const currentBook = normalizeNotasPrestamoLibro(mergedBooks[existingIndex]);
+        const movementResult = mergeById(currentBook.movimientos, incomingBook.movimientos, normalizeNotasPrestamoMovimiento);
+        mergedBooks[existingIndex] = normalizeNotasPrestamoLibro({
+          ...currentBook,
+          ...incomingBook,
+          id: currentBook.id || incomingBook.id,
+          movimientos: movementResult.merged,
+          updatedAt: cleanText(incomingBook.updatedAt) || cleanText(currentBook.updatedAt) || nowIso()
+        });
+        added += movementResult.addedCount;
+        skipped += 1 + incomingBook.movimientos.length - movementResult.addedCount;
+      });
+      result.prestamos = normalizeNotasPrestamosData({
+        version: 1,
+        libros: mergedBooks,
+        metadata: { ...currentLoans.metadata, lastMergedAt: nowIso() }
+      });
+    } else {
+      result.prestamos = normalizeNotasPrestamosData(currentLoans);
+    }
+
+    return { data: result, added, skipped };
   }
 
 
@@ -16406,6 +16912,9 @@ Notas importantes:
     const activePendientes = data.pendientes.filter((record) => !record.completed);
     const activeRecordatorios = data.recordatorios.filter((record) => !record.completed && record.estado !== 'Cumplido');
     const homePendingItems = getNotasHomePendingItems(data);
+    const operationalPendientes = getNotasPendientesData().registros;
+    const prestamosData = getNotasPrestamosData();
+    const prestamoMovimientosCount = prestamosData.libros.reduce((sum, libro) => sum + normalizeNotasPrestamoLibro(libro).movimientos.length, 0);
     const historicalNotas = data.notas.filter((record) => record.completed || record.estado === 'Cumplido').length + data.pendientes.filter((record) => record.completed).length;
     const historicalRecordatorios = data.recordatorios.filter((record) => record.completed || record.estado === 'Cumplido').length;
     return `
@@ -16413,12 +16922,12 @@ Notas importantes:
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Notas</h1>
-          <p class="lead">Centro rápido para apuntes generales, pendientes de registrar y recordatorios operativos. Guarda aparte de la base de negocio, porque los apuntes no deben disfrazarse de contabilidad.</p>
+          <p class="lead">Centro rápido para Notas, Pendientes, Préstamos y Recordatorios operativos. Los registros auxiliares permanecen separados de la lógica financiera.</p>
         </div>
         <aside class="hero-status" aria-label="Estado del módulo Notas">
           <h3>Etapa actual</h3>
           <div class="status-grid">
-            <div class="status-item"><strong>Activos</strong><span>${activeNotas.length + activePendientes.length + activeRecordatorios.length}</span></div>
+            <div class="status-item"><strong>Activos</strong><span>${activeNotas.length + activePendientes.length + operationalPendientes.length + prestamoMovimientosCount + activeRecordatorios.length}</span></div>
             <div class="status-item"><strong>Históricos</strong><span>${historicalNotas + historicalRecordatorios}</span></div>
             <div class="status-item"><strong>Storage</strong><span>${escapeHtml(NOTES_STORAGE_KEY)}</span></div>
             <div class="status-item"><strong>Negocio</strong><span>Intacto</span></div>
@@ -16436,6 +16945,18 @@ Notas importantes:
           <button type="button" class="card-action" data-go="notas-apuntes">Entrar</button>
         </article>
         <article class="module-card notas-section-card">
+          <div class="module-icon" aria-hidden="true">▤</div>
+          <h3>Pendientes</h3>
+          <p>Registros auxiliares para Casa o Gastos. Registros: ${operationalPendientes.length}</p>
+          <button type="button" class="card-action" data-go="notas-pendientes">Entrar</button>
+        </article>
+        <article class="module-card notas-section-card">
+          <div class="module-icon" aria-hidden="true">⇄</div>
+          <h3>Préstamos</h3>
+          <p>Libros auxiliares independientes. Libros: ${prestamosData.libros.length} · Movimientos: ${prestamoMovimientosCount}</p>
+          <button type="button" class="card-action" data-go="notas-prestamos">Entrar</button>
+        </article>
+        <article class="module-card notas-section-card">
           <div class="module-icon" aria-hidden="true">⏱</div>
           <h3>Recordatorios</h3>
           <p>Avisos con fecha, prioridad, estado y relación opcional. Activos: ${activeRecordatorios.length} · Histórico: ${historicalRecordatorios}</p>
@@ -16447,7 +16968,7 @@ Notas importantes:
 
       <article class="placeholder-card notas-stage-card">
         <h2>Funcionamiento separado</h2>
-        <p>Notas usa almacenamiento propio del módulo. Pendientes de registrar no crean gastos, no mueven saldos, no afectan Resumen y no bloquean cierres.</p>
+        <p>Notas usa almacenamiento propio del módulo. Pendientes y Préstamos son auxiliares: no crean gastos, no mueven saldos operativos, no afectan Resumen y no bloquean cierres.</p>
         <p class="notice">Recordatorios ya permite exportación .ics individual/global y Notas queda incluido en el respaldo JSON del proyecto sin tocar datos de negocio.</p>
         <div class="placeholder-tools notas-icon-toolbar">
           <button type="button" class="notas-icon-action" data-go="home" title="Volver" aria-label="Volver al Menú principal">←</button>
@@ -16544,6 +17065,580 @@ Notas importantes:
       </section>
       ${renderNotasDetailModal(data)}
     `;
+  }
+
+  function renderNotasPendientes() {
+    const data = getNotasPendientesData();
+    const records = data.registros
+      .map(normalizeNotasPendienteOperativoRecord)
+      .sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+    const editingRecord = notasState.editingOperationalPendingId
+      ? getNotasPendienteOperativoById(notasState.editingOperationalPendingId, data)
+      : null;
+    const casaCount = records.filter((record) => record.categoria === 'Casa').length;
+    const gastosCount = records.filter((record) => record.categoria === 'Gastos').length;
+    const totalMonto = records.reduce((sum, record) => roundMoney(sum + (Number(record.monto) || 0)), 0);
+
+    return `
+      <section class="hero notas-hero">
+        <div>
+          <span class="eyebrow">Pendientes</span>
+          <h1>Pendientes</h1>
+          <p class="lead">Registro auxiliar compacto de gastos pendientes para Casa o Gastos. No crea movimientos financieros ni altera saldos.</p>
+        </div>
+        <aside class="hero-status" aria-label="Estado de Pendientes">
+          <h3>Estado</h3>
+          <div class="status-grid">
+            <div class="status-item"><strong>Registros</strong><span>${records.length}</span></div>
+            <div class="status-item"><strong>Casa</strong><span>${casaCount}</span></div>
+            <div class="status-item"><strong>Gastos</strong><span>${gastosCount}</span></div>
+            <div class="status-item"><strong>Total</strong><span>${escapeHtml(formatMoney(totalMonto))}</span></div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="notas-shell notas-pendientes-shell">
+        ${notasState.message ? `<div class="form-message ${notasState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(notasState.message)}</div>` : ''}
+        <div class="notas-top-actions notas-icon-toolbar">
+          <button type="button" class="notas-icon-action" data-go="notas" title="Volver" aria-label="Volver a Notas">←</button>
+        </div>
+
+        <article class="panel-card notas-panel notas-pendientes-form-panel">
+          <div class="section-title-row">
+            <div>
+              <span class="eyebrow mini">Registro</span>
+              <h2>${editingRecord ? 'Editar pendiente' : 'Nuevo pendiente'}</h2>
+            </div>
+          </div>
+          ${renderNotasPendienteOperativoForm(editingRecord)}
+        </article>
+
+        <article class="panel-card notas-panel notas-pendientes-list-panel">
+          <div class="section-title-row">
+            <div>
+              <span class="eyebrow mini">Listado compacto</span>
+              <h2>Pendientes</h2>
+            </div>
+            <span class="notas-home-pending-count" aria-label="${records.length} registros">${records.length}</span>
+          </div>
+          <p class="notice compact-notice">Pendientes se conserva localmente y forma parte de Configuración → Guardar datos, respaldo JSON y recuperación desde nube.</p>
+          ${renderNotasPendientesOperativosTable(records)}
+        </article>
+      </section>
+    `;
+  }
+
+  function renderNotasPendienteOperativoForm(record = null) {
+    const categoria = normalizeNotasPendienteCategoria(record?.categoria || 'Casa');
+    const subcategorias = getNotasPendienteSubcategorias(categoria, record?.subcategoriaId);
+    return `
+      <form class="catalog-form notas-pendientes-form" data-notas-pendiente-operativo-form>
+        <div class="notas-pendientes-fields">
+          <label class="form-field">
+            <span>Fecha <b class="required-dot">*</b></span>
+            <input type="date" name="fecha" value="${escapeHtml(record?.fecha || todayInputValue())}" required />
+          </label>
+          <label class="form-field">
+            <span>Referencia <b class="required-dot">*</b></span>
+            <input type="text" name="referencia" value="${escapeHtml(record?.referencia || '')}" placeholder="Ej. Compra pendiente" autocomplete="off" required />
+          </label>
+          <label class="form-field">
+            <span>Categoría <b class="required-dot">*</b></span>
+            <select name="categoria" data-notas-pendiente-categoria required>
+              ${['Casa', 'Gastos'].map((item) => `<option value="${item}" ${categoria === item ? 'selected' : ''}>${item}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Subcategoría <b class="required-dot">*</b></span>
+            <select name="subcategoriaId" data-notas-pendiente-subcategoria required>
+              <option value="">Seleccionar</option>
+              ${subcategorias.map((item) => `<option value="${escapeHtml(item.id)}" ${record?.subcategoriaId === item.id ? 'selected' : ''}>${escapeHtml(item.nombre || 'Sin nombre')}${item.activo ? '' : ' · inactiva'}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Monto <b class="required-dot">*</b></span>
+            <input type="text" name="monto" inputmode="decimal" value="${escapeHtml(formatNumberInput(record?.monto ?? ''))}" placeholder="0.00" autocomplete="off" required data-money-input />
+          </label>
+        </div>
+        <div class="form-actions notas-icon-toolbar notas-pendientes-form-actions">
+          <button type="submit" class="notas-icon-action" title="${record ? 'Guardar cambios' : 'Agregar'}" aria-label="${record ? 'Guardar cambios' : 'Agregar'}">${record ? '✓' : '＋'}</button>
+          ${record ? '<button type="button" class="notas-icon-action" data-notas-pendiente-cancel-edit title="Cancelar edición" aria-label="Cancelar edición">←</button>' : ''}
+        </div>
+      </form>
+    `;
+  }
+
+  function renderNotasPendientesOperativosTable(records) {
+    if (!records.length) return '<p class="muted-text compact-note">No hay registros pendientes.</p>';
+    return `
+      <div class="operational-scroll-shell notas-pendientes-scroll-shell" data-operational-scroll-shell>
+        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-scroll-rail" data-operational-scroll-rail><span class="operational-scroll-thumb" data-operational-scroll-thumb></span></div><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
+        <div class="operational-table-wrap notas-pendientes-table-wrap" role="region" aria-label="Pendientes" tabindex="0" data-operational-table-scroll>
+          <table class="operational-table operational-table-notas-pendientes">
+            <thead><tr><th>Fecha</th><th>Referencia</th><th>Categoría</th><th>Subcategoría</th><th>Monto</th><th>Acciones</th></tr></thead>
+            <tbody>${records.map(renderNotasPendienteOperativoRow).join('')}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderNotasPendienteOperativoRow(record) {
+    const catalogId = getNotasPendienteCatalogId(record.categoria);
+    const subcategoria = getCatalogRecordById(catalogId, record.subcategoriaId);
+    return `
+      <tr>
+        <td><span class="notas-pendiente-nowrap">${escapeHtml(formatDate(record.fecha))}</span></td>
+        <td><span class="notas-pendiente-reference" title="${escapeHtml(record.referencia)}">${escapeHtml(record.referencia || '—')}</span></td>
+        <td><span class="notas-pendiente-nowrap">${escapeHtml(record.categoria)}</span></td>
+        <td><span class="notas-pendiente-subcategory" title="${escapeHtml(subcategoria?.nombre || 'Sin categoría disponible')}">${escapeHtml(subcategoria?.nombre || '—')}</span></td>
+        <td class="amount-cell"><span class="notas-pendiente-nowrap">${escapeHtml(formatMoney(record.monto || 0))}</span></td>
+        <td><div class="record-actions compact-row-actions notas-icon-toolbar">
+          <button type="button" class="notas-icon-action mini" data-notas-pendiente-edit="${escapeHtml(record.id)}" title="Editar" aria-label="Editar">✎</button>
+          <button type="button" class="notas-icon-action mini danger" data-notas-pendiente-delete="${escapeHtml(record.id)}" title="Eliminar" aria-label="Eliminar">🗑️</button>
+        </div></td>
+      </tr>
+    `;
+  }
+
+  function syncNotasPendienteSubcategoriaSelect(form) {
+    if (!(form instanceof HTMLFormElement)) return;
+    const categorySelect = form.querySelector('[data-notas-pendiente-categoria]');
+    const subcategorySelect = form.querySelector('[data-notas-pendiente-subcategoria]');
+    if (!(categorySelect instanceof HTMLSelectElement) || !(subcategorySelect instanceof HTMLSelectElement)) return;
+    const categoria = normalizeNotasPendienteCategoria(categorySelect.value);
+    const records = getNotasPendienteSubcategorias(categoria);
+    subcategorySelect.replaceChildren();
+    const emptyOption = document.createElement('option');
+    emptyOption.value = '';
+    emptyOption.textContent = 'Seleccionar';
+    subcategorySelect.appendChild(emptyOption);
+    records.forEach((record) => {
+      const option = document.createElement('option');
+      option.value = record.id;
+      option.textContent = `${record.nombre || 'Sin nombre'}${record.activo ? '' : ' · inactiva'}`;
+      subcategorySelect.appendChild(option);
+    });
+    subcategorySelect.value = '';
+  }
+
+  function saveNotasPendienteOperativoRecord(form) {
+    const formData = new FormData(form);
+    const timestamp = nowIso();
+    const data = getNotasPendientesData();
+    const existing = notasState.editingOperationalPendingId
+      ? getNotasPendienteOperativoById(notasState.editingOperationalPendingId, data)
+      : null;
+    const fecha = toDateInputValue(formData.get('fecha'));
+    const referencia = cleanText(formData.get('referencia'));
+    const categoria = normalizeNotasPendienteCategoria(formData.get('categoria'));
+    const subcategoriaId = cleanText(formData.get('subcategoriaId'));
+    const catalogId = getNotasPendienteCatalogId(categoria);
+    const subcategoria = getCatalogRecordById(catalogId, subcategoriaId);
+    const monto = parseMoney(formData.get('monto'));
+
+    if (!fecha) {
+      notifyAction(notasState, 'La fecha del pendiente es obligatoria.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (!referencia) {
+      notifyAction(notasState, 'La referencia del pendiente es obligatoria.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (!subcategoria) {
+      notifyAction(notasState, `Selecciona una subcategoría válida de ${categoria}.`, 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (!Number.isFinite(monto) || monto < 0) {
+      notifyAction(notasState, 'El monto del pendiente debe ser válido.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+
+    const record = normalizeNotasPendienteOperativoRecord({
+      ...(existing || {}),
+      id: existing?.id || generateId('pendiente_operativo'),
+      fecha,
+      referencia,
+      categoria,
+      subcategoriaId,
+      monto,
+      createdAt: existing?.createdAt || timestamp,
+      updatedAt: timestamp
+    });
+    data.registros = existing
+      ? data.registros.map((item) => item.id === existing.id ? record : item)
+      : [record, ...data.registros];
+    saveNotasPendientesData(data);
+    registerSessionChange({ module: 'Notas Pendientes Operativos', operation: existing ? 'editar' : 'crear', recordId: record.id });
+    notasState.editingOperationalPendingId = null;
+    clearActionMessage(notasState);
+    renderRoute({ preserveScroll: true });
+    showToast(existing ? 'Pendiente actualizado.' : 'Pendiente guardado.', 'success');
+  }
+
+  function editNotasPendienteOperativoRecord(id) {
+    notasState.editingOperationalPendingId = cleanText(id);
+    notasState.editingNoteId = null;
+    notasState.editingNoteType = '';
+    notasState.editingReminderId = null;
+    notasState.message = null;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function deleteNotasPendienteOperativoRecord(id) {
+    if (!window.confirm('¿Eliminar este pendiente? Esta acción no crea ni modifica movimientos de Casa o Gastos.')) return;
+    const data = getNotasPendientesData();
+    data.registros = data.registros.filter((record) => record.id !== cleanText(id));
+    saveNotasPendientesData(data);
+    registerSessionChange({ module: 'Notas Pendientes Operativos', operation: 'eliminar', recordId: cleanText(id) });
+    if (notasState.editingOperationalPendingId === cleanText(id)) notasState.editingOperationalPendingId = null;
+    clearActionMessage(notasState);
+    renderRoute({ preserveScroll: true });
+    showToast('Pendiente eliminado.', 'success');
+  }
+
+  function renderNotasPrestamos() {
+    const data = getNotasPrestamosData();
+    const libros = data.libros
+      .map(normalizeNotasPrestamoLibro)
+      .sort((a, b) => String(a.deudor || '').localeCompare(String(b.deudor || ''), 'es', { sensitivity: 'base' }) || String(a.acreedor || '').localeCompare(String(b.acreedor || ''), 'es', { sensitivity: 'base' }));
+    const movementCount = libros.reduce((sum, libro) => sum + libro.movimientos.length, 0);
+    const netBalance = libros.reduce((sum, libro) => roundMoney(sum + getNotasPrestamoSaldo(libro)), 0);
+    const bookModal = notasState.loanBookFormOpen ? renderNotasPrestamoLibroModal() : '';
+    const movementBook = notasState.loanMovementBookId ? getNotasPrestamoLibroById(notasState.loanMovementBookId, data) : null;
+    const movementRecord = movementBook && notasState.editingLoanMovementId
+      ? getNotasPrestamoMovimientoById(movementBook, notasState.editingLoanMovementId)
+      : null;
+    const movementModal = movementBook ? renderNotasPrestamoMovimientoModal(movementBook, movementRecord) : '';
+
+    return `
+      <section class="hero notas-hero">
+        <div>
+          <span class="eyebrow">Préstamos</span>
+          <h1>Préstamos</h1>
+          <p class="lead">Control auxiliar por libros independientes entre Deudor y Acreedor. Cada libro mantiene su propio Debe, Haber y Saldo.</p>
+        </div>
+        <aside class="hero-status" aria-label="Estado de Préstamos">
+          <h3>Estado</h3>
+          <div class="status-grid">
+            <div class="status-item"><strong>Libros</strong><span>${libros.length}</span></div>
+            <div class="status-item"><strong>Movimientos</strong><span>${movementCount}</span></div>
+            <div class="status-item"><strong>Saldo neto</strong><span>${escapeHtml(formatMoney(netBalance))}</span></div>
+            <div class="status-item"><strong>Negocio</strong><span>Intacto</span></div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="notas-shell notas-prestamos-shell">
+        ${notasState.message ? `<div class="form-message ${notasState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(notasState.message)}</div>` : ''}
+        <div class="notas-top-actions notas-prestamos-top-actions">
+          <div class="notas-icon-toolbar">
+            <button type="button" class="notas-icon-action" data-go="notas" title="Volver" aria-label="Volver a Notas">←</button>
+          </div>
+          <button type="button" class="primary-action compact notas-prestamos-new-book" data-notas-prestamo-new-book>Nuevo Libro</button>
+        </div>
+
+        <article class="panel-card notas-panel notas-prestamos-panel">
+          <div class="section-title-row">
+            <div>
+              <span class="eyebrow mini">Libros compactos</span>
+              <h2>Préstamos</h2>
+            </div>
+            <span class="notas-home-pending-count" aria-label="${libros.length} libros">${libros.length}</span>
+          </div>
+          <p class="notice compact-notice">Los libros permanecen cerrados por defecto. Préstamos es auxiliar y no afecta Casa, Gastos, Cobros, Pagos, Utilidad, Flujo, Resumen, mora ni cierres.</p>
+          ${libros.length ? `<div class="notas-prestamos-books">${libros.map(renderNotasPrestamoLibro).join('')}</div>` : '<p class="muted-text compact-note">No hay libros de préstamos. Usa “Nuevo Libro” para crear el primero.</p>'}
+        </article>
+      </section>
+      ${bookModal}
+      ${movementModal}
+    `;
+  }
+
+  function renderNotasPrestamoLibro(libro) {
+    const isOpen = notasState.openLoanBookIds.includes(libro.id);
+    const saldo = getNotasPrestamoSaldo(libro);
+    const count = libro.movimientos.length;
+    return `
+      <section class="notas-prestamo-book ${isOpen ? 'is-open' : ''}" data-notas-prestamo-book="${escapeHtml(libro.id)}">
+        <button type="button" class="notas-prestamo-book-toggle" data-notas-prestamo-toggle="${escapeHtml(libro.id)}" aria-expanded="${isOpen ? 'true' : 'false'}">
+          <span class="notas-prestamo-chevron" aria-hidden="true">${isOpen ? '▾' : '▸'}</span>
+          <span class="notas-prestamo-book-heading">
+            <strong>${escapeHtml(libro.deudor || '—')} → ${escapeHtml(libro.acreedor || '—')}</strong>
+            <span>Saldo ${escapeHtml(formatMoney(saldo))} · ${count} ${count === 1 ? 'movimiento' : 'movimientos'}</span>
+          </span>
+        </button>
+        ${isOpen ? renderNotasPrestamoLibroBody(libro) : ''}
+      </section>
+    `;
+  }
+
+  function renderNotasPrestamoLibroBody(libro) {
+    const ledger = getNotasPrestamoLedger(libro);
+    return `
+      <div class="notas-prestamo-book-body">
+        <div class="notas-prestamo-book-actions">
+          <button type="button" class="secondary-action compact" data-notas-prestamo-add-movement="${escapeHtml(libro.id)}">Agregar movimiento</button>
+        </div>
+        ${ledger.length ? renderNotasPrestamoMovimientosTable(libro, ledger) : '<p class="muted-text compact-note">Este libro todavía no tiene movimientos.</p>'}
+      </div>
+    `;
+  }
+
+  function renderNotasPrestamoMovimientosTable(libro, ledger) {
+    return `
+      <div class="operational-scroll-shell notas-prestamos-scroll-shell" data-operational-scroll-shell>
+        <div class="operational-top-scroll" data-operational-top-scroll aria-hidden="true"><div class="operational-scroll-rail" data-operational-scroll-rail><span class="operational-scroll-thumb" data-operational-scroll-thumb></span></div><div class="operational-top-scroll-spacer" data-operational-top-spacer></div></div>
+        <div class="operational-table-wrap notas-prestamos-table-wrap" role="region" aria-label="Movimientos de ${escapeHtml(libro.deudor)} a ${escapeHtml(libro.acreedor)}" tabindex="0" data-operational-table-scroll>
+          <table class="operational-table operational-table-notas-prestamos">
+            <thead><tr><th>Fecha</th><th>Referencia</th><th>Debe</th><th>Haber</th><th>Saldo</th><th>Acciones</th></tr></thead>
+            <tbody>${ledger.map((movimiento) => renderNotasPrestamoMovimientoRow(libro, movimiento)).join('')}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderNotasPrestamoMovimientoRow(libro, movimiento) {
+    return `
+      <tr>
+        <td><span class="notas-prestamo-nowrap">${escapeHtml(formatDate(movimiento.fecha))}</span></td>
+        <td><span class="notas-prestamo-reference" title="${escapeHtml(movimiento.referencia)}">${escapeHtml(movimiento.referencia || '—')}</span></td>
+        <td class="amount-cell"><span class="notas-prestamo-nowrap">${escapeHtml(formatMoney(movimiento.debe || 0))}</span></td>
+        <td class="amount-cell"><span class="notas-prestamo-nowrap">${escapeHtml(formatMoney(movimiento.haber || 0))}</span></td>
+        <td class="amount-cell"><strong class="notas-prestamo-nowrap">${escapeHtml(formatMoney(movimiento.saldo || 0))}</strong></td>
+        <td><div class="record-actions compact-row-actions notas-icon-toolbar">
+          <button type="button" class="notas-icon-action mini" data-notas-prestamo-edit-movement="${escapeHtml(movimiento.id)}" data-notas-prestamo-book-id="${escapeHtml(libro.id)}" title="Editar" aria-label="Editar movimiento">✎</button>
+          <button type="button" class="notas-icon-action mini danger" data-notas-prestamo-delete-movement="${escapeHtml(movimiento.id)}" data-notas-prestamo-book-id="${escapeHtml(libro.id)}" title="Eliminar" aria-label="Eliminar movimiento">🗑️</button>
+        </div></td>
+      </tr>
+    `;
+  }
+
+  function renderNotasPrestamoLibroModal() {
+    return renderEditModal(
+      getNotasPrestamoLibroModalId(),
+      'Nuevo Libro',
+      'Crear relación Deudor → Acreedor',
+      `
+        <form class="notas-prestamo-modal-form" data-notas-prestamo-book-form>
+          <div class="notas-prestamo-form-grid notas-prestamo-form-grid-book">
+            <label class="form-field">
+              <span>Deudor <b class="required-dot">*</b></span>
+              <input type="text" name="deudor" autocomplete="off" required />
+            </label>
+            <label class="form-field">
+              <span>Acreedor <b class="required-dot">*</b></span>
+              <input type="text" name="acreedor" autocomplete="off" required />
+            </label>
+          </div>
+          <div class="form-actions notas-prestamo-modal-actions">
+            <button type="submit" class="primary-action compact">Crear Libro</button>
+            <button type="button" class="secondary-action compact" data-modal-close="${escapeHtml(getNotasPrestamoLibroModalId())}">Cancelar</button>
+          </div>
+        </form>
+      `
+    );
+  }
+
+  function renderNotasPrestamoMovimientoModal(libro, movimiento = null) {
+    return renderEditModal(
+      getNotasPrestamoMovimientoModalId(),
+      movimiento ? 'Editar movimiento' : 'Nuevo movimiento',
+      `${libro.deudor} → ${libro.acreedor}`,
+      `
+        <form class="notas-prestamo-modal-form" data-notas-prestamo-movement-form data-notas-prestamo-book-id="${escapeHtml(libro.id)}">
+          <div class="notas-prestamo-form-grid">
+            <label class="form-field">
+              <span>Fecha <b class="required-dot">*</b></span>
+              <input type="date" name="fecha" value="${escapeHtml(movimiento?.fecha || todayInputValue())}" required />
+            </label>
+            <label class="form-field notas-prestamo-reference-field">
+              <span>Referencia <b class="required-dot">*</b></span>
+              <input type="text" name="referencia" value="${escapeHtml(movimiento?.referencia || '')}" autocomplete="off" required />
+            </label>
+            <label class="form-field">
+              <span>Debe</span>
+              <input type="text" name="debe" inputmode="decimal" value="${escapeHtml(formatNumberInput(movimiento?.debe ?? ''))}" placeholder="0.00" autocomplete="off" data-money-input />
+            </label>
+            <label class="form-field">
+              <span>Haber</span>
+              <input type="text" name="haber" inputmode="decimal" value="${escapeHtml(formatNumberInput(movimiento?.haber ?? ''))}" placeholder="0.00" autocomplete="off" data-money-input />
+            </label>
+          </div>
+          <p class="muted-text compact-note">Debe aumenta la deuda. Haber disminuye la deuda.</p>
+          <div class="form-actions notas-prestamo-modal-actions">
+            <button type="submit" class="primary-action compact">${movimiento ? 'Guardar cambios' : 'Agregar movimiento'}</button>
+            <button type="button" class="secondary-action compact" data-modal-close="${escapeHtml(getNotasPrestamoMovimientoModalId())}">Cancelar</button>
+          </div>
+        </form>
+      `
+    );
+  }
+
+  function openNotasPrestamoLibroModal() {
+    notasState.loanBookFormOpen = true;
+    notasState.loanMovementBookId = '';
+    notasState.editingLoanMovementId = '';
+    notasState.message = null;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function closeNotasPrestamoLibroModal() {
+    notasState.loanBookFormOpen = false;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function saveNotasPrestamoLibro(form) {
+    const formData = new FormData(form);
+    const deudor = cleanText(formData.get('deudor'));
+    const acreedor = cleanText(formData.get('acreedor'));
+    if (!deudor || !acreedor) {
+      notifyAction(notasState, 'Deudor y Acreedor son obligatorios.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    const data = getNotasPrestamosData();
+    const key = getNotasPrestamoCombinationKey(deudor, acreedor);
+    if (data.libros.some((libro) => getNotasPrestamoCombinationKey(libro.deudor, libro.acreedor) === key)) {
+      notifyAction(notasState, 'Ya existe exactamente ese libro Deudor → Acreedor.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    const timestamp = nowIso();
+    const libro = normalizeNotasPrestamoLibro({
+      id: generateId('prestamo_libro'),
+      deudor,
+      acreedor,
+      movimientos: [],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    data.libros.push(libro);
+    saveNotasPrestamosData(data);
+    registerSessionChange({ module: 'Notas Préstamos', operation: 'crear', recordId: libro.id });
+    notasState.loanBookFormOpen = false;
+    notasState.message = null;
+    renderRoute({ preserveScroll: true });
+    showToast('Libro de préstamo creado.', 'success');
+  }
+
+  function toggleNotasPrestamoLibro(id) {
+    const safeId = cleanText(id);
+    if (!safeId) return;
+    const open = new Set(notasState.openLoanBookIds);
+    if (open.has(safeId)) open.delete(safeId);
+    else open.add(safeId);
+    notasState.openLoanBookIds = [...open];
+    renderRoute({ preserveScroll: true });
+  }
+
+  function openNotasPrestamoMovimientoModal(bookId, movementId = '') {
+    const libro = getNotasPrestamoLibroById(bookId);
+    if (!libro) return;
+    notasState.loanBookFormOpen = false;
+    notasState.loanMovementBookId = libro.id;
+    notasState.editingLoanMovementId = cleanText(movementId);
+    if (!notasState.openLoanBookIds.includes(libro.id)) notasState.openLoanBookIds = [...notasState.openLoanBookIds, libro.id];
+    notasState.message = null;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function closeNotasPrestamoMovimientoModal() {
+    notasState.loanMovementBookId = '';
+    notasState.editingLoanMovementId = '';
+    renderRoute({ preserveScroll: true });
+  }
+
+  function saveNotasPrestamoMovimiento(form) {
+    const bookId = cleanText(form.dataset.notasPrestamoBookId);
+    const data = getNotasPrestamosData();
+    const bookIndex = data.libros.findIndex((libro) => libro.id === bookId);
+    if (bookIndex < 0) {
+      notifyAction(notasState, 'No se encontró el libro de préstamo.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    const libro = normalizeNotasPrestamoLibro(data.libros[bookIndex]);
+    const existing = notasState.editingLoanMovementId
+      ? getNotasPrestamoMovimientoById(libro, notasState.editingLoanMovementId)
+      : null;
+    const formData = new FormData(form);
+    const fecha = toDateInputValue(formData.get('fecha'));
+    const referencia = cleanText(formData.get('referencia'));
+    const debe = parseMoney(formData.get('debe'));
+    const haber = parseMoney(formData.get('haber'));
+    if (!fecha || !referencia) {
+      notifyAction(notasState, 'Fecha y Referencia son obligatorias.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (!Number.isFinite(debe) || debe < 0 || !Number.isFinite(haber) || haber < 0) {
+      notifyAction(notasState, 'Debe y Haber deben contener montos válidos.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (debe <= 0 && haber <= 0) {
+      notifyAction(notasState, 'Ingresa un monto en Debe o en Haber.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (debe > 0 && haber > 0) {
+      notifyAction(notasState, 'Cada movimiento debe usar Debe o Haber, no ambos.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    const timestamp = nowIso();
+    const movimiento = normalizeNotasPrestamoMovimiento({
+      ...(existing || {}),
+      id: existing?.id || generateId('prestamo_movimiento'),
+      fecha,
+      referencia,
+      debe,
+      haber,
+      createdAt: existing?.createdAt || timestamp,
+      updatedAt: timestamp
+    });
+    libro.movimientos = existing
+      ? libro.movimientos.map((item) => item.id === existing.id ? movimiento : item)
+      : [...libro.movimientos, movimiento];
+    libro.updatedAt = timestamp;
+    data.libros[bookIndex] = libro;
+    saveNotasPrestamosData(data);
+    registerSessionChange({ module: 'Notas Préstamos', operation: existing ? 'editar' : 'crear', recordId: movimiento.id, relatedId: libro.id });
+    registerSessionChange({ module: 'Notas Préstamos', operation: 'editar', recordId: libro.id, relatedId: movimiento.id });
+    notasState.loanMovementBookId = '';
+    notasState.editingLoanMovementId = '';
+    notasState.message = null;
+    renderRoute({ preserveScroll: true });
+    showToast(existing ? 'Movimiento actualizado.' : 'Movimiento agregado.', 'success');
+  }
+
+  function deleteNotasPrestamoMovimiento(bookId, movementId) {
+    const safeBookId = cleanText(bookId);
+    const safeMovementId = cleanText(movementId);
+    if (!window.confirm('¿Eliminar este movimiento del libro?')) return;
+    const data = getNotasPrestamosData();
+    const index = data.libros.findIndex((libro) => libro.id === safeBookId);
+    if (index < 0) return;
+    const libro = normalizeNotasPrestamoLibro(data.libros[index]);
+    libro.movimientos = libro.movimientos.filter((movimiento) => movimiento.id !== safeMovementId);
+    libro.updatedAt = nowIso();
+    data.libros[index] = libro;
+    saveNotasPrestamosData(data);
+    registerSessionChange({ module: 'Notas Préstamos', operation: 'eliminar', recordId: safeMovementId, relatedId: libro.id });
+    registerSessionChange({ module: 'Notas Préstamos', operation: 'editar', recordId: libro.id, relatedId: safeMovementId });
+    if (notasState.editingLoanMovementId === safeMovementId) {
+      notasState.loanMovementBookId = '';
+      notasState.editingLoanMovementId = '';
+    }
+    notasState.message = null;
+    renderRoute({ preserveScroll: true });
+    showToast('Movimiento eliminado.', 'success');
   }
 
   function renderNotasRecordatorios() {
@@ -16960,6 +18055,7 @@ Notas importantes:
     notasState.editingNoteId = null;
     notasState.editingNoteType = '';
     notasState.editingReminderId = null;
+    notasState.editingOperationalPendingId = null;
   }
 
   function clearNotasDetail() {
@@ -17097,6 +18193,7 @@ Notas importantes:
   }
 
   function editNotaRecord(type, id) {
+    notasState.editingOperationalPendingId = null;
     notasState.editingNoteType = type;
     notasState.editingNoteId = id;
     notasState.editingReminderId = null;
@@ -17105,6 +18202,7 @@ Notas importantes:
   }
 
   function editRecordatorioRecord(id) {
+    notasState.editingOperationalPendingId = null;
     notasState.editingReminderId = id;
     notasState.editingNoteType = '';
     notasState.editingNoteId = null;
@@ -21607,6 +22705,8 @@ Notas importantes:
   function getCasaPendientesModalId() { return 'casa-pendientes'; }
   function getFacturasModalId() { return 'factura'; }
   function getFacturasGlobalModalId() { return 'facturas-global'; }
+  function getNotasPrestamoLibroModalId() { return 'notas-prestamo-libro'; }
+  function getNotasPrestamoMovimientoModalId() { return 'notas-prestamo-movimiento'; }
 
 
   function renderVentas() {
@@ -29140,7 +30240,7 @@ Notas importantes:
     const bitacora = Array.isArray(activityEntries)
       ? activityEntries.length
       : (Array.isArray(data.bitacora) ? data.bitacora.length : 0);
-    const notasBackup = getNotasBackupFromSource(data) || (dataSource === appData ? getNotasData() : null);
+    const notasBackup = getNotasBackupFromSource(data) || (dataSource === appData ? cloneNotasModuleData() : null);
     const facturasBackup = getFacturasBackupFromSource(data) || (dataSource === appData ? getFacturasData() : null);
     const seguimientoBackup = getSeguimientoBackupFromSource(data) || (dataSource === appData ? seguimientoData : null);
     const counts = normalizeBackupCounts({
@@ -29238,7 +30338,7 @@ Notas importantes:
     const activityEntries = Array.isArray(opts.activityEntries)
       ? opts.activityEntries.map((entry) => normalizeActivityEntry(entry)).slice(0, ACTIVITY_LOG_MAX_ENTRIES)
       : getRecentActivityEntries(ACTIVITY_LOG_MAX_ENTRIES);
-    const notasModulo = opts.notasModulo ? normalizeNotasData(opts.notasModulo) : cloneNotasModuleData();
+    const notasModulo = opts.notasModulo ? normalizeNotasModuleSnapshot(opts.notasModulo) : cloneNotasModuleData();
     const facturasModulo = opts.facturasModulo ? sanitizeFacturasClientesData(opts.facturasModulo, { mark: false }) : cloneFacturasModuleData();
     const seguimiento = opts.seguimiento ? normalizeSeguimientoData(opts.seguimiento) : cloneSeguimientoModuleData();
     const workPeriodInfo = getWorkPeriodBackupInfo();
@@ -29758,7 +30858,7 @@ Notas importantes:
         }
       });
       saveData(appData);
-      saveNotasData({ ...normalizeNotasData(incomingNotas), metadata: { ...normalizeNotasData(incomingNotas).metadata, localCopyLoadedAt: loadedAt } });
+      saveNotasModuleSnapshot({ ...incomingNotas, metadata: { ...normalizeNotasData(incomingNotas).metadata, localCopyLoadedAt: loadedAt } });
       saveFacturasData({ ...sanitizeFacturasClientesData(incomingFacturas, { mark: false }), metadata: { ...sanitizeFacturasClientesData(incomingFacturas, { mark: false }).metadata, localCopyLoadedAt: loadedAt } });
       saveSeguimientoData({ ...normalizeSeguimientoData(incomingSeguimiento), metadata: { ...normalizeSeguimientoData(incomingSeguimiento).metadata, localCopyLoadedAt: loadedAt } });
       saveActivityLog(incomingActivity);
@@ -30221,12 +31321,12 @@ Notas importantes:
       let skipped = 0;
       if (incomingNotas) {
         if (mode === 'replace') {
-          saveNotasData({ ...incomingNotas, metadata: { ...incomingNotas.metadata, importedAt: timestamp, updatedAt: timestamp } });
+          saveNotasModuleSnapshot({ ...incomingNotas, metadata: { ...incomingNotas.metadata, importedAt: timestamp, updatedAt: timestamp } });
           added.notasModulo = countNotasModuleRecords(incomingNotas);
           added.notas = added.notasModulo;
         } else {
-          const notesMerge = mergeNotasModuleData(getNotasData(), incomingNotas);
-          saveNotasData(notesMerge.data);
+          const notesMerge = mergeNotasModuleData(cloneNotasModuleData(), incomingNotas);
+          saveNotasModuleSnapshot(notesMerge.data);
           added.notasModulo = notesMerge.added;
           added.notas = notesMerge.added;
           skipped += notesMerge.skipped;
@@ -30275,7 +31375,7 @@ Notas importantes:
           updatedAt: timestamp
         }
       });
-      if (incomingNotas) saveNotasData({ ...incomingNotas, metadata: { ...incomingNotas.metadata, importedAt: timestamp, updatedAt: timestamp } });
+      if (incomingNotas) saveNotasModuleSnapshot({ ...incomingNotas, metadata: { ...incomingNotas.metadata, importedAt: timestamp, updatedAt: timestamp } });
       if (incomingFacturas) saveFacturasData({ ...incomingFacturas, metadata: { ...incomingFacturas.metadata, importedAt: timestamp, updatedAt: timestamp } });
       if (incomingSeguimiento) saveSeguimientoData({ ...incomingSeguimiento, metadata: { ...incomingSeguimiento.metadata, importedAt: timestamp, updatedAt: timestamp } });
       return { loaded, added: loaded, skipped: 0 };
@@ -30451,8 +31551,8 @@ Notas importantes:
     target.exportacionesExcel = reconciledImportedClosuresExcel.exportaciones;
 
     if (incomingNotas) {
-      const notesMerge = mergeNotasModuleData(getNotasData(), incomingNotas);
-      saveNotasData(notesMerge.data);
+      const notesMerge = mergeNotasModuleData(cloneNotasModuleData(), incomingNotas);
+      saveNotasModuleSnapshot(notesMerge.data);
       added.notasModulo = notesMerge.added;
       added.notas = notesMerge.added;
       skipped += notesMerge.skipped;
@@ -33596,6 +34696,8 @@ ${rowsXml}
     else if (id === getCasaPendientesModalId()) closeCasaPendientesModal();
     else if (id === getFacturasModalId()) clearFacturaForm();
     else if (id === getFacturasGlobalModalId()) closeFacturasGlobalModal();
+    else if (id === getNotasPrestamoLibroModalId()) closeNotasPrestamoLibroModal();
+    else if (id === getNotasPrestamoMovimientoModalId()) closeNotasPrestamoMovimientoModal();
     else if (id === getNotasModalId()) {
       notasState.detailType = '';
       notasState.detailId = '';
@@ -33769,6 +34871,66 @@ ${rowsXml}
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         savePendienteRecord(form);
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-notas-pendiente-operativo-form]').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveNotasPendienteOperativoRecord(form);
+      });
+      form.querySelectorAll('[data-notas-pendiente-categoria]').forEach((select) => {
+        select.addEventListener('change', () => syncNotasPendienteSubcategoriaSelect(form));
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-notas-pendiente-cancel-edit]').forEach((button) => {
+      button.addEventListener('click', () => {
+        notasState.editingOperationalPendingId = null;
+        notasState.message = null;
+        renderRoute({ preserveScroll: true });
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-notas-pendiente-edit]').forEach((button) => {
+      button.addEventListener('click', () => editNotasPendienteOperativoRecord(button.dataset.notasPendienteEdit));
+    });
+
+    viewRoot.querySelectorAll('[data-notas-pendiente-delete]').forEach((button) => {
+      button.addEventListener('click', () => deleteNotasPendienteOperativoRecord(button.dataset.notasPendienteDelete));
+    });
+
+    viewRoot.querySelectorAll('[data-notas-prestamo-new-book]').forEach((button) => {
+      button.addEventListener('click', openNotasPrestamoLibroModal);
+    });
+
+    viewRoot.querySelectorAll('[data-notas-prestamo-book-form]').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveNotasPrestamoLibro(form);
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-notas-prestamo-toggle]').forEach((button) => {
+      button.addEventListener('click', () => toggleNotasPrestamoLibro(button.dataset.notasPrestamoToggle));
+    });
+
+    viewRoot.querySelectorAll('[data-notas-prestamo-add-movement]').forEach((button) => {
+      button.addEventListener('click', () => openNotasPrestamoMovimientoModal(button.dataset.notasPrestamoAddMovement));
+    });
+
+    viewRoot.querySelectorAll('[data-notas-prestamo-edit-movement]').forEach((button) => {
+      button.addEventListener('click', () => openNotasPrestamoMovimientoModal(button.dataset.notasPrestamoBookId, button.dataset.notasPrestamoEditMovement));
+    });
+
+    viewRoot.querySelectorAll('[data-notas-prestamo-delete-movement]').forEach((button) => {
+      button.addEventListener('click', () => deleteNotasPrestamoMovimiento(button.dataset.notasPrestamoBookId, button.dataset.notasPrestamoDeleteMovement));
+    });
+
+    viewRoot.querySelectorAll('[data-notas-prestamo-movement-form]').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveNotasPrestamoMovimiento(form);
       });
     });
 

@@ -13625,3 +13625,429 @@ input[type="number"]::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
+
+
+/* KSA PRÁCTIKA — Notas — Etapa 1/3 — Pendientes */
+.notas-pendientes-shell {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: clip;
+}
+
+.notas-pendientes-form-panel,
+.notas-pendientes-list-panel,
+.notas-pendientes-scroll-shell {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.notas-pendientes-fields {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.notas-pendientes-fields .form-field {
+  min-width: 0;
+  gap: 5px;
+}
+
+.notas-pendientes-fields input,
+.notas-pendientes-fields select {
+  width: 100%;
+  min-width: 0;
+}
+
+.notas-pendientes-form-actions {
+  margin-top: 10px;
+}
+
+.notas-pendientes-table-wrap {
+  max-height: min(52vh, 500px);
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.operational-table-notas-pendientes {
+  min-width: 860px;
+  font-size: 0.82rem;
+}
+
+.operational-table-notas-pendientes th,
+.operational-table-notas-pendientes td {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  vertical-align: middle;
+  line-height: 1.15;
+}
+
+.operational-table-notas-pendientes tbody tr {
+  height: 42px;
+}
+
+.operational-table-notas-pendientes .notas-icon-toolbar {
+  flex-wrap: nowrap;
+  gap: 5px;
+}
+
+.operational-table-notas-pendientes .notas-icon-action.mini {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  border-radius: 9px;
+}
+
+.notas-pendiente-nowrap,
+.notas-pendiente-reference,
+.notas-pendiente-subcategory,
+.operational-table-notas-pendientes .amount-cell span {
+  display: block;
+  white-space: nowrap;
+}
+
+.notas-pendiente-reference,
+.notas-pendiente-subcategory {
+  width: max-content;
+  max-width: none;
+}
+
+.operational-table-notas-pendientes thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fffaf0;
+}
+
+@media (max-width: 1100px) {
+  .notas-pendientes-fields {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .notas-pendientes-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .notas-pendientes-table-wrap {
+    max-height: min(56vh, 470px);
+  }
+}
+
+@media (max-width: 520px) {
+  .notas-pendientes-fields {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .notas-pendientes-form-panel,
+  .notas-pendientes-list-panel {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .notas-pendientes-table-wrap {
+    max-height: min(60vh, 440px);
+  }
+}
+
+
+/* KSA PRÁCTIKA — Notas — Etapa 2/3 — Préstamos y libros compactos */
+.notas-prestamos-shell,
+.notas-prestamos-panel,
+.notas-prestamos-books,
+.notas-prestamo-book,
+.notas-prestamo-book-body,
+.notas-prestamos-scroll-shell {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.notas-prestamos-shell {
+  overflow-x: clip;
+}
+
+.notas-prestamos-top-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.notas-prestamos-new-book {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 8px 14px;
+  border-radius: 999px;
+}
+
+.notas-prestamos-books {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.notas-prestamo-book {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 250, 240, 0.66);
+}
+
+.notas-prestamo-book-toggle {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 9px 11px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.notas-prestamo-book-toggle:hover,
+.notas-prestamo-book-toggle:focus-visible {
+  background: rgba(229, 192, 123, 0.12);
+  outline: none;
+}
+
+.notas-prestamo-chevron {
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.notas-prestamo-book-heading {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.84rem;
+  line-height: 1.15;
+}
+
+.notas-prestamo-book-heading strong,
+.notas-prestamo-book-heading span {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.notas-prestamo-book-heading strong {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.notas-prestamo-book-heading span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.notas-prestamo-book-body {
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.notas-prestamo-book-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 7px;
+}
+
+.notas-prestamos-table-wrap {
+  max-height: min(42vh, 340px);
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.operational-table-notas-prestamos {
+  min-width: 790px;
+  font-size: 0.81rem;
+}
+
+.operational-table-notas-prestamos th,
+.operational-table-notas-prestamos td {
+  padding-top: 5px;
+  padding-bottom: 5px;
+  vertical-align: middle;
+  line-height: 1.12;
+}
+
+.operational-table-notas-prestamos tbody tr {
+  height: 39px;
+}
+
+.operational-table-notas-prestamos thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fffaf0;
+}
+
+.operational-table-notas-prestamos .notas-icon-toolbar {
+  flex-wrap: nowrap;
+  gap: 5px;
+}
+
+.operational-table-notas-prestamos .notas-icon-action.mini {
+  width: 29px;
+  min-width: 29px;
+  height: 29px;
+  border-radius: 9px;
+}
+
+.notas-prestamo-nowrap,
+.notas-prestamo-reference {
+  display: block;
+  white-space: nowrap;
+}
+
+.notas-prestamo-reference {
+  width: max-content;
+  max-width: none;
+}
+
+.notas-prestamo-modal-form {
+  min-width: 0;
+}
+
+.notas-prestamo-form-grid {
+  display: grid;
+  grid-template-columns: 0.8fr minmax(180px, 1.6fr) 1fr 1fr;
+  gap: 10px;
+  align-items: end;
+}
+
+.notas-prestamo-form-grid-book {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.notas-prestamo-form-grid .form-field,
+.notas-prestamo-form-grid input {
+  min-width: 0;
+  width: 100%;
+}
+
+.notas-prestamo-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 820px) {
+  .notas-prestamo-book-heading {
+    display: grid;
+    gap: 3px;
+  }
+
+  .notas-prestamo-book-heading strong,
+  .notas-prestamo-book-heading span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .notas-prestamo-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .notas-prestamos-top-actions {
+    align-items: stretch;
+  }
+
+  .notas-prestamos-new-book {
+    min-height: 36px;
+    padding-inline: 12px;
+  }
+
+  .notas-prestamo-book-toggle {
+    padding: 8px 9px;
+  }
+
+  .notas-prestamo-book-heading {
+    font-size: 0.79rem;
+  }
+
+  .notas-prestamo-book-body {
+    padding: 7px 8px 9px;
+  }
+
+  .notas-prestamos-table-wrap {
+    max-height: min(48vh, 320px);
+  }
+
+  .notas-prestamo-form-grid,
+  .notas-prestamo-form-grid-book {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .notas-prestamo-modal-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+
+/* KSA PRÁCTIKA — Notas — Etapa 3/3 — hardening final */
+.notas-pendientes-shell .operational-scroll-shell,
+.notas-prestamos-shell .operational-scroll-shell {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  contain: inline-size;
+}
+
+.notas-pendientes-table-wrap,
+.notas-prestamos-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable both-edges;
+  touch-action: pan-x pan-y;
+}
+
+.notas-pendientes-scroll-shell .operational-top-scroll,
+.notas-prestamos-scroll-shell .operational-top-scroll {
+  max-width: 100%;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable both-edges;
+}
+
+.operational-table-notas-pendientes th,
+.operational-table-notas-prestamos th {
+  white-space: nowrap;
+}
+
+.notas-prestamo-book-heading strong,
+.notas-prestamo-book-heading span {
+  text-overflow: clip;
+}
+
+@media (max-width: 820px) {
+  .notas-prestamo-book-heading strong,
+  .notas-prestamo-book-heading span {
+    white-space: normal;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+  }
+}
