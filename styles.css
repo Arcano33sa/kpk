@@ -13611,3 +13611,17 @@ body,
     min-width: 1180px;
   }
 }
+
+/* Etapa 2/2 · hardening de controles numéricos no monetarios.
+   Oculta los spin buttons nativos; la protección JS evita cambios por rueda
+   sin bloquear el desplazamiento normal de la página. */
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}

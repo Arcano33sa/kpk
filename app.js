@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.69-reintentos-hardening';
+  const APP_VERSION = '0.18.71-campos-monetarios-etapa2-hardening-final';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -12183,6 +12183,7 @@ Notas importantes:
       viewRoot.innerHTML = renderPlaceholder(module);
     }
 
+    setupMoneyInputs(viewRoot);
     bindViewActions();
     setupResponsiveHardening();
     setupOperationalTopScrollbars();
@@ -14721,7 +14722,7 @@ Notas importantes:
           </label>
           <label class="form-field">
             <span>Monto</span>
-            <input type="number" name="monto" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(formatNumberInput(current.monto || ''))}" placeholder="0.00" />
+            <input type="text" name="monto" inputmode="decimal" value="${escapeHtml(formatNumberInput(current.monto || ''))}" placeholder="0.00" data-money-input />
           </label>
           <label class="form-field full-span">
             <span>Observaciones</span>
@@ -16657,7 +16658,7 @@ Notas importantes:
         <div class="form-grid">
           <label class="form-field">
             <span>Monto</span>
-            <input type="number" name="monto" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(formatNumberInput(record?.monto || ''))}" placeholder="0.00" />
+            <input type="text" name="monto" inputmode="decimal" value="${escapeHtml(formatNumberInput(record?.monto || ''))}" placeholder="0.00" data-money-input />
           </label>
           <label class="form-field">
             <span>Método de pago</span>
@@ -17786,7 +17787,8 @@ Notas importantes:
     shell.querySelectorAll('[data-commercial-field]').forEach((input) => {
       const field = input.dataset.commercialField;
       const maxDecimals = Number(input.dataset.maxDecimals || 2);
-      input.value = commercialCalculatorState[field] || '';
+      const storedValue = commercialCalculatorState[field] || '';
+      input.value = input.matches('[data-money-input]') ? formatMoneyInputDisplay(storedValue) : storedValue;
       input.addEventListener('input', () => {
         const sanitized = sanitizeCommercialDecimalInput(input.value, maxDecimals);
         if (input.value !== sanitized) input.value = sanitized;
@@ -17794,7 +17796,11 @@ Notas importantes:
         commercialCalculatorState.message = '';
         updateCommercialCalculatorDisplay();
       });
-      input.addEventListener('focus', () => input.select());
+      input.addEventListener('focus', () => {
+        window.requestAnimationFrame(() => {
+          try { input.select(); } catch (_) {}
+        });
+      });
     });
 
     const retention = shell.querySelector('[data-commercial-retention]');
@@ -17954,7 +17960,7 @@ Notas importantes:
               </label>
               <label class="calculator-commercial-field">
                 <span>Precio unitario C$</span>
-                <input type="text" inputmode="decimal" autocomplete="off" placeholder="Ej. 100.00" value="${escapeHtml(commercialCalculatorState.unitPrice)}" data-commercial-field="unitPrice" data-max-decimals="2" aria-label="Precio unitario" />
+                <input type="text" inputmode="decimal" autocomplete="off" placeholder="Ej. 100.00" value="${escapeHtml(commercialCalculatorState.unitPrice)}" data-commercial-field="unitPrice" data-max-decimals="2" data-money-input aria-label="Precio unitario" />
               </label>
               <label class="calculator-commercial-field">
                 <span>Descuento %</span>
@@ -17962,7 +17968,7 @@ Notas importantes:
               </label>
               <label class="calculator-commercial-field">
                 <span>Descuento por monto C$</span>
-                <input type="text" inputmode="decimal" autocomplete="off" placeholder="Ej. 50.00" value="${escapeHtml(commercialCalculatorState.discountAmount)}" data-commercial-field="discountAmount" data-max-decimals="2" aria-label="Descuento por monto" />
+                <input type="text" inputmode="decimal" autocomplete="off" placeholder="Ej. 50.00" value="${escapeHtml(commercialCalculatorState.discountAmount)}" data-commercial-field="discountAmount" data-max-decimals="2" data-money-input aria-label="Descuento por monto" />
               </label>
               <label class="calculator-commercial-field calculator-commercial-retention-field">
                 <span>Retención</span>
@@ -20789,7 +20795,7 @@ Notas importantes:
         </label>
         <label class="form-field">
           <span>Precio <span class="required-dot" aria-label="obligatorio">*</span></span>
-          <input type="number" name="precio" value="${escapeHtml(record ? String(roundMoney(record.precio)) : '')}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required autocomplete="off" ${disabled ? 'disabled' : ''} />
+          <input type="text" name="precio" value="${escapeHtml(record ? String(roundMoney(record.precio)) : '')}" inputmode="decimal" placeholder="0.00" required autocomplete="off" data-money-input ${disabled ? 'disabled' : ''} />
         </label>
         <div class="form-actions">
           <button type="submit" class="card-action" ${disabled ? 'disabled' : ''}>${isEdit ? 'Guardar cambios' : 'Agregar artículo'}</button>
@@ -21756,7 +21762,7 @@ Notas importantes:
           </label>
           <label class="form-field">
             <span>Monto ajuste C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="monto" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-ajuste-monto />
+            <input type="text" name="monto" inputmode="decimal" placeholder="0.00" required data-money-input data-ajuste-monto />
           </label>
           <label class="form-field">
             <span>Factura afectada</span>
@@ -21948,15 +21954,15 @@ Notas importantes:
         </label>
         <label class="factura-cell factura-money-cell">
           <span>Subtotal</span>
-          <input type="number" data-factura-subtotal value="${escapeHtml(subtotalValue)}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" aria-label="Subtotal factura ${index + 1}" />
+          <input type="text" data-factura-subtotal value="${escapeHtml(subtotalValue)}" inputmode="decimal" placeholder="0.00" aria-label="Subtotal factura ${index + 1}" data-money-input />
         </label>
         <label class="factura-cell factura-money-cell">
           <span>Descuento</span>
-          <input type="number" data-factura-descuento value="${escapeHtml(descuentoValue)}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" aria-label="Descuento factura ${index + 1}" />
+          <input type="text" data-factura-descuento value="${escapeHtml(descuentoValue)}" inputmode="decimal" placeholder="0.00" aria-label="Descuento factura ${index + 1}" data-money-input />
         </label>
         <label class="factura-cell factura-money-cell factura-total-cell">
           <span>Total</span>
-          <input type="number" data-factura-total value="${escapeHtml(totalValue)}" readonly tabindex="-1" placeholder="0.00" aria-label="Total factura ${index + 1}" />
+          <input type="text" data-factura-total value="${escapeHtml(totalValue)}" readonly tabindex="-1" placeholder="0.00" aria-label="Total factura ${index + 1}" data-money-input />
         </label>
         <button type="button" class="danger-action compact factura-remove-button" data-factura-remove aria-label="Quitar factura">×</button>
       </div>
@@ -22116,7 +22122,7 @@ Notas importantes:
         <div class="form-grid logistica-gasto-grid">
           <label class="form-field">
             <span>Monto</span>
-            <input type="number" name="logisticaGastoMonto" value="${escapeHtml(formatNumberInput(normalized.monto))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" />
+            <input type="text" name="logisticaGastoMonto" value="${escapeHtml(formatNumberInput(normalized.monto))}" inputmode="decimal" placeholder="0.00" data-money-input />
           </label>
           <label class="form-field">
             <span>Método de pago</span>
@@ -22281,11 +22287,11 @@ Notas importantes:
           </label>
           <label class="form-field">
             <span>Subtotal C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="subtotal" value="${escapeHtml(formatNumberInput(record ? record.subtotal : (draft.subtotal || draft.montoOc)))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-venta-calc />
+            <input type="text" name="subtotal" value="${escapeHtml(formatNumberInput(record ? record.subtotal : (draft.subtotal || draft.montoOc)))}" inputmode="decimal" placeholder="0.00" required data-money-input data-venta-calc />
           </label>
           <label class="form-field">
             <span>Descuento C$</span>
-            <input type="number" name="descuento" value="${escapeHtml(formatNumberInput(record ? record.descuento : draft.descuento))}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" data-venta-calc />
+            <input type="text" name="descuento" value="${escapeHtml(formatNumberInput(record ? record.descuento : draft.descuento))}" inputmode="decimal" placeholder="0.00" data-money-input data-venta-calc />
           </label>
           <label class="form-field venta-credit-days-field">
             <span>Días de crédito</span>
@@ -23037,7 +23043,7 @@ Notas importantes:
       const subtotal = subtotalInfo.hasValue && !Number.isNaN(subtotalInfo.value) ? subtotalInfo.value : 0;
       const descuento = descuentoInfo.hasValue && !Number.isNaN(descuentoInfo.value) ? descuentoInfo.value : 0;
       const total = roundMoney(subtotal - descuento);
-      if (totalInput) totalInput.value = hasAmounts ? formatNumberInput(total) : '';
+      if (totalInput) totalInput.value = hasAmounts ? formatMoneyInputDisplay(total) : '';
       const invalid = subtotalInfo.invalid || descuentoInfo.invalid || (hasAmounts && (descuento > subtotal || total < 0));
       row.classList.toggle('is-invalid', invalid);
       row.classList.toggle('is-pending', !hasAmounts);
@@ -23488,15 +23494,15 @@ Notas importantes:
             </label>
             <label class="form-field">
               <span>Monto retenido C$</span>
-              <input type="number" name="retencionMonto" value="${escapeHtml(formatNumberInput(calculatedRetention.retencionMonto))}" min="0" max="${escapeHtml(String(roundMoney(saldoDisponible)))}" step="0.01" inputmode="decimal" placeholder="0.00" data-cobro-retencion-monto readonly ${!active || disabled ? 'disabled' : ''} />
+              <input type="text" name="retencionMonto" value="${escapeHtml(formatNumberInput(calculatedRetention.retencionMonto))}" inputmode="decimal" placeholder="0.00" data-money-input data-cobro-retencion-monto readonly ${!active || disabled ? 'disabled' : ''} />
             </label>
             <label class="form-field">
               <span>Recibido real / caja-banco</span>
-              <input type="text" value="${escapeHtml(formatMoney(calculatedRetention.montoRecibidoReal))}" data-cobro-recibido-real readonly ${!active || disabled ? 'disabled' : ''} />
+              <input type="text" value="${escapeHtml(formatNumberInput(calculatedRetention.montoRecibidoReal))}" data-money-input data-cobro-recibido-real readonly ${!active || disabled ? 'disabled' : ''} />
             </label>
             <label class="form-field">
               <span>Total aplicado a OC</span>
-              <input type="text" value="${escapeHtml(formatMoney(calculatedRetention.montoAplicadoOC))}" data-cobro-total-aplicado readonly ${!active || disabled ? 'disabled' : ''} />
+              <input type="text" value="${escapeHtml(formatNumberInput(calculatedRetention.montoAplicadoOC))}" data-money-input data-cobro-total-aplicado readonly ${!active || disabled ? 'disabled' : ''} />
             </label>
             <p class="compact-note full-span" data-cobro-retencion-note>El monto aplicado reduce el saldo de la OC. La app calcula automáticamente retención y recibido real.</p>
           ` : `
@@ -23538,7 +23544,7 @@ Notas importantes:
           </label>
           <label class="form-field">
             <span>Monto a aplicar a OC C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="montoCobrado" min="0" max="${escapeHtml(saldo)}" step="0.01" inputmode="decimal" placeholder="0.00" required data-cobro-monto-recibido data-cobro-monto-aplicado ${cannotCreate ? 'disabled' : ''} />
+            <input type="text" name="montoCobrado" inputmode="decimal" placeholder="0.00" required data-money-input data-money-max="${escapeHtml(saldo)}" data-cobro-monto-recibido data-cobro-monto-aplicado ${cannotCreate ? 'disabled' : ''} />
           </label>
           ${renderCobroRetencionBlock(null, retencionesDisponibles, saldo, cannotCreate)}
           <label class="form-field">
@@ -23587,7 +23593,7 @@ Notas importantes:
           </label>
           <label class="form-field">
             <span>Monto a aplicar a OC C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="montoCobrado" value="${escapeHtml(formatNumberInput(record.retencionActiva ? record.montoAplicadoOC : record.montoCobrado))}" min="0" max="${escapeHtml(saldoDisponible)}" step="0.01" inputmode="decimal" placeholder="0.00" required data-cobro-monto-recibido data-cobro-monto-aplicado />
+            <input type="text" name="montoCobrado" value="${escapeHtml(formatNumberInput(record.retencionActiva ? record.montoAplicadoOC : record.montoCobrado))}" inputmode="decimal" placeholder="0.00" required data-money-input data-money-max="${escapeHtml(saldoDisponible)}" data-cobro-monto-recibido data-cobro-monto-aplicado />
           </label>
           ${renderCobroRetencionBlock(record, retencionesDisponibles, saldoDisponible, false)}
           <label class="form-field">
@@ -24319,7 +24325,7 @@ Notas importantes:
     const venta = appData.ventas.map((record) => normalizeVentaRecord(record)).find((record) => record.id === ventaId);
     const amountInput = form.querySelector('input[name="montoCobrado"]');
     if (venta && amountInput) {
-      amountInput.value = String(roundMoney(venta.saldoPorCobrar));
+      amountInput.value = formatMoneyInputDisplay(venta.saldoPorCobrar);
       amountInput.dispatchEvent(new Event('input', { bubbles: true }));
     }
   }
@@ -24369,9 +24375,9 @@ Notas importantes:
       const amounts = toggle.checked
         ? calculateCobroRetentionAmounts(Number.isNaN(applied) ? 0 : applied, Number.isNaN(percentage) ? 0 : percentage)
         : { montoAplicadoOC: Number.isNaN(applied) ? 0 : applied, retencionMonto: 0, montoRecibidoReal: Number.isNaN(applied) ? 0 : applied };
-      if (retentionInput) retentionInput.value = formatNumberInput(amounts.retencionMonto);
-      if (receivedInput) receivedInput.value = formatMoney(amounts.montoRecibidoReal);
-      if (totalInput) totalInput.value = formatMoney(amounts.montoAplicadoOC);
+      if (retentionInput) retentionInput.value = formatMoneyInputDisplay(amounts.retencionMonto);
+      if (receivedInput) receivedInput.value = formatMoneyInputDisplay(amounts.montoRecibidoReal);
+      if (totalInput) totalInput.value = formatMoneyInputDisplay(amounts.montoAplicadoOC);
     };
 
     toggle.addEventListener('change', setRetentionFieldsState);
@@ -24548,7 +24554,7 @@ Notas importantes:
           </label>
           <label class="form-field">
             <span>Monto ajuste C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="monto" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required data-ajuste-monto />
+            <input type="text" name="monto" inputmode="decimal" placeholder="0.00" required data-money-input data-ajuste-monto />
           </label>
           <label class="form-field">
             <span>Factura afectada</span>
@@ -24642,7 +24648,7 @@ Notas importantes:
           </label>
           <label class="form-field compra-total-field">
             <span>Total compra/deuda C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="totalCompra" value="${escapeHtml(formatNumberInput(totalCompraValue))}" min="0" step="0.01" inputmode="decimal" placeholder="Calculado desde facturas" required readonly data-compra-calc data-compra-total-input />
+            <input type="text" name="totalCompra" value="${escapeHtml(formatNumberInput(totalCompraValue))}" inputmode="decimal" placeholder="Calculado desde facturas" required readonly data-money-input data-compra-calc data-compra-total-input />
           </label>
         </div>
 
@@ -24726,7 +24732,7 @@ Notas importantes:
         </label>
         <label class="factura-cell factura-money-cell">
           <span>Monto</span>
-          <input type="number" data-factura-proveedor-monto value="${escapeHtml(montoValue)}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" aria-label="Monto factura relacionada ${index + 1}" />
+          <input type="text" data-factura-proveedor-monto value="${escapeHtml(montoValue)}" inputmode="decimal" placeholder="0.00" aria-label="Monto factura relacionada ${index + 1}" data-money-input />
         </label>
         <button type="button" class="danger-action compact factura-remove-button" data-factura-proveedor-remove aria-label="Quitar factura relacionada">×</button>
       </div>
@@ -25081,7 +25087,7 @@ Notas importantes:
     const preserveLegacyTotal = form?.dataset?.existingCompra === '1' && stats.pendientes > 0 && stats.completas === 0;
     const legacyTotal = parseMoney(form?.dataset?.legacyTotalCompra || 0);
     const total = preserveLegacyTotal ? legacyTotal : stats.total;
-    if (totalInput) totalInput.value = formatNumberInput(total);
+    if (totalInput) totalInput.value = formatMoneyInputDisplay(total);
     return total;
   }
 
@@ -25836,7 +25842,7 @@ Notas importantes:
           </label>
           <label class="form-field">
             <span>Monto pagado C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="montoPagado" min="0.01" max="${escapeHtml(saldo)}" step="0.01" inputmode="decimal" placeholder="0.00" required ${cannotCreate ? 'disabled' : ''} />
+            <input type="text" name="montoPagado" inputmode="decimal" placeholder="0.00" required data-money-input data-money-max="${escapeHtml(saldo)}" ${cannotCreate ? 'disabled' : ''} />
           </label>
           <label class="form-field">
             <span>Método de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
@@ -25882,7 +25888,7 @@ Notas importantes:
           </label>
           <label class="form-field">
             <span>Monto pagado C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="montoPagado" value="${escapeHtml(formatNumberInput(record.montoPagado))}" min="0.01" max="${escapeHtml(saldoDisponible)}" step="0.01" inputmode="decimal" placeholder="0.00" required />
+            <input type="text" name="montoPagado" value="${escapeHtml(formatNumberInput(record.montoPagado))}" inputmode="decimal" placeholder="0.00" required data-money-input data-money-max="${escapeHtml(saldoDisponible)}" />
           </label>
           <label class="form-field">
             <span>Método de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
@@ -26260,7 +26266,7 @@ Notas importantes:
   function fillPagoFullAmount(form, compraProveedorId) {
     const compra = appData.comprasProveedores.map((record) => normalizeCompraProveedorRecord(record)).find((record) => record.id === compraProveedorId);
     const amountInput = form.querySelector('input[name="montoPagado"]');
-    if (compra && amountInput) amountInput.value = String(compra.saldoPorPagar);
+    if (compra && amountInput) amountInput.value = formatMoneyInputDisplay(compra.saldoPorPagar);
   }
 
   function setupPagosSearch() {
@@ -26378,7 +26384,7 @@ Notas importantes:
           </label>
           <label class="form-field">
             <span>Monto C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="monto" value="${escapeHtml(formatNumberInput(record?.monto))}" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00" required ${cannotCreate ? 'disabled' : ''} />
+            <input type="text" name="monto" value="${escapeHtml(formatNumberInput(record?.monto))}" inputmode="decimal" placeholder="0.00" required data-money-input ${cannotCreate ? 'disabled' : ''} />
           </label>
           <label class="form-field">
             <span>Método de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
@@ -26906,7 +26912,7 @@ Notas importantes:
           </label>
           <label class="form-field">
             <span>Monto C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="number" name="monto" value="${escapeHtml(formatNumberInput(record?.monto))}" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00" required ${cannotCreate ? 'disabled' : ''} />
+            <input type="text" name="monto" value="${escapeHtml(formatNumberInput(record?.monto))}" inputmode="decimal" placeholder="0.00" required data-money-input ${cannotCreate ? 'disabled' : ''} />
           </label>
           <label class="form-field">
             <span>Método de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
@@ -33128,6 +33134,115 @@ ${rowsXml}
     if (value === null || value === undefined || value === '') return '';
     const numeric = Number(value);
     return Number.isFinite(numeric) && numeric !== 0 ? String(roundMoney(numeric)) : '';
+  }
+
+
+  function formatMoneyInputDisplay(value) {
+    if (value === null || value === undefined || value === '') return '';
+    const numeric = parseMoney(value);
+    if (!Number.isFinite(numeric)) return String(value ?? '');
+    return new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+      useGrouping: true
+    }).format(roundMoney(numeric));
+  }
+
+  function normalizeMoneyInputEditValue(value) {
+    if (value === null || value === undefined || value === '') return '';
+    const raw = String(value).trim();
+    if (!raw) return '';
+    const normalized = raw.includes('.')
+      ? raw.replace(/,/g, '')
+      : (/^\d+,\d{1,2}$/.test(raw) ? raw.replace(',', '.') : raw.replace(/,/g, ''));
+    const numeric = parseMoney(normalized);
+    if (!Number.isFinite(numeric)) return normalized;
+    const decimals = normalized.includes('.') ? normalized.split('.')[1]?.length || 0 : 0;
+    return decimals > 0 ? numeric.toFixed(Math.min(2, decimals)) : String(numeric);
+  }
+
+  function sanitizeMoneyInputValue(value) {
+    let raw = String(value ?? '').replace(/\s+/g, '');
+    if (!raw) return '';
+    if (!raw.includes('.') && /^\d+,\d{1,2}$/.test(raw)) raw = raw.replace(',', '.');
+    else raw = raw.replace(/,/g, '');
+    raw = raw.replace(/[^0-9.]/g, '');
+    const dotIndex = raw.indexOf('.');
+    if (dotIndex >= 0) {
+      raw = `${raw.slice(0, dotIndex + 1)}${raw.slice(dotIndex + 1).replace(/\./g, '')}`;
+      const [whole, decimals = ''] = raw.split('.');
+      raw = `${whole}.${decimals.slice(0, 2)}`;
+    }
+    return raw;
+  }
+
+  function formatMoneyInputElement(input) {
+    if (!(input instanceof HTMLInputElement) || !input.matches('[data-money-input]')) return;
+    if (!input.value) return;
+    const numeric = parseMoney(input.value);
+    if (!Number.isFinite(numeric)) return;
+    input.value = formatMoneyInputDisplay(numeric);
+  }
+
+  function setupMoneyInputs(root = viewRoot) {
+    if (!root) return;
+    root.querySelectorAll('[data-money-input]').forEach((input) => {
+      if (document.activeElement !== input) formatMoneyInputElement(input);
+    });
+
+    if (root.dataset.moneyInputsBound === 'true') return;
+    root.dataset.moneyInputsBound = 'true';
+
+    root.addEventListener('focusin', (event) => {
+      const input = event.target instanceof HTMLInputElement ? event.target : null;
+      if (!input?.matches('[data-money-input]') || input.readOnly || input.disabled) return;
+      input.value = normalizeMoneyInputEditValue(input.value);
+    });
+
+    root.addEventListener('input', (event) => {
+      const input = event.target instanceof HTMLInputElement ? event.target : null;
+      if (!input?.matches('[data-money-input]') || input.readOnly || input.disabled) return;
+      const original = input.value;
+      const cursor = input.selectionStart ?? original.length;
+      const sanitized = sanitizeMoneyInputValue(original);
+      if (sanitized === original) return;
+      const prefix = original.slice(0, cursor);
+      const sanitizedPrefix = sanitizeMoneyInputValue(prefix);
+      input.value = sanitized;
+      const nextCursor = Math.max(0, Math.min(sanitized.length, sanitizedPrefix.length));
+      try { input.setSelectionRange(nextCursor, nextCursor); } catch (_) {}
+    }, true);
+
+    root.addEventListener('focusout', (event) => {
+      const input = event.target instanceof HTMLInputElement ? event.target : null;
+      if (!input?.matches('[data-money-input]')) return;
+      if (input.value === '.') input.value = '';
+      formatMoneyInputElement(input);
+    });
+
+    root.addEventListener('wheel', (event) => {
+      const input = event.target instanceof HTMLInputElement ? event.target : null;
+      if (!input?.matches('input[type="number"]') || input.readOnly || input.disabled) return;
+      if (document.activeElement !== input) return;
+      // Quitar el foco antes de la acción nativa evita incrementos/decrementos por rueda
+      // sin cancelar el evento: el scroll vertical de la página o contenedor sigue normal.
+      input.blur();
+    }, { capture: true, passive: true });
+
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        mutation.addedNodes.forEach((node) => {
+          if (!(node instanceof Element)) return;
+          const moneyInputs = node.matches('[data-money-input]')
+            ? [node]
+            : Array.from(node.querySelectorAll('[data-money-input]'));
+          moneyInputs.forEach((input) => {
+            if (document.activeElement !== input) formatMoneyInputElement(input);
+          });
+        });
+      });
+    });
+    observer.observe(root, { childList: true, subtree: true });
   }
 
   function formatDate(value) {
