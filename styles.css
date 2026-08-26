@@ -13932,11 +13932,12 @@ input[type="number"]::-webkit-inner-spin-button {
 }
 
 .notas-prestamo-form-grid-book {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(120px, 0.72fr);
 }
 
 .notas-prestamo-form-grid .form-field,
-.notas-prestamo-form-grid input {
+.notas-prestamo-form-grid input,
+.notas-prestamo-form-grid select {
   min-width: 0;
   width: 100%;
 }

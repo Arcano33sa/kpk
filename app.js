@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.74-notas-etapa3-hardening-final';
+  const APP_VERSION = '0.18.75-notas-prestamos-multimoneda';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -6347,6 +6347,7 @@ Notas importantes:
               libroId: normalizedBook.id,
               deudor: normalizedBook.deudor,
               acreedor: normalizedBook.acreedor,
+              moneda: normalizedBook.moneda,
               tipoRegistro: 'prestamo_movimiento',
               _docPrefix: 'prestamo_movimiento'
             });
@@ -6399,6 +6400,7 @@ Notas importantes:
               id: bookId || generateId('prestamo_libro'),
               deudor: cleanText(movementRecord.deudor),
               acreedor: cleanText(movementRecord.acreedor),
+              moneda: normalizeNotasPrestamoMoneda(movementRecord.moneda || movementRecord.currency || movementRecord.divisa || 'NIO'),
               movimientos: []
             });
             loanBooks.set(book.id, book);
@@ -13120,12 +13122,32 @@ Notas importantes:
     };
   }
 
+  function normalizeNotasPrestamoMoneda(value) {
+    const normalized = normalizeKeyForCompare(cleanText(value));
+    if (['usd', 'us$', '$', 'dolar', 'dolares', 'dólar', 'dólares'].includes(normalized)) return 'USD';
+    return 'NIO';
+  }
+
+  function getNotasPrestamoMonedaLabel(value) {
+    return normalizeNotasPrestamoMoneda(value) === 'USD' ? '$' : 'C$';
+  }
+
+  function formatNotasPrestamoMoney(value, moneda = 'NIO') {
+    const amount = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+      useGrouping: true
+    }).format(roundMoney(value));
+    return `${getNotasPrestamoMonedaLabel(moneda)} ${amount}`;
+  }
+
   function normalizeNotasPrestamoLibro(raw = {}) {
     const timestamp = nowIso();
     return {
       id: cleanText(raw.id) || generateId('prestamo_libro'),
       deudor: cleanText(raw.deudor || ''),
       acreedor: cleanText(raw.acreedor || ''),
+      moneda: normalizeNotasPrestamoMoneda(raw.moneda || raw.currency || raw.divisa || 'NIO'),
       movimientos: Array.isArray(raw.movimientos) ? raw.movimientos.map(normalizeNotasPrestamoMovimiento) : [],
       createdAt: cleanText(raw.createdAt) || timestamp,
       updatedAt: cleanText(raw.updatedAt) || cleanText(raw.createdAt) || timestamp
@@ -13185,8 +13207,8 @@ Notas importantes:
     return normalizeNotasPrestamoLibro(libro || {}).movimientos.find((movimiento) => movimiento.id === safeId) || null;
   }
 
-  function getNotasPrestamoCombinationKey(deudor, acreedor) {
-    return `${normalizeKeyForCompare(deudor)}→${normalizeKeyForCompare(acreedor)}`;
+  function getNotasPrestamoCombinationKey(deudor, acreedor, moneda = 'NIO') {
+    return `${normalizeKeyForCompare(deudor)}→${normalizeKeyForCompare(acreedor)}→${normalizeNotasPrestamoMoneda(moneda)}`;
   }
 
   function getNotasPrestamoLedger(libro) {
@@ -13492,7 +13514,7 @@ Notas importantes:
       const mergedBooks = currentLoans.libros.map(normalizeNotasPrestamoLibro);
       incomingLoans.libros.map(normalizeNotasPrestamoLibro).forEach((incomingBook) => {
         const existingIndex = mergedBooks.findIndex((book) => cleanText(book.id) === cleanText(incomingBook.id)
-          || getNotasPrestamoCombinationKey(book.deudor, book.acreedor) === getNotasPrestamoCombinationKey(incomingBook.deudor, incomingBook.acreedor));
+          || getNotasPrestamoCombinationKey(book.deudor, book.acreedor, book.moneda) === getNotasPrestamoCombinationKey(incomingBook.deudor, incomingBook.acreedor, incomingBook.moneda));
         if (existingIndex < 0) {
           mergedBooks.push(incomingBook);
           added += 1 + incomingBook.movimientos.length;
@@ -17307,7 +17329,11 @@ Notas importantes:
       .map(normalizeNotasPrestamoLibro)
       .sort((a, b) => String(a.deudor || '').localeCompare(String(b.deudor || ''), 'es', { sensitivity: 'base' }) || String(a.acreedor || '').localeCompare(String(b.acreedor || ''), 'es', { sensitivity: 'base' }));
     const movementCount = libros.reduce((sum, libro) => sum + libro.movimientos.length, 0);
-    const netBalance = libros.reduce((sum, libro) => roundMoney(sum + getNotasPrestamoSaldo(libro)), 0);
+    const netBalances = libros.reduce((totals, libro) => {
+      const moneda = normalizeNotasPrestamoMoneda(libro.moneda);
+      totals[moneda] = roundMoney((totals[moneda] || 0) + getNotasPrestamoSaldo(libro));
+      return totals;
+    }, { NIO: 0, USD: 0 });
     const bookModal = notasState.loanBookFormOpen ? renderNotasPrestamoLibroModal() : '';
     const movementBook = notasState.loanMovementBookId ? getNotasPrestamoLibroById(notasState.loanMovementBookId, data) : null;
     const movementRecord = movementBook && notasState.editingLoanMovementId
@@ -17320,15 +17346,15 @@ Notas importantes:
         <div>
           <span class="eyebrow">Préstamos</span>
           <h1>Préstamos</h1>
-          <p class="lead">Control auxiliar por libros independientes entre Deudor y Acreedor. Cada libro mantiene su propio Debe, Haber y Saldo.</p>
+          <p class="lead">Control auxiliar por libros independientes entre Deudor y Acreedor. Cada libro usa una sola moneda (C$ o $) y mantiene su propio Debe, Haber y Saldo.</p>
         </div>
         <aside class="hero-status" aria-label="Estado de Préstamos">
           <h3>Estado</h3>
           <div class="status-grid">
             <div class="status-item"><strong>Libros</strong><span>${libros.length}</span></div>
             <div class="status-item"><strong>Movimientos</strong><span>${movementCount}</span></div>
-            <div class="status-item"><strong>Saldo neto</strong><span>${escapeHtml(formatMoney(netBalance))}</span></div>
-            <div class="status-item"><strong>Negocio</strong><span>Intacto</span></div>
+            <div class="status-item"><strong>Saldo C$</strong><span>${escapeHtml(formatNotasPrestamoMoney(netBalances.NIO, 'NIO'))}</span></div>
+            <div class="status-item"><strong>Saldo $</strong><span>${escapeHtml(formatNotasPrestamoMoney(netBalances.USD, 'USD'))}</span></div>
           </div>
         </aside>
       </section>
@@ -17368,8 +17394,8 @@ Notas importantes:
         <button type="button" class="notas-prestamo-book-toggle" data-notas-prestamo-toggle="${escapeHtml(libro.id)}" aria-expanded="${isOpen ? 'true' : 'false'}">
           <span class="notas-prestamo-chevron" aria-hidden="true">${isOpen ? '▾' : '▸'}</span>
           <span class="notas-prestamo-book-heading">
-            <strong>${escapeHtml(libro.deudor || '—')} → ${escapeHtml(libro.acreedor || '—')}</strong>
-            <span>Saldo ${escapeHtml(formatMoney(saldo))} · ${count} ${count === 1 ? 'movimiento' : 'movimientos'}</span>
+            <strong>${escapeHtml(libro.deudor || '—')} → ${escapeHtml(libro.acreedor || '—')} · ${escapeHtml(getNotasPrestamoMonedaLabel(libro.moneda))}</strong>
+            <span>Saldo ${escapeHtml(formatNotasPrestamoMoney(saldo, libro.moneda))} · ${count} ${count === 1 ? 'movimiento' : 'movimientos'}</span>
           </span>
         </button>
         ${isOpen ? renderNotasPrestamoLibroBody(libro) : ''}
@@ -17408,9 +17434,9 @@ Notas importantes:
       <tr>
         <td><span class="notas-prestamo-nowrap">${escapeHtml(formatDate(movimiento.fecha))}</span></td>
         <td><span class="notas-prestamo-reference" title="${escapeHtml(movimiento.referencia)}">${escapeHtml(movimiento.referencia || '—')}</span></td>
-        <td class="amount-cell"><span class="notas-prestamo-nowrap">${escapeHtml(formatMoney(movimiento.debe || 0))}</span></td>
-        <td class="amount-cell"><span class="notas-prestamo-nowrap">${escapeHtml(formatMoney(movimiento.haber || 0))}</span></td>
-        <td class="amount-cell"><strong class="notas-prestamo-nowrap">${escapeHtml(formatMoney(movimiento.saldo || 0))}</strong></td>
+        <td class="amount-cell"><span class="notas-prestamo-nowrap">${escapeHtml(formatNotasPrestamoMoney(movimiento.debe || 0, libro.moneda))}</span></td>
+        <td class="amount-cell"><span class="notas-prestamo-nowrap">${escapeHtml(formatNotasPrestamoMoney(movimiento.haber || 0, libro.moneda))}</span></td>
+        <td class="amount-cell"><strong class="notas-prestamo-nowrap">${escapeHtml(formatNotasPrestamoMoney(movimiento.saldo || 0, libro.moneda))}</strong></td>
         <td><div class="record-actions compact-row-actions notas-icon-toolbar">
           <button type="button" class="notas-icon-action mini" data-notas-prestamo-edit-movement="${escapeHtml(movimiento.id)}" data-notas-prestamo-book-id="${escapeHtml(libro.id)}" title="Editar" aria-label="Editar movimiento">✎</button>
           <button type="button" class="notas-icon-action mini danger" data-notas-prestamo-delete-movement="${escapeHtml(movimiento.id)}" data-notas-prestamo-book-id="${escapeHtml(libro.id)}" title="Eliminar" aria-label="Eliminar movimiento">🗑️</button>
@@ -17435,6 +17461,13 @@ Notas importantes:
               <span>Acreedor <b class="required-dot">*</b></span>
               <input type="text" name="acreedor" autocomplete="off" required />
             </label>
+            <label class="form-field">
+              <span>Moneda <b class="required-dot">*</b></span>
+              <select name="moneda" required>
+                <option value="NIO">C$ — Córdobas</option>
+                <option value="USD">$ — Dólares</option>
+              </select>
+            </label>
           </div>
           <div class="form-actions notas-prestamo-modal-actions">
             <button type="submit" class="primary-action compact">Crear Libro</button>
@@ -17449,7 +17482,7 @@ Notas importantes:
     return renderEditModal(
       getNotasPrestamoMovimientoModalId(),
       movimiento ? 'Editar movimiento' : 'Nuevo movimiento',
-      `${libro.deudor} → ${libro.acreedor}`,
+      `${libro.deudor} → ${libro.acreedor} · ${getNotasPrestamoMonedaLabel(libro.moneda)}`,
       `
         <form class="notas-prestamo-modal-form" data-notas-prestamo-movement-form data-notas-prestamo-book-id="${escapeHtml(libro.id)}">
           <div class="notas-prestamo-form-grid">
@@ -17470,7 +17503,7 @@ Notas importantes:
               <input type="text" name="haber" inputmode="decimal" value="${escapeHtml(formatNumberInput(movimiento?.haber ?? ''))}" placeholder="0.00" autocomplete="off" data-money-input />
             </label>
           </div>
-          <p class="muted-text compact-note">Debe aumenta la deuda. Haber disminuye la deuda.</p>
+          <p class="muted-text compact-note">Debe aumenta la deuda. Haber disminuye la deuda. Moneda del libro: ${escapeHtml(getNotasPrestamoMonedaLabel(libro.moneda))}.</p>
           <div class="form-actions notas-prestamo-modal-actions">
             <button type="submit" class="primary-action compact">${movimiento ? 'Guardar cambios' : 'Agregar movimiento'}</button>
             <button type="button" class="secondary-action compact" data-modal-close="${escapeHtml(getNotasPrestamoMovimientoModalId())}">Cancelar</button>
@@ -17497,15 +17530,16 @@ Notas importantes:
     const formData = new FormData(form);
     const deudor = cleanText(formData.get('deudor'));
     const acreedor = cleanText(formData.get('acreedor'));
+    const moneda = normalizeNotasPrestamoMoneda(formData.get('moneda'));
     if (!deudor || !acreedor) {
       notifyAction(notasState, 'Deudor y Acreedor son obligatorios.', 'error');
       renderRoute({ preserveScroll: true });
       return;
     }
     const data = getNotasPrestamosData();
-    const key = getNotasPrestamoCombinationKey(deudor, acreedor);
-    if (data.libros.some((libro) => getNotasPrestamoCombinationKey(libro.deudor, libro.acreedor) === key)) {
-      notifyAction(notasState, 'Ya existe exactamente ese libro Deudor → Acreedor.', 'error');
+    const key = getNotasPrestamoCombinationKey(deudor, acreedor, moneda);
+    if (data.libros.some((libro) => getNotasPrestamoCombinationKey(libro.deudor, libro.acreedor, libro.moneda) === key)) {
+      notifyAction(notasState, `Ya existe ese libro Deudor → Acreedor en ${getNotasPrestamoMonedaLabel(moneda)}.`, 'error');
       renderRoute({ preserveScroll: true });
       return;
     }
@@ -17514,6 +17548,7 @@ Notas importantes:
       id: generateId('prestamo_libro'),
       deudor,
       acreedor,
+      moneda,
       movimientos: [],
       createdAt: timestamp,
       updatedAt: timestamp

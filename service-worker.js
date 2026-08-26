@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_74_notas_etapa3_hardening_final';
+const CACHE_VERSION = 'v0_18_75_notas_prestamos_multimoneda';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
