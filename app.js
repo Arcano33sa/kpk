@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.76-catalogo-transporte';
+  const APP_VERSION = '0.18.79-fecha-registro-hardening';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -4001,6 +4001,18 @@ Notas importantes:
     return formatDateInput(new Date());
   }
 
+  // Fecha de Registro es la fecha de origen operativo de la venta.
+  // Se conserva fechaOc como clave histórica/compatible para no migrar ni mover registros previos.
+  function getVentaFechaRegistro(record) {
+    const raw = isPlainObject(record) ? record : {};
+    const candidates = [raw.fechaRegistro, raw.fechaDeRegistro, raw.fechaOc, raw.fechaOC, raw.fecha];
+    for (const candidate of candidates) {
+      const normalized = toDateInputValue(candidate);
+      if (normalized) return normalized;
+    }
+    return '';
+  }
+
   function getCurrentMonthValue() {
     return String(new Date().getMonth() + 1).padStart(2, '0');
   }
@@ -4043,7 +4055,7 @@ Notas importantes:
       return toDateInputValue(getVentaLogisticaRecord(raw).fechaReal || '');
     }
     return toDateInputValue(raw.fechaEntrega || raw.fechaDeEntrega || raw.entrega || raw.fechaRecepcion || raw.fechaRecepción || '')
-      || toDateInputValue(raw.fechaOc || raw.fechaOC || raw.fecha || '');
+      || getVentaFechaRegistro(raw);
   }
 
   function getVentaCreditBaseType(record) {
@@ -4051,7 +4063,7 @@ Notas importantes:
     if (isVentaRequiereEnvio(raw)) {
       return getVentaLogisticaRecord(raw).fechaReal ? 'Fecha real' : 'Pendiente recepción';
     }
-    return isVentaCreditBaseEntrega(raw) ? 'Entrega' : 'OC';
+    return isVentaCreditBaseEntrega(raw) ? 'Entrega' : 'Registro';
   }
 
   function calculateVentaFechaVencimiento(record, diasCredito) {
@@ -4752,7 +4764,7 @@ Notas importantes:
     const timestamp = nowIso();
     const diasCredito = parsePositiveInteger(raw.diasCredito);
     const safeDiasCredito = Number.isNaN(diasCredito) ? 0 : diasCredito;
-    const fechaOc = toDateInputValue(raw.fechaOc || raw.fechaOC || raw.fecha || '');
+    const fechaOc = getVentaFechaRegistro(raw);
     const fechaEntrega = toDateInputValue(raw.fechaEntrega || raw.fechaDeEntrega || raw.entrega || raw.fechaRecepcion || raw.fechaRecepción || '');
     const requiereEnvio = isVentaRequiereEnvio(raw);
     const logistica = getVentaLogisticaRecord(raw);
@@ -12514,12 +12526,9 @@ Notas importantes:
 
     const ventas = (Array.isArray(appData.ventas) ? appData.ventas : []).map((record) => normalizeVentaRecord(record));
     const compras = (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : []).map((record) => normalizeCompraProveedorRecord(record));
-    const ventasById = new Map(ventas.map((venta) => [venta.id, venta]));
-    const comprasById = new Map(compras.map((compra) => [compra.id, compra]));
-
     ventas
       .filter((record) => record.activo)
-      .forEach((record) => addWorkPeriodCandidateFromDate(candidates, record.fechaOc || record.fecha, 'Ventas / OC'));
+      .forEach((record) => addWorkPeriodCandidateFromDate(candidates, getVentaFechaRegistro(record), 'Ventas / OC'));
 
     compras
       .filter((record) => record.activo)
@@ -12528,20 +12537,12 @@ Notas importantes:
     (Array.isArray(appData.cobros) ? appData.cobros : [])
       .map((record) => normalizeCobroRecord(record))
       .filter((record) => record.activo)
-      .forEach((record) => {
-        const venta = ventasById.get(record.ventaId);
-        if (venta) addWorkPeriodCandidateFromDate(candidates, venta.fechaOc || venta.fecha, 'Cobros → OC');
-        else addWorkPeriodCandidateFromDate(candidates, record.fechaCobro || record.fecha, 'Cobros sin OC');
-      });
+      .forEach((record) => addWorkPeriodCandidateFromDate(candidates, record.fechaCobro || record.fecha, 'Cobros'));
 
     (Array.isArray(appData.pagosProveedores) ? appData.pagosProveedores : [])
       .map((record) => normalizePagoProveedorRecord(record))
       .filter((record) => record.activo)
-      .forEach((record) => {
-        const compra = comprasById.get(record.compraProveedorId || record.compraIdOrigen);
-        if (compra) addWorkPeriodCandidateFromDate(candidates, compra.fechaCompra || compra.fecha, 'Pagos → Compra');
-        else addWorkPeriodCandidateFromDate(candidates, record.fechaPago || record.fecha, 'Pagos sin compra');
-      });
+      .forEach((record) => addWorkPeriodCandidateFromDate(candidates, record.fechaPago || record.fecha, 'Pagos'));
 
     (Array.isArray(appData.gastos) ? appData.gastos : [])
       .filter((record) => normalizeGastoRecord(record).activo)
@@ -12640,7 +12641,7 @@ Notas importantes:
 
   function getVentaOriginPeriodKey(record) {
     const venta = normalizeVentaRecord(record);
-    return getPeriodKeyFromDateValue(venta.fechaOc || venta.fecha);
+    return getPeriodKeyFromDateValue(getVentaFechaRegistro(venta));
   }
 
   function isVentaInWorkPeriod(record, periodo = getActiveWorkPeriodKeyOrCurrent()) {
@@ -12674,15 +12675,11 @@ Notas importantes:
 
   function isCobroInWorkPeriod(record, periodo = getActiveWorkPeriodKeyOrCurrent()) {
     const cobro = normalizeCobroRecord(record);
-    const venta = getVentaRecordById(cobro.ventaId);
-    if (venta) return isVentaInWorkPeriod(venta, periodo);
     return isDateInWorkPeriod(cobro.fechaCobro, periodo);
   }
 
   function isPagoProveedorInWorkPeriod(record, periodo = getActiveWorkPeriodKeyOrCurrent()) {
     const pago = normalizePagoProveedorRecord(record);
-    const compra = getCompraProveedorRecordById(pago.compraProveedorId || pago.compraIdOrigen);
-    if (compra) return isCompraInWorkPeriod(compra, periodo);
     return isDateInWorkPeriod(pago.fechaPago, periodo);
   }
 
@@ -14415,7 +14412,7 @@ Notas importantes:
       records.push(normalizeFacturaModuloRecord({
         id: cleanText(item.moduloId) || cleanText(item.id && !String(item.id).startsWith('factura') ? item.id : '') || generateId('facturaModulo'),
         no: item.numero,
-        fecha: venta.fechaOc || todayInputValue(),
+        fecha: getVentaFechaRegistro(venta) || todayInputValue(),
         estado: fromGap ? 'Otro' : 'Enviada',
         monto: fromGap ? 0 : Math.max(0, Number(item.total) || 0),
         subtotal: fromGap ? 0 : Math.max(0, Number(item.subtotal) || 0),
@@ -16241,7 +16238,7 @@ Notas importantes:
     return (Array.isArray(appData.ventas) ? appData.ventas : [])
       .map((record) => normalizeVentaRecord(record))
       .filter((record) => record.activo && record.clienteId === safeClientId && cleanText(record.sucursalId) === safeBranchId)
-      .sort((left, right) => compareVisualDateDesc(left, right, ['fechaOc', 'createdAt']) || String(right.createdAt).localeCompare(String(left.createdAt)))[0] || null;
+      .sort((left, right) => compareVisualDateDesc(left, right, [getVentaFechaRegistro, 'createdAt']) || String(right.createdAt).localeCompare(String(left.createdAt)))[0] || null;
   }
 
   function getSeguimientoMatrix() {
@@ -16530,7 +16527,7 @@ Notas importantes:
         <div class="seguimiento-cell seguimiento-cell-order" data-label="Último pedido" role="cell">
           ${lastOrder ? `
             <strong>${escapeHtml(lastOrder.numeroDocumento || 'OC')}</strong>
-            <small>${escapeHtml(formatDate(lastOrder.fechaOc))}</small>
+            <small>${escapeHtml(formatDate(getVentaFechaRegistro(lastOrder)))}</small>
           ` : '<span class="seguimiento-empty-value">—</span>'}
         </div>
         <div class="seguimiento-cell seguimiento-cell-action" data-label="Llamar" role="cell">
@@ -19234,7 +19231,7 @@ Notas importantes:
         </td>
         <td class="resumen-seguimiento-days" data-label="Días sin llamar"><strong>${row.semaphore.days === null ? '—' : escapeHtml(String(row.semaphore.days))}</strong></td>
         <td data-label="Último pedido">
-          ${lastOrder ? `<strong>${escapeHtml(lastOrder.numeroDocumento || 'OC')}</strong><small>${escapeHtml(formatDate(lastOrder.fechaOc))}</small>` : '<span class="seguimiento-empty-value">—</span>'}
+          ${lastOrder ? `<strong>${escapeHtml(lastOrder.numeroDocumento || 'OC')}</strong><small>${escapeHtml(formatDate(getVentaFechaRegistro(lastOrder)))}</small>` : '<span class="seguimiento-empty-value">—</span>'}
         </td>
       </tr>
     `;
@@ -19674,7 +19671,7 @@ Notas importantes:
 
 
   function getExcelConsultaVentaOriginDate(venta) {
-    return toDateInputValue(venta?.fechaOc) || toDateInputValue(venta?.fechaEntrega) || toDateInputValue(venta?.createdAt) || '';
+    return getVentaFechaRegistro(venta) || toDateInputValue(venta?.createdAt) || '';
   }
 
   function getExcelConsultaCompraOriginDate(compra) {
@@ -19942,7 +19939,7 @@ Notas importantes:
 
   function matchesResumenUtilityVenta(venta, range) {
     if (!venta?.activo) return false;
-    return isDateInResumenRange(venta.fechaOc, range);
+    return isDateInResumenRange(getVentaFechaRegistro(venta), range);
   }
 
   function matchesResumenUtilityCompra(compra, range) {
@@ -20001,7 +19998,7 @@ Notas importantes:
     if (filters.sucursalId && venta.sucursalId !== filters.sucursalId) return false;
     if (filters.estado && venta.estado !== filters.estado) return false;
     if (!matchesResumenMoraFilter(venta.fechaVencimiento, venta.saldoPorCobrar, filters.mora)) return false;
-    if (useDate && !isDateInResumenRange(venta.fechaOc, range)) return false;
+    if (useDate && !isDateInResumenRange(getVentaFechaRegistro(venta), range)) return false;
     return true;
   }
 
@@ -20082,7 +20079,7 @@ Notas importantes:
       const safeDate = toDateInputValue(dateInput);
       if (safeDate) years.add(safeDate.slice(0, 4));
     };
-    (Array.isArray(appData.ventas) ? appData.ventas : []).forEach((record) => addYear(record.fechaOc || record.fecha));
+    (Array.isArray(appData.ventas) ? appData.ventas : []).forEach((record) => addYear(getVentaFechaRegistro(record)));
     (Array.isArray(appData.cobros) ? appData.cobros : []).forEach((record) => addYear(record.fechaCobro || record.fecha));
     (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : []).forEach((record) => addYear(record.fechaCompra || record.fecha));
     (Array.isArray(appData.pagosProveedores) ? appData.pagosProveedores : []).forEach((record) => addYear(record.fechaPago || record.fecha));
@@ -20259,10 +20256,10 @@ Notas importantes:
       cliente: cliente?.nombre || 'Cliente no encontrado',
       sucursal: sucursal?.nombre || 'Sucursal no encontrada',
       documento: venta.numeroDocumento || 'Sin número',
-      fechaOrigen: venta.fechaOc,
+      fechaOrigen: getVentaFechaRegistro(venta),
       fechaEntrega: venta.fechaEntrega || '',
       fechaBaseCredito: venta.fechaBaseCredito || getVentaCreditBaseDate(venta),
-      fechaBaseCreditoTipo: venta.fechaBaseCreditoTipo || (isVentaCreditBaseEntrega(venta) ? 'Entrega' : 'OC'),
+      fechaBaseCreditoTipo: venta.fechaBaseCreditoTipo || (isVentaCreditBaseEntrega(venta) ? 'Entrega' : 'Registro'),
       fechaVencimiento: venta.fechaVencimiento,
       diasMora,
       saldoPendiente: venta.saldoPorCobrar,
@@ -20310,7 +20307,7 @@ Notas importantes:
     (Array.isArray(ventas) ? ventas : [])
       .filter((venta) => venta.activo)
       .forEach((venta) => {
-        const periodInfo = getPeriodFromOriginDate(venta.fechaOc);
+        const periodInfo = getPeriodFromOriginDate(getVentaFechaRegistro(venta));
         if (!periodInfo) return;
         const group = ensureGroup(periodInfo);
         group.documentosClientes += 1;
@@ -20553,7 +20550,7 @@ Notas importantes:
         <th>Cliente</th>
         <th>Sucursal</th>
         <th>Documento</th>
-        <th>Origen</th>
+        <th>Fecha de Registro</th>
         <th>Vence</th>
         <th>Mora</th>
         <th class="amount-cell">Saldo</th>
@@ -21127,10 +21124,10 @@ Notas importantes:
       cliente: cliente?.nombre || 'Cliente no encontrado',
       sucursal: sucursal?.nombre || 'Sucursal no encontrada',
       documento: venta.numeroDocumento || 'Sin número',
-      fechaOrigen: venta.fechaOc,
+      fechaOrigen: getVentaFechaRegistro(venta),
       fechaEntrega: venta.fechaEntrega || '',
       fechaBaseCredito: venta.fechaBaseCredito || getVentaCreditBaseDate(venta),
-      fechaBaseCreditoTipo: venta.fechaBaseCreditoTipo || (isVentaCreditBaseEntrega(venta) ? 'Entrega' : 'OC'),
+      fechaBaseCreditoTipo: venta.fechaBaseCreditoTipo || (isVentaCreditBaseEntrega(venta) ? 'Entrega' : 'Registro'),
       fechaVencimiento: venta.fechaVencimiento,
       diasMora,
       rango: getMoraRangeLabel(diasMora),
@@ -21228,7 +21225,7 @@ Notas importantes:
         <th>Cliente</th>
         <th>Sucursal</th>
         <th>Documento</th>
-        <th>Origen</th>
+        <th>Fecha de Registro</th>
         <th>Vence</th>
         <th>Mora</th>
         <th class="amount-cell">Saldo</th>
@@ -21370,12 +21367,13 @@ Notas importantes:
       const sucursal = getCatalogRecordById('sucursales', venta.sucursalId);
       const clienteNombre = cliente?.nombre || 'Cliente no encontrado';
       const documento = venta.numeroDocumento || 'Sin número';
-      const searchable = normalizeNameForCompare(`${documento} ${clienteNombre} ${sucursal?.nombre || ''} ${venta.fechaOc} ${venta.fechaVencimiento} ${venta.saldoPorCobrar} ${venta.estado}`);
+      const fechaRegistro = getVentaFechaRegistro(venta);
+      const searchable = normalizeNameForCompare(`${documento} ${clienteNombre} ${sucursal?.nombre || ''} ${fechaRegistro} ${venta.fechaVencimiento} ${venta.saldoPorCobrar} ${venta.estado}`);
       return `
         <tr class="compact-record-row historial-compact-row" data-mora-search-card data-search-text="${escapeHtml(searchable)}">
           <td class="historial-compact-text"><span title="${escapeHtml(clienteNombre)}">${escapeHtml(clienteNombre)}</span></td>
           <td class="historial-compact-doc"><span title="${escapeHtml(documento)}">${escapeHtml(documento)}</span></td>
-          <td class="historial-compact-date"><span>${escapeHtml(formatDate(venta.fechaOc))}</span></td>
+          <td class="historial-compact-date"><span>${escapeHtml(formatDate(fechaRegistro))}</span></td>
           <td class="historial-compact-date"><span>${escapeHtml(formatDate(venta.fechaVencimiento))}</span></td>
           <td class="amount-cell historial-compact-amount"><span>${escapeHtml(formatMoney(venta.saldoPorCobrar))}</span></td>
           <td class="historial-compact-state"><span class="state-pill ${getEstadoClass(venta.estado)}">${escapeHtml(venta.estado)}</span></td>
@@ -21404,7 +21402,7 @@ Notas importantes:
       headers: `
         <th>Cliente</th>
         <th>Documento</th>
-        <th>Origen</th>
+        <th>Fecha de Registro</th>
         <th>Vence</th>
         <th class="amount-cell">Saldo</th>
         <th>Estado</th>
@@ -21576,6 +21574,7 @@ Notas importantes:
         details: [
           { label: 'Cliente', value: cliente?.nombre || 'Cliente no encontrado' },
           { label: 'Sucursal', value: sucursal?.nombre || 'Sucursal no encontrada' },
+          { label: 'Fecha de Registro', value: formatDate(getVentaFechaRegistro(venta)) },
           { label: 'Estado actual', value: venta.estado },
           { label: 'Subtotal', value: formatMoney(venta.subtotal) },
           { label: 'Descuento', value: formatMoney(venta.descuento) },
@@ -21621,7 +21620,7 @@ Notas importantes:
     const facturasVenta = normalizeFacturasVentaList(venta.facturas);
     if (facturasVenta.length) {
       entries.push({
-        date: formatDate(venta.fechaOc),
+        date: formatDate(getVentaFechaRegistro(venta)),
         title: 'Facturas registradas',
         detail: formatFacturasVentaResumen(facturasVenta),
         statusClass: 'is-info'
@@ -23395,7 +23394,7 @@ Notas importantes:
     const draft = !record && isPlainObject(quickCapture) ? quickCapture : {};
     const selectedClienteId = record?.clienteId || cleanText(draft.clienteId);
     const selectedSucursalId = record?.sucursalId || cleanText(draft.sucursalId);
-    const fechaOc = record?.fechaOc || toDateInputValue(draft.fechaOc) || getWorkPeriodDefaultDate();
+    const fechaOc = getVentaFechaRegistro(record) || toDateInputValue(draft.fechaOc) || todayInputValue();
     const fechaEntrega = record?.fechaEntrega || toDateInputValue(draft.fechaEntrega) || '';
     const selectedTerms = selectedClienteId ? getCatalogPaymentTerms('clientes', selectedClienteId) : { diasCredito: 0 };
     const draftDias = draft.diasCredito ?? '';
@@ -23425,7 +23424,7 @@ Notas importantes:
             <input type="text" name="numeroDocumento" value="${escapeHtml(record?.numeroDocumento || cleanText(draft.numeroDocumento))}" placeholder="Ej. OC-001" required autocomplete="off" />
           </label>
           <label class="form-field">
-            <span>Fecha OC <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <span>Fecha de Registro <span class="required-dot" aria-label="obligatorio">*</span></span>
             <input type="date" name="fechaOc" value="${escapeHtml(fechaOc)}" required data-venta-date />
           </label>
           <label class="form-field">
@@ -23523,7 +23522,7 @@ Notas importantes:
       headers: `
         <th>OC</th>
         <th>Sucursal</th>
-        <th>Fecha</th>
+        <th>Registro</th>
         <th>Vence</th>
         <th class="amount-cell">Subtotal</th>
         <th class="amount-cell">Descuento</th>
@@ -23564,7 +23563,7 @@ Notas importantes:
       <tr class="compact-record-row venta-row ${record.activo ? 'is-active' : 'is-inactive'}">
         <td data-label="OC"><span class="compact-primary">${escapeHtml(record.numeroDocumento || 'Sin número')}</span>${facturas.length ? `<small>Facturas: ${escapeHtml(formatFacturasVentaResumen(facturas))}</small>` : ''}${record.requiereEnvio ? `<small>${escapeHtml(formatLogisticaVentaResumen(record))}</small>` : ''}</td>
         <td data-label="Sucursal"><span title="${escapeHtml(sucursalNombre || 'Sin sucursal')}">${escapeHtml(sucursalNombre || '—')}</span></td>
-        <td data-label="Fecha"><span>${escapeHtml(formatDate(record.fechaOc))}</span></td>
+        <td data-label="Registro"><span>${escapeHtml(formatDate(getVentaFechaRegistro(record)))}</span></td>
         <td data-label="Vence"><span>${escapeHtml(formatDate(record.fechaVencimiento))}</span></td>
         <td data-label="Subtotal" class="amount-cell"><span>${escapeHtml(formatMoney(record.subtotal))}</span></td>
         <td data-label="Descuento" class="amount-cell"><span>${escapeHtml(formatMoney(record.descuento))}</span></td>
@@ -23728,7 +23727,7 @@ Notas importantes:
     if (!record.clienteId || !getActiveCatalogRecords('clientes').some((cliente) => cliente.id === record.clienteId)) return 'Selecciona un cliente activo desde Catálogos.';
     if (!record.sucursalId || !getActiveCatalogRecords('sucursales').some((sucursal) => sucursal.id === record.sucursalId)) return 'Selecciona una sucursal activa desde Catálogos.';
     if (!getVentaSucursalesForCliente(record.clienteId, record.sucursalId).some((sucursal) => sucursal.id === record.sucursalId)) return 'Selecciona una sucursal correspondiente al cliente elegido.';
-    if (!record.fechaOc) return 'La fecha OC es obligatoria.';
+    if (!getVentaFechaRegistro(record)) return 'La Fecha de Registro es obligatoria.';
     if (Number.isNaN(parseMoney(record.subtotal)) || record.subtotal <= 0) return 'Subtotal debe ser un número mayor que cero.';
     if (Number.isNaN(parsePositiveInteger(record.diasCredito))) return 'Días de crédito debe ser cero o un número entero positivo.';
 
@@ -23850,8 +23849,7 @@ Notas importantes:
   function buildVentaQuickCaptureFromSavedRecord(record) {
     const saved = normalizeVentaRecord(record);
     return {
-      clienteId: saved.clienteId,
-      fechaOc: saved.fechaOc || todayInputValue()
+      clienteId: saved.clienteId
     };
   }
 
@@ -24046,6 +24044,12 @@ Notas importantes:
     const existingId = cleanText(new FormData(form).get('id'));
     const records = Array.isArray(appData.ventas) ? appData.ventas : [];
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
+    if (!existingRecord) {
+      const registrationDateInput = form.querySelector('[data-venta-date]');
+      if (registrationDateInput && registrationDateInput.dataset.registrationDateManual !== '1') {
+        registrationDateInput.value = todayInputValue();
+      }
+    }
     const pendingFacturaError = validatePendingFacturaInputs(form);
     if (pendingFacturaError) {
       ventasState.quickCapture = existingRecord ? null : buildVentaDraftFromForm(form);
@@ -24065,7 +24069,7 @@ Notas importantes:
       return;
     }
 
-    if (!warnIfClosedPeriod(newRecord.fechaOc, existingRecord ? 'Actualizar esta OC' : 'Crear esta OC')) return;
+    if (!warnIfClosedPeriod(getVentaFechaRegistro(newRecord), existingRecord ? 'Actualizar esta OC' : 'Crear esta OC')) return;
 
     if (existingRecord) {
       appData.ventas = records.map((record) => record.id === existingId ? newRecord : record);
@@ -24074,7 +24078,7 @@ Notas importantes:
     } else {
       appData.ventas = [newRecord, ...records];
       ventasState.quickCapture = buildVentaQuickCaptureFromSavedRecord(newRecord);
-      ventasState.message = `OC ${newRecord.numeroDocumento} guardada. Cliente y Fecha OC quedan listos; selecciona la nueva sucursal para continuar.`;
+      ventasState.message = `OC ${newRecord.numeroDocumento} guardada. Cliente queda listo; Fecha de Registro seguirá la fecha actual del dispositivo.`;
     }
 
     const autoGastoResult = syncAutoGastoLogisticaVenta(newRecord);
@@ -24125,7 +24129,7 @@ Notas importantes:
     const record = records.find((item) => item.id === recordId);
     if (!record) return;
     const shouldActivate = !record.activo;
-    if (!warnIfClosedPeriod(record.fechaOc, shouldActivate ? 'Reactivar esta OC' : 'Anular esta OC')) return;
+    if (!warnIfClosedPeriod(getVentaFechaRegistro(record), shouldActivate ? 'Reactivar esta OC' : 'Anular esta OC')) return;
 
     appData.ventas = records.map((item) => {
       if (item.id !== recordId) return item;
@@ -24155,6 +24159,21 @@ Notas importantes:
   }
 
   function setupVentaLiveCalculations(form) {
+    const ventaDateInput = form.querySelector('[data-venta-date]');
+    const isNewVenta = !cleanText(form.querySelector('input[name="id"]')?.value || '');
+    if (ventaDateInput && isNewVenta) {
+      ventaDateInput.dataset.registrationDateManual = '0';
+      const syncRegistrationDate = () => {
+        if (ventaDateInput.dataset.registrationDateManual === '1') return;
+        const currentDate = todayInputValue();
+        if (ventaDateInput.value === currentDate) return;
+        ventaDateInput.value = currentDate;
+        updateVentaPreviewFromForm(form, true);
+      };
+      syncRegistrationDate();
+      form.addEventListener('focusin', syncRegistrationDate);
+    }
+
     updateVentaPreviewFromForm(form, false);
 
     form.querySelectorAll('[data-venta-calc]').forEach((input) => {
@@ -24169,7 +24188,10 @@ Notas importantes:
       syncVentaSucursalSelect(form);
       applyVentaPaymentTermsSuggestion(form);
     });
-    form.querySelector('[data-venta-date]')?.addEventListener('change', () => updateVentaPreviewFromForm(form, true));
+    ventaDateInput?.addEventListener('change', () => {
+      if (isNewVenta) ventaDateInput.dataset.registrationDateManual = '1';
+      updateVentaPreviewFromForm(form, true);
+    });
     form.querySelector('[data-venta-delivery]')?.addEventListener('change', () => updateVentaPreviewFromForm(form, true));
     form.querySelector('[data-venta-days]')?.addEventListener('input', () => updateVentaPreviewFromForm(form, true));
   }
@@ -24389,7 +24411,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Cobros de clientes</h1>
-          <p class="lead">Registra pagos completos o abonos parciales ligados a una OC específica. La fecha real del cobro puede ser distinta a la fecha de la OC; la trazabilidad queda amarrada y sin nudos marineros.</p>
+          <p class="lead">Registra pagos completos o abonos parciales ligados a una OC específica. La fecha real del cobro puede ser distinta a la Fecha de Registro de la venta; la trazabilidad queda amarrada y sin nudos marineros.</p>
         </div>
         <aside class="hero-status" aria-label="Resumen de cobros">
           <h3>Totales básicos</h3>
@@ -24813,7 +24835,7 @@ Notas importantes:
     const summaryItems = [
       ['Cliente', cliente?.nombre || record.clienteNombre || 'Cliente no encontrado'],
       ['Sucursal', sucursal?.nombre || record.sucursalNombre || 'Sucursal no encontrada'],
-      ['Fecha OC', formatDate(record.fechaOc)],
+      ['Fecha de Registro', formatDate(getVentaFechaRegistro(record))],
       [record.requiereEnvio ? 'Logística' : 'Entrega', entregaResumen],
       ['Vencimiento', formatDate(record.fechaVencimiento)],
       ['Estado', record.estado || '—'],
@@ -28540,7 +28562,7 @@ Notas importantes:
       const safeDate = toDateInputValue(dateInput);
       return Boolean(safeDate && safeDate.slice(5, 7) === month);
     };
-    const ventasUtilidad = ventas.filter((venta) => venta.activo && matchesMonth(venta.fechaOc));
+    const ventasUtilidad = ventas.filter((venta) => venta.activo && matchesMonth(getVentaFechaRegistro(venta)));
     const comprasUtilidad = compras.filter((compra) => compra.activo && matchesMonth(compra.fechaCompra));
     const gastosUtilidad = gastos.filter((gasto) => gasto.activo && matchesMonth(gasto.fecha));
     const totalVentasAjustadas = sumMoney(ventasUtilidad, (venta) => venta.ventaNetaAjustada);
@@ -33116,7 +33138,7 @@ Exportado: ${exportDateLabel}
       const sucursal = getCatalogRecordById('sucursales', venta.sucursalId);
       const logistica = normalizeLogisticaVentaRecord(venta.logistica);
       rows.push([
-        xlsxDate(venta.fechaOc),
+        xlsxDate(getVentaFechaRegistro(venta)),
         xlsxDate(venta.fechaEntrega),
         xlsxText(venta.clienteNombre || cliente?.nombre || 'Cliente no encontrado'),
         xlsxText(venta.sucursalNombre || sucursal?.nombre || 'Sucursal no encontrada'),
@@ -33298,8 +33320,8 @@ Exportado: ${exportDateLabel}
   function getVentasForExport(range, filters) {
     return (Array.isArray(appData.ventas) ? appData.ventas : [])
       .map((record) => normalizeVentaRecord(record))
-      .filter((venta) => isDateInResumenRange(venta.fechaOc, range) && matchesResumenVenta(venta, { ...filters, estado: '' }, null, false))
-      .sort((a, b) => String(a.fechaOc).localeCompare(String(b.fechaOc)) || String(a.numeroDocumento).localeCompare(String(b.numeroDocumento)));
+      .filter((venta) => isDateInResumenRange(getVentaFechaRegistro(venta), range) && matchesResumenVenta(venta, { ...filters, estado: '' }, null, false))
+      .sort((a, b) => String(getVentaFechaRegistro(a)).localeCompare(String(getVentaFechaRegistro(b))) || String(a.numeroDocumento).localeCompare(String(b.numeroDocumento)));
   }
 
   function getComprasForExport(range, filters) {
@@ -33948,7 +33970,7 @@ ${rowsXml}
         numeroDocumento: cleanText(pickCell(row, ['OC/documento', 'OC', 'Documento', 'No OC', 'N° OC', 'Número OC', 'Numero OC', 'Orden de compra'])),
         clienteId,
         sucursalId,
-        fechaOc: parseExcelDateValue(pickCell(row, ['Fecha OC', 'Fecha', 'Fecha origen', 'Fecha venta'])),
+        fechaOc: parseExcelDateValue(pickCell(row, ['Fecha de Registro', 'Fecha Registro', 'Fecha OC', 'Fecha', 'Fecha origen', 'Fecha venta'])),
         fechaEntrega: parseExcelDateValue(pickCell(row, ['Fecha entrega', 'Fecha de entrega', 'Entrega', 'Fecha recepción', 'Fecha recepcion'])),
         diasCredito: parsePositiveInteger(pickCell(row, ['Días crédito', 'Dias credito', 'Crédito', 'Credito'])),
         fechaVencimiento: parseExcelDateValue(pickCell(row, ['Fecha vencimiento', 'Vencimiento', 'Fecha de vencimiento'])),
@@ -33969,7 +33991,7 @@ ${rowsXml}
         descuentoNoVa: Number.isNaN(legacyDescuentoNoVa) ? 0 : legacyDescuentoNoVa,
         ajustes: totalAjustes > 0 ? [{
           id: generateId('ajusteCliente'),
-          fecha: parseExcelDateValue(pickCell(row, ['Fecha OC', 'Fecha', 'Fecha origen', 'Fecha venta'])) || todayInputValue(),
+          fecha: parseExcelDateValue(pickCell(row, ['Fecha de Registro', 'Fecha Registro', 'Fecha OC', 'Fecha', 'Fecha origen', 'Fecha venta'])) || todayInputValue(),
           tipo: 'Corrección',
           monto: totalAjustes,
           observacion: cleanText(pickCell(row, ['Ajustes detalle', 'Detalle ajustes', 'Observación', 'Observacion', 'Notas', 'Comentario']))
@@ -33984,7 +34006,7 @@ ${rowsXml}
         payload.cobros.push(normalizeCobroRecord({
           id: generateId('cobro'),
           ventaId: record.id,
-          fechaCobro: record.fechaOc || todayInputValue(),
+          fechaCobro: getVentaFechaRegistro(record) || todayInputValue(),
           clienteId: record.clienteId,
           clienteNombre,
           sucursalId: record.sucursalId,
@@ -34258,7 +34280,7 @@ ${rowsXml}
 
   function getVentaDuplicateKey(record) {
     const venta = normalizeVentaRecord(record);
-    return [normalizeNameForCompare(venta.numeroDocumento), venta.clienteId, venta.fechaOc].join('|');
+    return [normalizeNameForCompare(venta.numeroDocumento), venta.clienteId, getVentaFechaRegistro(venta)].join('|');
   }
 
   function getCompraDuplicateKey(record) {
