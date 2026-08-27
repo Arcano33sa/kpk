@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_75_notas_prestamos_multimoneda';
+const CACHE_VERSION = 'v0_18_76_catalogo_transporte';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

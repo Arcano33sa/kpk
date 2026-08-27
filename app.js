@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.75-notas-prestamos-multimoneda';
+  const APP_VERSION = '0.18.76-catalogo-transporte';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -181,6 +181,7 @@
     'cuentasBancos',
     'retenciones',
     'categoriasCasa',
+    'transportes',
     'bdatos',
     'ventas',
     'cobros',
@@ -276,6 +277,17 @@
         { name: 'nombre', label: 'Nombre del banco', type: 'text', required: true, placeholder: 'Ej. BAC, Lafise, Banpro' },
         { name: 'tipo', label: 'Tipo', type: 'select', options: BANK_TYPE_OPTIONS, required: true, placeholder: 'Seleccionar tipo' },
         { name: 'observacion', label: 'Observación', type: 'textarea', placeholder: 'Notas internas del banco' }
+      ]
+    },
+    {
+      id: 'transportes',
+      label: 'Transporte',
+      singular: 'transportista',
+      icon: 'TR',
+      description: 'Transportistas disponibles para Logística / Envío en Ventas / OC.',
+      exportExcel: false,
+      fields: [
+        { name: 'nombre', label: 'Nombre del transportista', type: 'text', required: true, placeholder: 'Ej. CARGOTRANS' }
       ]
     },
     {
@@ -2903,6 +2915,7 @@ Notas importantes:
       cuentasBancos: [],
       retenciones: [],
       categoriasCasa: [],
+      transportes: [],
       bdatos: buildInitialBdatosRecords(BDATOS_INITIAL_UPDATED_AT),
       bdatosUpdatedAt: BDATOS_INITIAL_UPDATED_AT,
       ventas: [],
@@ -23281,6 +23294,20 @@ Notas importantes:
     `;
   }
 
+  function renderTransportistaVentaOptions(currentValue = '') {
+    const selectedValue = cleanText(currentValue);
+    const activeRecords = getActiveCatalogRecords('transportes');
+    let options = activeRecords.map((record) => cleanText(record.nombre)).filter(Boolean);
+    if (selectedValue) {
+      options = options.filter((name) => normalizeNameForCompare(name) !== normalizeNameForCompare(selectedValue));
+      options.unshift(selectedValue);
+    }
+    return [
+      '<option value="">Seleccionar transportista</option>',
+      ...options.map((name) => `<option value="${escapeHtml(name)}" ${normalizeNameForCompare(name) === normalizeNameForCompare(selectedValue) ? 'selected' : ''}>${escapeHtml(name)}</option>`)
+    ].join('');
+  }
+
   function renderLogisticaVentaBlock(record) {
     const requiereEnvio = Boolean(record?.requiereEnvio);
     const logistica = normalizeLogisticaVentaRecord(record?.logistica || {});
@@ -23301,7 +23328,9 @@ Notas importantes:
           <div class="form-grid logistica-grid">
             <label class="form-field">
               <span>Transportista</span>
-              <input type="text" name="logisticaTransportista" value="${escapeHtml(logistica.transportista)}" placeholder="Ej. CARGOTRANS" autocomplete="off" />
+              <select name="logisticaTransportista">
+                ${renderTransportistaVentaOptions(logistica.transportista)}
+              </select>
             </label>
             <label class="form-field">
               <span>Fecha de embarque</span>
@@ -30857,7 +30886,9 @@ Notas importantes:
     const loadedAt = nowIso();
     const currentConfig = normalizeConfiguracion(appData.configuracion);
     const currentMetadata = isPlainObject(appData.metadata) ? { ...appData.metadata } : {};
+    const currentTransportes = getCatalogRecords('transportes').map((record) => normalizeCatalogRecord(record, CATALOGS.find((catalog) => catalog.id === 'transportes')));
     const incoming = normalizeData(importData);
+    if (importData.__transportesOmitted === true) incoming.transportes = currentTransportes;
     const incomingNotas = getNotasBackupFromSource(importData) || createInitialNotasData();
     const incomingFacturas = getFacturasBackupFromSource(importData) || createInitialFacturasData();
     const incomingSeguimiento = getSeguimientoBackupFromSource(importData) || createInitialSeguimientoData();
@@ -31122,10 +31153,14 @@ Notas importantes:
     const notasBackup = getNotasBackupFromSource(data);
     const facturasBackup = getFacturasBackupFromSource(data);
     const seguimientoBackup = getSeguimientoBackupFromSource(data);
-    const requiredKeys = [...CATALOGS.map((catalog) => catalog.id), 'ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'cierresMensuales'];
+    const requiredKeys = [...CATALOGS.filter((catalog) => catalog.id !== 'transportes').map((catalog) => catalog.id), 'ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'cierresMensuales'];
     const missingRequiredKeys = requiredKeys.filter((key) => !Array.isArray(data[key]));
     const rawRecordsSource = isPlainObject(raw?.registros) ? raw.registros : raw;
     const rawCatalogsSource = isPlainObject(rawRecordsSource?.catalogos) ? rawRecordsSource.catalogos : {};
+    const transportesPresentInBackup = Array.isArray(rawCatalogsSource?.transportes)
+      || Array.isArray(rawRecordsSource?.transportes)
+      || Array.isArray(raw?.transportes);
+    if (!transportesPresentInBackup) warnings.push('Respaldo anterior sin Catálogo Transporte: se importará sin borrar el catálogo Transporte actual.');
     const businessArrayAliases = [
       ...CATALOGS.map((catalog) => catalog.id),
       'ventas', 'cobros', 'comprasProveedores', 'proveedoresCompras', 'compras',
@@ -31147,6 +31182,7 @@ Notas importantes:
       facturasModulo: facturasBackup || getFacturasBackupFromSource(data),
       seguimiento: seguimientoBackup || getSeguimientoBackupFromSource(data),
       __partialImport: isModulePartialBackup,
+      __transportesOmitted: !transportesPresentInBackup,
       __partialModules: isModulePartialBackup ? { notasModulo: Boolean(notasBackup), facturasModulo: Boolean(facturasBackup), seguimiento: Boolean(seguimientoBackup) } : {},
       configuracion: data.configuracion || {},
       metadata: {
@@ -31161,6 +31197,7 @@ Notas importantes:
       if (facturasBackup) normalized.facturasModulo = facturasBackup;
       if (seguimientoBackup) normalized.seguimiento = seguimientoBackup;
       normalized.__partialImport = isModulePartialBackup;
+      normalized.__transportesOmitted = !transportesPresentInBackup;
       normalized.__partialModules = isModulePartialBackup ? { notasModulo: Boolean(notasBackup), facturasModulo: Boolean(facturasBackup), seguimiento: Boolean(seguimientoBackup) } : {};
     }
     const counts = getJsonRecordCounts(data, activityLog);
@@ -31212,6 +31249,7 @@ Notas importantes:
           cuentasBancos: Array.isArray(catalogos.cuentasBancos) ? catalogos.cuentasBancos : registros.cuentasBancos,
           retenciones: Array.isArray(catalogos.retenciones) ? catalogos.retenciones : (Array.isArray(registros.retenciones) ? registros.retenciones : []),
           categoriasCasa: Array.isArray(catalogos.categoriasCasa) ? catalogos.categoriasCasa : (Array.isArray(registros.categoriasCasa) ? registros.categoriasCasa : []),
+          transportes: Array.isArray(catalogos.transportes) ? catalogos.transportes : (Array.isArray(registros.transportes) ? registros.transportes : []),
           ventas: registros.ventas,
           cobros: registros.cobros,
           comprasProveedores: registros.comprasProveedores || registros.proveedoresCompras || registros.compras || [],
@@ -31245,6 +31283,7 @@ Notas importantes:
         cuentasBancos: raw.cuentasBancos,
         retenciones: Array.isArray(raw.retenciones) ? raw.retenciones : [],
         categoriasCasa: Array.isArray(raw.categoriasCasa) ? raw.categoriasCasa : [],
+        transportes: Array.isArray(raw.transportes) ? raw.transportes : [],
         ventas: raw.ventas,
         cobros: raw.cobros,
         comprasProveedores: raw.comprasProveedores,
@@ -31396,8 +31435,12 @@ Notas importantes:
     }
     if (mode === 'replace') {
       const activeRole = getCurrentRole();
+      const transportesToKeep = incoming.__transportesOmitted === true
+        ? getCatalogRecords('transportes').map((record) => normalizeCatalogRecord(record, CATALOGS.find((catalog) => catalog.id === 'transportes')))
+        : incoming.transportes;
       appData = normalizeData({
         ...incoming,
+        transportes: transportesToKeep,
         configuracion: {
           ...incoming.configuracion,
           currentRole: activeRole,
@@ -34036,7 +34079,7 @@ ${rowsXml}
       const row = (sheet.rows || []).find((item) => item.some((value) => cleanText(value))) || [];
       headers.push({ sheet: sheet.name, headers: row.map((value) => cleanText(value)).filter(Boolean) });
     });
-    const catalogCount = CATALOGS.reduce((sum, catalog) => sum + payload[catalog.id].length, 0);
+    const catalogCount = CATALOGS.filter((catalog) => catalog.exportExcel !== false).reduce((sum, catalog) => sum + (Array.isArray(payload[catalog.id]) ? payload[catalog.id].length : 0), 0);
     const sheets = workbook.meta.map((item) => ({ name: item.name, rows: item.rows }));
     const counts = {
       ventas: payload.ventas.length,
@@ -34093,12 +34136,16 @@ ${rowsXml}
 
   function applyExcelImportPayload(payload, mode) {
     const target = mode === 'replace' ? createInitialData() : normalizeData(appData);
+    if (mode === 'replace') {
+      const transportCatalog = CATALOGS.find((catalog) => catalog.id === 'transportes');
+      target.transportes = getCatalogRecords('transportes').map((record) => normalizeCatalogRecord(record, transportCatalog));
+    }
     const timestamp = nowIso();
     const idMaps = {};
     const added = { ventas: 0, proveedores: 0, gastos: 0, catalogos: 0 };
-    CATALOGS.forEach((catalog) => {
+    CATALOGS.filter((catalog) => catalog.exportExcel !== false).forEach((catalog) => {
       idMaps[catalog.id] = new Map();
-      payload[catalog.id].forEach((record) => {
+      (Array.isArray(payload[catalog.id]) ? payload[catalog.id] : []).forEach((record) => {
         const existing = (target[catalog.id] || []).find((item) => catalogRecordsMatchForMerge(catalog.id, item, record));
         if (existing) {
           idMaps[catalog.id].set(record.id, existing.id);
