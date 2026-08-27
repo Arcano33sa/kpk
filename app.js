@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.79-fecha-registro-hardening';
+  const APP_VERSION = '0.18.80-fecha-registro-orden-oc';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -23618,7 +23618,13 @@ Notas importantes:
     return [...(Array.isArray(appData.ventas) ? appData.ventas : [])]
       .map((record) => normalizeVentaRecord(record))
       .filter((record) => options.workPeriod === false || !periodo || isVentaInWorkPeriod(record, periodo))
-      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      .sort((a, b) => {
+        const fechaDiff = String(getVentaFechaRegistro(b)).localeCompare(String(getVentaFechaRegistro(a)));
+        if (fechaDiff) return fechaDiff;
+        const createdDiff = String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+        if (createdDiff) return createdDiff;
+        return String(b.id || '').localeCompare(String(a.id || ''));
+      });
   }
 
   function getVentasTotals(recordsSource = null) {
