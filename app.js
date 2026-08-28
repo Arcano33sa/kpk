@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.83-cobros-pagos-tablas-hardening';
+  const APP_VERSION = '0.18.85-cobros-pagos-seleccion-hardening-final';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -12179,6 +12179,12 @@ Notas importantes:
     }
     if (previousRoute === 'ventas' && route !== 'ventas') {
       resetVentasTransientState();
+    }
+    if (previousRoute === 'cobros' && route !== 'cobros') {
+      resetCobrosSelectionVisualState();
+    }
+    if (previousRoute === 'pagos' && route !== 'pagos') {
+      resetPagosSelectionVisualState();
     }
     if (previousRoute === 'facturas' && route !== 'facturas') {
       resetFacturasTransientState();
@@ -24781,6 +24787,7 @@ Notas importantes:
         <th>Sucursal</th>
         <th>Facturas relacionadas</th>
         <th class="amount-cell">Monto</th>
+        <th class="selection-cell" aria-label="Selección"></th>
         <th class="actions-cell">Acciones</th>
       `,
       rows: ventas.map((venta) => {
@@ -24797,6 +24804,9 @@ Notas importantes:
             <td data-label="Sucursal"><span title="${escapeHtml(sucursal?.nombre || record.sucursalNombre || 'Sin sucursal')}">${escapeHtml(sucursal?.nombre || record.sucursalNombre || '—')}</span></td>
             <td data-label="Facturas relacionadas"><span title="${escapeHtml(facturas)}">${escapeHtml(facturas)}</span></td>
             <td data-label="Monto" class="amount-cell"><span class="compact-primary" title="${escapeHtml(formatMoney(record.ventaNetaAjustada))}">${escapeHtml(formatMoney(record.ventaNetaAjustada))}</span></td>
+            <td class="selection-cell" aria-label="${isSelected ? 'Seleccionado para cobrar' : 'No seleccionado'}">
+              <span class="selection-indicator${isSelected ? ' is-selected' : ''}" aria-hidden="true">${isSelected ? '✓' : ''}</span>
+            </td>
             <td data-label="Acciones" class="actions-cell">
               <div class="record-actions compact-row-actions">
                 <button type="button" class="card-action compact" data-cobro-pick-venta="${escapeHtml(record.id)}" title="Cobrar esta OC" aria-label="Cobrar OC ${escapeHtml(record.numeroDocumento || 'sin número')}">Cobrar</button>
@@ -24813,6 +24823,7 @@ Notas importantes:
         <col style="width: 170px;">
         <col style="width: 250px;">
         <col style="width: 125px;">
+        <col style="width: 42px;">
         <col style="width: 180px;">
       `
     });
@@ -25529,8 +25540,14 @@ Notas importantes:
     renderRoute();
   }
 
+  function resetCobrosSelectionVisualState() {
+    cobrosState.selectedVentaId = '';
+    cobrosState.facturaReferida = '';
+  }
+
   function clearCobroForm() {
     cobrosState.editingId = null;
+    resetCobrosSelectionVisualState();
     cobrosState.message = null;
     renderRoute();
   }
@@ -27152,6 +27169,7 @@ Notas importantes:
         <th>Proveedor</th>
         <th>Facturas relacionadas</th>
         <th class="amount-cell">Monto</th>
+        <th class="selection-cell" aria-label="Selección"></th>
         <th class="actions-cell">Acciones</th>
       `,
       rows: compras.map((compra) => {
@@ -27168,6 +27186,9 @@ Notas importantes:
             <td data-label="Proveedor"><span title="${escapeHtml(proveedorNombre)}">${escapeHtml(proveedorNombre)}</span></td>
             <td data-label="Facturas relacionadas"><span title="${escapeHtml(facturas)}">${escapeHtml(facturas)}</span></td>
             <td data-label="Monto" class="amount-cell"><span class="compact-primary" title="${escapeHtml(formatMoney(montoVigente))}">${escapeHtml(formatMoney(montoVigente))}</span></td>
+            <td class="selection-cell" aria-label="${isSelected ? 'Seleccionado para pagar' : 'No seleccionado'}">
+              <span class="selection-indicator${isSelected ? ' is-selected' : ''}" aria-hidden="true">${isSelected ? '✓' : ''}</span>
+            </td>
             <td data-label="Acciones" class="actions-cell">
               <div class="record-actions compact-row-actions">
                 <button type="button" class="card-action compact" data-pago-pick-compra="${escapeHtml(record.id)}" title="Pagar esta compra/deuda" aria-label="Pagar compra o deuda ${escapeHtml(facturas)}"><span aria-hidden="true">✓</span> Pagar</button>
@@ -27182,6 +27203,7 @@ Notas importantes:
         <col style="width: 230px;">
         <col style="width: 360px;">
         <col style="width: 135px;">
+        <col style="width: 42px;">
         <col style="width: 190px;">
       `
     });
@@ -27512,8 +27534,7 @@ Notas importantes:
       pagosState.message = `Pago aplicado a ${newRecord.facturaReferencia}: ${formatMoney(newRecord.montoPagado)}.`;
     }
 
-    const compra = appData.comprasProveedores.find((record) => record.id === newRecord.compraProveedorId);
-    pagosState.selectedCompraId = compra?.saldoPorPagar > 0 ? newRecord.compraProveedorId : '';
+    pagosState.selectedCompraId = '';
     pagosState.focusCompraId = newRecord.compraProveedorId;
     openAccordionGroupForRecord('pagos', newRecord);
     pagosState.editingId = null;
@@ -27559,8 +27580,13 @@ Notas importantes:
     renderRoute();
   }
 
+  function resetPagosSelectionVisualState() {
+    pagosState.selectedCompraId = '';
+  }
+
   function clearPagoProveedorForm() {
     pagosState.editingId = null;
+    resetPagosSelectionVisualState();
     pagosState.message = null;
     renderRoute();
   }

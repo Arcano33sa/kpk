@@ -14132,10 +14132,6 @@ input[type="number"]::-webkit-inner-spin-button {
   flex-wrap: nowrap;
 }
 
-.cobros-pending-row.is-selected {
-  background: rgba(185, 135, 43, 0.12);
-  box-shadow: inset 3px 0 0 rgba(185, 135, 43, 0.72);
-}
 
 .cobros-pending-empty {
   margin: 0.45rem 0 0.9rem;
@@ -14187,10 +14183,6 @@ input[type="number"]::-webkit-inner-spin-button {
   flex-wrap: nowrap;
 }
 
-.pagos-pending-row.is-selected {
-  background: rgba(185, 135, 43, 0.12);
-  box-shadow: inset 3px 0 0 rgba(185, 135, 43, 0.72);
-}
 
 .pagos-pending-empty,
 .pagos-pending-selection-empty {
@@ -14207,4 +14199,75 @@ input[type="number"]::-webkit-inner-spin-button {
     padding-top: 6px;
     padding-bottom: 6px;
   }
+}
+
+/* Cobros y Pagos — Indicador visual de selección — Etapa 2/2 · Hardening final */
+.cobros-pending-table,
+.pagos-pending-table {
+  --pending-selection-blue: #2563eb;
+}
+
+.cobros-pending-table {
+  min-width: 1231px;
+}
+
+.pagos-pending-table {
+  min-width: 1069px;
+}
+
+.cobros-pending-table .selection-cell,
+.pagos-pending-table .selection-cell {
+  width: 42px;
+  min-width: 42px;
+  max-width: 42px;
+  padding-left: 5px;
+  padding-right: 5px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.selection-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 19px;
+  height: 19px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  color: transparent;
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1;
+  vertical-align: middle;
+  pointer-events: none;
+  user-select: none;
+}
+
+.selection-indicator.is-selected {
+  border-color: var(--pending-selection-blue);
+  color: var(--pending-selection-blue);
+}
+
+.cobros-pending-row.is-selected,
+.pagos-pending-row.is-selected {
+  box-shadow: none;
+}
+
+.cobros-pending-row.is-selected > td:first-child,
+.pagos-pending-row.is-selected > td:first-child {
+  position: relative;
+}
+
+.cobros-pending-row.is-selected > td:first-child::before,
+.pagos-pending-row.is-selected > td:first-child::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--pending-selection-blue);
+  pointer-events: none;
 }
