@@ -14094,3 +14094,117 @@ input[type="number"]::-webkit-inner-spin-button {
     font-size: 0.72rem;
   }
 }
+
+
+/* Cobros y Pagos en tablas operativas — Etapa 1/2: selector de Cobros reemplazado por tabla */
+.cobros-pending-scroll-shell {
+  margin: 0.45rem 0 0.9rem;
+}
+
+.cobros-pending-table {
+  min-width: 1189px;
+}
+
+.cobros-pending-table th,
+.cobros-pending-table td {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.cobros-pending-table :where(
+  td[data-label="OC"] > span,
+  td[data-label="Registro"] > span,
+  td[data-label="Cliente"] > span,
+  td[data-label="Sucursal"] > span,
+  td[data-label="Facturas relacionadas"] > span,
+  td[data-label="Monto"] > span
+) {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+
+.cobros-pending-table .actions-cell {
+  white-space: nowrap;
+}
+
+.cobros-pending-table .compact-row-actions {
+  flex-wrap: nowrap;
+}
+
+.cobros-pending-row.is-selected {
+  background: rgba(185, 135, 43, 0.12);
+  box-shadow: inset 3px 0 0 rgba(185, 135, 43, 0.72);
+}
+
+.cobros-pending-empty {
+  margin: 0.45rem 0 0.9rem;
+}
+
+@media (max-width: 760px) {
+  .cobros-pending-scroll-shell {
+    margin-bottom: 0.75rem;
+  }
+
+  .cobros-pending-table th,
+  .cobros-pending-table td {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+}
+
+
+/* Cobros y Pagos en tablas operativas — Etapa 2/2: Pagos + hardening final */
+.pagos-pending-scroll-shell {
+  margin: 0.45rem 0 0.9rem;
+}
+
+.pagos-pending-table {
+  min-width: 1027px;
+}
+
+.pagos-pending-table th,
+.pagos-pending-table td {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.pagos-pending-table :where(
+  td[data-label="Registro"] > span,
+  td[data-label="Proveedor"] > span,
+  td[data-label="Facturas relacionadas"] > span,
+  td[data-label="Monto"] > span
+) {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.pagos-pending-table .actions-cell {
+  white-space: nowrap;
+}
+
+.pagos-pending-table .compact-row-actions {
+  flex-wrap: nowrap;
+}
+
+.pagos-pending-row.is-selected {
+  background: rgba(185, 135, 43, 0.12);
+  box-shadow: inset 3px 0 0 rgba(185, 135, 43, 0.72);
+}
+
+.pagos-pending-empty,
+.pagos-pending-selection-empty {
+  margin: 0.45rem 0 0.9rem;
+}
+
+@media (max-width: 760px) {
+  .pagos-pending-scroll-shell {
+    margin-bottom: 0.75rem;
+  }
+
+  .pagos-pending-table th,
+  .pagos-pending-table td {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+}

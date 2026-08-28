@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_81_notas_orden_limpiar_libros';
+const CACHE_VERSION = 'v0_18_83_cobros_pagos_tablas_hardening';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.81-notas-orden-limpiar-libros';
+  const APP_VERSION = '0.18.83-cobros-pagos-tablas-hardening';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -24505,7 +24505,8 @@ Notas importantes:
                 <h2>Registrar cobro</h2>
               </div>
             </div>
-            <p class="muted-text">Solo aparecen OC activas con saldo por cobrar mayor que cero.</p>
+            <p class="muted-text">Solo aparecen OC activas con saldo por cobrar mayor que cero. La más reciente por Fecha de Registro aparece arriba.</p>
+            ${renderCobrosPendingVentasTable(ventasDisponibles)}
             ${renderCobroForm(selectedVenta, ventasDisponibles, metodosActivos, cuentasActivas, cannotCreate)}
           </article>
 
@@ -24758,6 +24759,65 @@ Notas importantes:
     `;
   }
 
+  function renderCobrosPendingVentasTable(ventasDisponibles) {
+    const ventas = Array.isArray(ventasDisponibles) ? ventasDisponibles : [];
+    if (!ventas.length) {
+      return `
+        <div class="compact-empty-state cobros-pending-empty" role="status">
+          No hay OC con saldo pendiente por cobrar en el período de trabajo.
+        </div>
+      `;
+    }
+
+    return renderOperationalTableShell({
+      shellClass: 'cobros-pending-scroll-shell',
+      wrapClass: 'cobros-pending-table-wrap compact-table-wrap',
+      ariaLabel: 'OC pendientes disponibles para cobrar',
+      tableClass: 'cobros-pending-table compact-operational-table',
+      headers: `
+        <th>OC</th>
+        <th>Registro</th>
+        <th>Cliente</th>
+        <th>Sucursal</th>
+        <th>Facturas relacionadas</th>
+        <th class="amount-cell">Monto</th>
+        <th class="actions-cell">Acciones</th>
+      `,
+      rows: ventas.map((venta) => {
+        const record = normalizeVentaRecord(venta);
+        const cliente = getCatalogRecordById('clientes', record.clienteId);
+        const sucursal = getCatalogRecordById('sucursales', record.sucursalId);
+        const facturas = formatFacturasVentaResumen(record.facturas);
+        const isSelected = record.id === cobrosState.selectedVentaId;
+        return `
+          <tr class="compact-record-row cobros-pending-row${isSelected ? ' is-selected' : ''}">
+            <td data-label="OC"><span class="compact-primary" title="${escapeHtml(record.numeroDocumento || 'Sin número')}">${escapeHtml(record.numeroDocumento || 'Sin número')}</span></td>
+            <td data-label="Registro"><span title="${escapeHtml(formatDate(getVentaFechaRegistro(record)))}">${escapeHtml(formatDate(getVentaFechaRegistro(record)))}</span></td>
+            <td data-label="Cliente"><span title="${escapeHtml(cliente?.nombre || record.clienteNombre || 'Cliente no encontrado')}">${escapeHtml(cliente?.nombre || record.clienteNombre || 'Cliente no encontrado')}</span></td>
+            <td data-label="Sucursal"><span title="${escapeHtml(sucursal?.nombre || record.sucursalNombre || 'Sin sucursal')}">${escapeHtml(sucursal?.nombre || record.sucursalNombre || '—')}</span></td>
+            <td data-label="Facturas relacionadas"><span title="${escapeHtml(facturas)}">${escapeHtml(facturas)}</span></td>
+            <td data-label="Monto" class="amount-cell"><span class="compact-primary" title="${escapeHtml(formatMoney(record.ventaNetaAjustada))}">${escapeHtml(formatMoney(record.ventaNetaAjustada))}</span></td>
+            <td data-label="Acciones" class="actions-cell">
+              <div class="record-actions compact-row-actions">
+                <button type="button" class="card-action compact" data-cobro-pick-venta="${escapeHtml(record.id)}" title="Cobrar esta OC" aria-label="Cobrar OC ${escapeHtml(record.numeroDocumento || 'sin número')}">Cobrar</button>
+                <button type="button" class="secondary-action compact" data-cobro-edit-venta="${escapeHtml(record.id)}" title="Editar Venta / OC" aria-label="Editar OC ${escapeHtml(record.numeroDocumento || 'sin número')}">Editar</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join(''),
+      colgroup: `
+        <col style="width: 150px;">
+        <col style="width: 104px;">
+        <col style="width: 210px;">
+        <col style="width: 170px;">
+        <col style="width: 250px;">
+        <col style="width: 125px;">
+        <col style="width: 180px;">
+      `
+    });
+  }
+
   function renderCobroForm(selectedVenta, ventasDisponibles, metodosActivos, cuentasActivas, cannotCreate) {
     const cliente = selectedVenta ? getCatalogRecordById('clientes', selectedVenta.clienteId) : null;
     const sucursal = selectedVenta ? getCatalogRecordById('sucursales', selectedVenta.sucursalId) : null;
@@ -24768,19 +24828,8 @@ Notas importantes:
     return `
       <form class="cobro-form" data-cobro-form novalidate>
         <input type="hidden" name="facturaReferida" value="${escapeHtml(facturaReferida)}" />
+        <input type="hidden" name="ventaId" value="${escapeHtml(selectedVenta?.id || '')}" />
         <div class="form-grid">
-          ${renderCobroOcFacturaSearchPanel(ventasDisponibles)}
-          <label class="form-field full-span">
-            <span>OC / Factura <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <select name="ventaId" required data-cobro-venta ${!ventasDisponibles.length ? 'disabled' : ''}>
-              <option value="" ${selectedVenta ? '' : 'selected'}>${ventasDisponibles.length ? 'Ninguna' : 'No hay OC con saldo'}</option>
-              ${ventasDisponibles.map((venta) => {
-                const ventaCliente = getCatalogRecordById('clientes', venta.clienteId);
-                const ventaSucursal = getCatalogRecordById('sucursales', venta.sucursalId);
-                return `<option value="${escapeHtml(venta.id)}" ${venta.id === selectedVenta?.id ? 'selected' : ''}>${escapeHtml(venta.numeroDocumento || 'Sin número')} · ${escapeHtml(ventaCliente?.nombre || 'Cliente')} · ${escapeHtml(ventaSucursal?.nombre || 'Sin sucursal')} · saldo ${escapeHtml(formatMoney(venta.saldoPorCobrar))}</option>`;
-              }).join('')}
-            </select>
-          </label>
           <label class="form-field">
             <span>Fecha real de cobro <span class="required-dot" aria-label="obligatorio">*</span></span>
             <input type="date" name="fechaCobro" value="${escapeHtml(todayInputValue())}" required ${cannotCreate ? 'disabled' : ''} />
@@ -25260,7 +25309,7 @@ Notas importantes:
       .map((record) => normalizeVentaRecord(record))
       .filter((venta) => venta.activo && venta.saldoPorCobrar > 0)
       .filter((venta) => options.workPeriod === false || !periodo || isVentaInWorkPeriod(venta, periodo))
-      .sort((a, b) => String(a.fechaVencimiento || '').localeCompare(String(b.fechaVencimiento || '')) || String(b.createdAt).localeCompare(String(a.createdAt)));
+      .sort((a, b) => String(getVentaFechaRegistro(b) || '').localeCompare(String(getVentaFechaRegistro(a) || '')) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
   }
 
   function getCobrosTotals(recordsSource = null, ventasSource = null) {
@@ -25521,6 +25570,22 @@ Notas importantes:
       const totalCobrado = calculateTotalCobradoForVenta(record.id, appData.cobros);
       return normalizeVentaRecord({ ...record, totalCobrado, updatedAt: nowIso() });
     });
+  }
+
+  function editVentaFromCobros(ventaId) {
+    const cleanVentaId = cleanText(ventaId);
+    const record = (Array.isArray(appData.ventas) ? appData.ventas : []).find((item) => item.id === cleanVentaId);
+    if (!record) {
+      cobrosState.message = 'No se encontró la Venta / OC seleccionada para editar.';
+      cobrosState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+    ventasState.editingId = cleanVentaId;
+    ventasState.quickCapture = null;
+    ventasState.selectedAjusteVentaId = '';
+    ventasState.message = null;
+    setRoute('ventas');
   }
 
   function selectCobroVenta(ventaId, options = {}) {
@@ -26970,8 +27035,12 @@ Notas importantes:
     const visiblePagos = pagosState.focusCompraId ? pagos.filter((pago) => pago.compraProveedorId === pagosState.focusCompraId) : pagos;
     const focusCompra = pagosState.focusCompraId ? normalizeCompraProveedorRecord(appData.comprasProveedores.find((compra) => compra.id === pagosState.focusCompraId)) : null;
     const totals = getPagosProveedoresTotals();
-    const selectedCompra = comprasDisponibles.find((compra) => compra.id === pagosState.selectedCompraId) || comprasDisponibles[0] || null;
-    if (selectedCompra && pagosState.selectedCompraId !== selectedCompra.id) pagosState.selectedCompraId = selectedCompra.id;
+    const selectedCompra = pagosState.selectedCompraId
+      ? (comprasDisponibles.find((compra) => compra.id === pagosState.selectedCompraId) || null)
+      : null;
+    if (pagosState.selectedCompraId && !selectedCompra) {
+      pagosState.selectedCompraId = '';
+    }
     const editingRecord = pagosState.editingId ? getPagosProveedoresOrdenados().find((record) => record.id === pagosState.editingId) : null;
     const modalMetodos = editingRecord ? getSelectableCatalogRecords('metodosPago', editingRecord.metodoPagoId) : metodosActivos;
     const modalCuentas = editingRecord ? getSelectableBankRecords(editingRecord.cuentaBancoId) : cuentasActivas;
@@ -27020,7 +27089,8 @@ Notas importantes:
                 <h2>Registrar pago</h2>
               </div>
             </div>
-            <p class="muted-text">Solo aparecen compras/deudas activas con saldo por pagar mayor que cero.</p>
+            <p class="muted-text">Solo aparecen compras/deudas activas con saldo por pagar mayor que cero. La más reciente por Fecha de Registro aparece arriba.</p>
+            ${renderPagosPendingComprasTable(comprasDisponibles)}
             ${renderPagoProveedorForm(selectedCompra, comprasDisponibles, metodosActivos, cuentasActivas, cannotCreate)}
           </article>
 
@@ -27062,23 +27132,69 @@ Notas importantes:
     `;
   }
 
+  function renderPagosPendingComprasTable(comprasDisponibles) {
+    const compras = Array.isArray(comprasDisponibles) ? comprasDisponibles : [];
+    if (!compras.length) {
+      return `
+        <div class="compact-empty-state pagos-pending-empty" role="status">
+          No hay compras/deudas con saldo pendiente por pagar en el período de trabajo.
+        </div>
+      `;
+    }
+
+    return renderOperationalTableShell({
+      shellClass: 'pagos-pending-scroll-shell',
+      wrapClass: 'pagos-pending-table-wrap compact-table-wrap',
+      ariaLabel: 'Compras o deudas pendientes disponibles para pagar',
+      tableClass: 'pagos-pending-table compact-operational-table',
+      headers: `
+        <th>Registro</th>
+        <th>Proveedor</th>
+        <th>Facturas relacionadas</th>
+        <th class="amount-cell">Monto</th>
+        <th class="actions-cell">Acciones</th>
+      `,
+      rows: compras.map((compra) => {
+        const record = normalizeCompraProveedorRecord(compra);
+        const proveedor = getCatalogRecordById('proveedores', record.proveedorId);
+        const proveedorNombre = proveedor?.nombre || record.proveedorNombre || 'Proveedor no encontrado';
+        const facturas = getCompraProveedorReferenciaDocumental(record);
+        const fechaRegistro = formatDate(record.fechaCompra);
+        const montoVigente = record.totalAjustado;
+        const isSelected = record.id === pagosState.selectedCompraId;
+        return `
+          <tr class="compact-record-row pagos-pending-row${isSelected ? ' is-selected' : ''}">
+            <td data-label="Registro"><span title="${escapeHtml(fechaRegistro)}">${escapeHtml(fechaRegistro)}</span></td>
+            <td data-label="Proveedor"><span title="${escapeHtml(proveedorNombre)}">${escapeHtml(proveedorNombre)}</span></td>
+            <td data-label="Facturas relacionadas"><span title="${escapeHtml(facturas)}">${escapeHtml(facturas)}</span></td>
+            <td data-label="Monto" class="amount-cell"><span class="compact-primary" title="${escapeHtml(formatMoney(montoVigente))}">${escapeHtml(formatMoney(montoVigente))}</span></td>
+            <td data-label="Acciones" class="actions-cell">
+              <div class="record-actions compact-row-actions">
+                <button type="button" class="card-action compact" data-pago-pick-compra="${escapeHtml(record.id)}" title="Pagar esta compra/deuda" aria-label="Pagar compra o deuda ${escapeHtml(facturas)}"><span aria-hidden="true">✓</span> Pagar</button>
+                <button type="button" class="secondary-action compact" data-pago-edit-compra="${escapeHtml(record.id)}" title="Editar compra/deuda en Proveedores / Compras" aria-label="Editar compra o deuda ${escapeHtml(facturas)}"><span aria-hidden="true">✎</span> Editar</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join(''),
+      colgroup: `
+        <col style="width: 112px;">
+        <col style="width: 230px;">
+        <col style="width: 360px;">
+        <col style="width: 135px;">
+        <col style="width: 190px;">
+      `
+    });
+  }
+
   function renderPagoProveedorForm(selectedCompra, comprasDisponibles, metodosActivos, cuentasActivas, cannotCreate) {
     const proveedor = selectedCompra ? getCatalogRecordById('proveedores', selectedCompra.proveedorId) : null;
     const saldo = selectedCompra ? selectedCompra.saldoPorPagar : 0;
 
     return `
       <form class="pago-form" data-pago-form novalidate>
+        <input type="hidden" name="compraProveedorId" value="${escapeHtml(selectedCompra?.id || '')}" />
         <div class="form-grid">
-          <label class="form-field full-span">
-            <span>Compra / facturas <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <select name="compraProveedorId" required data-pago-compra ${!comprasDisponibles.length ? 'disabled' : ''}>
-              ${comprasDisponibles.length ? '' : '<option value="">No hay facturas con saldo</option>'}
-              ${comprasDisponibles.map((compra) => {
-                const compraProveedor = getCatalogRecordById('proveedores', compra.proveedorId);
-                return `<option value="${escapeHtml(compra.id)}" ${compra.id === selectedCompra?.id ? 'selected' : ''}>${escapeHtml(getCompraProveedorReferenciaCompacta(compra))} · ${escapeHtml(compraProveedor?.nombre || compra.proveedorNombre || 'Proveedor')} · saldo ${escapeHtml(formatMoney(compra.saldoPorPagar))}</option>`;
-              }).join('')}
-            </select>
-          </label>
           <label class="form-field">
             <span>Fecha real de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
             <input type="date" name="fechaPago" value="${escapeHtml(todayInputValue())}" required ${cannotCreate ? 'disabled' : ''} />
@@ -27097,7 +27213,11 @@ Notas importantes:
           ${renderPaymentBankField(cuentasActivas, null, cannotCreate)}
         </div>
 
-        ${selectedCompra ? renderSelectedCompraPagoSummary(selectedCompra, proveedor) : ''}
+        ${selectedCompra ? renderSelectedCompraPagoSummary(selectedCompra, proveedor) : `
+          <div class="compact-empty-state pagos-pending-selection-empty" role="status">
+            Selecciona <strong>Pagar</strong> en una compra/deuda pendiente para cargar el formulario.
+          </div>
+        `}
 
         <label class="form-field">
           <span>Observación</span>
@@ -27271,7 +27391,7 @@ Notas importantes:
       .map((record) => normalizeCompraProveedorRecord(record))
       .filter((compra) => compra.activo && compra.saldoPorPagar > 0)
       .filter((compra) => options.workPeriod === false || !periodo || isCompraInWorkPeriod(compra, periodo))
-      .sort((a, b) => String(a.fechaVencimiento || '').localeCompare(String(b.fechaVencimiento || '')) || String(b.createdAt).localeCompare(String(a.createdAt)));
+      .sort((a, b) => String(b.fechaCompra || '').localeCompare(String(a.fechaCompra || '')) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
   }
 
   function getPagosProveedoresTotals(recordsSource = null, comprasSource = null) {
@@ -27484,6 +27604,23 @@ Notas importantes:
       const totalPagado = calculateTotalPagadoForCompra(record.id, appData.pagosProveedores);
       return normalizeCompraProveedorRecord({ ...record, totalPagado, updatedAt: nowIso() });
     });
+  }
+
+  function editCompraFromPagos(compraProveedorId) {
+    const cleanCompraId = cleanText(compraProveedorId);
+    const record = (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : []).find((item) => item.id === cleanCompraId);
+    if (!record) {
+      pagosState.message = 'No se encontró la compra/deuda seleccionada para editar.';
+      pagosState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+    proveedoresState.editingId = cleanCompraId;
+    proveedoresState.quickCapture = null;
+    proveedoresState.selectedAjusteCompraId = '';
+    openAccordionGroupForRecord('compras', record);
+    proveedoresState.message = null;
+    setRoute('proveedores');
   }
 
   function selectPagoCompra(compraProveedorId) {
@@ -35294,7 +35431,6 @@ ${rowsXml}
         event.preventDefault();
         saveCobroRecord(form);
       });
-      form.querySelector('[data-cobro-venta]')?.addEventListener('change', (event) => selectCobroVenta(event.target.value));
       form.querySelector('[data-cobro-oc-factura-run]')?.addEventListener('click', () => runCobroOcFacturaSearch(form));
       form.querySelector('[data-cobro-oc-factura-clear]')?.addEventListener('click', clearCobroOcFacturaSearch);
       form.querySelector('[data-cobro-oc-factura-search]')?.addEventListener('keydown', (event) => {
@@ -35308,6 +35444,14 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-cobro-select-result]').forEach((button) => {
       button.addEventListener('click', () => selectCobroVentaFromSearch(button.dataset.cobroSelectResult, button.dataset.cobroSelectFactura));
+    });
+
+    viewRoot.querySelectorAll('[data-cobro-pick-venta]').forEach((button) => {
+      button.addEventListener('click', () => selectCobroVenta(button.dataset.cobroPickVenta));
+    });
+
+    viewRoot.querySelectorAll('[data-cobro-edit-venta]').forEach((button) => {
+      button.addEventListener('click', () => editVentaFromCobros(button.dataset.cobroEditVenta));
     });
 
     viewRoot.querySelectorAll('[data-cobro-edit]').forEach((button) => {
@@ -35375,8 +35519,15 @@ ${rowsXml}
         event.preventDefault();
         savePagoProveedorRecord(form);
       });
-      form.querySelector('[data-pago-compra]')?.addEventListener('change', (event) => selectPagoCompra(event.target.value));
       form.querySelector('[data-pago-fill-full]')?.addEventListener('click', (event) => fillPagoFullAmount(form, event.currentTarget.dataset.pagoFillFull));
+    });
+
+    viewRoot.querySelectorAll('[data-pago-pick-compra]').forEach((button) => {
+      button.addEventListener('click', () => selectPagoCompra(button.dataset.pagoPickCompra));
+    });
+
+    viewRoot.querySelectorAll('[data-pago-edit-compra]').forEach((button) => {
+      button.addEventListener('click', () => editCompraFromPagos(button.dataset.pagoEditCompra));
     });
 
     viewRoot.querySelectorAll('[data-pago-edit]').forEach((button) => {
