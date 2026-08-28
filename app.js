@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.80-fecha-registro-orden-oc';
+  const APP_VERSION = '0.18.81-notas-orden-limpiar-libros';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -17103,7 +17103,7 @@ Notas importantes:
     const data = getNotasPendientesData();
     const records = data.registros
       .map(normalizeNotasPendienteOperativoRecord)
-      .sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+      .sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || String(b.id || '').localeCompare(String(a.id || '')));
     const editingRecord = notasState.editingOperationalPendingId
       ? getNotasPendienteOperativoById(notasState.editingOperationalPendingId, data)
       : null;
@@ -17399,22 +17399,33 @@ Notas importantes:
     const isOpen = notasState.openLoanBookIds.includes(libro.id);
     const saldo = getNotasPrestamoSaldo(libro);
     const count = libro.movimientos.length;
+    const canClear = count > 0;
+    const clearTitle = !canClear
+      ? 'Libro sin movimientos para limpiar'
+      : (roundMoney(saldo) === 0
+        ? 'Limpiar todos los movimientos del libro'
+        : `Solo se puede limpiar cuando el saldo sea ${formatNotasPrestamoMoney(0, libro.moneda)}`);
     return `
       <section class="notas-prestamo-book ${isOpen ? 'is-open' : ''}" data-notas-prestamo-book="${escapeHtml(libro.id)}">
-        <button type="button" class="notas-prestamo-book-toggle" data-notas-prestamo-toggle="${escapeHtml(libro.id)}" aria-expanded="${isOpen ? 'true' : 'false'}">
-          <span class="notas-prestamo-chevron" aria-hidden="true">${isOpen ? '▾' : '▸'}</span>
-          <span class="notas-prestamo-book-heading">
-            <strong>${escapeHtml(libro.deudor || '—')} → ${escapeHtml(libro.acreedor || '—')} · ${escapeHtml(getNotasPrestamoMonedaLabel(libro.moneda))}</strong>
-            <span>Saldo ${escapeHtml(formatNotasPrestamoMoney(saldo, libro.moneda))} · ${count} ${count === 1 ? 'movimiento' : 'movimientos'}</span>
-          </span>
-        </button>
+        <div class="notas-prestamo-book-header">
+          <button type="button" class="notas-prestamo-book-toggle" data-notas-prestamo-toggle="${escapeHtml(libro.id)}" aria-expanded="${isOpen ? 'true' : 'false'}">
+            <span class="notas-prestamo-chevron" aria-hidden="true">${isOpen ? '▾' : '▸'}</span>
+            <span class="notas-prestamo-book-heading">
+              <strong>${escapeHtml(libro.deudor || '—')} → ${escapeHtml(libro.acreedor || '—')} · ${escapeHtml(getNotasPrestamoMonedaLabel(libro.moneda))}</strong>
+              <span>Saldo ${escapeHtml(formatNotasPrestamoMoney(saldo, libro.moneda))} · ${count} ${count === 1 ? 'movimiento' : 'movimientos'}</span>
+            </span>
+          </button>
+          ${!isOpen ? `<button type="button" class="danger-action compact notas-prestamo-clear-book" data-notas-prestamo-clear-book="${escapeHtml(libro.id)}" title="${escapeHtml(clearTitle)}" aria-label="${escapeHtml(clearTitle)}" ${canClear ? '' : 'disabled'}>Limpiar</button>` : ''}
+        </div>
         ${isOpen ? renderNotasPrestamoLibroBody(libro) : ''}
       </section>
     `;
   }
 
   function renderNotasPrestamoLibroBody(libro) {
-    const ledger = getNotasPrestamoLedger(libro);
+    const ledger = getNotasPrestamoLedger(libro)
+      .slice()
+      .sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || String(b.id || '').localeCompare(String(a.id || '')));
     return `
       <div class="notas-prestamo-book-body">
         <div class="notas-prestamo-book-actions">
@@ -17661,6 +17672,46 @@ Notas importantes:
     notasState.message = null;
     renderRoute({ preserveScroll: true });
     showToast(existing ? 'Movimiento actualizado.' : 'Movimiento agregado.', 'success');
+  }
+
+  function clearNotasPrestamoLibro(bookId) {
+    const safeBookId = cleanText(bookId);
+    if (!safeBookId) return;
+    const data = getNotasPrestamosData();
+    const index = data.libros.findIndex((libro) => libro.id === safeBookId);
+    if (index < 0) {
+      showToast('No se encontró el libro de préstamo.', 'error');
+      return;
+    }
+    const libro = normalizeNotasPrestamoLibro(data.libros[index]);
+    const saldo = roundMoney(getNotasPrestamoSaldo(libro));
+    if (saldo !== 0) {
+      showToast(`No se puede limpiar este libro. El saldo debe ser ${formatNotasPrestamoMoney(0, libro.moneda)}.`, 'error');
+      return;
+    }
+    if (!libro.movimientos.length) {
+      showToast('Este libro no tiene movimientos para limpiar.', 'error');
+      return;
+    }
+    const confirmed = window.confirm(`¿Seguro que deseas limpiar todos los registros de este libro?\n\n${libro.deudor || '—'} → ${libro.acreedor || '—'} · ${getNotasPrestamoMonedaLabel(libro.moneda)}\n\nSe eliminarán todos sus movimientos. Esta acción no se puede deshacer.`);
+    if (!confirmed) return;
+
+    const deletedMovementIds = libro.movimientos.map((movimiento) => cleanText(movimiento.id)).filter(Boolean);
+    libro.movimientos = [];
+    libro.updatedAt = nowIso();
+    data.libros[index] = libro;
+    saveNotasPrestamosData(data);
+    deletedMovementIds.forEach((movementId) => {
+      registerSessionChange({ module: 'Notas Préstamos', operation: 'eliminar', recordId: movementId, relatedId: libro.id });
+    });
+    registerSessionChange({ module: 'Notas Préstamos', operation: 'editar', recordId: libro.id, sourceModule: 'Limpiar Libro' });
+    if (notasState.loanMovementBookId === libro.id) {
+      notasState.loanMovementBookId = '';
+      notasState.editingLoanMovementId = '';
+    }
+    notasState.message = null;
+    renderRoute({ preserveScroll: true });
+    showToast('Libro limpiado correctamente.', 'success');
   }
 
   function deleteNotasPrestamoMovimiento(bookId, movementId) {
@@ -35027,6 +35078,10 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-notas-prestamo-add-movement]').forEach((button) => {
       button.addEventListener('click', () => openNotasPrestamoMovimientoModal(button.dataset.notasPrestamoAddMovement));
+    });
+
+    viewRoot.querySelectorAll('[data-notas-prestamo-clear-book]').forEach((button) => {
+      button.addEventListener('click', () => clearNotasPrestamoLibro(button.dataset.notasPrestamoClearBook));
     });
 
     viewRoot.querySelectorAll('[data-notas-prestamo-edit-movement]').forEach((button) => {

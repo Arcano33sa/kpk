@@ -14052,3 +14052,45 @@ input[type="number"]::-webkit-inner-spin-button {
     text-overflow: clip;
   }
 }
+
+/* KSA PRÁCTIKA — Notas — orden reciente + limpiar libros con saldo cero */
+.notas-prestamo-book-header {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+.notas-prestamo-book-header .notas-prestamo-book-toggle {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.notas-prestamo-clear-book {
+  flex: 0 0 auto;
+  align-self: center;
+  min-height: 32px;
+  margin: 5px 8px 5px 0;
+  padding: 5px 10px;
+  font-size: 0.76rem;
+}
+
+.notas-prestamo-clear-book:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  transform: none;
+  box-shadow: none;
+}
+
+@media (max-width: 520px) {
+  .notas-prestamo-book-header {
+    align-items: center;
+  }
+
+  .notas-prestamo-clear-book {
+    min-height: 30px;
+    margin-right: 6px;
+    padding-inline: 8px;
+    font-size: 0.72rem;
+  }
+}
