@@ -2775,6 +2775,72 @@ textarea:disabled {
   gap: 14px;
 }
 
+.periodos-cierre-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.periodos-cierre-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.periodos-cierre-toggle-heading {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.periodos-cierre-toggle-title {
+  color: var(--ink);
+  font-size: 1.25rem;
+  font-weight: 950;
+  line-height: 1.15;
+}
+
+.periodos-cierre-toggle-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.periodos-cierre-toggle-icon {
+  width: 11px;
+  height: 11px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg) translate(-2px, -2px);
+  transition: transform 160ms ease;
+}
+
+.periodos-cierre-panel[open] > .periodos-cierre-toggle .periodos-cierre-toggle-icon {
+  transform: rotate(225deg) translate(-2px, -2px);
+}
+
+.periodos-cierre-toggle:focus-visible {
+  outline: 3px solid var(--accent-soft);
+  outline-offset: 4px;
+  border-radius: 10px;
+}
+
+@media (max-width: 620px) {
+  .periodos-cierre-toggle {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .periodos-cierre-toggle-meta {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
 .periodos-cierre-notice {
   margin: 0;
 }
@@ -6168,6 +6234,39 @@ body {
 
 .resumen-venta-sucursal-table {
   min-width: 720px;
+}
+
+.resumen-venta-sucursal-total-row td {
+  border-bottom: 2px solid rgba(185, 135, 43, 0.32);
+  background: var(--surface-soft);
+}
+
+.resumen-venta-sucursal-total-label strong,
+.resumen-venta-sucursal-total small,
+.resumen-venta-sucursal-total strong {
+  display: block;
+}
+
+.resumen-venta-sucursal-total-label strong {
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 950;
+}
+
+.resumen-venta-sucursal-total small {
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 900;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.resumen-venta-sucursal-total strong {
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 0.84rem;
+  font-weight: 950;
+  font-variant-numeric: tabular-nums;
 }
 
 .resumen-periodos-cierre-shell,

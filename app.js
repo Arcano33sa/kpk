@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.87-facturas-estados-etapa2';
+  const APP_VERSION = '0.18.90-resumen-sucursales-etapa3';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -19540,7 +19540,6 @@ Notas importantes:
           <article class="metric-card"><span>Total ventas</span><strong>${escapeHtml(formatMoney(summary.totalVendidoOriginal || 0))}</strong><small>Subtotal - descuento</small></article>
           <article class="metric-card"><span>Ajustes clientes</span><strong>${summary.totalAjustesClientes > 0 ? '-' : ''}${escapeHtml(formatMoney(summary.totalAjustesClientes || 0))}</strong><small>No son cobros</small></article>
           <article class="metric-card"><span>Total cobrado clientes</span><strong>${escapeHtml(formatMoney(summary.totalCobradoClientes))}</strong><small>Fecha real de cobro</small></article>
-          <article class="metric-card"><span>Retenciones</span><strong>${escapeHtml(formatMoney(summary.totalRetenciones || 0))}</strong><small>Total del período</small></article>
           <article class="metric-card"><span>Saldo por cobrar</span><strong>${escapeHtml(formatMoney(summary.saldoPorCobrar))}</strong><small>Cartera general</small></article>
           <article class="metric-card"><span>Ajustes proveedores</span><strong>${summary.totalAjustesProveedores > 0 ? '-' : ''}${escapeHtml(formatMoney(summary.totalAjustesProveedores || 0))}</strong><small>No son pagos</small></article>
           <article class="metric-card"><span>Pagado proveedores</span><strong>${escapeHtml(formatMoney(summary.totalPagadoProveedores))}</strong><small>Fecha real de pago</small></article>
@@ -19560,8 +19559,6 @@ Notas importantes:
 
         ${renderPeriodosPendientesCierreCard(summary.periodosCierre)}
 
-        ${renderResumenSeguimiento(summary.seguimiento)}
-
         <section class="panel-grid resumen-two-columns">
           <article class="panel-card resumen-panel">
             <div class="section-title-row">
@@ -19579,13 +19576,6 @@ Notas importantes:
             ${renderResumenVentaPorSucursal(summary.ventaPorSucursal)}
           </article>
 
-          <article class="panel-card resumen-panel">
-            <div class="section-title-row">
-              <div><span class="eyebrow mini">Cobros</span><h2>Retenciones por concepto</h2></div>
-              <div class="count-pill">${summary.retencionesPorConcepto.length} conceptos</div>
-            </div>
-            ${renderResumenRetencionesPorConcepto(summary.retencionesPorConcepto)}
-          </article>
         </section>
 
         <section class="panel-card resumen-panel">
@@ -20502,11 +20492,17 @@ Notas importantes:
           : 'No hay períodos pendientes de cierre.';
 
     return `
-      <section class="panel-card resumen-panel periodos-cierre-panel">
-        <div class="section-title-row">
-          <div><span class="eyebrow mini">Cierre mensual</span><h2>Períodos Pendientes de Cierre</h2></div>
-          <div class="count-pill">${pendingCount} pendiente${pendingCount === 1 ? '' : 's'}</div>
-        </div>
+      <details class="panel-card resumen-panel periodos-cierre-panel">
+        <summary class="periodos-cierre-toggle">
+          <span class="periodos-cierre-toggle-heading">
+            <span class="eyebrow mini">Cierre mensual</span>
+            <span class="periodos-cierre-toggle-title">Períodos Pendientes de Cierre</span>
+          </span>
+          <span class="periodos-cierre-toggle-meta">
+            <span class="count-pill">${pendingCount} pendiente${pendingCount === 1 ? '' : 's'}</span>
+            <span class="periodos-cierre-toggle-icon" aria-hidden="true"></span>
+          </span>
+        </summary>
         <p class="notice periodos-cierre-notice">${escapeHtml(message)} El período se calcula por fecha de origen del documento; cobros o pagos posteriores no mueven ese bloqueo.</p>
         ${readyCount ? `
           <article class="period-ready-alert" role="status">
@@ -20523,7 +20519,7 @@ Notas importantes:
           </div>
           ${renderPeriodosCierreCompactTable(data.items)}
         ` : renderMoraEmptyState('No hay períodos pendientes de cierre.', 'Cuando existan OC o compras con saldo pendiente, aparecerán aquí por período de origen.')}
-      </section>
+      </details>
     `;
   }
 
@@ -20897,7 +20893,21 @@ Notas importantes:
 
   function renderResumenVentaPorSucursal(items) {
     if (!items.length) return renderMoraEmptyState('Sin venta por sucursal.', 'Cuando existan OC, cobros o cartera filtrada, aparecerán aquí por sucursal.');
-    const rows = items.map((item) => `
+    const totals = items.reduce((result, item) => ({
+      totalVendido: roundMoney(result.totalVendido + Number(item.totalVendido || 0)),
+      totalCobrado: roundMoney(result.totalCobrado + Number(item.totalCobrado || 0)),
+      saldoPorCobrar: roundMoney(result.saldoPorCobrar + Number(item.saldoPorCobrar || 0))
+    }), { totalVendido: 0, totalCobrado: 0, saldoPorCobrar: 0 });
+    const totalRow = `
+      <tr class="resumen-venta-sucursal-total-row">
+        <td class="resumen-venta-sucursal-total-label"><strong>Totales visibles</strong></td>
+        <td class="resumen-compact-count"><span>—</span></td>
+        <td class="amount-cell resumen-venta-sucursal-total"><small>Total venta</small><strong>${escapeHtml(formatMoney(totals.totalVendido))}</strong></td>
+        <td class="amount-cell resumen-venta-sucursal-total"><small>Total cobrado</small><strong>${escapeHtml(formatMoney(totals.totalCobrado))}</strong></td>
+        <td class="amount-cell resumen-venta-sucursal-total"><small>Total saldo</small><strong>${escapeHtml(formatMoney(totals.saldoPorCobrar))}</strong></td>
+      </tr>
+    `;
+    const detailRows = items.map((item) => `
       <tr class="compact-record-row resumen-compact-row">
         <td class="resumen-compact-text"><span title="${escapeHtml(item.sucursal)}">${escapeHtml(item.sucursal)}</span></td>
         <td class="resumen-compact-count"><span>${escapeHtml(String(item.documentos || 0))}</span></td>
@@ -20928,7 +20938,7 @@ Notas importantes:
         <th class="amount-cell">Cobrado</th>
         <th class="amount-cell">Saldo</th>
       `,
-      rows
+      rows: `${totalRow}${detailRows}`
     });
   }
 
