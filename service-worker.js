@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_85_cobros_pagos_seleccion_hardening_final';
+const CACHE_VERSION = 'v0_18_87_facturas_estados_etapa2';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

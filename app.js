@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.85-cobros-pagos-seleccion-hardening-final';
+  const APP_VERSION = '0.18.87-facturas-estados-etapa2';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -27,7 +27,7 @@
   const JSON_IMPORT_HISTORY_MAX_ENTRIES = 80;
   const ACTIVITY_LOG_MAX_ENTRIES = 300;
   const FACTURAS_PAGE_SIZE = 20;
-  const FACTURA_ESTADO_OPTIONS = ['Enviada', 'Recibida', 'Pagada', 'Anulada', 'Otro'];
+  const FACTURA_ESTADO_OPTIONS = ['Pendiente', 'Pagada', 'Anulada'];
   const BANK_TYPE_OPTIONS = ['Transferencia', 'Depósito', 'Tarjeta'];
   const COMPRA_AJUSTE_TYPES = ['Faltante', 'Devolución', 'Rebaja', 'Nota de crédito', 'Corrección'];
   const VENTA_AJUSTE_TYPES = ['Quebrado', 'Faltante', 'Devolución', 'Rebaja', 'Nota de crédito', 'Corrección'];
@@ -9648,7 +9648,10 @@ Notas importantes:
       };
       saveData(appData);
       if (result.notasModulo) saveNotasModuleSnapshot(result.notasModulo);
-      if (result.facturasModulo) absorbCloudFacturasCleanupResult(result.facturasModulo);
+      if (result.facturasModulo) {
+        absorbCloudFacturasCleanupResult(result.facturasModulo);
+        reconcileFacturasEstadosWithVentas();
+      }
       if (result.seguimiento) saveSeguimientoData(result.seguimiento);
       if (Array.isArray(result.bitacora)) {
         appActivityLog = result.bitacora.map((entry) => normalizeActivityEntry(entry));
@@ -10156,7 +10159,10 @@ Notas importantes:
       appData = normalized;
       saveData(appData);
       if (incomingNotas && writeOptions.includeAuxiliary !== false) saveNotasModuleSnapshot(incomingNotas);
-      if (incomingFacturas && writeOptions.includeAuxiliary !== false) saveFacturasData(sanitizeFacturasClientesData(incomingFacturas, { mark: false }));
+      if (incomingFacturas && writeOptions.includeAuxiliary !== false) {
+        saveFacturasData(sanitizeFacturasClientesData(incomingFacturas, { mark: false }));
+        reconcileFacturasEstadosWithVentas();
+      }
       if (writeOptions.render === true && typeof renderRoute === 'function') renderRoute();
       return {
         ok: true,
@@ -10215,6 +10221,7 @@ Notas importantes:
 
   let appData = loadData();
   let seguimientoData = loadSeguimientoData();
+  reconcileFacturasEstadosWithVentas();
   runFacturasProveedorCleanupMigration({ showMessage: true });
   reconcileWorkPeriodSelectionAfterDataChange();
   syncCasaFiltersWithActiveWorkPeriod({ force: true });
@@ -13664,7 +13671,7 @@ Notas importantes:
 
   function normalizeFacturaEstado(value) {
     const raw = cleanText(value);
-    return FACTURA_ESTADO_OPTIONS.includes(raw) ? raw : 'Enviada';
+    return FACTURA_ESTADO_OPTIONS.includes(raw) ? raw : 'Pendiente';
   }
 
   function getFacturaPeriodInfoFromDate(dateInput = todayInputValue()) {
@@ -13729,7 +13736,7 @@ Notas importantes:
       autoPagadaAt: Boolean(raw.autoPagada) ? cleanText(raw.autoPagadaAt) : '',
       autoPagadaVentaId: Boolean(raw.autoPagada) ? cleanText(raw.autoPagadaVentaId || raw.ventaId || raw.ocId) : cleanText(raw.autoPagadaVentaId),
       autoPagadaByCobroId: Boolean(raw.autoPagada) ? cleanText(raw.autoPagadaByCobroId || raw.cobroId) : cleanText(raw.autoPagadaByCobroId),
-      estadoPrevioAutoPagada: Boolean(raw.autoPagada) ? normalizeFacturaEstado(raw.estadoPrevioAutoPagada || raw.estadoAnteriorAutoPagada || 'Enviada') : '',
+      estadoPrevioAutoPagada: Boolean(raw.autoPagada) ? normalizeFacturaEstado(raw.estadoPrevioAutoPagada || raw.estadoAnteriorAutoPagada || 'Pendiente') : '',
       createdAt: cleanText(raw.createdAt) || timestamp,
       updatedAt: cleanText(raw.updatedAt) || cleanText(raw.createdAt) || timestamp
     };
@@ -14113,6 +14120,59 @@ Notas importantes:
     return loadFacturasData();
   }
 
+  function reconcileFacturasEstadosWithVentas(data = getFacturasData()) {
+    const normalized = normalizeFacturasData(data);
+    const ventasById = new Map((Array.isArray(appData?.ventas) ? appData.ventas : [])
+      .map((record) => normalizeVentaRecord(record))
+      .filter((venta) => venta.id && venta.activo)
+      .map((venta) => [venta.id, venta]));
+    const timestamp = nowIso();
+    let updated = 0;
+    const affectedIds = [];
+
+    normalized.facturas = normalized.facturas.map((record) => {
+      const factura = normalizeFacturaModuloRecord(record);
+      if (factura.estado === 'Anulada') return factura;
+      if (normalizeKeyForCompare(factura.origen).includes('salto')) {
+        if (factura.estado === 'Pendiente' && !factura.autoPagada) return factura;
+        updated += 1;
+        if (factura.id) affectedIds.push(factura.id);
+        return normalizeFacturaModuloRecord({
+          ...factura,
+          estado: 'Pendiente',
+          autoPagada: false,
+          autoPagadaAt: '',
+          autoPagadaVentaId: '',
+          autoPagadaByCobroId: '',
+          estadoPrevioAutoPagada: '',
+          updatedAt: timestamp
+        });
+      }
+      if (!factura.ventaId) return factura;
+      const venta = ventasById.get(factura.ventaId);
+      if (!venta) return factura;
+      const isPaid = venta.saldoPorCobrar <= COBRO_TOLERANCE;
+      const nextEstado = isPaid ? 'Pagada' : 'Pendiente';
+      if (factura.estado === nextEstado && factura.autoPagada === isPaid) return factura;
+      updated += 1;
+      if (factura.id) affectedIds.push(factura.id);
+      return normalizeFacturaModuloRecord({
+        ...factura,
+        estado: nextEstado,
+        autoPagada: isPaid,
+        autoPagadaAt: isPaid ? (factura.autoPagadaAt || timestamp) : '',
+        autoPagadaVentaId: isPaid ? factura.ventaId : '',
+        autoPagadaByCobroId: isPaid ? factura.autoPagadaByCobroId : '',
+        estadoPrevioAutoPagada: isPaid ? 'Pendiente' : '',
+        updatedAt: timestamp
+      });
+    });
+
+    return updated
+      ? { data: saveFacturasData(normalized), updated, affectedIds }
+      : { data: normalized, updated: 0, affectedIds: [] };
+  }
+
   function normalizeFacturaModuloNoKey(value) {
     return cleanText(value).toLocaleLowerCase('es-NI');
   }
@@ -14419,7 +14479,7 @@ Notas importantes:
         id: cleanText(item.moduloId) || cleanText(item.id && !String(item.id).startsWith('factura') ? item.id : '') || generateId('facturaModulo'),
         no: item.numero,
         fecha: getVentaFechaRegistro(venta) || todayInputValue(),
-        estado: fromGap ? 'Otro' : 'Enviada',
+        estado: 'Pendiente',
         monto: fromGap ? 0 : Math.max(0, Number(item.total) || 0),
         subtotal: fromGap ? 0 : Math.max(0, Number(item.subtotal) || 0),
         descuento: fromGap ? 0 : Math.max(0, Number(item.descuento) || 0),
@@ -14639,7 +14699,7 @@ Notas importantes:
     return {
       no: '',
       fecha: draft.fecha || getWorkPeriodDefaultDate(),
-      estado: 'Enviada',
+      estado: 'Pendiente',
       monto: '',
       clienteId: draft.clienteId,
       clienteNombre: '',
@@ -15204,11 +15264,9 @@ Notas importantes:
       <section class="metric-grid facturas-metric-grid" aria-label="Resumen de facturas del período de trabajo">
         <article class="metric-card"><span>Período</span><strong>${escapeHtml(periodInfo.label)}</strong><small>Vista actual</small></article>
         <article class="metric-card"><span>Total facturas</span><strong>${summary.total}</strong><small>${options.historical ? 'Histórico' : 'Período de trabajo'}</small></article>
-        <article class="metric-card"><span>Enviadas</span><strong>${summary.estados.Enviada || 0}</strong><small>Estado</small></article>
-        <article class="metric-card"><span>Recibidas</span><strong>${summary.estados.Recibida || 0}</strong><small>Estado</small></article>
+        <article class="metric-card"><span>Pendientes</span><strong>${summary.estados.Pendiente || 0}</strong><small>Estado</small></article>
         <article class="metric-card"><span>Pagadas</span><strong>${summary.estados.Pagada || 0}</strong><small>Estado</small></article>
         <article class="metric-card"><span>Anuladas</span><strong>${summary.estados.Anulada || 0}</strong><small>Estado</small></article>
-        <article class="metric-card"><span>Otro</span><strong>${summary.estados.Otro || 0}</strong><small>Requiere observación</small></article>
         <article class="metric-card"><span>Monto total</span><strong>${escapeHtml(formatMoney(summary.montoTotal || 0))}</strong><small>Monto vacío = C$0.00</small></article>
       </section>
     `;
@@ -15260,9 +15318,9 @@ Notas importantes:
           </label>
           <label class="form-field">
             <span>Estado *</span>
-            <select name="estado" required>
-              ${FACTURA_ESTADO_OPTIONS.map((estado) => `<option value="${escapeHtml(estado)}" ${normalizeFacturaEstado(current.estado) === estado ? 'selected' : ''}>${escapeHtml(estado)}</option>`).join('')}
-            </select>
+            <input type="text" value="${escapeHtml(normalizeFacturaEstado(current.estado))}" readonly aria-readonly="true" />
+            <input type="hidden" name="estado" value="${escapeHtml(normalizeFacturaEstado(current.estado))}" />
+            <small>Pagada se calcula desde el saldo de la Venta / OC. Anulada se aplica desde la acción de anulación.</small>
           </label>
           <label class="form-field">
             <span>Monto</span>
@@ -15270,7 +15328,7 @@ Notas importantes:
           </label>
           <label class="form-field full-span">
             <span>Observaciones</span>
-            <textarea name="observaciones" rows="3" placeholder="Obligatorio si Estado = Otro">${escapeHtml(current.observaciones || '')}</textarea>
+            <textarea name="observaciones" rows="3" placeholder="Detalle documental opcional">${escapeHtml(current.observaciones || '')}</textarea>
           </label>
         </div>
         <p class="compact-note muted-text">Las facturas emitidas a clientes pueden registrarse manualmente o venir desde Ventas / OC. Editarlas aquí no modifica Cobros, saldos, Resumen, Excel ni cierres.</p>
@@ -15349,7 +15407,7 @@ Notas importantes:
       : `<div class="record-actions compact-row-actions notas-icon-toolbar">
           <button type="button" class="secondary-action compact-action mini" data-factura-go-page="${page}" title="Ir a página ${page}" aria-label="Ir a página ${page}">Ir pág. ${page}</button>
           <button type="button" class="notas-icon-action mini" data-factura-edit="${escapeHtml(factura.id)}" title="Editar factura" aria-label="Editar factura ${escapeHtml(factura.no || '')}">✎</button>
-          <button type="button" class="notas-icon-action mini danger" data-factura-delete="${escapeHtml(factura.id)}" title="Borrar factura" aria-label="Borrar factura ${escapeHtml(factura.no || '')}">🗑️</button>
+          <button type="button" class="notas-icon-action mini danger" data-factura-delete="${escapeHtml(factura.id)}" title="Anular factura" aria-label="Anular factura ${escapeHtml(factura.no || '')}">⊘</button>
         </div>`;
     return `
       <tr>
@@ -15496,7 +15554,7 @@ Notas importantes:
       ? '<span class="muted-text compact-note">Histórico</span>'
       : `<div class="record-actions compact-row-actions notas-icon-toolbar">
           <button type="button" class="notas-icon-action mini" data-factura-edit="${escapeHtml(factura.id)}" title="Editar factura" aria-label="Editar factura ${escapeHtml(factura.no || '')}">✎</button>
-          <button type="button" class="notas-icon-action mini danger" data-factura-delete="${escapeHtml(factura.id)}" title="Borrar factura" aria-label="Borrar factura ${escapeHtml(factura.no || '')}">🗑️</button>
+          <button type="button" class="notas-icon-action mini danger" data-factura-delete="${escapeHtml(factura.id)}" title="Anular factura" aria-label="Anular factura ${escapeHtml(factura.no || '')}">⊘</button>
         </div>`;
     return `
       <tr>
@@ -15577,12 +15635,6 @@ Notas importantes:
       renderRoute({ preserveScroll: true });
       return;
     }
-    if (estado === 'Otro' && !observaciones) {
-      setFacturasMessage('Cuando el Estado es “Otro”, Observaciones es obligatorio.', 'error');
-      renderRoute({ preserveScroll: true });
-      return;
-    }
-
     if (!warnIfClosedPeriod(fecha, facturasState.editingId ? 'Actualizar esta factura' : 'Crear esta factura')) return;
 
     const data = getFacturasData();
@@ -15608,7 +15660,7 @@ Notas importantes:
       autoPagadaAt: existing?.autoPagada && estado === 'Pagada' ? existing.autoPagadaAt : '',
       autoPagadaVentaId: existing?.autoPagada && estado === 'Pagada' ? existing.autoPagadaVentaId : '',
       autoPagadaByCobroId: existing?.autoPagada && estado === 'Pagada' ? existing.autoPagadaByCobroId : '',
-      estadoPrevioAutoPagada: existing?.estadoPrevioAutoPagada || 'Enviada',
+      estadoPrevioAutoPagada: existing?.estadoPrevioAutoPagada || 'Pendiente',
       createdAt: existing?.createdAt || timestamp,
       updatedAt: timestamp
     });
@@ -15652,20 +15704,39 @@ Notas importantes:
   function deleteFacturaRecord(id) {
     const record = findFacturaModuloById(id);
     if (!record) {
-      setFacturasMessage('No se encontró la factura para borrar.', 'error');
+      setFacturasMessage('No se encontró la factura para anular.', 'error');
       renderRoute({ preserveScroll: true });
       return;
     }
-    if (!window.confirm(`¿Borrar la factura ${record.no || 'sin número'}? Esta acción es definitiva en el módulo Facturas y no toca Ventas, Cobros ni saldos.`)) return;
+    if (isFacturaPeriodClosed(record.periodo)) {
+      setFacturasMessage('Las facturas de períodos cerrados quedan solo para consulta histórica.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (record.estado === 'Anulada') {
+      setFacturasMessage('La factura ya está anulada.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (!window.confirm(`¿Anular la factura ${record.no || 'sin número'}? Se conservará en el histórico y no se modificarán Ventas, Cobros ni saldos.`)) return;
     const data = getFacturasData();
-    data.facturas = data.facturas.filter((item) => cleanText(item.id) !== record.id);
+    const timestamp = nowIso();
+    data.facturas = data.facturas.map((item) => cleanText(item.id) === record.id
+      ? normalizeFacturaModuloRecord({
+        ...item,
+        estado: 'Anulada',
+        autoPagada: false,
+        autoPagadaAt: '',
+        autoPagadaVentaId: '',
+        autoPagadaByCobroId: '',
+        estadoPrevioAutoPagada: '',
+        updatedAt: timestamp
+      })
+      : item);
     saveFacturasData(data);
-    registerSessionChange({ module: 'Facturas', operation: 'eliminar', recordId: record.id });
+    registerSessionChange({ module: 'Facturas', operation: 'editar', recordId: record.id });
     if (facturasState.editingId === record.id) facturasState.editingId = null;
-    const periodRecords = getFacturasForPeriod(getCurrentFacturasPeriodInfo().periodo, data);
-    const totalPages = Math.max(1, Math.ceil(periodRecords.length / FACTURAS_PAGE_SIZE));
-    facturasState.page = Math.min(Math.max(1, facturasState.page), totalPages);
-    setFacturasMessage('Factura borrada correctamente. Sin drama, sin tocar saldos.');
+    setFacturasMessage('Factura anulada y conservada en el histórico. No se modificaron Ventas, Cobros ni saldos.');
     renderRoute({ preserveScroll: true });
   }
 
@@ -15754,12 +15825,12 @@ Notas importantes:
       if (factura.ventaId !== cleanVentaId) return factura;
 
       if (!isPaid) {
-        if (factura.autoPagada && factura.estado === 'Pagada') {
+        if (factura.estado === 'Pagada') {
           reverted += 1;
           if (factura.id) affectedIds.push(factura.id);
           return normalizeFacturaModuloRecord({
             ...factura,
-            estado: factura.estadoPrevioAutoPagada && factura.estadoPrevioAutoPagada !== 'Pagada' ? factura.estadoPrevioAutoPagada : 'Enviada',
+            estado: 'Pendiente',
             autoPagada: false,
             autoPagadaAt: '',
             autoPagadaVentaId: '',
@@ -15770,11 +15841,10 @@ Notas importantes:
         return factura;
       }
 
-      if (factura.estado === 'Pagada' || factura.estado === 'Anulada' || factura.estado === 'Otro') return factura;
+      if (factura.estado === 'Anulada' || (factura.estado === 'Pagada' && factura.autoPagada)) return factura;
       const origen = normalizeKeyForCompare(factura.origen);
       const isVentaDirecta = origen.includes('ventas') || origen.includes('venta') || origen.includes('oc');
-      const isSaltoClasificado = origen.includes('salto') && factura.estado !== 'Otro' && factura.estado !== 'Anulada';
-      if (!isVentaDirecta && !isSaltoClasificado) return factura;
+      if (!isVentaDirecta) return factura;
       updated += 1;
       if (factura.id) affectedIds.push(factura.id);
       return normalizeFacturaModuloRecord({
@@ -31579,6 +31649,8 @@ Notas importantes:
     const incomingActivityLog = Array.isArray(jsonBackupState.activityLog) ? jsonBackupState.activityLog : [];
     const importedWorkPeriod = normalizeWorkPeriodKey(jsonBackupState.payload?.configuracion?.periodoTrabajoSeleccionado || jsonBackupState.payload?.metadata?.periodoTrabajoSeleccionado || jsonBackupState.payload?.metadata?.periodoTrabajo?.periodo || '');
     const result = applyJsonBackupPayload(jsonBackupState.payload, selectedMode);
+    const facturasReconciliadas = reconcileFacturasEstadosWithVentas();
+    registerFacturasSyncSessionChanges(facturasReconciliadas, 'editar', 'Importación JSON');
     const workPeriodResult = reconcileWorkPeriodSelectionAfterDataChange(importedWorkPeriod);
     syncCasaFiltersWithActiveWorkPeriod({ force: true });
     const activityImportResult = mergeImportedActivityLog(incomingActivityLog);
