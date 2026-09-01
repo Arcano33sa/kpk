@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_90_resumen_sucursales_etapa3';
+const CACHE_VERSION = 'v0_18_92_facturas_fecharegistro_sucursal_hardening_final';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

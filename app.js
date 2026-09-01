@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.90-resumen-sucursales-etapa3';
+  const APP_VERSION = '0.18.92-facturas-fecharegistro-sucursal-hardening-final';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -12520,7 +12520,7 @@ Notas importantes:
       const facturasData = getFacturasData();
       return getFacturasClienteRecords(facturasData)
         .map((record) => normalizeFacturaModuloRecord(record))
-        .map((record) => normalizeWorkPeriodKey(record.periodo) || normalizeWorkPeriodKey(getPeriodFromOriginDate(record.fecha)?.periodo))
+        .map((record) => resolveFacturaPeriodKey(record) || normalizeWorkPeriodKey(getPeriodFromOriginDate(getFacturaFechaRegistro(record))?.periodo))
         .filter(Boolean);
     } catch (error) {
       console.warn('KSA PRÁCTIKA: no se pudieron leer períodos del módulo Facturas.', error);
@@ -13674,6 +13674,38 @@ Notas importantes:
     return FACTURA_ESTADO_OPTIONS.includes(raw) ? raw : 'Pendiente';
   }
 
+  function getFacturaCreatedAtDateValue(value) {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) return formatDateInput(value);
+    if (value && typeof value === 'object' && typeof value.toDate === 'function') {
+      try {
+        const date = value.toDate();
+        if (date instanceof Date && !Number.isNaN(date.getTime())) return formatDateInput(date);
+      } catch (_) {}
+    }
+    const raw = cleanText(value);
+    if (!raw) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return toDateInputValue(raw);
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? '' : formatDateInput(parsed);
+  }
+
+  function getFacturaHistoricalDateValue(record) {
+    const raw = isPlainObject(record) ? record : {};
+    return toDateInputValue(raw.fecha || raw.fechaFactura || raw.issued || '');
+  }
+
+  // Fecha de Registro canónica para Facturas:
+  // 1) fechaRegistro explícita; 2) createdAt convertido a fecha local;
+  // 3) fecha histórica heredada. updatedAt nunca participa en esta resolución.
+  function getFacturaFechaRegistro(record) {
+    const raw = isPlainObject(record) ? record : {};
+    const explicit = toDateInputValue(raw.fechaRegistro || raw.fechaDeRegistro || '');
+    if (explicit) return explicit;
+    const createdDate = getFacturaCreatedAtDateValue(raw.createdAt);
+    if (createdDate) return createdDate;
+    return getFacturaHistoricalDateValue(raw);
+  }
+
   function getFacturaPeriodInfoFromDate(dateInput = todayInputValue()) {
     const safeDate = toDateInputValue(dateInput) || todayInputValue();
     const year = safeDate.slice(0, 4);
@@ -13691,16 +13723,46 @@ Notas importantes:
     return active?.periodo ? active : getFacturaPeriodInfoFromDate(todayInputValue());
   }
 
+  function resolveFacturaPeriodKey(record) {
+    const raw = isPlainObject(record) ? record : {};
+    const persisted = normalizeWorkPeriodKey(raw.periodo || raw.period || raw.periodoFactura || raw.periodKey || '');
+    if (persisted) return persisted;
+
+    // Registros nuevos de Etapa 2: el período nace de Fecha de Registro.
+    const explicitFechaRegistro = toDateInputValue(raw.fechaRegistro || raw.fechaDeRegistro || '');
+    if (explicitFechaRegistro) return getFacturaPeriodInfoFromDate(explicitFechaRegistro).periodo;
+
+    // Históricos sin período persistido conservan primero su fecha histórica,
+    // evitando reclasificarlos por un createdAt técnico agregado posteriormente.
+    const historicalDate = getFacturaHistoricalDateValue(raw);
+    if (historicalDate) return getFacturaPeriodInfoFromDate(historicalDate).periodo;
+
+    // Último fallback seguro para registros antiguos realmente incompletos.
+    const createdDate = getFacturaCreatedAtDateValue(raw.createdAt);
+    if (createdDate) return getFacturaPeriodInfoFromDate(createdDate).periodo;
+    return '';
+  }
+
+  function getFacturaPeriodInfo(record) {
+    const periodo = resolveFacturaPeriodKey(record);
+    if (periodo) return buildWorkPeriodInfo(periodo, 'Facturas') || getFacturaPeriodInfoFromDate(`${periodo}-01`);
+    return getFacturaPeriodInfoFromDate(getFacturaFechaRegistro(record) || todayInputValue());
+  }
+
   function normalizeFacturaModuloRecord(record) {
     const raw = isPlainObject(record) ? record : {};
     const timestamp = nowIso();
-    const fecha = toDateInputValue(raw.fecha || raw.fechaFactura || raw.issued || raw.createdAt || '') || todayInputValue();
+    const explicitFechaRegistro = toDateInputValue(raw.fechaRegistro || raw.fechaDeRegistro || '');
+    const historicalDate = getFacturaHistoricalDateValue(raw);
+    const createdDate = getFacturaCreatedAtDateValue(raw.createdAt);
+    const fecha = historicalDate || explicitFechaRegistro || createdDate || todayInputValue();
     const amount = parseMoney(raw.monto ?? raw.total ?? raw.importe ?? raw.valor ?? 0);
-    const periodInfo = getFacturaPeriodInfoFromDate(fecha);
+    const periodo = resolveFacturaPeriodKey(raw) || getFacturaPeriodInfoFromDate(fecha).periodo;
     return {
       id: cleanText(raw.id) || generateId('facturaModulo'),
       no: cleanText(raw.no || raw.numero || raw.numeroFactura || raw.factura || raw.documento || raw.referencia),
       fecha,
+      ...(explicitFechaRegistro ? { fechaRegistro: explicitFechaRegistro } : {}),
       estado: normalizeFacturaEstado(raw.estado),
       monto: Number.isNaN(amount) ? 0 : Math.max(0, amount),
       subtotal: Number.isNaN(parseMoney(raw.subtotal ?? raw.montoSubtotal ?? 0)) ? 0 : Math.max(0, parseMoney(raw.subtotal ?? raw.montoSubtotal ?? 0)),
@@ -13731,13 +13793,13 @@ Notas importantes:
         facturaAfectadaId: cleanText(item?.facturaAfectadaId),
         facturaAfectadaNumero: cleanFacturaVentaNumero(item?.facturaAfectadaNumero || '')
       })).filter((item) => item.id || item.facturaAfectadaId || item.facturaAfectadaNumero) : [],
-      periodo: periodInfo.periodo,
+      periodo,
       autoPagada: Boolean(raw.autoPagada),
       autoPagadaAt: Boolean(raw.autoPagada) ? cleanText(raw.autoPagadaAt) : '',
       autoPagadaVentaId: Boolean(raw.autoPagada) ? cleanText(raw.autoPagadaVentaId || raw.ventaId || raw.ocId) : cleanText(raw.autoPagadaVentaId),
       autoPagadaByCobroId: Boolean(raw.autoPagada) ? cleanText(raw.autoPagadaByCobroId || raw.cobroId) : cleanText(raw.autoPagadaByCobroId),
       estadoPrevioAutoPagada: Boolean(raw.autoPagada) ? normalizeFacturaEstado(raw.estadoPrevioAutoPagada || raw.estadoAnteriorAutoPagada || 'Pendiente') : '',
-      createdAt: cleanText(raw.createdAt) || timestamp,
+      createdAt: cleanText(raw.createdAt),
       updatedAt: cleanText(raw.updatedAt) || cleanText(raw.createdAt) || timestamp
     };
   }
@@ -14442,6 +14504,9 @@ Notas importantes:
           ...existing,
           ...payload,
           id: existing.id || payload.id,
+          fecha: existing.fecha || payload.fecha,
+          fechaRegistro: getFacturaFechaRegistro(existing) || getFacturaFechaRegistro(payload),
+          periodo: normalizeWorkPeriodKey(existing.periodo) || normalizeWorkPeriodKey(payload.periodo),
           estado: existing.origen === 'manual' && payload.origen !== 'manual' ? payload.estado : (existing.estado || payload.estado),
           createdAt: existing.createdAt || payload.createdAt,
           updatedAt: timestamp
@@ -14479,6 +14544,7 @@ Notas importantes:
         id: cleanText(item.moduloId) || cleanText(item.id && !String(item.id).startsWith('factura') ? item.id : '') || generateId('facturaModulo'),
         no: item.numero,
         fecha: getVentaFechaRegistro(venta) || todayInputValue(),
+        fechaRegistro: todayInputValue(),
         estado: 'Pendiente',
         monto: fromGap ? 0 : Math.max(0, Number(item.total) || 0),
         subtotal: fromGap ? 0 : Math.max(0, Number(item.subtotal) || 0),
@@ -14563,10 +14629,10 @@ Notas importantes:
         } else if (!bNo) {
           return -1;
         } else {
-          const byNo = compareFacturaNaturalNo(bNo, aNo);
+          const byNo = compareFacturaNaturalNo(aNo, bNo);
           if (byNo !== 0) return byNo;
         }
-        const byDate = String(b.fecha).localeCompare(String(a.fecha));
+        const byDate = String(getFacturaFechaRegistro(b)).localeCompare(String(getFacturaFechaRegistro(a)));
         if (byDate !== 0) return byDate;
         return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
       });
@@ -14644,7 +14710,6 @@ Notas importantes:
 
   function createEmptyFacturasCaptureDraft() {
     return {
-      fecha: '',
       clienteId: '',
       sucursalId: ''
     };
@@ -14652,20 +14717,18 @@ Notas importantes:
 
   function normalizeFacturasCaptureDraft(raw = {}) {
     const source = isPlainObject(raw) ? raw : {};
-    const fecha = toDateInputValue(source.fecha) || '';
     const clienteId = cleanText(source.clienteId);
     const sucursalId = cleanText(source.sucursalId);
     if (!clienteId) {
-      return { fecha, clienteId: '', sucursalId: '' };
+      return { clienteId: '', sucursalId: '' };
     }
     const cliente = getCatalogRecordById('clientes', clienteId);
     if (!cliente) {
-      return { fecha, clienteId: '', sucursalId: '' };
+      return { clienteId: '', sucursalId: '' };
     }
     const sucursales = getFacturaSucursalesForCliente(clienteId, sucursalId);
     const safeSucursalId = sucursales.some((sucursal) => sucursal.id === sucursalId) ? sucursalId : '';
     return {
-      fecha,
       clienteId,
       sucursalId: safeSucursalId
     };
@@ -14687,7 +14750,6 @@ Notas importantes:
   function rememberFacturasCaptureFromForm(form) {
     if (!form || !isFacturaCreateForm(form)) return;
     facturasState.captureDraft = normalizeFacturasCaptureDraft({
-      fecha: form.querySelector('input[name="fecha"]')?.value || '',
       clienteId: form.querySelector('[data-factura-cliente]')?.value || '',
       sucursalId: form.querySelector('[data-factura-sucursal]')?.value || ''
     });
@@ -14698,7 +14760,8 @@ Notas importantes:
     facturasState.captureDraft = draft;
     return {
       no: '',
-      fecha: draft.fecha || getWorkPeriodDefaultDate(),
+      fecha: todayInputValue(),
+      fechaRegistro: todayInputValue(),
       estado: 'Pendiente',
       monto: '',
       clienteId: draft.clienteId,
@@ -14795,8 +14858,7 @@ Notas importantes:
   }
 
   function getFacturaReliableDateValue(raw) {
-    const source = isPlainObject(raw) ? raw : {};
-    return toDateInputValue(source.fecha || source.fechaFactura || source.fechaEmision || source.issued || '');
+    return getFacturaFechaRegistro(raw);
   }
 
   function getFacturasGlobalSortLabel(record) {
@@ -14805,7 +14867,7 @@ Notas importantes:
   }
 
   function compareFacturasGlobalItems(a, b) {
-    const byNo = compareFacturaNaturalNo(b?.record?.no, a?.record?.no);
+    const byNo = compareFacturaNaturalNo(a?.record?.no, b?.record?.no);
     if (byNo !== 0) return byNo;
 
     if (a?.hasReliableDate && b?.hasReliableDate) {
@@ -15039,7 +15101,7 @@ Notas importantes:
         wrapClass: 'facturas-table-wrap facturas-global-table-wrap',
         ariaLabel: 'Global de Facturas',
         tableClass: 'operational-table-facturas facturas-global-operational-table',
-        headers: '<th>No.</th><th>Fecha</th><th>Período</th><th>Cliente</th><th>Sucursal</th><th>Estado</th><th>Total</th><th>Origen</th>',
+        headers: '<th>No.</th><th>Fecha de Registro</th><th>Período</th><th>Cliente</th><th>Sucursal</th><th>Subtotal</th><th>Estado</th><th>Total</th><th>Origen</th><th>Acciones</th>',
         rows: pagedItems.map((item) => renderFacturaGlobalRow(item)).join('')
       }) : `<p class="muted-text compact-note facturas-global-empty">${escapeHtml(emptyMessage)}</p>`}
       ${renderFacturasGlobalPagination(totalRecords, page, totalPages)}
@@ -15050,13 +15112,21 @@ Notas importantes:
     const payload = isPlainObject(item) && item.record ? item : { record: item, hasReliableDate: true };
     const factura = normalizeFacturaModuloRecord(payload.record);
     if (!isFacturaCliente(factura)) return '';
-    const periodInfo = payload.hasReliableDate ? getFacturaPeriodInfoFromDate(factura.fecha) : null;
+    const periodInfo = getFacturaPeriodInfo(factura);
     const partyLabel = getFacturaModuloPartyDisplay(factura) || '—';
     const sucursalLabel = getFacturaSucursalDisplay(factura) || '—';
     const origenLabel = getFacturaOrigenLabel(factura) || 'Manual';
-    const dateLabel = payload.hasReliableDate ? formatDate(factura.fecha) : '—';
+    const fechaRegistro = getFacturaFechaRegistro(factura);
+    const dateLabel = payload.hasReliableDate && fechaRegistro ? formatDate(fechaRegistro) : '—';
     const periodLabel = periodInfo?.label || '—';
     const amountLabel = getFacturaModuloAmountLabel(factura) || formatMoney(factura.monto || 0);
+    const closedPeriod = isFacturaPeriodClosed(factura.periodo);
+    const actions = closedPeriod
+      ? '<span class="muted-text compact-note">Histórico</span>'
+      : `<div class="record-actions compact-row-actions notas-icon-toolbar">
+          <button type="button" class="notas-icon-action mini" data-factura-edit="${escapeHtml(factura.id)}" title="Editar factura" aria-label="Editar factura ${escapeHtml(factura.no || '')}">✎</button>
+          <button type="button" class="notas-icon-action mini danger" data-factura-delete="${escapeHtml(factura.id)}" title="Anular factura" aria-label="Anular factura ${escapeHtml(factura.no || '')}">⊘</button>
+        </div>`;
     return `
       <tr>
         <td><span class="compact-primary critical-value-doc" title="${escapeHtml(factura.no || '—')}">${escapeHtml(factura.no || '—')}</span></td>
@@ -15064,9 +15134,11 @@ Notas importantes:
         <td><span title="${escapeHtml(periodLabel)}">${escapeHtml(periodLabel)}</span></td>
         <td><span title="${escapeHtml(partyLabel)}">${escapeHtml(partyLabel)}</span></td>
         <td><span title="${escapeHtml(sucursalLabel)}">${escapeHtml(sucursalLabel)}</span></td>
+        <td class="amount-cell"><span class="critical-value-money" title="${escapeHtml(formatMoney(factura.subtotal || 0))}">${escapeHtml(formatMoney(factura.subtotal || 0))}</span></td>
         <td><span class="state-pill ${getEstadoClass(factura.estado)} critical-value-state" title="${escapeHtml(factura.estado || '—')}">${escapeHtml(factura.estado || '—')}</span></td>
         <td class="amount-cell"><span class="critical-value-money" title="${escapeHtml(amountLabel)}">${escapeHtml(amountLabel)}</span></td>
         <td><small title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel)}</small></td>
+        <td>${actions}</td>
       </tr>
     `;
   }
@@ -15275,6 +15347,7 @@ Notas importantes:
   function renderFacturaForm(record, mode = 'create') {
     const isEditing = mode === 'edit' && Boolean(record);
     const current = record || getFacturasCreateFormDefaults();
+    const fechaRegistro = isEditing ? (getFacturaFechaRegistro(current) || todayInputValue()) : todayInputValue();
     const selectedClienteId = cleanText(current.clienteId);
     const selectedSucursalId = cleanText(current.sucursalId);
     const clientes = getFacturaClientesForSelect(selectedClienteId);
@@ -15299,8 +15372,8 @@ Notas importantes:
             <input type="text" name="no" value="${escapeHtml(current.no || '')}" placeholder="Ej. 00245" required />
           </label>
           <label class="form-field">
-            <span>Fecha *</span>
-            <input type="date" name="fecha" value="${escapeHtml(current.fecha || getWorkPeriodDefaultDate())}" required />
+            <span>Fecha de Registro *</span>
+            <input type="date" name="fechaRegistro" value="${escapeHtml(fechaRegistro)}" required readonly aria-readonly="true" />
           </label>
           <label class="form-field">
             <span>Cliente</span>
@@ -15384,7 +15457,7 @@ Notas importantes:
         wrapClass: 'facturas-table-wrap',
         ariaLabel: 'Resultados de búsqueda de facturas',
         tableClass: 'operational-table-facturas',
-        headers: '<th>No.</th><th>Período</th><th>Página</th><th>Fecha</th><th>Origen</th><th>Venta / OC</th><th>Cliente</th><th>Subtotal</th><th>Descuento</th><th>Total</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
+        headers: '<th>No.</th><th>Período</th><th>Página</th><th>Fecha de Registro</th><th>Origen</th><th>Venta / OC</th><th>Cliente</th><th>Sucursal</th><th>Subtotal</th><th>Descuento</th><th>Total</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
         rows
       })}
     `;
@@ -15394,9 +15467,10 @@ Notas importantes:
     const item = isPlainObject(result) ? result : { record: result, page: 1, scopeLabel: '' };
     const factura = normalizeFacturaModuloRecord(item.record);
     if (!isFacturaCliente(factura)) return '';
-    const periodInfo = getFacturaPeriodInfoFromDate(factura.fecha);
+    const periodInfo = getFacturaPeriodInfo(factura);
     const origenLabel = getFacturaOrigenLabel(factura);
     const partyLabel = getFacturaModuloPartyDisplay(factura);
+    const sucursalLabel = getFacturaSucursalDisplay(factura) || '—';
     const documentLabel = getFacturaModuloParentDocument(factura);
     const ajustesInfo = getFacturaModuloAjustesInfo(factura);
     const closedPeriod = isFacturaPeriodClosed(factura.periodo);
@@ -15414,10 +15488,11 @@ Notas importantes:
         <td><span class="compact-primary" title="${escapeHtml(factura.no)}">${escapeHtml(factura.no || '—')}</span></td>
         <td><span>${escapeHtml(periodInfo.label)}</span></td>
         <td><span class="badge subtle">Página ${page}</span></td>
-        <td><span>${escapeHtml(formatDate(factura.fecha))}</span></td>
+        <td><span>${escapeHtml(formatDate(getFacturaFechaRegistro(factura)))}</span></td>
         <td><small title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel || 'Manual')}</small></td>
         <td><span title="${escapeHtml(documentLabel || 'Sin documento madre')}">${escapeHtml(documentLabel || '—')}</span></td>
         <td><span title="${escapeHtml(partyLabel || 'Sin cliente')}">${escapeHtml(partyLabel || '—')}</span></td>
+        <td><span title="${escapeHtml(sucursalLabel)}">${escapeHtml(sucursalLabel)}</span></td>
         <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.subtotal || 0))}</span></td>
         <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.descuento || 0))}</span></td>
         <td class="amount-cell"><span>${escapeHtml(getFacturaModuloAmountLabel(factura))}</span></td>
@@ -15448,7 +15523,7 @@ Notas importantes:
           wrapClass: 'facturas-table-wrap',
           ariaLabel: `Listado de facturas de ${periodInfo.label}`,
           tableClass: 'operational-table-facturas',
-          headers: '<th>No.</th><th>Fecha</th><th>Origen</th><th>Venta / OC</th><th>Cliente</th><th>Subtotal</th><th>Descuento</th><th>Total</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
+          headers: '<th>No.</th><th>Fecha de Registro</th><th>Origen</th><th>Venta / OC</th><th>Cliente</th><th>Sucursal</th><th>Subtotal</th><th>Descuento</th><th>Total</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
           rows: records.map((record) => renderFacturaRow(record)).join('')
         }) : `<p class="muted-text compact-note">${escapeHtml(emptyText)}</p>`}
         ${pagination}
@@ -15530,7 +15605,7 @@ Notas importantes:
               wrapClass: 'facturas-table-wrap',
               ariaLabel: `Histórico de facturas de ${group.label}`,
               tableClass: 'operational-table-facturas',
-              headers: '<th>No.</th><th>Fecha</th><th>Origen</th><th>Venta / OC</th><th>Cliente</th><th>Subtotal</th><th>Descuento</th><th>Total</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
+              headers: '<th>No.</th><th>Fecha de Registro</th><th>Origen</th><th>Venta / OC</th><th>Cliente</th><th>Sucursal</th><th>Subtotal</th><th>Descuento</th><th>Total</th><th>Ajustes</th><th>Estado</th><th>Observaciones</th><th>Acciones>',
               rows: pagedRecords.map((record) => renderFacturaRow(record, { readonly: true })).join('')
             }) : '<p class="muted-text compact-note">No hay facturas en este período histórico.</p>'}
             ${renderFacturasPagination(group.records.length, totalPages, { scope: 'history', periodo: group.periodo })}
@@ -15543,9 +15618,10 @@ Notas importantes:
   function renderFacturaRow(record, options = {}) {
     const factura = normalizeFacturaModuloRecord(record);
     if (!isFacturaCliente(factura)) return '';
-    const periodInfo = getFacturaPeriodInfoFromDate(factura.fecha);
+    const periodInfo = getFacturaPeriodInfo(factura);
     const origenLabel = getFacturaOrigenLabel(factura);
     const partyLabel = getFacturaModuloPartyDisplay(factura);
+    const sucursalLabel = getFacturaSucursalDisplay(factura) || '—';
     const documentLabel = getFacturaModuloParentDocument(factura);
     const ajustesInfo = getFacturaModuloAjustesInfo(factura);
     const closedPeriod = isFacturaPeriodClosed(factura.periodo);
@@ -15560,10 +15636,11 @@ Notas importantes:
       <tr>
         <td><span class="compact-primary" title="${escapeHtml(factura.no)}">${escapeHtml(factura.no || '—')}</span>${origenLabel ? `<small class="factura-origin-label" title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel)}</small>` : ''}</td>
         ${options.includePeriod ? `<td><span>${escapeHtml(periodInfo.label)}</span></td>` : ''}
-        <td><span>${escapeHtml(formatDate(factura.fecha))}</span></td>
+        <td><span>${escapeHtml(formatDate(getFacturaFechaRegistro(factura)))}</span></td>
         <td><small title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel || 'Manual')}</small></td>
         <td><span title="${escapeHtml(documentLabel || 'Sin documento madre')}">${escapeHtml(documentLabel || '—')}</span></td>
         <td><span title="${escapeHtml(partyLabel || 'Sin cliente')}">${escapeHtml(partyLabel || '—')}</span></td>
+        <td><span title="${escapeHtml(sucursalLabel)}">${escapeHtml(sucursalLabel)}</span></td>
         <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.subtotal || 0))}</span></td>
         <td class="amount-cell"><span>${escapeHtml(formatMoney(factura.descuento || 0))}</span></td>
         <td class="amount-cell"><span>${escapeHtml(getFacturaModuloAmountLabel(factura))}</span></td>
@@ -15612,7 +15689,7 @@ Notas importantes:
     const formData = new FormData(form);
     const isCreateMode = isFacturaCreateForm(form);
     const no = cleanText(formData.get('no'));
-    const fecha = toDateInputValue(formData.get('fecha'));
+    const submittedFechaRegistro = toDateInputValue(formData.get('fechaRegistro'));
     const estado = normalizeFacturaEstado(formData.get('estado'));
     const clienteId = cleanText(formData.get('clienteId'));
     const sucursalId = cleanText(formData.get('sucursalId'));
@@ -15625,8 +15702,8 @@ Notas importantes:
       renderRoute({ preserveScroll: true });
       return;
     }
-    if (!fecha) {
-      setFacturasMessage('La fecha de la factura es obligatoria.', 'error');
+    if (!submittedFechaRegistro) {
+      setFacturasMessage('La Fecha de Registro de la factura es obligatoria.', 'error');
       renderRoute({ preserveScroll: true });
       return;
     }
@@ -15635,10 +15712,19 @@ Notas importantes:
       renderRoute({ preserveScroll: true });
       return;
     }
-    if (!warnIfClosedPeriod(fecha, facturasState.editingId ? 'Actualizar esta factura' : 'Crear esta factura')) return;
-
     const data = getFacturasData();
     const existing = findFacturaModuloById(facturasState.editingId, data);
+    const fechaRegistro = existing
+      ? (getFacturaFechaRegistro(existing) || submittedFechaRegistro)
+      : todayInputValue();
+    const fecha = existing?.fecha || fechaRegistro;
+    const periodo = normalizeWorkPeriodKey(existing?.periodo) || getFacturaPeriodInfoFromDate(fechaRegistro).periodo;
+    if (isFacturaPeriodClosed(periodo)) {
+      setFacturasMessage(`${existing ? 'Actualizar' : 'Crear'} esta factura no está permitido porque ${getFacturaPeriodInfoFromDate(`${periodo}-01`).label} ya está cerrado.`, 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+
     const catalogPayload = getFacturaClienteSucursalPayload(clienteId, sucursalId, existing?.sucursalId || '');
     const timestamp = nowIso();
     const nextRecord = normalizeFacturaModuloRecord({
@@ -15646,6 +15732,8 @@ Notas importantes:
       id: existing?.id || generateId('facturaModulo'),
       no,
       fecha,
+      fechaRegistro,
+      periodo,
       estado,
       monto,
       observaciones,
@@ -15674,7 +15762,6 @@ Notas importantes:
     facturasState.editingId = null;
     if (!existing) {
       facturasState.captureDraft = normalizeFacturasCaptureDraft({
-        fecha,
         clienteId: catalogPayload.clienteId,
         sucursalId: catalogPayload.sucursalId
       });
@@ -15697,6 +15784,7 @@ Notas importantes:
       return;
     }
     facturasState.editingId = record.id;
+    facturasState.globalOpen = false;
     facturasState.message = null;
     renderRoute({ preserveScroll: true });
   }
