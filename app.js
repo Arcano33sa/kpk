@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.92-facturas-fecharegistro-sucursal-hardening-final';
+  const APP_VERSION = '0.18.93-facturas-estado-editable';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -15391,9 +15391,13 @@ Notas importantes:
           </label>
           <label class="form-field">
             <span>Estado *</span>
-            <input type="text" value="${escapeHtml(normalizeFacturaEstado(current.estado))}" readonly aria-readonly="true" />
-            <input type="hidden" name="estado" value="${escapeHtml(normalizeFacturaEstado(current.estado))}" />
-            <small>Pagada se calcula desde el saldo de la Venta / OC. Anulada se aplica desde la acción de anulación.</small>
+            ${isEditing
+              ? `<select name="estado" required>
+                  ${FACTURA_ESTADO_OPTIONS.map((estado) => `<option value="${escapeHtml(estado)}" ${normalizeFacturaEstado(current.estado) === estado ? 'selected' : ''}>${escapeHtml(estado)}</option>`).join('')}
+                </select>`
+              : `<input type="text" value="${escapeHtml(normalizeFacturaEstado(current.estado))}" readonly aria-readonly="true" />
+                 <input type="hidden" name="estado" value="${escapeHtml(normalizeFacturaEstado(current.estado))}" />`}
+            <small>${isEditing ? 'Puedes seleccionar Pendiente, Pagada o Anulada. Las facturas ligadas a una Venta / OC conservan su sincronización automática con Cobros.' : 'Las facturas nuevas se crean como Pendiente. Pagada se sincroniza desde Cobros y Anulada puede aplicarse desde edición o desde la acción de anulación.'}</small>
           </label>
           <label class="form-field">
             <span>Monto</span>
