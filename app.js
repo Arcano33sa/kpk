@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.93-facturas-estado-editable';
+  const APP_VERSION = '0.18.94-facturas-cobro-manual';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -120,7 +120,7 @@
       title: 'Facturas',
       short: 'Facturas',
       description: 'Control documental independiente de facturas por período, búsqueda, resumen, histórico, JSON y vínculo documental con Cobros.',
-      placeholder: 'Facturas se alimenta de Ventas / OC, controla saltos de consecutivo y marca Pagada desde Cobros completos sin tocar saldos ni retenciones.'
+      placeholder: 'Facturas se alimenta de Ventas / OC y permite que una factura manual genere un cobro financiero real, sin duplicar movimientos vinculados.'
     },
     {
       id: 'catalogos',
@@ -1333,7 +1333,7 @@ Notas importantes:
     { key: 'usuarios', path: 'workspaces/{workspaceId}/usuarios/{uid}', label: 'Usuarios', source: 'firebase_auth_future', idPolicy: 'uid de Firebase Auth como documentId futuro.' },
     { key: 'catalogos', path: 'workspaces/{workspaceId}/catalogos/{catalogoId}/items/{itemId}', label: 'Catálogos', source: 'catalogos', idPolicy: 'Conservar IDs actuales de clientes, sucursales, proveedores, categorías, métodos y bancos.' },
     { key: 'ventas', path: 'workspaces/{workspaceId}/ventas/{ventaId}', label: 'Ventas / OC', source: 'ventas', idPolicy: 'Usar venta.id como documentId o campo id estable.' },
-    { key: 'cobros', path: 'workspaces/{workspaceId}/cobros/{cobroId}', label: 'Cobros', source: 'cobros', idPolicy: 'Conservar cobro.id y ventaId para no romper saldos.' },
+    { key: 'cobros', path: 'workspaces/{workspaceId}/cobros/{cobroId}', label: 'Cobros', source: 'cobros', idPolicy: 'Conservar cobro.id y su vínculo exclusivo ventaId o facturaModuloId.' },
     { key: 'comprasProveedores', path: 'workspaces/{workspaceId}/comprasProveedores/{compraProveedorId}', label: 'Compras proveedores', source: 'comprasProveedores', idPolicy: 'Conservar compra.id y proveedorId.' },
     { key: 'pagosProveedores', path: 'workspaces/{workspaceId}/pagosProveedores/{pagoProveedorId}', label: 'Pagos proveedores', source: 'pagosProveedores', idPolicy: 'Conservar pago.id y compraProveedorId.' },
     { key: 'gastos', path: 'workspaces/{workspaceId}/gastos/{gastoId}', label: 'Gastos productivos', source: 'gastos', idPolicy: 'Conservar gasto.id, vínculos y anulaciones.' },
@@ -1352,6 +1352,7 @@ Notas importantes:
   ]);
   const FIRESTORE_RELATION_CONTRACTS = Object.freeze([
     { from: 'cobros', field: 'ventaId', to: 'ventas', purpose: 'Aplicar abonos y pagos a la OC correcta.' },
+    { from: 'cobros', field: 'facturaModuloId', to: 'facturasModulo', purpose: 'Aplicar un cobro financiero a una factura manual sin crear una Venta / OC ficticia.' },
     { from: 'pagosProveedores', field: 'compraProveedorId', to: 'comprasProveedores', purpose: 'Aplicar pagos al documento de proveedor correcto.' },
     { from: 'ventas/cobros/facturas', field: 'clienteId', to: 'catalogos.clientes', purpose: 'Mantener cartera por cliente.' },
     { from: 'ventas/cobros/facturas', field: 'sucursalId', to: 'catalogos.sucursales', purpose: 'Mantener sucursal ligada a cliente y documentos.' },
@@ -1501,6 +1502,8 @@ Notas importantes:
 
   let facturasState = {
     editingId: null,
+    cobroDraft: null,
+    cobroSaving: false,
     search: '',
     page: 1,
     globalOpen: false,
@@ -4860,6 +4863,9 @@ Notas importantes:
     return {
       id: raw.id || generateId('cobro'),
       ventaId: cleanText(raw.ventaId || raw.ocId || raw.documentoId),
+      origenCobro: cleanText(raw.origenCobro || raw.cobroOrigen) || (cleanText(raw.facturaModuloId || raw.facturaManualId || raw.invoiceModuleId) ? 'factura_manual' : 'venta_oc'),
+      facturaModuloId: cleanText(raw.facturaModuloId || raw.facturaManualId || raw.invoiceModuleId),
+      facturaNumero: cleanText(raw.facturaNumero || raw.numeroFactura || raw.facturaReferida || raw.facturaReferencia),
       fechaCobro: toDateInputValue(raw.fechaCobro || raw.fecha || '') || todayInputValue(),
       clienteId: cleanText(raw.clienteId),
       clienteNombre: cleanText(raw.clienteNombre || raw.cliente),
@@ -4869,6 +4875,9 @@ Notas importantes:
       montoCobrado: montoRecibidoReal,
       montoRecibidoReal,
       montoAplicadoOC,
+      montoAplicadoDocumento: Number.isNaN(parseMoney(raw.montoAplicadoDocumento))
+        ? montoAplicadoOC
+        : Math.max(0, parseMoney(raw.montoAplicadoDocumento)),
       retencionActiva: Boolean(retencionActiva),
       retencionId: retencionActiva ? cleanText(raw.retencionId) : '',
       retencionConcepto: retencionActiva ? cleanText(raw.retencionConcepto || raw.retencionNombre || raw.conceptoRetencion) : '',
@@ -8864,7 +8873,7 @@ Notas importantes:
       'casaGastosPeriodo', 'casaGastosExport', 'casaCategoryTotals', 'casaResumen',
       'cobrosDocumentoPeriodo', 'pagosDocumentoPeriodo', 'cobrosFlujoPeriodo', 'pagosFlujoPeriodo',
       'totalSubtotalVentas', 'totalDescuentosVentas', 'totalVendidoOriginal', 'totalAjustesClientes',
-      'totalVendido', 'ventaNetaAjustada', 'totalCobradoClientes', 'totalCobradoAplicadoOC',
+      'totalVendido', 'ventaNetaAjustada', 'totalCobradoClientes', 'totalCobradoAplicadoDocumento', 'totalCobradoAplicadoOC',
       'totalRecibidoReal', 'totalRetenciones', 'retencionesPorConcepto', 'saldoPorCobrar',
       'totalComprasOriginal', 'totalAjustesProveedores', 'totalComprasProveedores', 'totalComprasAjustadas',
       'totalPagadoProveedores', 'saldoPorPagar', 'totalGastos', 'flujoPeriodo',
@@ -11124,13 +11133,26 @@ Notas importantes:
     const sucursales = buildIdSet(snapshot.sucursales);
     const proveedores = buildIdSet(snapshot.proveedores);
     const categoriasCasa = buildIdSet(snapshot.categoriasCasa);
+    const facturasModulo = buildIdSet(getFacturasClienteRecords(snapshot.facturasModulo || {}));
+    const cobros = buildIdSet(snapshot.cobros);
+    const activeManualFacturaIds = new Set();
     let hidden = 0;
     const warn = (condition, message) => {
       if (!condition) return;
       if (warnings.length < 40) warnings.push(message);
       else hidden += 1;
     };
-    (snapshot.cobros || []).forEach((record) => warn(record.ventaId && !ventas.has(record.ventaId), `Cobro ${record.id || 'sin ID'} refiere ventaId no encontrado: ${record.ventaId}.`));
+    (snapshot.cobros || []).forEach((rawRecord) => {
+      const record = normalizeCobroRecord(rawRecord);
+      warn(record.ventaId && !ventas.has(record.ventaId), `Cobro ${record.id || 'sin ID'} refiere ventaId no encontrado: ${record.ventaId}.`);
+      warn(record.facturaModuloId && !facturasModulo.has(record.facturaModuloId), `Cobro ${record.id || 'sin ID'} refiere facturaModuloId no encontrado: ${record.facturaModuloId}.`);
+      warn(Boolean(record.ventaId && record.facturaModuloId), `Cobro ${record.id || 'sin ID'} contiene ventaId y facturaModuloId simultáneamente.`);
+      warn(!record.ventaId && !record.facturaModuloId, `Cobro ${record.id || 'sin ID'} no tiene documento financiero de origen.`);
+      if (record.activo && record.facturaModuloId) {
+        warn(activeManualFacturaIds.has(record.facturaModuloId), `La factura manual ${record.facturaModuloId} tiene más de un cobro activo.`);
+        activeManualFacturaIds.add(record.facturaModuloId);
+      }
+    });
     (snapshot.pagosProveedores || []).forEach((record) => warn(record.compraProveedorId && !compras.has(record.compraProveedorId), `Pago ${record.id || 'sin ID'} refiere compraProveedorId no encontrado: ${record.compraProveedorId}.`));
     (snapshot.ventas || []).forEach((record) => {
       warn(record.clienteId && !clientes.has(record.clienteId), `Venta ${record.id || 'sin ID'} refiere clienteId no encontrado: ${record.clienteId}.`);
@@ -11146,6 +11168,7 @@ Notas importantes:
       warn(record.ventaId && !ventas.has(record.ventaId), `Factura ${record.id || record.no || 'sin ID'} refiere ventaId no encontrado: ${record.ventaId}.`);
       warn(record.clienteId && !clientes.has(record.clienteId), `Factura ${record.id || record.no || 'sin ID'} refiere clienteId no encontrado: ${record.clienteId}.`);
       warn(record.sucursalId && !sucursales.has(record.sucursalId), `Factura ${record.id || record.no || 'sin ID'} refiere sucursalId no encontrado: ${record.sucursalId}.`);
+      warn(record.cobroId && !cobros.has(record.cobroId), `Factura ${record.id || record.no || 'sin ID'} refiere cobroId no encontrado: ${record.cobroId}.`);
     });
     if (hidden > 0) warnings.push(`${hidden} advertencia(s) adicionales de relación no mostradas.`);
     return warnings;
@@ -13637,6 +13660,27 @@ Notas importantes:
     };
   }
 
+  function buildFacturaModuloImportIdMap(currentData, incomingData) {
+    const current = getFacturasClienteRecords(sanitizeFacturasClientesData(currentData || {}, { mark: false }));
+    const incoming = getFacturasClienteRecords(sanitizeFacturasClientesData(incomingData || {}, { mark: false }));
+    const currentById = new Map(current.map((record) => [cleanText(record.id), record]).filter(([id]) => id));
+    const currentByScopeAndNo = new Map(current.map((record) => {
+      const noKey = normalizeFacturaModuloNoKey(record.no);
+      const scope = isFacturaCliente(record) ? 'clientes' : 'proveedores';
+      return noKey ? [`${scope}|${noKey}`, record] : null;
+    }).filter(Boolean));
+    const idMap = new Map();
+    incoming.forEach((record) => {
+      const sourceId = cleanText(record.id);
+      if (!sourceId) return;
+      const noKey = normalizeFacturaModuloNoKey(record.no);
+      const scope = isFacturaCliente(record) ? 'clientes' : 'proveedores';
+      const existing = currentById.get(sourceId) || (noKey ? currentByScopeAndNo.get(`${scope}|${noKey}`) : null);
+      idMap.set(sourceId, cleanText(existing?.id) || sourceId);
+    });
+    return idMap;
+  }
+
   function setNotasMessage(message, type = 'success') {
     notifyAction(notasState, message, type, { id: 'ksa-action-notas' });
   }
@@ -13798,6 +13842,11 @@ Notas importantes:
       autoPagadaAt: Boolean(raw.autoPagada) ? cleanText(raw.autoPagadaAt) : '',
       autoPagadaVentaId: Boolean(raw.autoPagada) ? cleanText(raw.autoPagadaVentaId || raw.ventaId || raw.ocId) : cleanText(raw.autoPagadaVentaId),
       autoPagadaByCobroId: Boolean(raw.autoPagada) ? cleanText(raw.autoPagadaByCobroId || raw.cobroId) : cleanText(raw.autoPagadaByCobroId),
+      cobroId: cleanText(raw.cobroId || raw.cobroManualId),
+      pagadaAt: cleanText(raw.pagadaAt || raw.fechaPagada),
+      pagadaPor: cleanText(raw.pagadaPor || raw.origenPago),
+      ultimoCobroAnuladoId: cleanText(raw.ultimoCobroAnuladoId || raw.lastAnnulledCobroId),
+      cobroAnuladoAt: cleanText(raw.cobroAnuladoAt || raw.fechaCobroAnulado),
       estadoPrevioAutoPagada: Boolean(raw.autoPagada) ? normalizeFacturaEstado(raw.estadoPrevioAutoPagada || raw.estadoAnteriorAutoPagada || 'Pendiente') : '',
       createdAt: cleanText(raw.createdAt),
       updatedAt: cleanText(raw.updatedAt) || cleanText(raw.createdAt) || timestamp
@@ -14378,6 +14427,76 @@ Notas importantes:
     if (factura.compraProveedorId || factura.proveedorId || factura.origen === 'proveedores') return 'proveedores';
     if (factura.ventaId || factura.clienteId || factura.origen === 'ventas' || factura.origen === 'salto de consecutivo') return factura.origen === 'salto de consecutivo' ? 'salto de consecutivo' : 'ventas';
     return factura.origen || 'manual';
+  }
+
+  function isFacturaManualCobrable(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    const origen = normalizeKeyForCompare(factura.origen);
+    return Boolean(
+      isFacturaCliente(factura)
+      && origen === 'manual'
+      && !factura.ventaId
+      && !factura.compraProveedorId
+      && !factura.proveedorId
+      && !origen.includes('salto')
+    );
+  }
+
+  function getFacturaManualTotal(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    return roundMoney(Math.max(0, factura.totalFacturaRelacionada || factura.monto || 0));
+  }
+
+  function getActiveCobroForFacturaModulo(facturaId, cobrosSource = appData?.cobros) {
+    const target = cleanText(facturaId);
+    if (!target) return null;
+    return (Array.isArray(cobrosSource) ? cobrosSource : [])
+      .map((record) => normalizeCobroRecord(record))
+      .find((record) => record.activo && record.facturaModuloId === target) || null;
+  }
+
+  function buildFacturaManualCobroId(facturaId, cobrosSource = appData?.cobros) {
+    const target = cleanText(facturaId);
+    const revision = (Array.isArray(cobrosSource) ? cobrosSource : [])
+      .map((record) => normalizeCobroRecord(record))
+      .filter((record) => record.facturaModuloId === target)
+      .length + 1;
+    return sanitizeFirestoreDocId(`cobro_factura_manual_${simpleHashText(target)}_r${revision}`, 'cobro_factura_manual');
+  }
+
+  function reconcileFacturaManualCobro(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    if (!isFacturaManualCobrable(factura)) return factura;
+    const cobro = getActiveCobroForFacturaModulo(factura.id);
+    if (cobro) {
+      if (factura.estado === 'Pagada' && factura.cobroId === cobro.id) return factura;
+      return normalizeFacturaModuloRecord({
+        ...factura,
+        estado: 'Pagada',
+        cobroId: cobro.id,
+        pagadaAt: factura.pagadaAt || cobro.createdAt || cobro.updatedAt || nowIso(),
+        pagadaPor: 'cobro_factura_manual',
+        updatedAt: nowIso()
+      });
+    }
+    const linkedCobro = factura.cobroId
+      ? (Array.isArray(appData?.cobros) ? appData.cobros : [])
+        .map((item) => normalizeCobroRecord(item))
+        .find((item) => item.id === factura.cobroId)
+      : null;
+    if (factura.pagadaPor === 'cobro_factura_manual' && linkedCobro && !linkedCobro.activo) {
+      return normalizeFacturaModuloRecord({
+        ...factura,
+        estado: 'Pendiente',
+        cobroId: '',
+        pagadaAt: '',
+        pagadaPor: '',
+        ultimoCobroAnuladoId: linkedCobro.id,
+        cobroAnuladoAt: linkedCobro.updatedAt || nowIso(),
+        updatedAt: linkedCobro.updatedAt || nowIso()
+      });
+    }
+    return factura;
   }
 
   function getFacturaModuloParentDocument(record) {
@@ -15269,6 +15388,8 @@ Notas importantes:
     facturasState.page = 1;
     facturasState.search = '';
     facturasState.editingId = null;
+    facturasState.cobroDraft = null;
+    facturasState.cobroSaving = false;
     facturasState.globalOpen = false;
     facturasState.globalPage = 1;
     facturasState.globalSearch = '';
@@ -15280,7 +15401,15 @@ Notas importantes:
   }
 
   function renderFacturas() {
-    const data = getFacturasData();
+    let data = getFacturasData();
+    let reconciledManualCobro = false;
+    const reconciledFacturas = data.facturas.map((record) => {
+      const current = normalizeFacturaModuloRecord(record);
+      const reconciled = reconcileFacturaManualCobro(current);
+      if (current.estado !== reconciled.estado || current.cobroId !== reconciled.cobroId) reconciledManualCobro = true;
+      return reconciled;
+    });
+    if (reconciledManualCobro) data = saveFacturasData({ ...data, facturas: reconciledFacturas });
     const periodInfo = getCurrentFacturasPeriodInfo();
     const currentPeriodClosed = isFacturaPeriodClosed(periodInfo.periodo);
     const editingRecord = facturasState.editingId ? findFacturaModuloById(facturasState.editingId, data) : null;
@@ -15322,6 +15451,7 @@ Notas importantes:
         ${renderFacturasPeriodoList(periodInfo, pagedRecords, periodRecords.length, totalPages, { closed: currentPeriodClosed })}
         ${renderFacturasHistorico(historyGroups)}
         ${safeEditingRecord ? renderEditModal(getFacturasModalId(), 'Editar factura', 'Actualiza la factura sin salir del listado ni saltar al formulario principal.', renderFacturaForm(safeEditingRecord, 'edit')) : ''}
+        ${facturasState.cobroDraft ? renderEditModal(getFacturaManualCobroModalId(), 'Registrar cobro de factura manual', 'El estado Pagada se aplicará únicamente después de guardar el cobro.', renderFacturaManualCobroForm(facturasState.cobroDraft)) : ''}
         ${facturasState.globalOpen ? renderFacturasGlobalModal(data) : ''}
       </section>
     `;
@@ -15353,6 +15483,7 @@ Notas importantes:
     const clientes = getFacturaClientesForSelect(selectedClienteId);
     const sucursales = getFacturaSucursalesForCliente(selectedClienteId, selectedSucursalId);
     const sucursalDisabled = !selectedClienteId || !sucursales.length;
+    const financialLocked = isEditing && Boolean(getActiveCobroForFacturaModulo(current.id));
     return `
       <form class="${isEditing ? 'facturas-form facturas-modal-form' : 'panel-card facturas-form'}" data-factura-form data-factura-form-mode="${isEditing ? 'edit' : 'create'}">
         ${isEditing && facturasState.message ? `<div class="form-message ${facturasState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(facturasState.message)}</div>` : ''}
@@ -15369,7 +15500,7 @@ Notas importantes:
         <div class="form-grid compact-form-grid facturas-form-grid">
           <label class="form-field">
             <span>No. *</span>
-            <input type="text" name="no" value="${escapeHtml(current.no || '')}" placeholder="Ej. 00245" required />
+            <input type="text" name="no" value="${escapeHtml(current.no || '')}" placeholder="Ej. 00245" required ${financialLocked ? 'readonly aria-readonly="true"' : ''} />
           </label>
           <label class="form-field">
             <span>Fecha de Registro *</span>
@@ -15377,16 +15508,18 @@ Notas importantes:
           </label>
           <label class="form-field">
             <span>Cliente</span>
-            <select name="clienteId" data-factura-cliente>
+            <select name="clienteId" data-factura-cliente ${financialLocked ? 'disabled' : ''}>
               <option value="">Seleccionar cliente</option>
               ${clientes.map((cliente) => `<option value="${escapeHtml(cliente.id)}" ${cliente.id === selectedClienteId ? 'selected' : ''}>${escapeHtml(cliente.nombre || 'Cliente sin nombre')}${cliente.activo ? '' : ' · inactivo'}</option>`).join('')}
             </select>
+            ${financialLocked ? `<input type="hidden" name="clienteId" value="${escapeHtml(selectedClienteId)}" />` : ''}
           </label>
           <label class="form-field">
             <span>Sucursal</span>
-            <select name="sucursalId" data-factura-sucursal ${sucursalDisabled ? 'disabled' : ''}>
+            <select name="sucursalId" data-factura-sucursal ${sucursalDisabled || financialLocked ? 'disabled' : ''}>
               ${renderFacturaSucursalOptions(selectedClienteId, selectedSucursalId)}
             </select>
+            ${financialLocked ? `<input type="hidden" name="sucursalId" value="${escapeHtml(selectedSucursalId)}" />` : ''}
             <small>${selectedClienteId ? (sucursales.length ? 'Sucursales del cliente seleccionado.' : 'Cliente sin sucursales registradas.') : 'Primero selecciona un cliente.'}</small>
           </label>
           <label class="form-field">
@@ -15397,18 +15530,67 @@ Notas importantes:
                 </select>`
               : `<input type="text" value="${escapeHtml(normalizeFacturaEstado(current.estado))}" readonly aria-readonly="true" />
                  <input type="hidden" name="estado" value="${escapeHtml(normalizeFacturaEstado(current.estado))}" />`}
-            <small>${isEditing ? 'Puedes seleccionar Pendiente, Pagada o Anulada. Las facturas ligadas a una Venta / OC conservan su sincronización automática con Cobros.' : 'Las facturas nuevas se crean como Pendiente. Pagada se sincroniza desde Cobros y Anulada puede aplicarse desde edición o desde la acción de anulación.'}</small>
+            <small>${isEditing ? 'En una factura manual, seleccionar Pagada abrirá el registro obligatorio del cobro. Las facturas ligadas a Venta / OC solo se pagan desde Cobros.' : 'Las facturas nuevas se crean como Pendiente. Pagada requiere un cobro real y Anulada conserva el histórico.'}</small>
           </label>
           <label class="form-field">
             <span>Monto</span>
-            <input type="text" name="monto" inputmode="decimal" value="${escapeHtml(formatNumberInput(current.monto || ''))}" placeholder="0.00" data-money-input />
+            <input type="text" name="monto" inputmode="decimal" value="${escapeHtml(formatNumberInput(current.monto || ''))}" placeholder="0.00" data-money-input ${financialLocked ? 'readonly aria-readonly="true"' : ''} />
           </label>
           <label class="form-field full-span">
             <span>Observaciones</span>
             <textarea name="observaciones" rows="3" placeholder="Detalle documental opcional">${escapeHtml(current.observaciones || '')}</textarea>
           </label>
         </div>
-        <p class="compact-note muted-text">Las facturas emitidas a clientes pueden registrarse manualmente o venir desde Ventas / OC. Editarlas aquí no modifica Cobros, saldos, Resumen, Excel ni cierres.</p>
+        <p class="compact-note muted-text">${financialLocked ? 'Esta factura tiene un cobro activo: número, cliente, sucursal, monto y estado financiero están protegidos; solo puede editarse la observación.' : 'Las facturas manuales pueden generar un cobro real al cambiar de Pendiente a Pagada. Las vinculadas a Venta / OC conservan su flujo financiero exclusivo desde Cobros.'}</p>
+      </form>
+    `;
+  }
+
+  function renderFacturaManualCobroForm(record) {
+    const factura = normalizeFacturaModuloRecord(record);
+    const total = getFacturaManualTotal(factura);
+    const metodos = getActiveCatalogRecords('metodosPago');
+    const bancos = getActiveBankRecords();
+    const retenciones = getCobroRetencionesForForm();
+    const disabled = facturasState.cobroSaving || !metodos.length || total <= 0;
+    return `
+      <form class="cobro-form facturas-modal-form" data-factura-manual-cobro-form novalidate>
+        <input type="hidden" name="facturaModuloId" value="${escapeHtml(factura.id)}" />
+        ${facturasState.message ? `<div class="form-message ${facturasState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(facturasState.message)}</div>` : ''}
+        <div class="formula-card cobro-summary">
+          <strong>Factura manual ${escapeHtml(factura.no || 'sin número')}</strong>
+          <p class="compact-note">${escapeHtml(factura.clienteNombre || 'Sin cliente')} · Total a aplicar: ${escapeHtml(formatMoney(total))}</p>
+        </div>
+        <div class="form-grid">
+          <label class="form-field">
+            <span>Fecha real de cobro <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <input type="date" name="fechaCobro" value="${escapeHtml(todayInputValue())}" required ${disabled ? 'disabled' : ''} />
+          </label>
+          <label class="form-field">
+            <span>Monto de factura C$</span>
+            <input type="text" name="montoCobrado" value="${escapeHtml(formatNumberInput(total))}" readonly aria-readonly="true" data-cobro-monto-recibido data-cobro-monto-aplicado />
+          </label>
+          ${renderCobroRetencionBlock(null, retenciones, total, disabled)}
+          <label class="form-field">
+            <span>Método de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <select name="metodoPagoId" required data-payment-method-select ${disabled ? 'disabled' : ''}>
+              <option value="">Seleccionar método</option>
+              ${metodos.map((metodo) => `<option value="${escapeHtml(metodo.id)}">${escapeHtml(metodo.nombre || 'Método sin nombre')}</option>`).join('')}
+            </select>
+          </label>
+          ${renderPaymentBankField(bancos, null, disabled)}
+          <label class="form-field full-span">
+            <span>Observación</span>
+            <textarea name="observacion" rows="3" placeholder="Detalle opcional del cobro" ${disabled ? 'disabled' : ''}></textarea>
+          </label>
+        </div>
+        ${!metodos.length ? '<p class="form-message is-error">No hay métodos de pago activos en Catálogos.</p>' : ''}
+        ${total <= 0 ? '<p class="form-message is-error">La factura debe tener un monto mayor que cero antes de registrar el cobro.</p>' : ''}
+        <div class="form-actions">
+          <button type="submit" class="card-action" ${disabled ? 'disabled' : ''}>${facturasState.cobroSaving ? 'Guardando…' : 'Registrar cobro y marcar Pagada'}</button>
+          <button type="button" class="secondary-action" data-factura-manual-cobro-cancel ${facturasState.cobroSaving ? 'disabled' : ''}>Cancelar</button>
+        </div>
+        <p class="compact-note muted-text">Si cancelas, la factura continuará Pendiente. El monto se toma automáticamente de la factura.</p>
       </form>
     `;
   }
@@ -15740,6 +15922,9 @@ Notas importantes:
       periodo,
       estado,
       monto,
+      totalFacturaRelacionada: existing && !isFacturaManualCobrable(existing)
+        ? existing.totalFacturaRelacionada
+        : monto,
       observaciones,
       origen: existing?.origen || 'manual',
       ventaId: existing?.ventaId || '',
@@ -15756,6 +15941,60 @@ Notas importantes:
       createdAt: existing?.createdAt || timestamp,
       updatedAt: timestamp
     });
+    const activeManualCobro = existing ? getActiveCobroForFacturaModulo(existing.id) : null;
+    if (activeManualCobro && (
+      no !== existing.no
+      || Math.abs(roundMoney(monto - getFacturaManualTotal(existing))) > COBRO_TOLERANCE
+      || catalogPayload.clienteId !== existing.clienteId
+      || catalogPayload.sucursalId !== existing.sucursalId
+    )) {
+      setFacturasMessage('No se puede cambiar número, monto, cliente o sucursal mientras la factura tenga un cobro activo. Puedes editar únicamente la observación.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (existing?.estado === 'Pagada' && estado !== 'Pagada') {
+      setFacturasMessage('Una factura Pagada no puede cambiarse a Pendiente o Anulada desde el editor. El movimiento financiero debe conservarse.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (activeManualCobro && estado !== 'Pagada') {
+      setFacturasMessage('La factura tiene un cobro activo asociado y no puede cambiarse de estado.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (existing && existing.estado === 'Pendiente' && estado === 'Pagada') {
+      if (!isFacturaManualCobrable(existing)) {
+        setFacturasMessage('Esta factura no es manual cobrable. Las facturas vinculadas a Venta / OC solo se marcan Pagada desde Cobros.', 'error');
+        renderRoute({ preserveScroll: true });
+        return;
+      }
+      if (activeManualCobro) {
+        const reconciled = reconcileFacturaManualCobro(existing);
+        data.facturas = data.facturas.map((item) => cleanText(item.id) === existing.id ? reconciled : item);
+        saveFacturasData(data);
+        facturasState.editingId = null;
+        setFacturasMessage('La factura ya tenía un cobro activo; su estado fue reconciliado como Pagada.');
+        renderRoute({ preserveScroll: true });
+        return;
+      }
+      if (getFacturaManualTotal(nextRecord) <= 0) {
+        setFacturasMessage('La factura debe tener un monto mayor que cero antes de registrar el cobro.', 'error');
+        renderRoute({ preserveScroll: true });
+        return;
+      }
+      facturasState.cobroDraft = normalizeFacturaModuloRecord({
+        ...nextRecord,
+        estado: 'Pendiente',
+        cobroId: '',
+        pagadaAt: '',
+        pagadaPor: ''
+      });
+      facturasState.editingId = null;
+      facturasState.message = null;
+      facturasState.cobroSaving = false;
+      renderRoute({ preserveScroll: true });
+      return;
+    }
     if (existing) {
       data.facturas = data.facturas.map((item) => cleanText(item.id) === existing.id ? nextRecord : item);
     } else {
@@ -15772,6 +16011,167 @@ Notas importantes:
     }
     clampFacturasPageForCurrentPeriod(data);
     setFacturasMessage(existing ? 'Factura actualizada correctamente.' : 'Factura agregada correctamente.');
+    renderRoute({ preserveScroll: true });
+  }
+
+  function cancelFacturaManualCobro() {
+    if (facturasState.cobroSaving) return;
+    facturasState.cobroDraft = null;
+    facturasState.message = null;
+    facturasState.messageType = 'success';
+    renderRoute({ preserveScroll: true });
+  }
+
+  function saveFacturaManualCobro(form) {
+    if (facturasState.cobroSaving) return;
+    const draft = facturasState.cobroDraft ? normalizeFacturaModuloRecord(facturasState.cobroDraft) : null;
+    if (!draft || !isFacturaManualCobrable(draft) || draft.estado !== 'Pendiente') {
+      setFacturasMessage('La factura manual ya no está disponible para registrar este cobro.', 'error');
+      facturasState.cobroDraft = null;
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    const persistedFactura = findFacturaModuloById(draft.id);
+    if (!persistedFactura || persistedFactura.estado !== 'Pendiente') {
+      setFacturasMessage('La factura cambió mientras se preparaba el cobro. No se creó ningún movimiento.', 'error');
+      facturasState.cobroDraft = null;
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    const duplicate = getActiveCobroForFacturaModulo(draft.id);
+    if (duplicate) {
+      const data = getFacturasData();
+      data.facturas = data.facturas.map((item) => cleanText(item.id) === draft.id ? reconcileFacturaManualCobro(item) : item);
+      saveFacturasData(data);
+      facturasState.cobroDraft = null;
+      setFacturasMessage('No se duplicó el movimiento: la factura ya tenía un cobro activo y fue reconciliada como Pagada.');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+
+    const formData = new FormData(form);
+    const totalFactura = getFacturaManualTotal(draft);
+    const fechaCobro = toDateInputValue(formData.get('fechaCobro'));
+    const metodo = getCatalogRecordById('metodosPago', cleanText(formData.get('metodoPagoId')));
+    const retencionActiva = Boolean(form.querySelector('[data-cobro-retencion-toggle]')?.checked);
+    const retencionId = retencionActiva ? cleanText(formData.get('retencionId')) : '';
+    const retencion = retencionId ? getCatalogRecordById('retenciones', retencionId) : null;
+    if (!fechaCobro) {
+      setFacturasMessage('La fecha real del cobro es obligatoria.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (totalFactura <= 0) {
+      setFacturasMessage('El monto de la factura debe ser mayor que cero.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (!metodo || !metodo.activo) {
+      setFacturasMessage('Selecciona un método de pago activo.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (retencionActiva && (!retencion || !retencion.activo)) {
+      setFacturasMessage('Selecciona una retención activa de Catálogos.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (!warnIfClosedPeriod(fechaCobro, 'Registrar este cobro')) return;
+
+    const requiredBankType = getBankTypeForPaymentMethod(metodo.id || metodo.nombre);
+    const cuenta = requiredBankType ? getValidBankForPaymentMethod(metodo.id || metodo.nombre, formData.get('cuentaBancoId')) : null;
+    const retencionPorcentaje = retencionActiva ? normalizeCatalogPercentage(retencion?.porcentaje || 0) : 0;
+    const amounts = retencionActiva
+      ? calculateCobroRetentionAmounts(totalFactura, retencionPorcentaje)
+      : { montoAplicadoOC: totalFactura, retencionMonto: 0, montoRecibidoReal: totalFactura };
+    const timestamp = nowIso();
+    const newRecord = normalizeCobroRecord({
+      id: buildFacturaManualCobroId(draft.id),
+      ventaId: '',
+      origenCobro: 'factura_manual',
+      facturaModuloId: draft.id,
+      facturaNumero: draft.no,
+      facturaReferida: draft.no,
+      fechaCobro,
+      clienteId: draft.clienteId,
+      clienteNombre: draft.clienteNombre,
+      sucursalId: draft.sucursalId,
+      sucursalNombre: draft.sucursalNombre,
+      numeroDocumento: draft.no,
+      montoCobrado: amounts.montoRecibidoReal,
+      montoRecibidoReal: amounts.montoRecibidoReal,
+      montoAplicadoOC: totalFactura,
+      montoAplicadoDocumento: totalFactura,
+      retencionActiva,
+      retencionId,
+      retencionConcepto: retencionActiva ? retencion.nombre : '',
+      retencionPorcentaje,
+      retencionMonto: retencionActiva ? amounts.retencionMonto : 0,
+      metodoPagoId: metodo.id,
+      metodoPagoNombre: metodo.nombre,
+      cuentaBancoId: requiredBankType ? (cuenta?.id || '') : '',
+      cuentaBancoNombre: requiredBankType ? (cuenta?.nombre || '') : '',
+      cuentaBancoTipo: requiredBankType ? normalizeBankType(cuenta?.tipo) : '',
+      observacion: cleanText(formData.get('observacion')),
+      activo: true,
+      estado: 'Registrado',
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    const bankError = validateBankForPaymentMethod(newRecord);
+    if (bankError) {
+      setFacturasMessage(bankError, 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+
+    facturasState.cobroSaving = true;
+    const previousCobros = Array.isArray(appData.cobros) ? appData.cobros : [];
+    appData.cobros = [newRecord, ...previousCobros];
+    saveData(appData);
+    let cobroPersisted = false;
+    try {
+      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+      cobroPersisted = Array.isArray(stored.cobros) && stored.cobros.some((item) => cleanText(item.id) === newRecord.id && item.activo !== false);
+    } catch (_) {}
+    if (!cobroPersisted) {
+      appData.cobros = previousCobros;
+      facturasState.cobroSaving = false;
+      setFacturasMessage('No se pudo guardar el cobro. La factura continúa Pendiente.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+
+    const data = getFacturasData();
+    const paidFactura = normalizeFacturaModuloRecord({
+      ...draft,
+      estado: 'Pagada',
+      cobroId: newRecord.id,
+      pagadaAt: timestamp,
+      pagadaPor: 'cobro_factura_manual',
+      updatedAt: timestamp
+    });
+    data.facturas = data.facturas.map((item) => cleanText(item.id) === draft.id ? paidFactura : item);
+    saveFacturasData(data);
+    registerSessionChange({ module: 'Cobros', operation: 'crear', recordId: newRecord.id, sourceModule: 'Facturas' });
+    registerSessionChange({ module: 'Facturas', operation: 'editar', recordId: paidFactura.id, sourceModule: 'Cobros' });
+    registerActivity({
+      module: 'Cobros',
+      action: 'Creado',
+      entityType: 'Cobro de factura manual',
+      entityRef: `Factura ${paidFactura.no || 'sin número'}`,
+      amount: newRecord.montoCobrado,
+      detail: buildActivityDetail([
+        'Cobro registrado desde Facturas',
+        `Aplicado ${formatMoney(totalFactura)}`,
+        retencionActiva ? `Retención ${newRecord.retencionConcepto}: ${formatMoney(newRecord.retencionMonto)}` : ''
+      ]),
+      source: 'local'
+    });
+    facturasState.cobroDraft = null;
+    facturasState.cobroSaving = false;
+    facturasState.messageType = 'success';
+    facturasState.message = `Cobro registrado por ${formatMoney(newRecord.montoCobrado)}. La factura ${paidFactura.no || ''} quedó Pagada.`;
     renderRoute({ preserveScroll: true });
   }
 
@@ -15807,6 +16207,11 @@ Notas importantes:
     }
     if (record.estado === 'Anulada') {
       setFacturasMessage('La factura ya está anulada.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (getActiveCobroForFacturaModulo(record.id)) {
+      setFacturasMessage('No se puede anular una factura con un cobro activo. El dinero no se revertirá silenciosamente.', 'error');
       renderRoute({ preserveScroll: true });
       return;
     }
@@ -19888,11 +20293,16 @@ Notas importantes:
   }
 
   function getCobroAplicadoOcAmount(cobro) {
-    const applied = parseMoney(cobro?.montoAplicadoOC ?? cobro?.montoAplicadoOc ?? cobro?.totalAplicadoOC ?? cobro?.totalAplicadoOc ?? cobro?.montoAplicado ?? cobro?.totalAplicado);
+    const applied = parseMoney(cobro?.montoAplicadoDocumento ?? cobro?.montoAplicadoOC ?? cobro?.montoAplicadoOc ?? cobro?.totalAplicadoOC ?? cobro?.totalAplicadoOc ?? cobro?.montoAplicado ?? cobro?.totalAplicado);
     if (!Number.isNaN(applied)) return Math.max(0, applied);
     const received = parseMoney(cobro?.montoRecibidoReal ?? cobro?.montoCobrado ?? cobro?.monto ?? cobro?.importe);
     const retention = getCobroRetencionMontoForResumen(cobro);
     return roundMoney((Number.isNaN(received) ? 0 : Math.max(0, received)) + retention);
+  }
+
+  function isCobroFacturaManual(record) {
+    const cobro = normalizeCobroRecord(record);
+    return cobro.origenCobro === 'factura_manual' && Boolean(cobro.facturaModuloId);
   }
 
   function buildCobrosAplicadosForConsulta(cobros) {
@@ -19908,7 +20318,9 @@ Notas importantes:
     if (filters.clienteId && clienteId !== filters.clienteId) return false;
     if (filters.sucursalId && sucursalId !== filters.sucursalId) return false;
     if (filters.metodoPagoId && cobro.metodoPagoId !== filters.metodoPagoId) return false;
-    if (filters.estado && cobro.estado !== filters.estado && venta?.estado !== filters.estado) return false;
+    const documentEstado = isCobroFacturaManual(cobro) && cobro.activo ? 'Pagada' : '';
+    if (filters.estado && cobro.estado !== filters.estado && venta?.estado !== filters.estado && documentEstado !== filters.estado) return false;
+    if (filters.mora && !venta) return false;
     if (venta && !matchesResumenMoraFilter(venta.fechaVencimiento, venta.saldoPorCobrar, filters.mora)) return false;
     return true;
   }
@@ -19946,7 +20358,14 @@ Notas importantes:
     const compraIdsPeriodo = new Set(comprasPeriodoById.keys());
 
     const cobrosDocumentoPeriodo = cobros
-      .filter((cobro) => cobro.activo && ventaIdsPeriodo.has(cobro.ventaId) && matchesExcelConsultaCobroByDocument(cobro, filters, ventasPeriodoById.get(cobro.ventaId)))
+      .filter((cobro) => {
+        if (!cobro.activo) return false;
+        const venta = ventasPeriodoById.get(cobro.ventaId);
+        if (isCobroFacturaManual(cobro)) {
+          return isDateInResumenRange(cobro.fechaCobro, range) && matchesExcelConsultaCobroByDocument(cobro, filters, null);
+        }
+        return ventaIdsPeriodo.has(cobro.ventaId) && matchesExcelConsultaCobroByDocument(cobro, filters, venta);
+      })
       .sort((a, b) => String(ventasPeriodoById.get(a.ventaId)?.numeroDocumento || a.numeroDocumento).localeCompare(String(ventasPeriodoById.get(b.ventaId)?.numeroDocumento || b.numeroDocumento)) || String(a.fechaCobro).localeCompare(String(b.fechaCobro)));
     const pagosDocumentoPeriodo = pagos
       .filter((pago) => pago.activo && compraIdsPeriodo.has(pago.compraProveedorId) && matchesExcelConsultaPagoByDocument(pago, filters, comprasPeriodoById.get(pago.compraProveedorId)))
@@ -19987,7 +20406,7 @@ Notas importantes:
     const totalVendidoOriginal = sumMoney(ventasPeriodo, (venta) => venta.ventaNetaOriginal);
     const totalAjustesClientes = sumMoney(ventasPeriodo, (venta) => venta.totalAjustes);
     const totalVendido = sumMoney(ventasPeriodo, (venta) => venta.ventaNetaAjustada);
-    const totalCobradoAplicadoOC = sumMoney(cobrosDocumentoPeriodo, (cobro) => getCobroAplicadoOcAmount(cobro));
+    const totalCobradoAplicadoDocumento = sumMoney(cobrosDocumentoPeriodo, (cobro) => getCobroAplicadoOcAmount(cobro));
     const totalRecibidoReal = sumMoney(cobrosDocumentoPeriodo, (cobro) => cobro.montoRecibidoReal ?? cobro.montoCobrado);
     const totalRetenciones = sumMoney(cobrosDocumentoPeriodo, (cobro) => getCobroRetencionMontoForResumen(cobro));
     const totalComprasOriginal = sumMoney(comprasPeriodo, (compra) => compra.totalCompra);
@@ -20045,8 +20464,9 @@ Notas importantes:
       totalAjustesClientes,
       totalVendido,
       ventaNetaAjustada: totalVendido,
-      totalCobradoClientes: totalCobradoAplicadoOC,
-      totalCobradoAplicadoOC,
+      totalCobradoClientes: totalCobradoAplicadoDocumento,
+      totalCobradoAplicadoDocumento,
+      totalCobradoAplicadoOC: totalCobradoAplicadoDocumento,
       totalRecibidoReal,
       totalRetenciones,
       retencionesPorConcepto: buildRetencionesPorConcepto(cobrosDocumentoPeriodo),
@@ -20227,7 +20647,9 @@ Notas importantes:
     if (filters.clienteId && clienteId !== filters.clienteId) return false;
     if (filters.sucursalId && sucursalId !== filters.sucursalId) return false;
     if (filters.metodoPagoId && cobro.metodoPagoId !== filters.metodoPagoId) return false;
-    if (filters.estado && cobro.estado !== filters.estado && venta?.estado !== filters.estado) return false;
+    const documentEstado = isCobroFacturaManual(cobro) && cobro.activo ? 'Pagada' : '';
+    if (filters.estado && cobro.estado !== filters.estado && venta?.estado !== filters.estado && documentEstado !== filters.estado) return false;
+    if (filters.mora && !venta) return false;
     if (venta && !matchesResumenMoraFilter(venta.fechaVencimiento, venta.saldoPorCobrar, filters.mora)) return false;
     return true;
   }
@@ -22980,6 +23402,7 @@ Notas importantes:
   function getCasaModalId() { return 'casa'; }
   function getCasaPendientesModalId() { return 'casa-pendientes'; }
   function getFacturasModalId() { return 'factura'; }
+  function getFacturaManualCobroModalId() { return 'factura-cobro-manual'; }
   function getFacturasGlobalModalId() { return 'facturas-global'; }
   function getNotasPrestamoLibroModalId() { return 'notas-prestamo-libro'; }
   function getNotasPrestamoMovimientoModalId() { return 'notas-prestamo-movimiento'; }
@@ -24646,7 +25069,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Cobros de clientes</h1>
-          <p class="lead">Registra pagos completos o abonos parciales ligados a una OC específica. La fecha real del cobro puede ser distinta a la Fecha de Registro de la venta; la trazabilidad queda amarrada y sin nudos marineros.</p>
+          <p class="lead">Registra pagos completos o abonos parciales ligados a una Venta / OC, y consulta los cobros originados por facturas manuales. Cada movimiento conserva su documento de origen.</p>
         </div>
         <aside class="hero-status" aria-label="Resumen de cobros">
           <h3>Totales básicos</h3>
@@ -24654,6 +25077,7 @@ Notas importantes:
             <div class="status-item"><strong>Período</strong><span>${escapeHtml(workPeriodLabel)}</span></div>
             <div class="status-item"><strong>OC cobrables</strong><span>${ventasDisponibles.length}</span></div>
             <div class="status-item"><strong>Cobros activos</strong><span>${totals.activos}</span></div>
+            <div class="status-item"><strong>Facturas manuales</strong><span>${totals.facturasManuales}</span></div>
             <div class="status-item"><strong>Total cobrado</strong><span>${escapeHtml(formatMoney(totals.totalCobrado))}</span></div>
             <div class="status-item"><strong>Anulados</strong><span>${totals.anulados}</span></div>
           </div>
@@ -25420,7 +25844,7 @@ Notas importantes:
       tableClass: 'operational-table-cobros',
       headers: `
         <th>Fecha</th>
-        <th>OC</th>
+        <th>Documento</th>
         <th class="amount-cell">Recibido</th>
         <th>Retención</th>
         <th class="amount-cell">Aplicado</th>
@@ -25446,6 +25870,7 @@ Notas importantes:
 
   function renderCobroCard(cobro) {
     const record = normalizeCobroRecord(cobro);
+    const isFacturaManual = isCobroFacturaManual(record);
     const estadoClass = record.activo ? 'is-active' : 'is-inactive';
     const retentionSummary = record.retencionActiva
       ? `${record.retencionConcepto || 'Retención'}${record.retencionPorcentaje ? ` ${formatCobroRetencionPercentage(record.retencionPorcentaje)}` : ''} — ${formatMoney(record.retencionMonto)}`
@@ -25454,7 +25879,7 @@ Notas importantes:
     return `
       <tr class="compact-record-row cobro-row ${record.activo ? 'is-active' : 'is-inactive'}" data-cobro-card data-search-text="${escapeHtml(searchable)}">
         <td data-label="Fecha"><span class="compact-primary">${escapeHtml(formatDate(record.fechaCobro))}</span></td>
-        <td data-label="OC"><span class="compact-primary">${escapeHtml(record.numeroDocumento || 'Sin OC')}</span>${record.sucursalNombre ? `<small>${escapeHtml(record.sucursalNombre)}</small>` : ''}${record.facturaReferida ? `<small>Factura ref.: ${escapeHtml(record.facturaReferida)}</small>` : ''}</td>
+        <td data-label="Documento"><span class="compact-primary">${escapeHtml(isFacturaManual ? `Factura ${record.facturaNumero || record.facturaReferida || record.numeroDocumento}` : (record.numeroDocumento || 'Sin OC'))}</span>${isFacturaManual ? '<small>Origen: factura manual</small>' : ''}${record.sucursalNombre ? `<small>${escapeHtml(record.sucursalNombre)}</small>` : ''}${record.facturaReferida && !isFacturaManual ? `<small>Factura ref.: ${escapeHtml(record.facturaReferida)}</small>` : ''}</td>
         <td data-label="Recibido" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.montoCobrado))}</span></td>
         <td data-label="Retención"><span>${escapeHtml(retentionSummary)}</span></td>
         <td data-label="Aplicado" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.montoAplicadoOC))}</span></td>
@@ -25463,8 +25888,8 @@ Notas importantes:
         <td data-label="Estado"><span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span></td>
         <td data-label="Acciones" class="actions-cell">
           <div class="record-actions compact-row-actions">
-            <button type="button" class="secondary-action compact" data-go="ventas">Ventas</button>
-            ${record.activo ? `<button type="button" class="secondary-action compact" data-cobro-edit="${escapeHtml(record.id)}">Editar</button>` : ''}
+            <button type="button" class="secondary-action compact" data-go="${isFacturaManual ? 'facturas' : 'ventas'}">${isFacturaManual ? 'Facturas' : 'Ventas'}</button>
+            ${record.activo && !isFacturaManual ? `<button type="button" class="secondary-action compact" data-cobro-edit="${escapeHtml(record.id)}">Editar</button>` : ''}
             ${record.activo && canCurrentRole('annulMovements') ? `<button type="button" class="danger-action compact" data-cobro-annul="${escapeHtml(record.id)}">Anular</button>` : ''}
           </div>
         </td>
@@ -25509,9 +25934,10 @@ Notas importantes:
         return summary;
       }
       summary.activos += 1;
+      if (isCobroFacturaManual(cobro)) summary.facturasManuales += 1;
       summary.totalCobrado = roundMoney(summary.totalCobrado + cobro.montoCobrado);
       return summary;
-    }, { activos: 0, anulados: 0, totalCobrado: 0, ocPagadas: 0, ocAbonadas: 0, saldoCobrable: 0 });
+    }, { activos: 0, anulados: 0, facturasManuales: 0, totalCobrado: 0, ocPagadas: 0, ocAbonadas: 0, saldoCobrable: 0 });
 
     ventas.forEach((venta) => {
       if (!venta.activo) return;
@@ -25699,6 +26125,12 @@ Notas importantes:
     const record = (Array.isArray(appData.cobros) ? appData.cobros : []).find((item) => item.id === cobroId);
     if (!record) return;
     const normalized = normalizeCobroRecord(record);
+    if (normalized.origenCobro === 'factura_manual' && normalized.facturaModuloId) {
+      cobrosState.message = 'Los cobros creados desde facturas manuales quedan protegidos en esta etapa y no pueden editarse.';
+      cobrosState.messageType = 'error';
+      renderRoute();
+      return;
+    }
     if (!normalized.activo) {
       cobrosState.message = 'Los cobros anulados quedan visibles, pero no se editan.';
       cobrosState.messageType = 'error';
@@ -25724,6 +26156,89 @@ Notas importantes:
     renderRoute();
   }
 
+  function annulFacturaManualCobro(cobro) {
+    const normalizedCobro = normalizeCobroRecord(cobro);
+    const data = getFacturasData();
+    const factura = findFacturaModuloById(normalizedCobro.facturaModuloId, data);
+    if (!factura) {
+      cobrosState.message = 'No se puede anular: la factura manual vinculada no está disponible. No se modificó dinero.';
+      cobrosState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+    if (isFacturaPeriodClosed(factura.periodo)) {
+      cobrosState.message = 'No se puede anular este cobro porque la factura pertenece a un período cerrado.';
+      cobrosState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+    if (!warnIfClosedPeriod(normalizedCobro.fechaCobro, 'Anular este cobro de factura manual')) return;
+    if (!window.confirm(`¿Anular el cobro de la factura ${factura.no || 'sin número'} por ${formatMoney(normalizedCobro.montoCobrado)}? El cobro quedará en el histórico y la factura volverá a Pendiente.`)) return;
+
+    const timestamp = nowIso();
+    const previousCobros = Array.isArray(appData.cobros) ? appData.cobros : [];
+    appData.cobros = previousCobros.map((record) => cleanText(record.id) === normalizedCobro.id
+      ? normalizeCobroRecord({ ...record, activo: false, estado: 'Anulado', updatedAt: timestamp })
+      : record);
+    saveData(appData);
+    let cobroAnuladoPersisted = false;
+    try {
+      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+      const storedCobro = Array.isArray(stored.cobros) ? stored.cobros.find((record) => cleanText(record.id) === normalizedCobro.id) : null;
+      cobroAnuladoPersisted = Boolean(storedCobro && storedCobro.activo === false);
+    } catch (_) {}
+    if (!cobroAnuladoPersisted) {
+      appData.cobros = previousCobros;
+      cobrosState.message = 'No se pudo guardar la anulación. El cobro y la factura conservan su estado anterior.';
+      cobrosState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+
+    const pendingFactura = normalizeFacturaModuloRecord({
+      ...factura,
+      estado: 'Pendiente',
+      cobroId: '',
+      pagadaAt: '',
+      pagadaPor: '',
+      ultimoCobroAnuladoId: normalizedCobro.id,
+      cobroAnuladoAt: timestamp,
+      updatedAt: timestamp
+    });
+    data.facturas = data.facturas.map((record) => cleanText(record.id) === factura.id ? pendingFactura : record);
+    saveFacturasData(data);
+    let facturaPendientePersisted = false;
+    try {
+      const storedFacturas = JSON.parse(localStorage.getItem(FACTURAS_STORAGE_KEY) || '{}');
+      const storedFactura = Array.isArray(storedFacturas.facturas)
+        ? storedFacturas.facturas.find((record) => cleanText(record.id) === factura.id)
+        : null;
+      facturaPendientePersisted = Boolean(storedFactura && normalizeFacturaEstado(storedFactura.estado) === 'Pendiente' && !cleanText(storedFactura.cobroId));
+    } catch (_) {}
+    if (!facturaPendientePersisted) {
+      appData.cobros = previousCobros;
+      saveData(appData);
+      cobrosState.message = 'No se pudo completar la reversión de la factura. El cobro se restauró como activo para evitar una inconsistencia financiera.';
+      cobrosState.messageType = 'error';
+      renderRoute();
+      return;
+    }
+    registerSessionChange({ module: 'Cobros', operation: 'anular', recordId: normalizedCobro.id, sourceModule: 'Facturas' });
+    registerSessionChange({ module: 'Facturas', operation: 'editar', recordId: factura.id, sourceModule: 'Cobros' });
+    registerActivity({
+      module: 'Cobros',
+      action: 'Anulado',
+      entityType: 'Cobro de factura manual',
+      entityRef: `Factura ${factura.no || 'sin número'}`,
+      amount: normalizedCobro.montoCobrado,
+      detail: buildActivityDetail(['Cobro anulado con reversión controlada', `Factura devuelta a Pendiente`, `Cobro ${normalizedCobro.id}`]),
+      source: 'local'
+    });
+    cobrosState.message = `Cobro de ${formatMoney(normalizedCobro.montoCobrado)} anulado. La factura ${factura.no || ''} volvió a Pendiente sin borrar el histórico.`;
+    cobrosState.messageType = 'success';
+    renderRoute();
+  }
+
   function annulCobroRecord(cobroId) {
     if (!canCurrentRole('annulMovements')) {
       cobrosState.message = ADMIN_RESTRICTED_MESSAGE;
@@ -25734,6 +26249,11 @@ Notas importantes:
     const cobros = Array.isArray(appData.cobros) ? appData.cobros : [];
     const cobro = cobros.find((record) => record.id === cobroId);
     if (!cobro || cobro.activo === false) return;
+    const normalizedCobro = normalizeCobroRecord(cobro);
+    if (normalizedCobro.origenCobro === 'factura_manual' && normalizedCobro.facturaModuloId) {
+      annulFacturaManualCobro(normalizedCobro);
+      return;
+    }
     if (!warnIfClosedPeriod(cobro.fechaCobro, 'Anular este cobro')) return;
 
     appData.cobros = cobros.map((record) => record.id === cobroId
@@ -31879,6 +32399,7 @@ Notas importantes:
     const idMaps = buildCatalogMergeMaps(target, incoming, timestamp);
     const ventaIdMap = new Map();
     const compraIdMap = new Map();
+    const facturaModuloIdMap = buildFacturaModuloImportIdMap(getFacturasData(), incomingFacturas || {});
     const added = { catalogos: 0, bdatos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, casaGastos: 0, cierresMensuales: 0, exportacionesExcel: 0, notasModulo: 0, notas: 0, facturasModulo: 0, facturas: 0, seguimiento: 0, total: 0 };
     let skipped = 0;
 
@@ -31930,6 +32451,7 @@ Notas importantes:
       const remapped = normalizeCobroRecord({
         ...cobro,
         ventaId,
+        facturaModuloId: facturaModuloIdMap.get(cobro.facturaModuloId) || cobro.facturaModuloId,
         clienteId: idMaps.clientes.get(cobro.clienteId) || cobro.clienteId,
         sucursalId: idMaps.sucursales.get(cobro.sucursalId) || cobro.sucursalId,
         metodoPagoId: idMaps.metodosPago.get(cobro.metodoPagoId) || cobro.metodoPagoId,
@@ -32116,6 +32638,7 @@ Notas importantes:
 
   function getCobroDuplicateKey(record) {
     const cobro = normalizeCobroRecord(record);
+    if (cobro.facturaModuloId) return ['factura-manual', cobro.facturaModuloId].join('|');
     return [cobro.ventaId, cobro.fechaCobro, roundMoney(cobro.montoCobrado), cobro.metodoPagoId || normalizeNameForCompare(cobro.metodoPagoNombre)].join('|');
   }
 
@@ -33368,7 +33891,7 @@ Exportado: ${exportDateLabel}
       [xlsxText('Total ventas'), xlsxMoney(summary.totalVendidoOriginal || 0)],
       [xlsxText('Ajustes clientes'), xlsxMoney((summary.totalAjustesClientes || 0) > 0 ? -summary.totalAjustesClientes : 0)],
       [xlsxText('Total ventas ajustado'), xlsxMoney(summary.totalVendido)],
-      [xlsxText(usesLinkedDocumentCut ? 'Total cobrado clientes (aplicado a OC)' : 'Total cobrado clientes'), xlsxMoney(summary.totalCobradoClientes)],
+      [xlsxText(usesLinkedDocumentCut ? 'Total cobrado clientes (aplicado a documento)' : 'Total cobrado clientes'), xlsxMoney(summary.totalCobradoClientes)],
       ...(usesLinkedDocumentCut ? [
         [xlsxText('Recibido real vinculado'), xlsxMoney(summary.totalRecibidoReal || 0)],
         [xlsxText('Retenciones vinculadas'), xlsxMoney(summary.totalRetenciones || 0)]
@@ -33567,7 +34090,7 @@ Exportado: ${exportDateLabel}
       [xlsxLabel('Período'), xlsxText(summary.periodLabel)],
       ...(summary.excelCierreMode ? [[xlsxLabel('Corte oficial'), xlsxText(formatDateTime(summary.corteOficialAt))]] : []),
       [],
-      xlsxHeaderRow(['Fecha cobro', 'Cliente', 'Sucursal', 'OC', 'Factura', 'Recibido real', 'Aplicado OC', 'Retención', 'Concepto retención', 'Método', 'Banco', 'Estado', 'Observación'])
+      xlsxHeaderRow(['Fecha cobro', 'Cliente', 'Sucursal', 'Origen', 'Documento', 'Recibido real', 'Aplicado documento', 'Retención', 'Concepto retención', 'Método', 'Banco', 'Estado', 'Observación'])
     ];
     const cobrosExport = Array.isArray(summary.cobrosPeriodo) ? summary.cobrosPeriodo : [];
     cobrosExport.forEach((cobro) => {
@@ -33580,8 +34103,8 @@ Exportado: ${exportDateLabel}
         xlsxDate(cobro.fechaCobro),
         xlsxText(cobro.clienteNombre || venta?.clienteNombre || cliente?.nombre || 'Cliente no encontrado'),
         xlsxText(cobro.sucursalNombre || venta?.sucursalNombre || sucursal?.nombre || 'Sucursal no encontrada'),
-        xlsxText(cobro.numeroDocumento || venta?.numeroDocumento || ''),
-        xlsxText(cobro.facturaReferida),
+        xlsxText(isCobroFacturaManual(cobro) ? 'Factura manual' : 'Venta / OC'),
+        xlsxText(isCobroFacturaManual(cobro) ? (cobro.facturaNumero || cobro.facturaReferida || cobro.numeroDocumento) : (cobro.numeroDocumento || venta?.numeroDocumento || cobro.facturaReferida || '')),
         xlsxMoney(cobro.montoRecibidoReal ?? cobro.montoCobrado),
         xlsxMoney(getCobroAplicadoOcAmount(cobro)),
         xlsxMoney(getCobroRetencionMontoForResumen(cobro)),
@@ -35193,6 +35716,7 @@ ${rowsXml}
     else if (id === getCasaModalId()) clearCasaForm();
     else if (id === getCasaPendientesModalId()) closeCasaPendientesModal();
     else if (id === getFacturasModalId()) clearFacturaForm();
+    else if (id === getFacturaManualCobroModalId()) cancelFacturaManualCobro();
     else if (id === getFacturasGlobalModalId()) closeFacturasGlobalModal();
     else if (id === getNotasPrestamoLibroModalId()) closeNotasPrestamoLibroModal();
     else if (id === getNotasPrestamoMovimientoModalId()) closeNotasPrestamoMovimientoModal();
@@ -35287,6 +35811,19 @@ ${rowsXml}
         event.preventDefault();
         saveFacturaRecord(form);
       });
+    });
+
+    viewRoot.querySelectorAll('[data-factura-manual-cobro-form]').forEach((form) => {
+      setupPaymentBankField(form);
+      setupCobroRetencionForm(form);
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveFacturaManualCobro(form);
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-factura-manual-cobro-cancel]').forEach((button) => {
+      button.addEventListener('click', cancelFacturaManualCobro);
     });
 
     viewRoot.querySelectorAll('[data-factura-clear]').forEach((button) => {
