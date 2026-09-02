@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.94-facturas-cobro-manual';
+  const APP_VERSION = '0.18.98-buscador-etapa4';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -116,11 +116,11 @@
     },
     {
       id: 'facturas',
-      icon: 'FC',
-      title: 'Facturas',
-      short: 'Facturas',
-      description: 'Control documental independiente de facturas por período, búsqueda, resumen, histórico, JSON y vínculo documental con Cobros.',
-      placeholder: 'Facturas se alimenta de Ventas / OC y permite que una factura manual genere un cobro financiero real, sin duplicar movimientos vinculados.'
+      icon: '⌕',
+      title: 'Buscador',
+      short: 'Buscar',
+      description: 'Consulta documental por período para localizar facturas y órdenes de compra, con acceso a sus vínculos operativos existentes.',
+      placeholder: 'Buscador reúne Facturas y OC sin duplicar registros, movimientos ni relaciones financieras.'
     },
     {
       id: 'catalogos',
@@ -1501,6 +1501,12 @@ Notas importantes:
   };
 
   let facturasState = {
+    activeSearchTab: 'facturas',
+    ocSearch: '',
+    ocCliente: '',
+    ocSucursal: '',
+    ocEstado: '',
+    ocPage: 1,
     editingId: null,
     cobroDraft: null,
     cobroSaving: false,
@@ -12779,6 +12785,11 @@ Notas importantes:
       if (getRoute() === 'facturas') {
         facturasState.page = 1;
         facturasState.search = '';
+        facturasState.ocPage = 1;
+        facturasState.ocSearch = '';
+        facturasState.ocCliente = '';
+        facturasState.ocSucursal = '';
+        facturasState.ocEstado = '';
         facturasState.editingId = null;
       }
       if (getRoute() === 'casa') {
@@ -14748,7 +14759,7 @@ Notas importantes:
         } else if (!bNo) {
           return -1;
         } else {
-          const byNo = compareFacturaNaturalNo(aNo, bNo);
+          const byNo = -compareFacturaNaturalNo(aNo, bNo);
           if (byNo !== 0) return byNo;
         }
         const byDate = String(getFacturaFechaRegistro(b)).localeCompare(String(getFacturaFechaRegistro(a)));
@@ -14986,7 +14997,11 @@ Notas importantes:
   }
 
   function compareFacturasGlobalItems(a, b) {
-    const byNo = compareFacturaNaturalNo(a?.record?.no, b?.record?.no);
+    const aNo = cleanFacturaVentaNumero(a?.record?.no);
+    const bNo = cleanFacturaVentaNumero(b?.record?.no);
+    if (!aNo && bNo) return 1;
+    if (aNo && !bNo) return -1;
+    const byNo = -compareFacturaNaturalNo(aNo, bNo);
     if (byNo !== 0) return byNo;
 
     if (a?.hasReliableDate && b?.hasReliableDate) {
@@ -15385,6 +15400,12 @@ Notas importantes:
   }
 
   function resetFacturasPagedView() {
+    facturasState.activeSearchTab = 'facturas';
+    facturasState.ocSearch = '';
+    facturasState.ocCliente = '';
+    facturasState.ocSucursal = '';
+    facturasState.ocEstado = '';
+    facturasState.ocPage = 1;
     facturasState.page = 1;
     facturasState.search = '';
     facturasState.editingId = null;
@@ -15427,34 +15448,282 @@ Notas importantes:
     const start = (facturasState.page - 1) * FACTURAS_PAGE_SIZE;
     const pagedRecords = periodRecords.slice(start, start + FACTURAS_PAGE_SIZE);
 
+    const activeSearchTab = facturasState.activeSearchTab === 'oc' ? 'oc' : 'facturas';
+    const ocPayload = buildBuscadorOcPayload(periodInfo);
+
     return `
       <section class="hero facturas-hero">
         <div>
           <span class="eyebrow">Módulo activo</span>
-          <h1>Facturas</h1>
-          <p class="lead">Control documental exclusivo de facturas emitidas a clientes, con búsqueda global por número, captura manual, creación desde Ventas / OC y actualización documental desde Cobros completos.</p>
+          <h1>Buscador</h1>
+          <p class="lead">Consulta documental organizada en Buscador de Facturas y Buscador de OC, respetando el período de trabajo seleccionado.</p>
         </div>
-        <aside class="hero-status" aria-label="Estado del módulo Facturas">
+        <aside class="hero-status" aria-label="Estado del módulo Buscador">
           <div class="status-grid compact">
             <div class="status-item"><strong>Período</strong><span>${escapeHtml(periodInfo.label)}</span></div>
-            <div class="status-item"><strong>Facturas</strong><span>${summary.total}</span></div>
-            <div class="status-item"><strong>Página</strong><span>${facturasState.page}/${totalPages}</span></div>
-            <div class="status-item"><strong>Histórico</strong><span>${historyGroups.length}</span></div>
+            <div class="status-item"><strong>Vista</strong><span>${activeSearchTab === 'oc' ? 'OC' : 'Facturas'}</span></div>
+            ${activeSearchTab === 'oc'
+              ? `<div class="status-item"><strong>OC</strong><span>${ocPayload.totalPeriodRecords}</span></div><div class="status-item"><strong>Página</strong><span>${ocPayload.page}/${ocPayload.totalPages}</span></div>`
+              : `<div class="status-item"><strong>Facturas</strong><span>${summary.total}</span></div><div class="status-item"><strong>Histórico</strong><span>${historyGroups.length}</span></div>`}
           </div>
         </aside>
       </section>
       <section class="facturas-shell">
-        ${facturasState.message ? `<div class="form-message ${facturasState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(facturasState.message)}</div>` : ''}
-        ${renderFacturasSummary(periodInfo, summary, { closed: currentPeriodClosed })}
-        ${renderFacturaForm(null, 'create')}
-        ${renderFacturasSearch(searchResults, searchBase)}
-        ${renderFacturasPeriodoList(periodInfo, pagedRecords, periodRecords.length, totalPages, { closed: currentPeriodClosed })}
-        ${renderFacturasHistorico(historyGroups)}
-        ${safeEditingRecord ? renderEditModal(getFacturasModalId(), 'Editar factura', 'Actualiza la factura sin salir del listado ni saltar al formulario principal.', renderFacturaForm(safeEditingRecord, 'edit')) : ''}
-        ${facturasState.cobroDraft ? renderEditModal(getFacturaManualCobroModalId(), 'Registrar cobro de factura manual', 'El estado Pagada se aplicará únicamente después de guardar el cobro.', renderFacturaManualCobroForm(facturasState.cobroDraft)) : ''}
-        ${facturasState.globalOpen ? renderFacturasGlobalModal(data) : ''}
+        ${renderBuscadorTabs(activeSearchTab)}
+        <div class="buscador-tab-panel" id="buscador-panel" role="tabpanel" aria-labelledby="buscador-tab-${activeSearchTab}">
+          ${activeSearchTab === 'facturas' ? `
+            ${facturasState.message ? `<div class="form-message ${facturasState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(facturasState.message)}</div>` : ''}
+            ${renderFacturasSummary(periodInfo, summary, { closed: currentPeriodClosed })}
+            ${renderFacturaForm(null, 'create')}
+            ${renderFacturasSearch(searchResults, searchBase)}
+            ${renderFacturasPeriodoList(periodInfo, pagedRecords, periodRecords.length, totalPages, { closed: currentPeriodClosed })}
+            ${renderFacturasHistorico(historyGroups)}
+            ${safeEditingRecord ? renderEditModal(getFacturasModalId(), 'Editar factura', 'Actualiza la factura sin salir del listado ni saltar al formulario principal.', renderFacturaForm(safeEditingRecord, 'edit')) : ''}
+            ${facturasState.cobroDraft ? renderEditModal(getFacturaManualCobroModalId(), 'Registrar cobro de factura manual', 'El estado Pagada se aplicará únicamente después de guardar el cobro.', renderFacturaManualCobroForm(facturasState.cobroDraft)) : ''}
+            ${facturasState.globalOpen ? renderFacturasGlobalModal(data) : ''}
+          ` : renderBuscadorOc(periodInfo, ocPayload)}
+        </div>
       </section>
     `;
+  }
+
+  function renderBuscadorTabs(activeTab = 'facturas') {
+    return `
+      <div class="buscador-tabs" role="tablist" aria-label="Tipos de buscador">
+        <button type="button" id="buscador-tab-facturas" class="buscador-tab ${activeTab === 'facturas' ? 'is-active' : ''}" role="tab" aria-selected="${activeTab === 'facturas'}" aria-controls="buscador-panel" tabindex="${activeTab === 'facturas' ? '0' : '-1'}" data-buscador-tab="facturas">Buscador de Facturas</button>
+        <button type="button" id="buscador-tab-oc" class="buscador-tab ${activeTab === 'oc' ? 'is-active' : ''}" role="tab" aria-selected="${activeTab === 'oc'}" aria-controls="buscador-panel" tabindex="${activeTab === 'oc' ? '0' : '-1'}" data-buscador-tab="oc">Buscador de OC</button>
+      </div>
+    `;
+  }
+
+  function sortBuscadorOcRecords(records = []) {
+    return (Array.isArray(records) ? records : [])
+      .map((record) => normalizeVentaRecord(record))
+      .sort((a, b) => {
+        const aNumber = cleanText(a.numeroDocumento);
+        const bNumber = cleanText(b.numeroDocumento);
+        if (!aNumber && bNumber) return 1;
+        if (aNumber && !bNumber) return -1;
+        const byNumber = -compareFacturaNaturalNo(aNumber, bNumber);
+        if (byNumber !== 0) return byNumber;
+        const byDate = String(getVentaFechaRegistro(b)).localeCompare(String(getVentaFechaRegistro(a)));
+        if (byDate !== 0) return byDate;
+        return String(b.updatedAt || b.createdAt || b.id || '').localeCompare(String(a.updatedAt || a.createdAt || a.id || ''));
+      });
+  }
+
+  function getBuscadorOcPeriodRecords(periodo = getActiveWorkPeriodKeyOrCurrent()) {
+    const periodKey = normalizeWorkPeriodKey(periodo);
+    return sortBuscadorOcRecords((Array.isArray(appData.ventas) ? appData.ventas : [])
+      .filter((record) => !periodKey || isVentaInWorkPeriod(record, periodKey)));
+  }
+
+  function buildBuscadorOcPayload(periodInfo = getActiveWorkPeriodInfoOrCurrent()) {
+    const records = getBuscadorOcPeriodRecords(periodInfo?.periodo);
+    const query = normalizeFacturaGlobalSearchValue(facturasState.ocSearch);
+    const queryLoose = normalizeFacturaGlobalLooseSearchValue(facturasState.ocSearch);
+    const queryNumeric = normalizeFacturaGlobalNumericSearchValue(facturasState.ocSearch);
+    const cliente = cleanText(facturasState.ocCliente);
+    const sucursal = cleanText(facturasState.ocSucursal);
+    const estado = cleanText(facturasState.ocEstado);
+    const filteredRecords = records.filter((record) => {
+      const no = cleanText(record.numeroDocumento);
+      const matchesNumber = !query
+        || normalizeFacturaGlobalSearchValue(no).includes(query)
+        || (queryLoose && normalizeFacturaGlobalLooseSearchValue(no).includes(queryLoose))
+        || (queryNumeric && normalizeFacturaGlobalNumericSearchValue(no).includes(queryNumeric));
+      if (!matchesNumber) return false;
+      if (cliente && record.clienteId !== cliente) return false;
+      if (sucursal && record.sucursalId !== sucursal) return false;
+      if (estado && record.estado !== estado) return false;
+      return true;
+    });
+    const clientesMap = new Map();
+    const sucursalesMap = new Map();
+    const estadosSet = new Set();
+    records.forEach((record) => {
+      const clienteRecord = getCatalogRecordById('clientes', record.clienteId);
+      const sucursalRecord = getCatalogRecordById('sucursales', record.sucursalId);
+      const clienteLabel = cleanText(clienteRecord?.nombre || record.clienteNombre);
+      const sucursalLabel = cleanText(sucursalRecord?.nombre || record.sucursalNombre);
+      if (record.clienteId && clienteLabel) clientesMap.set(record.clienteId, clienteLabel);
+      if ((!cliente || record.clienteId === cliente) && record.sucursalId && sucursalLabel) sucursalesMap.set(record.sucursalId, sucursalLabel);
+      if (record.estado) estadosSet.add(record.estado);
+    });
+    const mapToOptions = (map) => Array.from(map.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => compareCatalogDisplayText(a.label, b.label));
+    const totalRecords = filteredRecords.length;
+    const totalPages = Math.max(1, Math.ceil(totalRecords / FACTURAS_PAGE_SIZE));
+    facturasState.ocPage = Math.min(Math.max(1, Number.parseInt(facturasState.ocPage, 10) || 1), totalPages);
+    const start = (facturasState.ocPage - 1) * FACTURAS_PAGE_SIZE;
+    return {
+      records: filteredRecords.slice(start, start + FACTURAS_PAGE_SIZE),
+      totalPeriodRecords: records.length,
+      totalRecords,
+      totalPages,
+      page: facturasState.ocPage,
+      hasFilters: Boolean(query || cliente || sucursal || estado),
+      filters: { search: facturasState.ocSearch, cliente, sucursal, estado },
+      filterOptions: {
+        clientes: mapToOptions(clientesMap),
+        sucursales: mapToOptions(sucursalesMap),
+        estados: Array.from(estadosSet).sort(compareCatalogDisplayText)
+      }
+    };
+  }
+
+  function renderBuscadorOc(periodInfo, payload = buildBuscadorOcPayload(periodInfo)) {
+    return `
+      <article class="panel-card buscador-oc-search-panel">
+        <div class="section-title-row">
+          <div>
+            <span class="eyebrow mini">Órdenes de compra</span>
+            <h2>Buscador de OC</h2>
+          </div>
+          <span class="badge">${escapeHtml(periodInfo.label)}</span>
+        </div>
+        <form class="buscador-oc-filters" data-buscador-oc-search-form>
+          <label class="form-field compact-search-field">
+            <span>Número de OC</span>
+            <input type="search" name="ocSearch" value="${escapeHtml(facturasState.ocSearch || '')}" placeholder="Buscar OC-00125" autocomplete="off" />
+          </label>
+          <label class="form-field">
+            <span>Cliente</span>
+            <select name="ocCliente" data-buscador-oc-filter>
+              <option value="">Todos</option>
+              ${payload.filterOptions.clientes.map((item) => `<option value="${escapeHtml(item.value)}" ${item.value === payload.filters.cliente ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Sucursal</span>
+            <select name="ocSucursal" data-buscador-oc-filter>
+              <option value="">Todas</option>
+              ${payload.filterOptions.sucursales.map((item) => `<option value="${escapeHtml(item.value)}" ${item.value === payload.filters.sucursal ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Estado</span>
+            <select name="ocEstado" data-buscador-oc-filter>
+              <option value="">Todos</option>
+              ${payload.filterOptions.estados.map((item) => `<option value="${escapeHtml(item)}" ${item === payload.filters.estado ? 'selected' : ''}>${escapeHtml(item)}</option>`).join('')}
+            </select>
+          </label>
+          <div class="record-actions compact-row-actions buscador-oc-filter-actions">
+            <button type="submit" class="card-action compact-action">Buscar</button>
+            <button type="button" class="secondary-action compact-action" data-buscador-oc-clear>Limpiar</button>
+          </div>
+        </form>
+        <p class="compact-note muted-text">Se consulta únicamente ${escapeHtml(periodInfo.label)}. Las OC se ordenan por numeración natural, de mayor a menor, antes de paginar.</p>
+      </article>
+      <article class="panel-card buscador-oc-list-panel">
+        <div class="section-title-row">
+          <div>
+            <span class="eyebrow mini">Resultado por período</span>
+            <h2>OC de ${escapeHtml(periodInfo.label)}</h2>
+          </div>
+          <span class="badge">${payload.totalRecords}${payload.hasFilters ? ` de ${payload.totalPeriodRecords}` : ''} resultado(s)</span>
+        </div>
+        ${payload.records.length ? renderOperationalTableShell({
+          shellClass: 'buscador-oc-table-shell',
+          wrapClass: 'buscador-oc-table-wrap',
+          ariaLabel: `Órdenes de compra de ${periodInfo.label}`,
+          tableClass: 'buscador-oc-table operational-table-ventas',
+          headers: '<th>OC</th><th>Fecha de Registro</th><th>Cliente</th><th>Sucursal</th><th>Facturas</th><th>Subtotal</th><th>Descuento</th><th>Total</th><th>Cobrado</th><th>Saldo</th><th>Vence</th><th>Estado</th><th>Acciones</th>',
+          rows: payload.records.map(renderBuscadorOcRow).join('')
+        }) : `<p class="muted-text compact-note">${payload.hasFilters ? 'No se encontraron OC que coincidan con los filtros en el período seleccionado.' : 'No hay OC registradas en el período seleccionado.'}</p>`}
+        ${renderBuscadorOcPagination(payload)}
+      </article>
+    `;
+  }
+
+  function renderBuscadorOcRow(record) {
+    const venta = normalizeVentaRecord(record);
+    const cliente = getCatalogRecordById('clientes', venta.clienteId);
+    const sucursal = getCatalogRecordById('sucursales', venta.sucursalId);
+    const clienteNombre = cleanText(cliente?.nombre || venta.clienteNombre) || '—';
+    const sucursalNombre = cleanText(sucursal?.nombre || venta.sucursalNombre) || '—';
+    const facturas = formatFacturasVentaResumen(venta.facturas) || '—';
+    return `
+      <tr class="compact-record-row buscador-oc-row ${venta.activo ? 'is-active' : 'is-inactive'}">
+        <td data-label="OC"><span class="compact-primary" title="${escapeHtml(venta.numeroDocumento || 'Sin número')}">${escapeHtml(venta.numeroDocumento || 'Sin número')}</span></td>
+        <td data-label="Fecha de Registro"><span>${escapeHtml(formatDate(getVentaFechaRegistro(venta)))}</span></td>
+        <td data-label="Cliente"><span title="${escapeHtml(clienteNombre)}">${escapeHtml(clienteNombre)}</span></td>
+        <td data-label="Sucursal"><span title="${escapeHtml(sucursalNombre)}">${escapeHtml(sucursalNombre)}</span></td>
+        <td data-label="Facturas"><span title="${escapeHtml(facturas)}">${escapeHtml(facturas)}</span></td>
+        <td data-label="Subtotal" class="amount-cell"><span>${escapeHtml(formatMoney(venta.subtotal))}</span></td>
+        <td data-label="Descuento" class="amount-cell"><span>${escapeHtml(formatMoney(venta.descuento))}</span></td>
+        <td data-label="Total" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(venta.ventaNetaOriginal))}</span></td>
+        <td data-label="Cobrado" class="amount-cell"><span>${escapeHtml(formatMoney(venta.totalCobrado))}</span></td>
+        <td data-label="Saldo" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(venta.saldoPorCobrar))}</span></td>
+        <td data-label="Vence"><span>${escapeHtml(formatDate(venta.fechaVencimiento))}</span></td>
+        <td data-label="Estado"><span class="state-pill ${getEstadoClass(venta.estado)}">${escapeHtml(venta.estado)}</span></td>
+        <td data-label="Acciones" class="actions-cell">
+          <div class="record-actions compact-row-actions">
+            <button type="button" class="secondary-action compact" data-buscador-oc-edit="${escapeHtml(venta.id)}">Editar</button>
+            <button type="button" class="secondary-action compact" data-cobros-for="${escapeHtml(venta.id)}">Cobros</button>
+            <button type="button" class="secondary-action compact" data-history-venta="${escapeHtml(venta.id)}">Historial</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  function renderBuscadorOcPagination(payload) {
+    return `
+      <div class="pagination-row facturas-pagination" aria-label="Paginación de órdenes de compra">
+        <button type="button" class="secondary-action compact-action" data-buscador-oc-page="prev" ${payload.page <= 1 ? 'disabled' : ''}>Anterior</button>
+        <span>Página ${payload.page} de ${payload.totalPages}</span>
+        <button type="button" class="secondary-action compact-action" data-buscador-oc-page="next" ${payload.page >= payload.totalPages ? 'disabled' : ''}>Siguiente</button>
+      </div>
+    `;
+  }
+
+  function updateBuscadorOcSearch(form) {
+    const formData = new FormData(form);
+    facturasState.ocSearch = cleanText(formData.get('ocSearch'));
+    facturasState.ocCliente = cleanText(formData.get('ocCliente'));
+    facturasState.ocSucursal = cleanText(formData.get('ocSucursal'));
+    facturasState.ocEstado = cleanText(formData.get('ocEstado'));
+    facturasState.ocPage = 1;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function clearBuscadorOcSearch() {
+    facturasState.ocSearch = '';
+    facturasState.ocCliente = '';
+    facturasState.ocSucursal = '';
+    facturasState.ocEstado = '';
+    facturasState.ocPage = 1;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function changeBuscadorOcPage(direction) {
+    const payload = buildBuscadorOcPayload(getActiveWorkPeriodInfoOrCurrent());
+    facturasState.ocPage = direction === 'prev'
+      ? Math.max(1, payload.page - 1)
+      : Math.min(payload.totalPages, payload.page + 1);
+    renderRoute({ preserveScroll: true });
+  }
+
+  function editVentaFromBuscador(recordId) {
+    const id = cleanText(recordId);
+    if (!(Array.isArray(appData.ventas) ? appData.ventas : []).some((record) => record.id === id)) return;
+    ventasState.editingId = id;
+    ventasState.quickCapture = null;
+    ventasState.selectedAjusteVentaId = '';
+    ventasState.message = null;
+    setRoute('ventas');
+  }
+
+  function setBuscadorTab(tab, options = {}) {
+    const nextTab = tab === 'oc' ? 'oc' : 'facturas';
+    if (facturasState.activeSearchTab === nextTab) return;
+    facturasState.activeSearchTab = nextTab;
+    renderRoute({ preserveScroll: true });
+    if (options.focus === true) {
+      window.requestAnimationFrame(() => viewRoot.querySelector(`[data-buscador-tab="${nextTab}"]`)?.focus());
+    }
   }
 
   function renderFacturasSummary(periodInfo, summary, options = {}) {
@@ -35790,6 +36059,44 @@ ${rowsXml}
       backdrop.addEventListener('click', (event) => {
         if (event.target === backdrop) closeEditModal(backdrop.dataset.modalBackdrop);
       });
+    });
+
+    viewRoot.querySelectorAll('[data-buscador-tab]').forEach((button) => {
+      button.addEventListener('click', () => setBuscadorTab(button.dataset.buscadorTab, { focus: true }));
+      button.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const nextTab = event.key === 'ArrowLeft' || event.key === 'Home' ? 'facturas' : 'oc';
+        setBuscadorTab(nextTab, { focus: true });
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-buscador-oc-search-form]').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        updateBuscadorOcSearch(form);
+      });
+      form.querySelectorAll('[data-buscador-oc-filter]').forEach((field) => {
+        field.addEventListener('change', () => {
+          if (field.name === 'ocCliente') {
+            const sucursalField = form.querySelector('[name="ocSucursal"]');
+            if (sucursalField) sucursalField.value = '';
+          }
+          updateBuscadorOcSearch(form);
+        });
+      });
+    });
+
+    viewRoot.querySelectorAll('[data-buscador-oc-clear]').forEach((button) => {
+      button.addEventListener('click', clearBuscadorOcSearch);
+    });
+
+    viewRoot.querySelectorAll('[data-buscador-oc-page]').forEach((button) => {
+      button.addEventListener('click', () => changeBuscadorOcPage(button.dataset.buscadorOcPage));
+    });
+
+    viewRoot.querySelectorAll('[data-buscador-oc-edit]').forEach((button) => {
+      button.addEventListener('click', () => editVentaFromBuscador(button.dataset.buscadorOcEdit));
     });
 
     viewRoot.querySelectorAll('[data-factura-form]').forEach((form) => {
