@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.98-buscador-etapa4';
+  const APP_VERSION = '0.18.99-facturas-manuales';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -14847,20 +14847,22 @@ Notas importantes:
 
   function normalizeFacturasCaptureDraft(raw = {}) {
     const source = isPlainObject(raw) ? raw : {};
+    const fields = { no: cleanText(source.no), fecha: toDateInputValue(source.fecha) || todayInputValue(), estado: normalizeFacturaEstado(source.estado), monto: cleanText(source.monto), observaciones: cleanText(source.observaciones) };
     const clienteId = cleanText(source.clienteId);
     const sucursalId = cleanText(source.sucursalId);
     if (!clienteId) {
-      return { clienteId: '', sucursalId: '' };
+      return { ...fields, clienteId: '', sucursalId: '' };
     }
     const cliente = getCatalogRecordById('clientes', clienteId);
     if (!cliente) {
-      return { clienteId: '', sucursalId: '' };
+      return { ...fields, clienteId: '', sucursalId: '' };
     }
     const sucursales = getFacturaSucursalesForCliente(clienteId, sucursalId);
     const safeSucursalId = sucursales.some((sucursal) => sucursal.id === sucursalId) ? sucursalId : '';
     return {
       clienteId,
-      sucursalId: safeSucursalId
+      sucursalId: safeSucursalId,
+      ...fields
     };
   }
 
@@ -14880,6 +14882,7 @@ Notas importantes:
   function rememberFacturasCaptureFromForm(form) {
     if (!form || !isFacturaCreateForm(form)) return;
     facturasState.captureDraft = normalizeFacturasCaptureDraft({
+      ...Object.fromEntries(new FormData(form)),
       clienteId: form.querySelector('[data-factura-cliente]')?.value || '',
       sucursalId: form.querySelector('[data-factura-sucursal]')?.value || ''
     });
@@ -14898,7 +14901,8 @@ Notas importantes:
       clienteNombre: '',
       sucursalId: draft.sucursalId,
       sucursalNombre: '',
-      observaciones: ''
+      observaciones: '',
+      ...draft
     };
   }
 
@@ -15264,7 +15268,7 @@ Notas importantes:
     return `
       <tr>
         <td><span class="compact-primary critical-value-doc" title="${escapeHtml(factura.no || '—')}">${escapeHtml(factura.no || '—')}</span></td>
-        <td><span class="critical-value-date" title="${escapeHtml(dateLabel)}">${escapeHtml(dateLabel)}</span></td>
+        <td><span class="critical-value-date" title="${escapeHtml(dateLabel)}">${escapeHtml(dateLabel)}</span><small>Factura: ${escapeHtml(formatDate(factura.fecha))}</small></td>
         <td><span title="${escapeHtml(periodLabel)}">${escapeHtml(periodLabel)}</span></td>
         <td><span title="${escapeHtml(partyLabel)}">${escapeHtml(partyLabel)}</span></td>
         <td><span title="${escapeHtml(sucursalLabel)}">${escapeHtml(sucursalLabel)}</span></td>
@@ -15772,6 +15776,10 @@ Notas importantes:
             <input type="text" name="no" value="${escapeHtml(current.no || '')}" placeholder="Ej. 00245" required ${financialLocked ? 'readonly aria-readonly="true"' : ''} />
           </label>
           <label class="form-field">
+            <span>Fecha de factura *</span>
+            <input type="date" name="fecha" value="${escapeHtml(current.fecha || fechaRegistro)}" required ${financialLocked || (isEditing && !isFacturaManualCobrable(current)) ? 'readonly aria-readonly="true"' : ''} />
+          </label>
+          <label class="form-field">
             <span>Fecha de Registro *</span>
             <input type="date" name="fechaRegistro" value="${escapeHtml(fechaRegistro)}" required readonly aria-readonly="true" />
           </label>
@@ -15793,13 +15801,10 @@ Notas importantes:
           </label>
           <label class="form-field">
             <span>Estado *</span>
-            ${isEditing
-              ? `<select name="estado" required>
-                  ${FACTURA_ESTADO_OPTIONS.map((estado) => `<option value="${escapeHtml(estado)}" ${normalizeFacturaEstado(current.estado) === estado ? 'selected' : ''}>${escapeHtml(estado)}</option>`).join('')}
-                </select>`
-              : `<input type="text" value="${escapeHtml(normalizeFacturaEstado(current.estado))}" readonly aria-readonly="true" />
-                 <input type="hidden" name="estado" value="${escapeHtml(normalizeFacturaEstado(current.estado))}" />`}
-            <small>${isEditing ? 'En una factura manual, seleccionar Pagada abrirá el registro obligatorio del cobro. Las facturas ligadas a Venta / OC solo se pagan desde Cobros.' : 'Las facturas nuevas se crean como Pendiente. Pagada requiere un cobro real y Anulada conserva el histórico.'}</small>
+            <select name="estado" required>
+              ${FACTURA_ESTADO_OPTIONS.map((estado) => `<option value="${escapeHtml(estado)}" ${normalizeFacturaEstado(current.estado) === estado ? 'selected' : ''}>${escapeHtml(estado)}</option>`).join('')}
+            </select>
+            <small>Pagada requiere guardar un cobro real. Al crearla, se guarda primero Pendiente; si cancelas el cobro, seguirá Pendiente. Para Anulada, indica el motivo en Observaciones.</small>
           </label>
           <label class="form-field">
             <span>Monto</span>
@@ -15943,7 +15948,7 @@ Notas importantes:
         <td><span class="compact-primary" title="${escapeHtml(factura.no)}">${escapeHtml(factura.no || '—')}</span></td>
         <td><span>${escapeHtml(periodInfo.label)}</span></td>
         <td><span class="badge subtle">Página ${page}</span></td>
-        <td><span>${escapeHtml(formatDate(getFacturaFechaRegistro(factura)))}</span></td>
+        <td><span>${escapeHtml(formatDate(getFacturaFechaRegistro(factura)))}</span><small>Factura: ${escapeHtml(formatDate(factura.fecha))}</small></td>
         <td><small title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel || 'Manual')}</small></td>
         <td><span title="${escapeHtml(documentLabel || 'Sin documento madre')}">${escapeHtml(documentLabel || '—')}</span></td>
         <td><span title="${escapeHtml(partyLabel || 'Sin cliente')}">${escapeHtml(partyLabel || '—')}</span></td>
@@ -16091,7 +16096,7 @@ Notas importantes:
       <tr>
         <td><span class="compact-primary" title="${escapeHtml(factura.no)}">${escapeHtml(factura.no || '—')}</span>${origenLabel ? `<small class="factura-origin-label" title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel)}</small>` : ''}</td>
         ${options.includePeriod ? `<td><span>${escapeHtml(periodInfo.label)}</span></td>` : ''}
-        <td><span>${escapeHtml(formatDate(getFacturaFechaRegistro(factura)))}</span></td>
+        <td><span>${escapeHtml(formatDate(getFacturaFechaRegistro(factura)))}</span><small>Factura: ${escapeHtml(formatDate(factura.fecha))}</small></td>
         <td><small title="${escapeHtml(origenLabel)}">${escapeHtml(origenLabel || 'Manual')}</small></td>
         <td><span title="${escapeHtml(documentLabel || 'Sin documento madre')}">${escapeHtml(documentLabel || '—')}</span></td>
         <td><span title="${escapeHtml(partyLabel || 'Sin cliente')}">${escapeHtml(partyLabel || '—')}</span></td>
@@ -16145,6 +16150,7 @@ Notas importantes:
     const isCreateMode = isFacturaCreateForm(form);
     const no = cleanText(formData.get('no'));
     const submittedFechaRegistro = toDateInputValue(formData.get('fechaRegistro'));
+    const submittedFecha = toDateInputValue(formData.get('fecha'));
     const estado = normalizeFacturaEstado(formData.get('estado'));
     const clienteId = cleanText(formData.get('clienteId'));
     const sucursalId = cleanText(formData.get('sucursalId'));
@@ -16157,8 +16163,8 @@ Notas importantes:
       renderRoute({ preserveScroll: true });
       return;
     }
-    if (!submittedFechaRegistro) {
-      setFacturasMessage('La Fecha de Registro de la factura es obligatoria.', 'error');
+    if (!submittedFechaRegistro || !submittedFecha) {
+      setFacturasMessage('La fecha de factura y la fecha de registro son obligatorias.', 'error');
       renderRoute({ preserveScroll: true });
       return;
     }
@@ -16172,8 +16178,18 @@ Notas importantes:
     const fechaRegistro = existing
       ? (getFacturaFechaRegistro(existing) || submittedFechaRegistro)
       : todayInputValue();
-    const fecha = existing?.fecha || fechaRegistro;
-    const periodo = normalizeWorkPeriodKey(existing?.periodo) || getFacturaPeriodInfoFromDate(fechaRegistro).periodo;
+    const fecha = existing && !isFacturaManualCobrable(existing) ? existing.fecha : submittedFecha;
+    const periodo = normalizeWorkPeriodKey(existing?.periodo) || getFacturaPeriodInfoFromDate(fecha).periodo;
+    if (existing && fecha !== existing.fecha && getFacturaPeriodInfoFromDate(fecha).periodo !== periodo) {
+      setFacturasMessage('La fecha debe permanecer en el período original de esta factura.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
+    if (estado === 'Anulada' && !observaciones) {
+      setFacturasMessage('Indica el motivo de anulación en Observaciones.', 'error');
+      renderRoute({ preserveScroll: true });
+      return;
+    }
     if (isFacturaPeriodClosed(periodo)) {
       setFacturasMessage(`${existing ? 'Actualizar' : 'Crear'} esta factura no está permitido porque ${getFacturaPeriodInfoFromDate(`${periodo}-01`).label} ya está cerrado.`, 'error');
       renderRoute({ preserveScroll: true });
@@ -16212,12 +16228,13 @@ Notas importantes:
     });
     const activeManualCobro = existing ? getActiveCobroForFacturaModulo(existing.id) : null;
     if (activeManualCobro && (
-      no !== existing.no
+      fecha !== existing.fecha
+      || no !== existing.no
       || Math.abs(roundMoney(monto - getFacturaManualTotal(existing))) > COBRO_TOLERANCE
       || catalogPayload.clienteId !== existing.clienteId
       || catalogPayload.sucursalId !== existing.sucursalId
     )) {
-      setFacturasMessage('No se puede cambiar número, monto, cliente o sucursal mientras la factura tenga un cobro activo. Puedes editar únicamente la observación.', 'error');
+      setFacturasMessage('No se puede cambiar fecha, número, monto, cliente o sucursal mientras la factura tenga un cobro activo. Puedes editar únicamente la observación.', 'error');
       renderRoute({ preserveScroll: true });
       return;
     }
@@ -16231,8 +16248,8 @@ Notas importantes:
       renderRoute({ preserveScroll: true });
       return;
     }
-    if (existing && existing.estado === 'Pendiente' && estado === 'Pagada') {
-      if (!isFacturaManualCobrable(existing)) {
+    if (estado === 'Pagada' && (!existing || existing.estado !== 'Pagada')) {
+      if (!isFacturaManualCobrable(nextRecord) || (existing && existing.estado !== 'Pendiente')) {
         setFacturasMessage('Esta factura no es manual cobrable. Las facturas vinculadas a Venta / OC solo se marcan Pagada desde Cobros.', 'error');
         renderRoute({ preserveScroll: true });
         return;
@@ -16258,6 +16275,12 @@ Notas importantes:
         pagadaAt: '',
         pagadaPor: ''
       });
+      if (!existing) {
+        data.facturas.unshift(facturasState.cobroDraft);
+        saveFacturasData(data);
+        registerSessionChange({ module: 'Facturas', operation: 'crear', recordId: nextRecord.id });
+        facturasState.captureDraft = normalizeFacturasCaptureDraft({ clienteId, sucursalId });
+      }
       facturasState.editingId = null;
       facturasState.message = null;
       facturasState.cobroSaving = false;
