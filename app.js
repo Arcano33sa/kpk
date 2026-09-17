@@ -25498,9 +25498,12 @@ Notas importantes:
     `;
     const rows = results.map((result) => {
       const venta = result.venta;
+      const facturasEncontradas = normalizeFacturasVentaList(venta.facturas)
+        .filter((factura) => normalizeCobroSearchText(factura.numero).includes(normalizeCobroSearchText(cleanQuery)))
+        .map((factura) => formatFacturaCobroConMonto(factura)).join(' · ');
       return `
         <tr data-cobro-search-row data-operational-search="${escapeHtml(result.searchText)}">
-          <td data-label="Factura">${result.facturaEncontrada ? `<span class="compact-primary">${escapeHtml(result.facturaEncontrada)}</span>` : '<span class="muted-text">—</span>'}</td>
+          <td data-label="Factura">${result.facturaEncontrada ? `<span class="compact-primary">${escapeHtml(facturasEncontradas)}</span>` : '<span class="muted-text">—</span>'}</td>
           <td data-label="OC"><span class="compact-primary">${escapeHtml(venta.numeroDocumento || 'Sin número')}</span></td>
           <td data-label="Cliente">${escapeHtml(result.cliente?.nombre || venta.clienteNombre || 'Cliente no encontrado')}</td>
           <td data-label="Sucursal">${escapeHtml(result.sucursal?.nombre || venta.sucursalNombre || '—')}</td>
@@ -25682,7 +25685,8 @@ Notas importantes:
         const record = normalizeVentaRecord(venta);
         const cliente = getCatalogRecordById('clientes', record.clienteId);
         const sucursal = getCatalogRecordById('sucursales', record.sucursalId);
-        const facturas = formatFacturasVentaResumen(record.facturas);
+        const facturas = normalizeFacturasVentaList(record.facturas)
+          .map((factura) => formatFacturaCobroConMonto(factura)).join(' · ') || 'Sin facturas registradas';
         const isSelected = record.id === cobrosState.selectedVentaId;
         return `
           <tr class="compact-record-row cobros-pending-row${isSelected ? ' is-selected' : ''}">
@@ -25819,6 +25823,11 @@ Notas importantes:
     `;
   }
 
+  function formatFacturaCobroConMonto(factura) {
+    const monto = factura.pendienteMonto ? 'Monto no registrado' : formatMoney(factura.total);
+    return `${factura.numero} — ${monto}`;
+  }
+
   function renderSelectedVentaFacturasCobro(facturas) {
     const list = normalizeFacturasVentaList(facturas);
     if (!list.length) {
@@ -25826,7 +25835,7 @@ Notas importantes:
     }
     return `
       <div class="cobro-summary-facturas-list">
-        ${list.map((factura) => `<span class="factura-chip">${escapeHtml(factura.numero)}</span>`).join('')}
+        ${list.map((factura) => `<span class="factura-chip">${escapeHtml(formatFacturaCobroConMonto(factura))}</span>`).join('')}
       </div>
     `;
   }
