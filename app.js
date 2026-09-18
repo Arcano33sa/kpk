@@ -3485,6 +3485,7 @@ Notas importantes:
 
   let sessionChangeQueue = [];
   let sessionChangeSequence = 0;
+  let sessionOperationSequence = 0;
 
   function syncSessionChangeQueueGlobal() {
     if (typeof window !== 'undefined') {
@@ -3610,6 +3611,8 @@ Notas importantes:
       recordId,
       idRegistro: recordId,
       fechaHoraLocal: timestamp,
+      operationSequence: ++sessionOperationSequence,
+      lastOperationSourceModule: cleanText(payload.sourceModule),
       origen: 'session',
       estado: 'pendiente',
       key
@@ -3627,6 +3630,8 @@ Notas importantes:
       existing.operation = finalOperation;
       existing.operacion = finalOperation;
       existing.fechaHoraLocal = timestamp;
+      existing.operationSequence = base.operationSequence;
+      existing.lastOperationSourceModule = base.lastOperationSourceModule;
       existing.updatedAt = timestamp;
       if (base.relatedId) existing.relatedId = base.relatedId;
       if (base.sourceModule) existing.sourceModule = base.sourceModule;
@@ -6723,6 +6728,7 @@ Notas importantes:
         // La lectura parte de copias locales completas. Cada bloque se valida entero y
         // solo entonces reemplaza su equivalente; un fallo conserva el bloque local.
         const snapshot = normalizeData(appData || createInitialData());
+        snapshot.metadata.lastCloudRecord = metadata.lastCloudRecord || null;
         CATALOGS.forEach((catalog) => {
           if (!Array.isArray(snapshot[catalog.id])) snapshot[catalog.id] = [];
         });
@@ -6859,6 +6865,7 @@ Notas importantes:
               snapshot.metadata = {
                 ...(isPlainObject(snapshot.metadata) ? snapshot.metadata : {}),
                 ...freshMetadata,
+                lastCloudRecord: freshMetadata.lastCloudRecord || null,
                 fuentePrincipal: 'firestore',
                 cloudActive: true,
                 lastCloudReadAt: nowIso()
@@ -7171,8 +7178,11 @@ Notas importantes:
           });
         }
 
+        const snapshotMetadata = { ...(isPlainObject(data.metadata) ? data.metadata : {}) };
+        // El resumen confirmado solo se escribe junto con la operación correspondiente.
+        delete snapshotMetadata.lastCloudRecord;
         await queueSet(fs.doc(db, 'workspaces', workspaceId, 'metadata', FIRESTORE_METADATA_SYSTEM_ID), {
-          ...(isPlainObject(data.metadata) ? data.metadata : {}),
+          ...snapshotMetadata,
           id: FIRESTORE_METADATA_SYSTEM_ID,
           appName: APP_NAME,
           appVersion: APP_VERSION,
@@ -7414,8 +7424,31 @@ Notas importantes:
       return {
         ref,
         payload: stripUndefinedForFirestore(payload),
+        lastRecord: buildLastCloudRecordSummary(change, payload, target.collection),
         change,
         key: `${target.kind || 'simple'}:${target.collection}:${target.catalogId || ''}:${recordId}`
+      };
+    }
+
+    function buildLastCloudRecordSummary(change, record, collection) {
+      // Las réplicas y recálculos derivados no reemplazan la operación del usuario.
+      const source = cleanText(change.lastOperationSourceModule ?? change.sourceModule);
+      if (isFacturasCleanupSessionChange(change) || (source && collection !== 'catalogos')) return null;
+      const identity = normalizeDeviceIdentity(appDeviceIdentity);
+      const amount = record.montoCobrado ?? record.montoPagado ?? record.monto
+        ?? record.ventaNetaOriginal ?? record.totalCompra ?? record.total;
+      return {
+        module: cleanText(change.module || change.modulo),
+        operation: normalizeSessionChangeOperation(change.operation),
+        recordId: cleanText(change.recordId),
+        description: cleanText(record.tipoGastoNombre || record.descripcion || record.numeroDocumento
+          || record.facturaReferencia || record.no || record.numero || record.titulo || record.nombre
+          || record.concepto || record.proveedorNombre || record.clienteNombre) || cleanText(change.recordId),
+        amount: amount !== undefined && amount !== null && amount !== '' && Number.isFinite(Number(amount)) ? Number(amount) : null,
+        recordDate: cleanText(record.fechaCobro || record.fechaPago || record.fechaRegistro || record.fechaCompra || record.fecha || record.fechaEmision),
+        operationAt: cleanText(change.fechaHoraLocal || change.updatedAt || change.createdAt),
+        deviceId: identity.deviceId,
+        deviceName: identity.deviceName
       };
     }
 
@@ -7485,14 +7518,34 @@ Notas importantes:
         errors.push(`${formatDateTime(nowIso())} · ${label} · cloud/session-change-unresolved · ${unresolvedChanges.length} cambio(s) no pudieron resolverse contra el estado local.`);
       }
 
-      const writeEntries = Array.from(writesByKey.values());
+      const writeEntries = Array.from(writesByKey.values()).sort((a, b) =>
+        (Number(a.write.change.operationSequence) || 0) - (Number(b.write.change.operationSequence) || 0)
+        || cleanText(a.write.change.fechaHoraLocal).localeCompare(cleanText(b.write.change.fechaHoraLocal)));
+      const metadataRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
+      async function commitEntries(entries) {
+        const batch = fs.writeBatch(db);
+        entries.forEach((entry) => batch.set(entry.write.ref, entry.write.payload, { merge: true }));
+        const lastRecord = entries.map((entry) => entry.write.lastRecord).filter(Boolean).pop();
+        if (lastRecord) {
+          // Atómico con sus registros: nunca anunciar un cambio cuya escritura falló.
+          // El orden entre equipos lo establece el commit del servidor, no sus relojes.
+          batch.set(metadataRef, {
+            lastCloudRecord: { ...lastRecord, savedAt: getFirestoreTimestampValue(fs) }
+          }, { merge: true });
+        }
+        await batch.commit();
+        if (lastRecord) {
+          state.cloudMetadata = {
+            ...(state.cloudMetadata || {}),
+            lastCloudRecord: { ...lastRecord, savedAt: '' }
+          };
+        }
+      }
       const batchLimit = Math.max(1, FIRESTORE_IMPORT_BATCH_LIMIT - 2);
       for (let offset = 0; offset < writeEntries.length; offset += batchLimit) {
         const chunk = writeEntries.slice(offset, offset + batchLimit);
-        let batch = fs.writeBatch(db);
-        chunk.forEach((entry) => batch.set(entry.write.ref, entry.write.payload, { merge: true }));
         try {
-          await batch.commit();
+          await commitEntries(chunk);
           chunk.forEach((entry) => confirmedChanges.push(...entry.changes));
         } catch (batchError) {
           if (chunk.length === 1) {
@@ -7503,7 +7556,7 @@ Notas importantes:
 
           for (const entry of chunk) {
             try {
-              await fs.setDoc(entry.write.ref, entry.write.payload, { merge: true });
+              await commitEntries([entry]);
               confirmedChanges.push(...entry.changes);
             } catch (itemError) {
               failedChanges.push(...entry.changes);
@@ -7616,6 +7669,15 @@ Notas importantes:
             }), { merge: true });
           } catch (error) {
             metadataError = buildSessionCloudDiagnostic('Metadata de sincronización', error);
+          }
+          try {
+            const savedMetadata = await fs.getDoc(metadataRef);
+            if (savedMetadata.exists()) {
+              const freshMetadata = normalizeFirestoreDoc(savedMetadata);
+              state.cloudMetadata = { ...freshMetadata, lastCloudRecord: freshMetadata.lastCloudRecord || null };
+            }
+          } catch (error) {
+            metadataError = [metadataError, buildSessionCloudDiagnostic('Lectura del último registro', error)].filter(Boolean).join(' | ');
           }
         }
 
@@ -30876,6 +30938,35 @@ Notas importantes:
     `;
   }
 
+  function renderLastCloudRecord() {
+    const runtime = getCloudRuntimeStatusSafe();
+    const metadata = runtime?.metadata || {};
+    const fromRuntime = Object.prototype.hasOwnProperty.call(metadata, 'lastCloudRecord');
+    const record = fromRuntime ? metadata.lastCloudRecord : appData.metadata?.lastCloudRecord;
+    const title = '<h3>Último Registro Agregado</h3>';
+    if (!isPlainObject(record) || !cleanText(record.recordId)) {
+      return `<div class="formula-card" role="status">${title}<p class="compact-note">Sin información disponible del último registro guardado en Firebase. Se mostrará después de guardar una operación con esta versión y cargar sus datos de nube.</p></div>`;
+    }
+    const operation = { crear: 'Agregado', editar: 'Editado', anular: 'Anulado', eliminar: 'Eliminado' }[record.operation] || 'Guardado';
+    const amount = record.amount !== null && record.amount !== undefined && record.amount !== '' && Number.isFinite(Number(record.amount))
+      ? formatMoney(Number(record.amount)) : '';
+    const summary = [record.module, record.description, amount].filter(Boolean).join(' · ');
+    const cached = !fromRuntime || !runtime.cloudActive || Boolean(cloudOperationState.lastError);
+    return `
+      <div class="formula-card" role="status">
+        ${title}
+        <p><strong>${escapeHtml(summary)}</strong></p>
+        <dl class="definition-list">
+          <dt>Operación</dt><dd>${escapeHtml(operation)}</dd>
+          <dt>Fecha del registro</dt><dd>${escapeHtml(record.recordDate ? formatDate(record.recordDate) : 'No registrada')}</dd>
+          <dt>Equipo que guardó</dt><dd>${escapeHtml(record.deviceName || 'Equipo no identificado')}</dd>
+          <dt>Guardado en Firebase</dt><dd>${escapeHtml(record.savedAt ? formatDateTime(record.savedAt) : 'Guardado confirmado; fecha del servidor pendiente de lectura')}</dd>
+        </dl>
+        <p class="compact-note">${cached ? 'Última información disponible; pendiente de verificar al actualizar desde Firestore.' : 'Última operación confirmada conocida. Actualizar datos consulta los cambios de otros equipos.'}</p>
+      </div>
+    `;
+  }
+
   function renderConfiguracion() {
     const config = normalizeConfiguracion(appData.configuracion);
     const currentRole = getCurrentRoleDefinition();
@@ -31119,6 +31210,7 @@ Notas importantes:
           </div>
           ${renderCloudRefreshProgressPanel()}
           <p class="compact-note">Guardar datos sube solo cambios de esta sesión. Actualizar datos refresca desde Firestore cuando la nube está activa.</p>
+          ${renderLastCloudRecord()}
         </article>
 
         ${configState.message ? `<div class="form-message ${configState.messageType === 'error' ? 'is-error' : (configState.messageType === 'warning' ? 'is-warning' : (configState.messageType === 'info' ? 'is-info' : 'is-success'))}" role="status">${escapeHtml(configState.message)}</div>` : ''}
