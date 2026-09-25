@@ -14722,3 +14722,169 @@ input[type="number"]::-webkit-inner-spin-button {
     margin: 0;
   }
 }
+
+/* Cobros — captura, selección y retenciones compactas en escritorio */
+@media (min-width: 1280px) {
+  .cobros-shell .cobro-form-card {
+    padding: 11px 13px;
+  }
+
+  .cobros-shell .cobro-form-card .section-title-row {
+    margin-bottom: 5px;
+    padding-bottom: 5px;
+  }
+
+  .cobros-shell .cobro-form-card > .muted-text {
+    margin: -1px 0 4px;
+    font-size: 0.8rem;
+    line-height: 1.2;
+  }
+
+  .cobros-shell .cobros-pending-scroll-shell {
+    margin: 3px 0 7px;
+  }
+
+  .cobros-shell .cobros-pending-table-wrap {
+    max-height: min(220px, 25vh);
+    overflow: auto;
+  }
+
+  .cobros-shell .cobros-pending-table th,
+  .cobros-shell .cobros-pending-table td {
+    padding-top: 5px;
+    padding-bottom: 5px;
+  }
+
+  .cobros-shell .cobro-form {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px 10px;
+  }
+
+  .cobros-shell .cobro-form > input[type="hidden"],
+  .cobros-shell .cobro-form > .form-grid,
+  .cobros-shell .cobro-form > .cobro-summary {
+    grid-column: 1 / -1;
+  }
+
+  .cobros-shell .cobro-form > .form-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 7px;
+    align-items: end;
+  }
+
+  .cobros-shell .cobro-form .form-field {
+    gap: 3px;
+  }
+
+  .cobros-shell .cobro-form .form-field input,
+  .cobros-shell .cobro-form .form-field select {
+    min-height: 36px;
+    padding: 7px 9px;
+  }
+
+  .cobros-shell .cobro-retencion-panel {
+    grid-column: auto;
+    align-self: end;
+    gap: 6px;
+    padding: 4px;
+    border-radius: 12px;
+  }
+
+  .cobros-shell .cobro-retencion-panel:has([data-cobro-retencion-toggle]:checked) {
+    grid-column: 1 / -1;
+    padding: 7px 9px;
+  }
+
+  .cobros-shell .checkbox-field.compact-toggle {
+    min-height: 36px;
+    padding: 6px 9px;
+    font-size: 0.76rem;
+  }
+
+  .cobros-shell .checkbox-field.compact-toggle input {
+    width: 16px;
+    height: 16px;
+  }
+
+  .cobros-shell .cobro-retencion-fields {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .cobros-shell .cobro-retencion-fields > .compact-note {
+    margin: 0;
+    font-size: 0.7rem;
+    line-height: 1.15;
+  }
+
+  .cobros-shell .cobro-summary {
+    gap: 6px;
+    padding: 7px 9px;
+  }
+
+  .cobros-shell .cobro-summary-head {
+    align-items: center;
+    gap: 8px;
+  }
+
+  .cobros-shell .cobro-summary-head strong,
+  .cobros-shell .cobro-summary-subtitle {
+    font-size: 0.7rem;
+  }
+
+  .cobros-shell .cobro-summary-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .cobros-shell .cobro-summary-item {
+    min-height: 43px;
+    padding: 6px 8px;
+  }
+
+  .cobros-shell .cobro-summary-item span {
+    font-size: 0.66rem;
+  }
+
+  .cobros-shell .cobro-summary-item b {
+    font-size: 0.8rem;
+  }
+
+  .cobros-shell .cobro-summary-facturas,
+  .cobros-shell .cobro-summary-referred {
+    gap: 5px;
+    padding: 6px 8px;
+  }
+
+  .cobros-shell .cobro-summary-facturas-list {
+    gap: 5px;
+  }
+
+  .cobros-shell .cobro-summary-facturas-list .factura-chip {
+    padding: 4px 7px;
+    font-size: 0.7rem;
+  }
+
+  .cobros-shell .cobro-summary-empty {
+    min-height: 0;
+    padding: 8px 10px;
+  }
+
+  .cobros-shell .cobro-form > .form-field:last-of-type {
+    grid-column: 1;
+  }
+
+  .cobros-shell .cobro-form textarea[name="observacion"] {
+    min-height: 38px;
+    height: 38px;
+    padding: 7px 9px;
+    resize: vertical;
+  }
+
+  .cobros-shell .cobro-form > .form-actions {
+    grid-column: 2;
+    align-self: end;
+    flex-wrap: nowrap;
+    margin: 0;
+  }
+}
