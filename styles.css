@@ -14609,3 +14609,116 @@ input[type="number"]::-webkit-inner-spin-button {
     margin: 0;
   }
 }
+
+/* Pagos — captura y selección compactas en escritorio */
+@media (min-width: 1280px) {
+  .pagos-shell .pago-form-card {
+    padding: 11px 13px;
+  }
+
+  .pagos-shell .pago-form-card .section-title-row {
+    margin-bottom: 5px;
+    padding-bottom: 5px;
+  }
+
+  .pagos-shell .pago-form-card > .muted-text {
+    margin: -1px 0 4px;
+    font-size: 0.8rem;
+    line-height: 1.2;
+  }
+
+  .pagos-shell .pagos-pending-scroll-shell {
+    margin: 3px 0 7px;
+  }
+
+  .pagos-shell .pagos-pending-table-wrap {
+    max-height: min(220px, 25vh);
+    overflow: auto;
+  }
+
+  .pagos-shell .pagos-pending-table th,
+  .pagos-shell .pagos-pending-table td {
+    padding-top: 5px;
+    padding-bottom: 5px;
+  }
+
+  .pagos-shell .pago-form {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px 10px;
+  }
+
+  .pagos-shell .pago-form > input[type="hidden"],
+  .pagos-shell .pago-form > .form-grid,
+  .pagos-shell .pago-form > .pago-summary,
+  .pagos-shell .pago-form > .pagos-pending-selection-empty {
+    grid-column: 1 / -1;
+  }
+
+  .pagos-shell .pago-form > .form-grid {
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 7px;
+  }
+
+  .pagos-shell .pago-form .form-field {
+    gap: 3px;
+  }
+
+  .pagos-shell .pago-form .form-field input,
+  .pagos-shell .pago-form .form-field select {
+    min-height: 36px;
+    padding: 7px 9px;
+  }
+
+  .pagos-shell .pago-summary {
+    gap: 6px;
+    padding: 7px 9px;
+  }
+
+  .pagos-shell .pago-summary > strong {
+    margin-bottom: 0;
+    font-size: 0.78rem;
+  }
+
+  .pagos-shell .pago-summary .critical-summary-grid {
+    grid-template-columns: minmax(150px, 1.2fr) minmax(170px, 1.35fr) repeat(5, minmax(112px, 1fr));
+    gap: 6px;
+  }
+
+  .pagos-shell .pago-summary .critical-summary-grid .summary-cell-item {
+    grid-column: auto;
+    min-height: 44px;
+    padding: 6px 8px;
+  }
+
+  .pagos-shell .pago-summary .summary-cell-item span {
+    font-size: 0.68rem;
+  }
+
+  .pagos-shell .pago-summary .summary-cell-item b {
+    margin-top: 2px;
+    font-size: 0.82rem;
+  }
+
+  .pagos-shell .pagos-pending-selection-empty {
+    margin: 0;
+    padding: 8px 10px;
+  }
+
+  .pagos-shell .pago-form > .form-field:last-of-type {
+    grid-column: 1;
+  }
+
+  .pagos-shell .pago-form textarea[name="observacion"] {
+    min-height: 38px;
+    height: 38px;
+    padding: 7px 9px;
+    resize: vertical;
+  }
+
+  .pagos-shell .pago-form > .form-actions {
+    grid-column: 2;
+    align-self: end;
+    flex-wrap: nowrap;
+    margin: 0;
+  }
+}
