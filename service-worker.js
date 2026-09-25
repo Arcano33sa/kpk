@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_102_compra_compacta';
+const CACHE_VERSION = 'v0_18_103_pagos_facturas_montos';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

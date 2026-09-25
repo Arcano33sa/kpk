@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.102-compra-compacta';
+  const APP_VERSION = '0.18.103-pagos-facturas-montos';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -4652,6 +4652,11 @@ Notas importantes:
     const list = normalizeFacturasProveedorList(facturas);
     if (!list.length) return 'Sin facturas relacionadas';
     return list.map((factura) => factura.numero).join(', ');
+  }
+
+  function formatFacturaProveedorConMonto(factura) {
+    const monto = factura.pendienteMonto ? 'Monto no registrado' : formatMoney(factura.monto);
+    return `${factura.numero} — ${monto}`;
   }
 
   function formatFacturasProveedorCompact(facturas) {
@@ -28230,7 +28235,8 @@ Notas importantes:
         const record = normalizeCompraProveedorRecord(compra);
         const proveedor = getCatalogRecordById('proveedores', record.proveedorId);
         const proveedorNombre = proveedor?.nombre || record.proveedorNombre || 'Proveedor no encontrado';
-        const facturas = getCompraProveedorReferenciaDocumental(record);
+        const facturas = normalizeFacturasProveedorList(record.facturasRelacionadas)
+          .map((factura) => formatFacturaProveedorConMonto(factura)).join(' · ') || 'Sin facturas relacionadas';
         const fechaRegistro = formatDate(record.fechaCompra);
         const montoVigente = record.totalAjustado;
         const isSelected = record.id === pagosState.selectedCompraId;
