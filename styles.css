@@ -14460,3 +14460,152 @@ input[type="number"]::-webkit-inner-spin-button {
   background: var(--pending-selection-blue);
   pointer-events: none;
 }
+
+/* Proveedores / Compras — formulario de captura compacto en escritorio */
+@media (min-width: 1280px) {
+  .proveedores-shell .compra-form-card {
+    padding: 11px 13px;
+  }
+
+  .proveedores-shell .compra-form-card .section-title-row {
+    margin-bottom: 5px;
+    padding-bottom: 5px;
+  }
+
+  .proveedores-shell .compra-form-card > .muted-text {
+    margin: -1px 0 5px;
+    font-size: 0.8rem;
+    line-height: 1.2;
+  }
+
+  .proveedores-shell .compra-form {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px 10px;
+  }
+
+  .proveedores-shell .compra-form > :not(.form-field):not(.form-actions),
+  .proveedores-shell .compra-form > .form-grid {
+    grid-column: 1 / -1;
+  }
+
+  .proveedores-shell .compra-form > .form-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .proveedores-shell .compra-total-field {
+    grid-column: auto;
+  }
+
+  .proveedores-shell .compra-form .form-field {
+    gap: 3px;
+  }
+
+  .proveedores-shell .compra-form .form-field input,
+  .proveedores-shell .compra-form .form-field select {
+    min-height: 36px;
+    padding: 7px 9px;
+  }
+
+  .proveedores-shell .compra-form .form-field small {
+    font-size: 0.68rem;
+    line-height: 1.08;
+  }
+
+  .proveedores-shell .compra-form .formula-card {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: center;
+    gap: 8px 12px;
+    padding: 7px 9px;
+  }
+
+  .proveedores-shell .compra-form .formula-card > strong {
+    margin: 0;
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
+
+  .proveedores-shell .compra-summary-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .proveedores-shell .compra-summary-grid > * {
+    min-height: 44px;
+    padding: 6px 8px;
+  }
+
+  .proveedores-shell .facturas-proveedor-block {
+    grid-template-columns: minmax(180px, 0.24fr) minmax(430px, 1fr);
+    align-items: center;
+    gap: 7px 12px;
+    padding: 8px 10px;
+    margin-top: 0;
+  }
+
+  .proveedores-shell .facturas-proveedor-block .facturas-head {
+    align-items: center;
+  }
+
+  .proveedores-shell .facturas-proveedor-block .facturas-head h3 {
+    font-size: 1rem;
+    line-height: 1.05;
+  }
+
+  .proveedores-shell .facturas-proveedor-block .facturas-editor-shell {
+    min-width: 0;
+  }
+
+  .proveedores-shell .facturas-proveedor-grid {
+    gap: 4px;
+  }
+
+  .proveedores-shell .facturas-proveedor-grid .facturas-grid-row {
+    grid-template-columns: minmax(10rem, 1.45fr) minmax(8rem, 1fr) 34px;
+    gap: 5px;
+  }
+
+  .proveedores-shell .facturas-proveedor-grid .factura-edit-row {
+    padding: 5px;
+  }
+
+  .proveedores-shell .facturas-proveedor-grid .factura-cell input,
+  .proveedores-shell .facturas-proveedor-grid .factura-remove-button,
+  .proveedores-shell .facturas-proveedor-grid .factura-add-button {
+    height: 34px;
+    min-height: 34px;
+  }
+
+  .proveedores-shell .facturas-proveedor-block .facturas-preview,
+  .proveedores-shell .facturas-proveedor-block .facturas-message {
+    grid-column: 1 / -1;
+  }
+
+  .proveedores-shell .facturas-proveedor-block .facturas-preview {
+    padding: 6px 9px;
+    font-size: 0.76rem;
+  }
+
+  .proveedores-shell .facturas-proveedor-block .facturas-message:empty {
+    display: none;
+  }
+
+  .proveedores-shell .compra-form > .form-field:last-of-type {
+    grid-column: 1;
+  }
+
+  .proveedores-shell .compra-form textarea[name="observacion"] {
+    min-height: 38px;
+    height: 38px;
+    padding: 7px 9px;
+    resize: vertical;
+  }
+
+  .proveedores-shell .compra-form > .form-actions {
+    grid-column: 2;
+    align-self: end;
+    flex-wrap: nowrap;
+    margin: 0;
+  }
+}

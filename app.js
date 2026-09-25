@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.100-cobros-ultimo-registro';
+  const APP_VERSION = '0.18.102-compra-compacta';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -27074,7 +27074,6 @@ Notas importantes:
             </div>
             <span class="count-pill" data-facturas-proveedor-count>${facturas.length} factura${facturas.length === 1 ? '' : 's'}</span>
           </div>
-          <p class="muted-text compact-note">Una compra madre puede tener una o varias facturas. La suma de montos calcula el Total compra; no crea pagos ni saldos por factura.</p>
           <div class="facturas-editor-shell" data-facturas-proveedor-editor-shell>
             <div class="facturas-grid facturas-proveedor-grid" role="table" aria-label="Facturas relacionadas de proveedor">
               <div class="facturas-grid-row facturas-grid-head" role="row">
