@@ -14888,3 +14888,126 @@ input[type="number"]::-webkit-inner-spin-button {
     margin: 0;
   }
 }
+
+/* Gastos y Ajustes — captura compacta en escritorio */
+@media (min-width: 1280px) {
+  .gastos-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .gastos-shell .gasto-form-card,
+  .ventas-shell .venta-ajuste-card,
+  .proveedores-shell .compra-ajuste-card {
+    width: 100%;
+    max-width: 100%;
+    padding: 11px 13px;
+  }
+
+  :where(.gastos-shell .gasto-form-card,
+    .ventas-shell .venta-ajuste-card,
+    .proveedores-shell .compra-ajuste-card) .section-title-row {
+    margin-bottom: 5px;
+    padding-bottom: 5px;
+  }
+
+  :where(.gastos-shell .gasto-form-card,
+    .ventas-shell .venta-ajuste-card,
+    .proveedores-shell .compra-ajuste-card) > .muted-text {
+    margin: -1px 0 5px;
+    font-size: 0.8rem;
+    line-height: 1.2;
+  }
+
+  .gastos-shell .gasto-form,
+  :where(.ventas-shell, .proveedores-shell) .ajuste-form {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px 10px;
+  }
+
+  .gastos-shell .gasto-form > input[type="hidden"],
+  .gastos-shell .gasto-form > .form-grid,
+  :where(.ventas-shell, .proveedores-shell) .ajuste-form > .form-grid,
+  :where(.ventas-shell, .proveedores-shell) .ajuste-form > .ajuste-preview {
+    grid-column: 1 / -1;
+  }
+
+  .gastos-shell .gasto-form > .form-grid {
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 7px;
+  }
+
+  :where(.ventas-shell, .proveedores-shell) .ajuste-form > .ajuste-form-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  :where(.gastos-shell .gasto-form,
+    .ventas-shell .ajuste-form,
+    .proveedores-shell .ajuste-form) .form-field {
+    gap: 3px;
+  }
+
+  :where(.gastos-shell .gasto-form,
+    .ventas-shell .ajuste-form,
+    .proveedores-shell .ajuste-form) .form-field input,
+  :where(.gastos-shell .gasto-form,
+    .ventas-shell .ajuste-form,
+    .proveedores-shell .ajuste-form) .form-field select {
+    min-height: 36px;
+    padding: 7px 9px;
+  }
+
+  :where(.ventas-shell, .proveedores-shell) .ajuste-form .form-field small {
+    font-size: 0.68rem;
+    line-height: 1.08;
+  }
+
+  :where(.ventas-shell, .proveedores-shell) .ajuste-preview {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: center;
+    gap: 7px 10px;
+    padding: 7px 9px;
+  }
+
+  :where(.ventas-shell, .proveedores-shell) .ajuste-preview > strong {
+    margin: 0;
+    max-width: 210px;
+    font-size: 0.78rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  :where(.ventas-shell, .proveedores-shell) .ajuste-summary-grid {
+    grid-template-columns: repeat(auto-fit, minmax(115px, 1fr));
+    gap: 6px;
+  }
+
+  :where(.ventas-shell, .proveedores-shell) .ajuste-summary-grid > * {
+    min-height: 43px;
+    padding: 6px 8px;
+  }
+
+  .gastos-shell .gasto-form > .form-field:last-of-type,
+  :where(.ventas-shell, .proveedores-shell) .ajuste-form > .form-field:last-of-type {
+    grid-column: 1;
+  }
+
+  .gastos-shell .gasto-form textarea[name="observacion"],
+  :where(.ventas-shell, .proveedores-shell) .ajuste-form textarea[name="observacion"] {
+    min-height: 38px;
+    height: 38px;
+    padding: 7px 9px;
+    resize: vertical;
+  }
+
+  .gastos-shell .gasto-form > .form-actions,
+  :where(.ventas-shell, .proveedores-shell) .ajuste-form > .form-actions {
+    grid-column: 2;
+    align-self: end;
+    flex-wrap: nowrap;
+    margin: 0;
+  }
+}
