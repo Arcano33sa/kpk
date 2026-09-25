@@ -15011,3 +15011,233 @@ input[type="number"]::-webkit-inner-spin-button {
     margin: 0;
   }
 }
+
+/* Ventas / OC — captura, facturas y logística compactas en escritorio */
+@media (min-width: 1280px) {
+  .ventas-shell .venta-form-card {
+    padding: 11px 13px;
+  }
+
+  .ventas-shell .venta-form-card .section-title-row {
+    margin-bottom: 5px;
+    padding-bottom: 5px;
+  }
+
+  .ventas-shell .venta-form-card > .muted-text {
+    margin: -1px 0 5px;
+    font-size: 0.8rem;
+    line-height: 1.2;
+  }
+
+  .ventas-shell .venta-form {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px 10px;
+  }
+
+  .ventas-shell .venta-form > input[type="hidden"],
+  .ventas-shell .venta-form > .form-grid,
+  .ventas-shell .venta-form > .formula-card,
+  .ventas-shell .venta-form > .facturas-venta-block,
+  .ventas-shell .venta-form > .logistica-block {
+    grid-column: 1 / -1;
+  }
+
+  .ventas-shell .venta-form > .form-grid {
+    grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+    gap: 7px;
+  }
+
+  .ventas-shell .venta-form .form-field {
+    gap: 3px;
+  }
+
+  .ventas-shell .venta-form .form-field input,
+  .ventas-shell .venta-form .form-field select {
+    min-height: 36px;
+    padding: 7px 9px;
+  }
+
+  .ventas-shell .venta-form > .formula-card {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: center;
+    gap: 7px 10px;
+    padding: 7px 9px;
+  }
+
+  .ventas-shell .venta-form > .formula-card > strong {
+    margin: 0;
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
+
+  .ventas-shell .venta-summary-grid {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .ventas-shell .venta-summary-grid > * {
+    min-height: 43px;
+    padding: 6px 8px;
+  }
+
+  .ventas-shell .facturas-venta-block {
+    grid-template-columns: minmax(170px, 0.22fr) minmax(650px, 1fr);
+    align-items: center;
+    gap: 7px 12px;
+    padding: 8px 10px;
+  }
+
+  .ventas-shell .facturas-venta-block > .muted-text {
+    display: none;
+  }
+
+  .ventas-shell .facturas-venta-block .facturas-head {
+    align-items: center;
+  }
+
+  .ventas-shell .facturas-venta-block .facturas-head h3 {
+    font-size: 1rem;
+    line-height: 1.05;
+  }
+
+  .ventas-shell .facturas-venta-block .facturas-editor-shell {
+    min-width: 0;
+  }
+
+  .ventas-shell .facturas-venta-grid {
+    gap: 4px;
+  }
+
+  .ventas-shell .facturas-venta-grid .facturas-grid-row {
+    grid-template-columns: minmax(9rem, 1.25fr) repeat(3, minmax(7rem, 1fr)) 34px;
+    gap: 5px;
+  }
+
+  .ventas-shell .facturas-venta-grid .factura-edit-row {
+    padding: 5px;
+  }
+
+  .ventas-shell .facturas-venta-grid .factura-cell input,
+  .ventas-shell .facturas-venta-grid .factura-remove-button,
+  .ventas-shell .facturas-venta-grid .factura-add-button {
+    height: 34px;
+    min-height: 34px;
+  }
+
+  .ventas-shell .facturas-venta-block .facturas-cuadre-card,
+  .ventas-shell .facturas-venta-block .facturas-message {
+    grid-column: 1 / -1;
+  }
+
+  .ventas-shell .facturas-venta-block .facturas-cuadre-card {
+    gap: 6px;
+    padding: 7px 9px;
+  }
+
+  .ventas-shell .facturas-cuadre-title {
+    font-size: 0.76rem;
+  }
+
+  .ventas-shell .facturas-cuadre-title span {
+    padding: 3px 7px;
+    font-size: 0.68rem;
+  }
+
+  .ventas-shell .facturas-cuadre-grid {
+    grid-template-columns: repeat(9, minmax(0, 1fr));
+    gap: 5px;
+  }
+
+  .ventas-shell .facturas-cuadre-item {
+    min-height: 42px;
+    padding: 5px 6px;
+  }
+
+  .ventas-shell .facturas-cuadre-item span {
+    font-size: 0.62rem;
+  }
+
+  .ventas-shell .facturas-cuadre-item strong {
+    font-size: 0.76rem;
+  }
+
+  .ventas-shell .facturas-venta-block .facturas-message:empty {
+    display: none;
+  }
+
+  .ventas-shell .logistica-block {
+    gap: 7px;
+    padding: 5px 7px;
+  }
+
+  .ventas-shell .checkbox-field.logistica-toggle {
+    min-height: 36px;
+    padding: 6px 9px;
+    font-size: 0.76rem;
+  }
+
+  .ventas-shell .checkbox-field.logistica-toggle input {
+    width: 16px;
+    height: 16px;
+  }
+
+  .ventas-shell .logistica-block:has([data-logistica-toggle]:checked) {
+    padding: 8px 10px;
+  }
+
+  .ventas-shell .logistica-panel {
+    gap: 7px;
+  }
+
+  .ventas-shell .logistica-panel > .facturas-head,
+  .ventas-shell .logistica-panel > .muted-text {
+    display: none;
+  }
+
+  .ventas-shell .logistica-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .ventas-shell .logistica-gasto-subblock {
+    gap: 7px;
+    padding: 7px 9px;
+  }
+
+  .ventas-shell .logistica-gasto-head strong {
+    font-size: 0.82rem;
+  }
+
+  .ventas-shell .logistica-gasto-head small {
+    font-size: 0.68rem;
+  }
+
+  .ventas-shell .logistica-gasto-grid {
+    gap: 7px;
+  }
+
+  .ventas-shell .logistica-gasto-subblock textarea[name="logisticaGastoObservacion"] {
+    min-height: 38px;
+    height: 38px;
+    padding: 7px 9px;
+  }
+
+  .ventas-shell .venta-form > .form-field:last-of-type {
+    grid-column: 1;
+  }
+
+  .ventas-shell .venta-form > .form-field:last-of-type textarea[name="observacion"] {
+    min-height: 38px;
+    height: 38px;
+    padding: 7px 9px;
+    resize: vertical;
+  }
+
+  .ventas-shell .venta-form > .form-actions {
+    grid-column: 2;
+    align-self: end;
+    flex-wrap: nowrap;
+    margin: 0;
+  }
+}
