@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.107-mejora-visual-ventas';
+  const APP_VERSION = '0.18.108-sin-seguimiento';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -89,14 +89,6 @@
       short: 'Gastos',
       description: 'Control práctico de gastos por fecha, tipo, método, banco, estado y observación.',
       placeholder: 'Gastos ya permite crear, editar y anular registros usando tipos, métodos y bancos desde Catálogos.'
-    },
-    {
-      id: 'seguimiento',
-      icon: '☎',
-      title: 'Seguimiento',
-      short: 'Seguimiento',
-      description: 'Registro local de llamadas por cliente y sucursal, con última llamada vigente e Histórico automático.',
-      placeholder: 'Seguimiento registra llamadas relacionadas con Clientes y Sucursales y las integra con Firestore y JSON.'
     },
     {
       id: 'casa',
@@ -1374,7 +1366,6 @@ Notas importantes:
     ['proveedores', 'proveedores'],
     ['pagos', 'pagos'],
     ['gastos', 'gastos'],
-    ['seguimiento', 'seguimiento'],
     ['casa', 'casa'],
     ['notas', 'notas'],
     ['notas-inicio', 'notas'],
@@ -1471,17 +1462,6 @@ Notas importantes:
     messageType: 'success'
   };
 
-  let seguimientoState = {
-    editingCallId: null,
-    draftClienteId: '',
-    draftSucursalId: '',
-    search: '',
-    semaforo: 'todos',
-    actividad: 'todos',
-    openClientIds: [],
-    message: null,
-    messageType: 'success'
-  };
 
   let notasState = {
     editingNoteId: null,
@@ -3403,7 +3383,6 @@ Notas importantes:
       [pagosState, 'message', 'messageType', 'ksa-action-pagos'],
       [gastosState, 'message', 'messageType', 'ksa-action-gastos'],
       [casaState, 'message', 'messageType', 'ksa-action-casa'],
-      [seguimientoState, 'message', 'messageType', 'ksa-action-seguimiento'],
       [notasState, 'message', 'messageType', 'ksa-action-notas'],
       [facturasState, 'message', 'messageType', 'ksa-action-facturas'],
       [excelImportState, 'message', 'messageType', 'ksa-action-excel-import'],
@@ -12321,7 +12300,6 @@ Notas importantes:
       pagosState.message = null;
       gastosState.message = null;
       casaState.message = null;
-      seguimientoState.message = null;
       facturasState.message = null;
       viewRoot.innerHTML = renderHome();
     } else if (route === 'resumen') {
@@ -12409,19 +12387,8 @@ Notas importantes:
       proveedoresState.message = null;
       pagosState.message = null;
       casaState.message = null;
-      seguimientoState.message = null;
       facturasState.message = null;
       viewRoot.innerHTML = renderGastos();
-    } else if (route === 'seguimiento') {
-      catalogState.message = null;
-      ventasState.message = null;
-      cobrosState.message = null;
-      proveedoresState.message = null;
-      pagosState.message = null;
-      gastosState.message = null;
-      casaState.message = null;
-      facturasState.message = null;
-      viewRoot.innerHTML = renderSeguimiento();
     } else if (route === 'casa') {
       catalogState.message = null;
       ventasState.message = null;
@@ -13069,7 +13036,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Post 12 / Casa · Fix Utilidad KPK por período</span>
           <h1>KSA PRÁCTIKA</h1>
-          <p class="lead">Webapp estática para convertir el control de OC, cobros, proveedores, pagos, gastos, Seguimiento, Casa y documentación en un sistema operativo continuo. Ya tiene menú, navegación fija, Catálogos editables, Ventas / OC, Cobros de clientes, Proveedores / Compras, Pagos a proveedores, Gastos, Casa independiente, Notas, Facturas, Calculadora temporal, mora avanzada, alertas, historial por documento, Resumen / Tablero operativo, importación inicial desde Excel, Configuración, roles básicos locales y respaldo JSON validado, exportación Excel y cierre mensual.</p>
+          <p class="lead">Webapp estática para convertir el control de OC, cobros, proveedores, pagos, gastos, Casa y documentación en un sistema operativo continuo. Ya tiene menú, navegación fija, Catálogos editables, Ventas / OC, Cobros de clientes, Proveedores / Compras, Pagos a proveedores, Gastos, Casa independiente, Notas, Facturas, Calculadora temporal, mora avanzada, alertas, historial por documento, Resumen / Tablero operativo, importación inicial desde Excel, Configuración, roles básicos locales y respaldo JSON validado, exportación Excel y cierre mensual.</p>
         </div>
         <aside class="hero-status" aria-label="Estado inicial de la app">
           <h3>Estado de la app</h3>
@@ -13090,7 +13057,7 @@ Notas importantes:
       <section class="panel-grid">
         <article class="panel-card">
           <h2>Estructura preparada</h2>
-          <p class="notice">Catálogos administra las listas maestras, Ventas / OC registra documentos con saldo por cobrar, Cobros aplica abonos a OC, Proveedores / Compras registra deudas con saldo por pagar, Pagos aplica abonos a facturas/referencias, Gastos registra egresos operativos, Seguimiento conserva llamadas locales por cliente y sucursal, Casa controla gastos familiares separados, Facturas ordena documentos manuales y Calculadora funciona como herramienta temporal sin persistencia.</p>
+          <p class="notice">Catálogos administra las listas maestras, Ventas / OC registra documentos con saldo por cobrar, Cobros aplica abonos a OC, Proveedores / Compras registra deudas con saldo por pagar, Pagos aplica abonos a facturas/referencias, Gastos registra egresos operativos, Casa controla gastos familiares separados, Facturas ordena documentos manuales y Calculadora funciona como herramienta temporal sin persistencia.</p>
           <div class="data-list">
             ${DATA_KEYS.map((key) => `<div class="data-pill"><span>${escapeHtml(key)}</span><strong>${appData[key].length}</strong></div>`).join('')}
           </div>
@@ -13116,7 +13083,6 @@ Notas importantes:
             <span class="badge">Proveedores / Compras</span>
             <span class="badge">Pagos a proveedores</span>
             <span class="badge">Gastos</span>
-            <span class="badge">Seguimiento</span>
             <span class="badge">Casa</span>
             <span class="badge">Notas</span>
             <span class="badge">Facturas</span>
@@ -17119,660 +17085,6 @@ Notas importantes:
     }
   }
 
-  function getSeguimientoClientes(currentId = '') {
-    return getSelectableCatalogRecords('clientes', currentId);
-  }
-
-  function getSeguimientoSucursales(clienteId, currentId = '') {
-    const safeClientId = cleanText(clienteId);
-    const safeCurrentId = cleanText(currentId);
-    if (!safeClientId) return [];
-    return getSelectableCatalogRecords('sucursales', safeCurrentId)
-      .filter((record) => record.clienteId === safeClientId);
-  }
-
-  function getSeguimientoGroupNames(group) {
-    const cliente = getCatalogRecordById('clientes', group?.clienteId);
-    const sucursal = group?.sucursalId ? getCatalogRecordById('sucursales', group.sucursalId) : null;
-    return {
-      clienteNombre: cleanText(cliente?.nombre || group?.clienteNombre) || 'Cliente no disponible',
-      sucursalNombre: cleanText(sucursal?.nombre || group?.sucursalNombre) || 'Sin sucursal'
-    };
-  }
-
-  function getSeguimientoEditingContext() {
-    const editingId = cleanText(seguimientoState.editingCallId);
-    if (!editingId) return null;
-    const group = seguimientoData.registros.find((record) => record.ultimaLlamada?.id === editingId);
-    if (!group || !group.ultimaLlamada) return null;
-    return { group, call: group.ultimaLlamada };
-  }
-
-  function getSeguimientoDaysSinceCall(fecha) {
-    const callDate = dateInputToLocalDate(fecha);
-    const today = dateInputToLocalDate(todayInputValue());
-    if (!callDate || !today) return null;
-    return Math.max(0, Math.floor((today - callDate) / 86400000));
-  }
-
-  function getSeguimientoSemaphore(fecha) {
-    const days = getSeguimientoDaysSinceCall(fecha);
-    if (days === null) return { key: 'rojo', days: null, range: '30+' };
-    if (days <= 24) return { key: 'verde', days, range: '0-24' };
-    if (days <= 29) return { key: 'amarillo', days, range: '25-29' };
-    return { key: 'rojo', days, range: '30+' };
-  }
-
-  function getSeguimientoLastOrder(clienteId, sucursalId = '') {
-    const safeClientId = cleanText(clienteId);
-    const safeBranchId = cleanText(sucursalId);
-    if (!safeClientId) return null;
-    return (Array.isArray(appData.ventas) ? appData.ventas : [])
-      .map((record) => normalizeVentaRecord(record))
-      .filter((record) => record.activo && record.clienteId === safeClientId && cleanText(record.sucursalId) === safeBranchId)
-      .sort((left, right) => compareVisualDateDesc(left, right, [getVentaFechaRegistro, 'createdAt']) || String(right.createdAt).localeCompare(String(left.createdAt)))[0] || null;
-  }
-
-  function getSeguimientoMatrix() {
-    const clientsCatalog = getSortedCatalogRecords('clientes');
-    const branchesCatalog = getSortedCatalogRecords('sucursales');
-    const clientsById = new Map(clientsCatalog.map((record) => [record.id, record]));
-    const branchesById = new Map(branchesCatalog.map((record) => [record.id, record]));
-    const groupsByKey = new Map();
-
-    seguimientoData.registros.forEach((group) => {
-      const key = `${cleanText(group.clienteId)}|${cleanText(group.sucursalId)}`;
-      groupsByKey.set(key, group);
-    });
-
-    const clientIds = new Set(clientsCatalog.filter((record) => record.activo).map((record) => record.id));
-    seguimientoData.registros.forEach((group) => {
-      if (group.clienteId) clientIds.add(group.clienteId);
-    });
-
-    const clients = [...clientIds].map((clienteId) => {
-      const clientRecord = clientsById.get(clienteId);
-      const trackedForClient = seguimientoData.registros.filter((group) => group.clienteId === clienteId);
-      const fallbackClientName = trackedForClient.map((group) => cleanText(group.clienteNombre)).find(Boolean) || 'Cliente no disponible';
-      const clientName = cleanText(clientRecord?.nombre) || fallbackClientName;
-      const branchIds = new Set(
-        branchesCatalog
-          .filter((record) => record.clienteId === clienteId && record.activo)
-          .map((record) => record.id)
-      );
-      trackedForClient.forEach((group) => {
-        if (group.sucursalId) branchIds.add(group.sucursalId);
-      });
-      const hasUnassignedTracking = trackedForClient.some((group) => !cleanText(group.sucursalId));
-      const branchRows = [...branchIds].map((sucursalId) => {
-        const branchRecord = branchesById.get(sucursalId);
-        const group = groupsByKey.get(`${clienteId}|${sucursalId}`) || null;
-        const fallbackName = cleanText(group?.sucursalNombre) || 'Sucursal no disponible';
-        return {
-          clienteId,
-          clienteNombre: clientName,
-          sucursalId,
-          sucursalNombre: cleanText(branchRecord?.nombre) || fallbackName,
-          group
-        };
-      });
-
-      if (!branchRows.length || hasUnassignedTracking) {
-        branchRows.push({
-          clienteId,
-          clienteNombre: clientName,
-          sucursalId: '',
-          sucursalNombre: 'Sin sucursal',
-          group: groupsByKey.get(`${clienteId}|`) || null
-        });
-      }
-
-      const rows = branchRows
-        .map((row) => {
-          const call = row.group?.ultimaLlamada || null;
-          const semaphore = getSeguimientoSemaphore(call?.fecha || '');
-          const lastOrder = getSeguimientoLastOrder(row.clienteId, row.sucursalId);
-          return {
-            ...row,
-            call,
-            semaphore,
-            lastOrder,
-            historyCount: Array.isArray(row.group?.historico) ? row.group.historico.length : 0,
-            searchText: normalizeNameForCompare(`${row.clienteNombre} ${row.sucursalNombre} ${lastOrder?.numeroDocumento || ''} ${call?.observacion || ''}`)
-          };
-        })
-        .sort((left, right) => compareVisualText(left.sucursalNombre, right.sucursalNombre));
-
-      return {
-        clienteId,
-        clienteNombre: clientName,
-        rows
-      };
-    }).sort((left, right) => compareVisualText(left.clienteNombre, right.clienteNombre));
-
-    return clients;
-  }
-
-  function filterSeguimientoMatrix(matrix) {
-    const query = normalizeNameForCompare(seguimientoState.search);
-    const semaphoreFilter = cleanText(seguimientoState.semaforo || 'todos');
-    const activityFilter = cleanText(seguimientoState.actividad || 'todos');
-    return matrix.map((client) => ({
-      ...client,
-      rows: client.rows.filter((row) => {
-        if (query && !row.searchText.includes(query)) return false;
-        if (semaphoreFilter !== 'todos' && row.semaphore.key !== semaphoreFilter) return false;
-        if (activityFilter === 'con' && !row.call) return false;
-        if (activityFilter === 'sin' && row.call) return false;
-        return true;
-      })
-    })).filter((client) => client.rows.length);
-  }
-
-  function getSeguimientoTotals(matrix) {
-    const rows = matrix.flatMap((client) => client.rows);
-    const conLlamada = rows.filter((row) => Boolean(row.call));
-    const nunca = rows.filter((row) => !row.call).length;
-    const verde = conLlamada.filter((row) => row.semaphore.key === 'verde').length;
-    const amarillo = conLlamada.filter((row) => row.semaphore.key === 'amarillo').length;
-    const rojo = conLlamada.filter((row) => row.semaphore.key === 'rojo').length;
-    return {
-      clientes: matrix.length,
-      sucursales: rows.length,
-      alDia: verde,
-      verde,
-      amarillo,
-      rojo,
-      nunca,
-      conLlamada: conLlamada.length,
-      historico: rows.reduce((sum, row) => sum + row.historyCount, 0)
-    };
-  }
-
-  function renderSeguimientoSucursalOptions(clienteId, selectedId = '') {
-    const safeClientId = cleanText(clienteId);
-    const safeSelectedId = cleanText(selectedId);
-    if (!safeClientId) return '<option value="">Primero selecciona un cliente</option>';
-    const sucursales = getSeguimientoSucursales(safeClientId, safeSelectedId);
-    if (!sucursales.length) return '<option value="">Sin sucursal registrada</option>';
-    return `
-      <option value="">Seleccionar sucursal</option>
-      ${sucursales.map((record) => `<option value="${escapeHtml(record.id)}" ${record.id === safeSelectedId ? 'selected' : ''}>${escapeHtml(record.nombre || 'Sucursal sin nombre')}${record.activo ? '' : ' · inactiva'}</option>`).join('')}
-    `;
-  }
-
-  function renderSeguimientoMessage() {
-    if (!seguimientoState.message) return '';
-    return `<div class="form-message is-${seguimientoState.messageType === 'error' ? 'error' : 'success'}" role="status">${escapeHtml(seguimientoState.message)}</div>`;
-  }
-
-  function renderSeguimientoForm() {
-    const context = getSeguimientoEditingContext();
-    const group = context?.group || null;
-    const call = context?.call || null;
-    const selectedClientId = cleanText(group?.clienteId || seguimientoState.draftClienteId);
-    const selectedBranchId = cleanText(group?.sucursalId || seguimientoState.draftSucursalId);
-    const clients = getSeguimientoClientes(selectedClientId);
-    const branches = selectedClientId ? getSeguimientoSucursales(selectedClientId, selectedBranchId) : [];
-    const clientLocked = Boolean(context);
-    const branchDisabled = clientLocked || !selectedClientId || !branches.length;
-
-    return `
-      <article class="panel-card seguimiento-form-card" data-seguimiento-form-card>
-        <div class="seguimiento-card-head">
-          <div>
-            <span class="eyebrow mini">Registro local</span>
-            <h2>${context ? 'Editar llamada' : 'Registrar llamada'}</h2>
-          </div>
-          ${context ? '<span class="badge">Edición</span>' : ''}
-        </div>
-        ${renderSeguimientoMessage()}
-        ${clients.length ? `
-          <form class="seguimiento-form" data-seguimiento-form novalidate>
-            <input type="hidden" name="editingId" value="${escapeHtml(call?.id || '')}" />
-            ${clientLocked ? `<input type="hidden" name="clienteId" value="${escapeHtml(selectedClientId)}" /><input type="hidden" name="sucursalId" value="${escapeHtml(selectedBranchId)}" />` : ''}
-            <div class="form-grid">
-              <label class="form-field">
-                <span>Cliente <span class="required-dot" aria-label="obligatorio">*</span></span>
-                <select name="clienteId" data-seguimiento-client required ${clientLocked ? 'disabled' : ''}>
-                  <option value="">Seleccionar cliente</option>
-                  ${clients.map((record) => `<option value="${escapeHtml(record.id)}" ${record.id === selectedClientId ? 'selected' : ''}>${escapeHtml(record.nombre || 'Cliente sin nombre')}${record.activo ? '' : ' · inactivo'}</option>`).join('')}
-                </select>
-              </label>
-              <label class="form-field">
-                <span>Sucursal</span>
-                <select name="sucursalId" data-seguimiento-sucursal ${branchDisabled ? 'disabled' : ''}>
-                  ${renderSeguimientoSucursalOptions(selectedClientId, selectedBranchId)}
-                </select>
-                <small data-seguimiento-sucursal-help>${selectedClientId ? (branches.length ? 'Sucursales del cliente seleccionado.' : 'El cliente no tiene sucursales registradas.') : 'Primero selecciona un cliente.'}</small>
-              </label>
-              <label class="form-field">
-                <span>Fecha <span class="required-dot" aria-label="obligatorio">*</span></span>
-                <input type="date" name="fecha" value="${escapeHtml(call?.fecha || todayInputValue())}" required />
-              </label>
-              <label class="form-field full-span seguimiento-observation-field">
-                <span>Observación</span>
-                <textarea name="observacion" rows="3" placeholder="Detalle de la llamada">${escapeHtml(call?.observacion || '')}</textarea>
-              </label>
-            </div>
-            <div class="form-actions">
-              <button type="submit" class="card-action compact">${context ? 'Guardar cambios' : 'Guardar llamada'}</button>
-              ${context ? '<button type="button" class="secondary-action compact" data-seguimiento-cancel>Cancelar</button>' : '<button type="reset" class="secondary-action compact" data-seguimiento-clear>Limpiar</button>'}
-            </div>
-          </form>
-        ` : `
-          <div class="empty-state">
-            <div>
-              <strong>No hay clientes disponibles</strong>
-              <p>Agrega al menos un cliente activo en Catálogos para registrar llamadas.</p>
-            </div>
-          </div>
-        `}
-      </article>
-    `;
-  }
-
-  function renderSeguimientoFilters() {
-    return `
-      <article class="panel-card seguimiento-filter-card">
-        <div class="seguimiento-card-head">
-          <div>
-            <span class="eyebrow mini">Vista operativa</span>
-            <h2>Filtros</h2>
-          </div>
-        </div>
-        <form class="seguimiento-filter-form" data-seguimiento-filters>
-          <label class="form-field seguimiento-search-field">
-            <span>Buscar</span>
-            <input type="search" name="search" value="${escapeHtml(seguimientoState.search)}" placeholder="Cliente, sucursal u OC" autocomplete="off" />
-          </label>
-          <label class="form-field">
-            <span>Semáforo</span>
-            <select name="semaforo">
-              <option value="todos" ${seguimientoState.semaforo === 'todos' ? 'selected' : ''}>Todos</option>
-              <option value="verde" ${seguimientoState.semaforo === 'verde' ? 'selected' : ''}>0-24 días</option>
-              <option value="amarillo" ${seguimientoState.semaforo === 'amarillo' ? 'selected' : ''}>25-29 días</option>
-              <option value="rojo" ${seguimientoState.semaforo === 'rojo' ? 'selected' : ''}>30+ días</option>
-            </select>
-          </label>
-          <label class="form-field">
-            <span>Llamadas</span>
-            <select name="actividad">
-              <option value="todos" ${seguimientoState.actividad === 'todos' ? 'selected' : ''}>Todas</option>
-              <option value="con" ${seguimientoState.actividad === 'con' ? 'selected' : ''}>Con registro</option>
-              <option value="sin" ${seguimientoState.actividad === 'sin' ? 'selected' : ''}>Sin registro</option>
-            </select>
-          </label>
-          <div class="form-actions seguimiento-filter-actions">
-            <button type="submit" class="card-action compact">Aplicar</button>
-            <button type="button" class="secondary-action compact" data-seguimiento-filter-clear>Limpiar</button>
-          </div>
-        </form>
-      </article>
-    `;
-  }
-
-  function renderSeguimientoHistory(group) {
-    const history = Array.isArray(group?.historico) ? group.historico : [];
-    if (!history.length) return '<p class="muted-text seguimiento-no-history">Sin llamadas anteriores.</p>';
-    return `
-      <div class="seguimiento-history-list">
-        ${history.map((call) => `
-          <article class="seguimiento-history-item">
-            <div>
-              <strong>${escapeHtml(formatDate(call.fecha))}</strong>
-              <p>${escapeHtml(call.observacion || 'Sin observación')}</p>
-            </div>
-            <small>${escapeHtml(formatDateTime(call.updatedAt))}</small>
-          </article>
-        `).join('')}
-      </div>
-    `;
-  }
-
-  function renderSeguimientoRow(row) {
-    const call = row.call;
-    const lastOrder = row.lastOrder;
-    const lightLabel = call
-      ? `Rango ${row.semaphore.range} días; ${row.semaphore.days} días sin llamar`
-      : 'Sin llamada registrada; rango 30 días o más';
-    return `
-      <div class="seguimiento-grid-row" role="row">
-        <div class="seguimiento-cell seguimiento-cell-light" data-label="Semáforo" role="cell">
-          <span class="seguimiento-light is-${escapeHtml(row.semaphore.key)}" aria-label="${escapeHtml(lightLabel)}"></span>
-        </div>
-        <div class="seguimiento-cell seguimiento-cell-branch" data-label="Sucursal" role="cell">
-          <strong>${escapeHtml(row.sucursalNombre)}</strong>
-        </div>
-        <div class="seguimiento-cell seguimiento-cell-call" data-label="Última llamada" role="cell">
-          ${call ? `
-            <div class="seguimiento-call-main">
-              <strong>${escapeHtml(formatDate(call.fecha))}</strong>
-              <button type="button" class="icon-action seguimiento-edit-call" data-seguimiento-edit="${escapeHtml(call.id)}" aria-label="Editar última llamada" title="Editar última llamada">✎</button>
-            </div>
-            <small>${escapeHtml(call.observacion || 'Sin observación')}</small>
-          ` : '<span class="seguimiento-empty-value">—</span>'}
-        </div>
-        <div class="seguimiento-cell seguimiento-cell-days" data-label="Días sin llamar" role="cell">
-          <strong>${row.semaphore.days === null ? '—' : escapeHtml(String(row.semaphore.days))}</strong>
-        </div>
-        <div class="seguimiento-cell seguimiento-cell-order" data-label="Último pedido" role="cell">
-          ${lastOrder ? `
-            <strong>${escapeHtml(lastOrder.numeroDocumento || 'OC')}</strong>
-            <small>${escapeHtml(formatDate(getVentaFechaRegistro(lastOrder)))}</small>
-          ` : '<span class="seguimiento-empty-value">—</span>'}
-        </div>
-        <div class="seguimiento-cell seguimiento-cell-action" data-label="Llamar" role="cell">
-          <button type="button" class="card-action compact seguimiento-call-button" data-seguimiento-call-client="${escapeHtml(row.clienteId)}" data-seguimiento-call-branch="${escapeHtml(row.sucursalId)}"><span aria-hidden="true">☎</span><span>Llamar</span></button>
-        </div>
-        <div class="seguimiento-cell seguimiento-cell-history" data-label="Histórico" role="cell">
-          <details class="seguimiento-history-inline">
-            <summary aria-label="Abrir Histórico"><span>Histórico</span><b>${row.historyCount}</b></summary>
-            <div class="seguimiento-history-popover">
-              ${renderSeguimientoHistory(row.group)}
-            </div>
-          </details>
-        </div>
-      </div>
-    `;
-  }
-
-  function renderSeguimientoClient(client) {
-    const openIds = Array.isArray(seguimientoState.openClientIds) ? seguimientoState.openClientIds : [];
-    const shouldOpen = openIds.includes(client.clienteId) || Boolean(seguimientoState.search);
-    const withCalls = client.rows.filter((row) => row.call).length;
-    return `
-      <details class="seguimiento-client" data-seguimiento-client-details="${escapeHtml(client.clienteId)}" ${shouldOpen ? 'open' : ''}>
-        <summary>
-          <div class="seguimiento-client-title">
-            <strong>${escapeHtml(client.clienteNombre)}</strong>
-            <small>${client.rows.length} sucursal${client.rows.length === 1 ? '' : 'es'} · ${withCalls} con llamada</small>
-          </div>
-          <span class="count-pill">${client.rows.length}</span>
-        </summary>
-        <div class="seguimiento-client-body" role="table" aria-label="Seguimiento de ${escapeHtml(client.clienteNombre)}">
-          <div class="seguimiento-grid-head" role="row">
-            <span role="columnheader">Semáforo</span>
-            <span role="columnheader">Sucursal</span>
-            <span role="columnheader">Última llamada</span>
-            <span role="columnheader">Días sin llamar</span>
-            <span role="columnheader">Último pedido</span>
-            <span role="columnheader">Llamar</span>
-            <span role="columnheader">Histórico</span>
-          </div>
-          <div class="seguimiento-client-rows" role="rowgroup">
-            ${client.rows.map((row) => renderSeguimientoRow(row)).join('')}
-          </div>
-        </div>
-      </details>
-    `;
-  }
-
-  function renderSeguimientoList(matrix) {
-    return `
-      <article class="panel-card seguimiento-list-card">
-        <div class="seguimiento-card-head">
-          <div>
-            <span class="eyebrow mini">Clientes y sucursales</span>
-            <h2>Seguimiento operativo</h2>
-          </div>
-          <span class="count-pill">${matrix.reduce((sum, client) => sum + client.rows.length, 0)}</span>
-        </div>
-        ${matrix.length ? `
-          <div class="seguimiento-client-list">
-            ${matrix.map((client) => renderSeguimientoClient(client)).join('')}
-          </div>
-        ` : `
-          <div class="empty-state">
-            <div>
-              <strong>Sin resultados</strong>
-              <p>No hay sucursales que coincidan con los filtros actuales.</p>
-            </div>
-          </div>
-        `}
-      </article>
-    `;
-  }
-
-  function renderSeguimientoTotals(totals) {
-    return `
-      <div class="seguimiento-totals" aria-label="Totales de Seguimiento">
-        <div class="seguimiento-total"><strong>Clientes</strong><span>${totals.clientes}</span></div>
-        <div class="seguimiento-total"><strong>Sucursales</strong><span>${totals.sucursales}</span></div>
-        <div class="seguimiento-total"><strong>Sucursales al día</strong><span>${totals.alDia}</span></div>
-        <div class="seguimiento-total"><strong>Sucursales amarillas</strong><span>${totals.amarillo}</span></div>
-        <div class="seguimiento-total"><strong>Sucursales rojas</strong><span>${totals.rojo}</span></div>
-        <div class="seguimiento-total"><strong>Nunca llamadas</strong><span>${totals.nunca}</span></div>
-        <div class="seguimiento-total"><strong>Histórico</strong><span>${totals.historico}</span></div>
-      </div>
-    `;
-  }
-
-  function renderSeguimiento() {
-    const matrix = filterSeguimientoMatrix(getSeguimientoMatrix());
-    const totals = getSeguimientoTotals(matrix);
-    return `
-      <section class="seguimiento-shell">
-        <section class="hero seguimiento-hero">
-          <div>
-            <span class="eyebrow">Seguimiento · Integración final</span>
-            <h1>Seguimiento</h1>
-            <p class="lead">Control visual por cliente y sucursal, con llamadas, antigüedad, último pedido e Histórico automático.</p>
-          </div>
-          <aside class="hero-status" aria-label="Estado local de Seguimiento">
-            <h3>Base local</h3>
-            <div class="status-grid">
-              <div class="status-item"><strong>Clientes</strong><span>${totals.clientes}</span></div>
-              <div class="status-item"><strong>Sucursales</strong><span>${totals.sucursales}</span></div>
-              <div class="status-item"><strong>Al día</strong><span>${totals.alDia}</span></div>
-              <div class="status-item"><strong>Nunca llamadas</strong><span>${totals.nunca}</span></div>
-            </div>
-          </aside>
-        </section>
-        ${renderSeguimientoTotals(totals)}
-        <div class="seguimiento-controls-layout">
-          ${renderSeguimientoForm()}
-          ${renderSeguimientoFilters()}
-        </div>
-        ${renderSeguimientoList(matrix)}
-      </section>
-    `;
-  }
-
-  function setupSeguimientoForm(form) {
-    const clientSelect = form.querySelector('[data-seguimiento-client]');
-    const branchSelect = form.querySelector('[data-seguimiento-sucursal]');
-    const help = form.querySelector('[data-seguimiento-sucursal-help]');
-    if (!clientSelect || !branchSelect || clientSelect.disabled) return;
-    clientSelect.addEventListener('change', () => {
-      const clienteId = cleanText(clientSelect.value);
-      const branches = getSeguimientoSucursales(clienteId);
-      seguimientoState.draftClienteId = clienteId;
-      seguimientoState.draftSucursalId = '';
-      branchSelect.innerHTML = renderSeguimientoSucursalOptions(clienteId, '');
-      branchSelect.disabled = !clienteId || !branches.length;
-      if (help) help.textContent = clienteId
-        ? (branches.length ? 'Sucursales del cliente seleccionado.' : 'El cliente no tiene sucursales registradas.')
-        : 'Primero selecciona un cliente.';
-    });
-    branchSelect.addEventListener('change', () => {
-      seguimientoState.draftSucursalId = cleanText(branchSelect.value);
-    });
-  }
-
-  function saveSeguimientoCall(form) {
-    const formData = new FormData(form);
-    const editingId = cleanText(formData.get('editingId'));
-    const fecha = toDateInputValue(formData.get('fecha'));
-    const observacion = cleanText(formData.get('observacion'));
-    if (!fecha) {
-      notifyAction(seguimientoState, 'Selecciona una fecha válida.', 'error');
-      renderRoute({ preserveScroll: true });
-      return;
-    }
-
-    if (editingId) {
-      const groupIndex = seguimientoData.registros.findIndex((record) => record.ultimaLlamada?.id === editingId);
-      if (groupIndex < 0) {
-        seguimientoState.editingCallId = null;
-        notifyAction(seguimientoState, 'La llamada que intentabas editar ya no está disponible.', 'error');
-        renderRoute();
-        return;
-      }
-      const timestamp = nowIso();
-      const group = seguimientoData.registros[groupIndex];
-      const updatedGroup = {
-        ...group,
-        ultimaLlamada: normalizeSeguimientoCall({
-          ...group.ultimaLlamada,
-          fecha,
-          observacion,
-          updatedAt: timestamp
-        }),
-        updatedAt: timestamp
-      };
-      const next = {
-        ...seguimientoData,
-        registros: seguimientoData.registros.map((record, index) => index === groupIndex ? updatedGroup : record)
-      };
-      const saved = saveSeguimientoData(next);
-      if (saved) {
-        registerSessionChange({ module: 'Seguimiento', operation: 'editar', recordId: updatedGroup.id });
-      }
-      seguimientoState.editingCallId = null;
-      seguimientoState.draftClienteId = '';
-      seguimientoState.draftSucursalId = '';
-      const resultMessage = saved
-        ? (cloudOperationState.active ? 'Llamada actualizada. Pendiente de Guardar datos.' : 'Llamada actualizada y guardada localmente.')
-        : 'No se pudo guardar la llamada.';
-      notifyAction(seguimientoState, resultMessage, saved ? 'success' : 'error');
-      renderRoute({ preserveScroll: true });
-      return;
-    }
-
-    const clienteId = cleanText(formData.get('clienteId'));
-    const cliente = getCatalogRecordById('clientes', clienteId);
-    if (!cliente) {
-      notifyAction(seguimientoState, 'Selecciona un cliente válido.', 'error');
-      renderRoute({ preserveScroll: true });
-      return;
-    }
-    const availableBranches = getSeguimientoSucursales(clienteId);
-    const sucursalId = cleanText(formData.get('sucursalId'));
-    const sucursal = sucursalId ? availableBranches.find((record) => record.id === sucursalId) : null;
-    if (availableBranches.length && !sucursal) {
-      notifyAction(seguimientoState, 'Selecciona una sucursal válida para el cliente.', 'error');
-      renderRoute({ preserveScroll: true });
-      return;
-    }
-
-    const timestamp = nowIso();
-    const newCall = normalizeSeguimientoCall({
-      id: generateId('llamada'),
-      fecha,
-      observacion,
-      createdAt: timestamp,
-      updatedAt: timestamp
-    });
-    const groupIndex = seguimientoData.registros.findIndex((record) => record.clienteId === clienteId && record.sucursalId === (sucursal?.id || ''));
-    let nextRecords;
-    if (groupIndex >= 0) {
-      const current = seguimientoData.registros[groupIndex];
-      const updated = {
-        ...current,
-        clienteNombre: cliente.nombre || current.clienteNombre,
-        sucursalNombre: sucursal?.nombre || '',
-        ultimaLlamada: newCall,
-        historico: current.ultimaLlamada ? [current.ultimaLlamada, ...current.historico] : current.historico,
-        updatedAt: timestamp
-      };
-      nextRecords = seguimientoData.registros.map((record, index) => index === groupIndex ? updated : record);
-    } else {
-      nextRecords = [{
-        id: generateId('seguimiento'),
-        clienteId,
-        clienteNombre: cleanText(cliente.nombre),
-        sucursalId: sucursal?.id || '',
-        sucursalNombre: cleanText(sucursal?.nombre),
-        ultimaLlamada: newCall,
-        historico: [],
-        createdAt: timestamp,
-        updatedAt: timestamp
-      }, ...seguimientoData.registros];
-    }
-
-    const saved = saveSeguimientoData({ ...seguimientoData, registros: nextRecords });
-    const changedGroup = groupIndex >= 0 ? nextRecords[groupIndex] : nextRecords[0];
-    if (saved && changedGroup?.id) {
-      registerSessionChange({ module: 'Seguimiento', operation: groupIndex >= 0 ? 'editar' : 'crear', recordId: changedGroup.id });
-    }
-    seguimientoState.draftClienteId = '';
-    seguimientoState.draftSucursalId = '';
-    const resultMessage = saved
-      ? (groupIndex >= 0
-        ? `Nueva llamada guardada. La llamada anterior pasó al Histórico.${cloudOperationState.active ? ' Pendiente de Guardar datos.' : ''}`
-        : (cloudOperationState.active ? 'Primera llamada guardada. Pendiente de Guardar datos.' : 'Primera llamada guardada localmente.'))
-      : 'No se pudo guardar la llamada.';
-    notifyAction(seguimientoState, resultMessage, saved ? 'success' : 'error');
-    renderRoute({ preserveScroll: true });
-  }
-
-  function startSeguimientoCall(clienteId, sucursalId = '') {
-    seguimientoState.editingCallId = null;
-    seguimientoState.draftClienteId = cleanText(clienteId);
-    seguimientoState.draftSucursalId = cleanText(sucursalId);
-    seguimientoState.message = null;
-    renderRoute({ preserveScroll: true });
-    requestAnimationFrame(() => {
-      const card = viewRoot.querySelector('[data-seguimiento-form-card]');
-      card?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-      card?.querySelector('textarea[name="observacion"]')?.focus?.();
-    });
-  }
-
-  function editSeguimientoCall(callId) {
-    const safeId = cleanText(callId);
-    const group = seguimientoData.registros.find((record) => record.ultimaLlamada?.id === safeId);
-    seguimientoState.editingCallId = group ? safeId : null;
-    seguimientoState.draftClienteId = cleanText(group?.clienteId);
-    seguimientoState.draftSucursalId = cleanText(group?.sucursalId);
-    seguimientoState.message = group ? null : 'La llamada seleccionada no está disponible.';
-    seguimientoState.messageType = group ? 'success' : 'error';
-    renderRoute();
-    requestAnimationFrame(() => viewRoot.querySelector('[data-seguimiento-form-card]')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }));
-  }
-
-  function applySeguimientoFilters(form) {
-    const formData = new FormData(form);
-    seguimientoState.search = cleanText(formData.get('search'));
-    seguimientoState.semaforo = cleanText(formData.get('semaforo')) || 'todos';
-    seguimientoState.actividad = cleanText(formData.get('actividad')) || 'todos';
-    renderRoute({ preserveScroll: true });
-  }
-
-  function clearSeguimientoFilters() {
-    seguimientoState.search = '';
-    seguimientoState.semaforo = 'todos';
-    seguimientoState.actividad = 'todos';
-    renderRoute({ preserveScroll: true });
-  }
-
-  function toggleSeguimientoClient(clientId, open) {
-    const safeId = cleanText(clientId);
-    const openIds = new Set(Array.isArray(seguimientoState.openClientIds) ? seguimientoState.openClientIds : []);
-    if (open) openIds.add(safeId);
-    else openIds.delete(safeId);
-    seguimientoState.openClientIds = [...openIds];
-  }
-
-  function clearSeguimientoForm() {
-    seguimientoState.editingCallId = null;
-    seguimientoState.draftClienteId = '';
-    seguimientoState.draftSucursalId = '';
-    seguimientoState.message = null;
-    renderRoute();
-  }
-
   function isNotasHomePendingRecord(record) {
     return Boolean(record)
       && !record.completed
@@ -20166,108 +19478,6 @@ Notas importantes:
   }
 
 
-  function buildResumenSeguimientoSnapshot(filters = {}) {
-    const safeFilters = normalizeResumenFilters(filters);
-    const matrix = getSeguimientoMatrix()
-      .map((client) => ({
-        ...client,
-        rows: client.rows.filter((row) => {
-          if (safeFilters.clienteId && row.clienteId !== safeFilters.clienteId) return false;
-          if (safeFilters.sucursalId && row.sucursalId !== safeFilters.sucursalId) return false;
-          return true;
-        })
-      }))
-      .filter((client) => client.rows.length);
-    const severity = (row) => {
-      if (!row.call) return 0;
-      if (row.semaphore.key === 'rojo') return 1;
-      if (row.semaphore.key === 'amarillo') return 2;
-      return 3;
-    };
-    const rows = matrix
-      .flatMap((client) => client.rows)
-      .sort((left, right) => severity(left) - severity(right)
-        || compareVisualText(left.clienteNombre, right.clienteNombre)
-        || compareVisualText(left.sucursalNombre, right.sucursalNombre));
-    return {
-      matrix,
-      rows,
-      totals: getSeguimientoTotals(matrix)
-    };
-  }
-
-  function renderResumenSeguimientoRow(row) {
-    const call = row.call;
-    const lastOrder = row.lastOrder;
-    const lightLabel = call
-      ? `Rango ${row.semaphore.range} días; ${row.semaphore.days} días sin llamar`
-      : 'Sin llamada registrada; indicador rojo';
-    return `
-      <tr>
-        <td class="resumen-seguimiento-light-cell" data-label="Semáforo">
-          <span class="seguimiento-light is-${escapeHtml(row.semaphore.key)}" aria-label="${escapeHtml(lightLabel)}" title="${escapeHtml(lightLabel)}"></span>
-        </td>
-        <td data-label="Cliente"><strong>${escapeHtml(row.clienteNombre)}</strong></td>
-        <td data-label="Sucursal"><strong>${escapeHtml(row.sucursalNombre)}</strong></td>
-        <td data-label="Última llamada">
-          ${call ? `<strong>${escapeHtml(formatDate(call.fecha))}</strong><small>${escapeHtml(call.observacion || 'Sin observación')}</small>` : '<span class="seguimiento-empty-value">—</span>'}
-        </td>
-        <td class="resumen-seguimiento-days" data-label="Días sin llamar"><strong>${row.semaphore.days === null ? '—' : escapeHtml(String(row.semaphore.days))}</strong></td>
-        <td data-label="Último pedido">
-          ${lastOrder ? `<strong>${escapeHtml(lastOrder.numeroDocumento || 'OC')}</strong><small>${escapeHtml(formatDate(getVentaFechaRegistro(lastOrder)))}</small>` : '<span class="seguimiento-empty-value">—</span>'}
-        </td>
-      </tr>
-    `;
-  }
-
-  function renderResumenSeguimiento(snapshot) {
-    const tracking = snapshot || buildResumenSeguimientoSnapshot(resumenState);
-    const totals = tracking.totals;
-    return `
-      <section class="panel-card resumen-panel resumen-seguimiento-panel" aria-labelledby="resumenSeguimientoTitle">
-        <div class="section-title-row resumen-seguimiento-heading">
-          <div>
-            <span class="eyebrow mini">Seguimiento</span>
-            <h2 id="resumenSeguimientoTitle">Seguimiento de sucursales</h2>
-          </div>
-          <div class="count-pill">${totals.sucursales} sucursal${totals.sucursales === 1 ? '' : 'es'} · ${totals.clientes} cliente${totals.clientes === 1 ? '' : 's'}</div>
-        </div>
-
-        <div class="resumen-seguimiento-metrics" aria-label="Totales de Seguimiento en Resumen">
-          <article class="resumen-seguimiento-metric"><span>Total sucursales</span><strong>${totals.sucursales}</strong><small>${totals.conLlamada} con llamada</small></article>
-          <article class="resumen-seguimiento-metric is-verde"><span>Sucursales al día</span><strong>${totals.alDia}</strong><small>Verdes · 0-24 días</small></article>
-          <article class="resumen-seguimiento-metric is-amarillo"><span>Sucursales amarillas</span><strong>${totals.amarillo}</strong><small>25-29 días</small></article>
-          <article class="resumen-seguimiento-metric is-rojo"><span>Sucursales rojas</span><strong>${totals.rojo}</strong><small>30+ días con llamada</small></article>
-          <article class="resumen-seguimiento-metric is-nunca"><span>Nunca llamadas</span><strong>${totals.nunca}</strong><small>Indicador rojo</small></article>
-          <article class="resumen-seguimiento-metric"><span>Histórico</span><strong>${totals.historico}</strong><small>Llamadas anteriores</small></article>
-        </div>
-
-        ${tracking.rows.length ? `
-          <div class="resumen-seguimiento-scroll" tabindex="0" role="region" aria-label="Detalle desplazable de Seguimiento">
-            <table class="resumen-seguimiento-table">
-              <thead>
-                <tr>
-                  <th>Semáforo</th>
-                  <th>Cliente</th>
-                  <th>Sucursal</th>
-                  <th>Última llamada</th>
-                  <th>Días sin llamar</th>
-                  <th>Último pedido</th>
-                </tr>
-              </thead>
-              <tbody>${tracking.rows.map((row) => renderResumenSeguimientoRow(row)).join('')}</tbody>
-            </table>
-          </div>
-        ` : `
-          <div class="empty-state resumen-seguimiento-empty">
-            <div><strong>Sin sucursales para mostrar</strong><p>Los filtros actuales no tienen clientes o sucursales disponibles en Seguimiento.</p></div>
-          </div>
-        `}
-      </section>
-    `;
-  }
-
-
   function renderResumenTablero() {
     const summary = buildResumenTableroSummary();
     const filters = summary.filters;
@@ -20579,7 +19789,6 @@ Notas importantes:
       parciales,
       alertas,
       periodosCierre: buildPeriodosCierreSummary(ventas, compras),
-      seguimiento: buildResumenSeguimientoSnapshot(filters),
       gastosPorTipo: buildGastosPorTipo(gastosPeriodo),
       ventaPorSucursal: buildVentaPorSucursal(ventasPeriodo, cobrosPeriodo, ventasCartera, ventasById),
       saldosPorProveedor: buildSaldosPorProveedor(comprasGeneral)
@@ -36143,41 +35352,6 @@ ${rowsXml}
         event.preventDefault();
         openModule();
       });
-    });
-
-    viewRoot.querySelectorAll('[data-seguimiento-form]').forEach((form) => {
-      setupSeguimientoForm(form);
-      form.addEventListener('submit', (event) => {
-        event.preventDefault();
-        saveSeguimientoCall(form);
-      });
-    });
-
-    viewRoot.querySelectorAll('[data-seguimiento-edit]').forEach((button) => {
-      button.addEventListener('click', () => editSeguimientoCall(button.dataset.seguimientoEdit));
-    });
-
-    viewRoot.querySelectorAll('[data-seguimiento-call-client]').forEach((button) => {
-      button.addEventListener('click', () => startSeguimientoCall(button.dataset.seguimientoCallClient, button.dataset.seguimientoCallBranch));
-    });
-
-    viewRoot.querySelectorAll('[data-seguimiento-filters]').forEach((form) => {
-      form.addEventListener('submit', (event) => {
-        event.preventDefault();
-        applySeguimientoFilters(form);
-      });
-    });
-
-    viewRoot.querySelectorAll('[data-seguimiento-filter-clear]').forEach((button) => {
-      button.addEventListener('click', clearSeguimientoFilters);
-    });
-
-    viewRoot.querySelectorAll('[data-seguimiento-client-details]').forEach((details) => {
-      details.addEventListener('toggle', () => toggleSeguimientoClient(details.dataset.seguimientoClientDetails, details.open));
-    });
-
-    viewRoot.querySelectorAll('[data-seguimiento-cancel], [data-seguimiento-clear]').forEach((button) => {
-      button.addEventListener('click', clearSeguimientoForm);
     });
 
     viewRoot.querySelectorAll('[data-modal-close]').forEach((button) => {
