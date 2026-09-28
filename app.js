@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.108-sin-seguimiento';
+  const APP_VERSION = '0.18.109-sin-seguimiento';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -23305,7 +23305,10 @@ Notas importantes:
 
   function renderVentaFacturaEditorRows(facturas) {
     const rows = normalizeFacturasVentaList(facturas);
-    return rows.map((factura, index) => renderVentaFacturaEditorRow(factura, index)).join('');
+    const visibleRows = rows.length
+      ? rows
+      : [{ id: generateId('factura'), numero: '', pendienteMonto: true }];
+    return visibleRows.map((factura, index) => renderVentaFacturaEditorRow(factura, index)).join('');
   }
 
   function renderVentaFacturaEditorRow(factura, index = 0) {
@@ -26311,7 +26314,10 @@ Notas importantes:
 
   function renderCompraFacturaEditorRows(facturas) {
     const rows = normalizeFacturasProveedorList(facturas);
-    return rows.map((factura, index) => renderCompraFacturaEditorRow(factura, index)).join('');
+    const visibleRows = rows.length
+      ? rows
+      : [{ id: generateId('facturaProveedor'), numero: '', pendienteMonto: true }];
+    return visibleRows.map((factura, index) => renderCompraFacturaEditorRow(factura, index)).join('');
   }
 
   function renderCompraFacturaEditorRow(factura, index = 0) {
