@@ -4019,11 +4019,11 @@ textarea:disabled {
 }
 
 .resumen-clientes-mora-table {
-  min-width: 920px;
+  min-width: 1040px;
 }
 
 .resumen-proveedores-mora-table {
-  min-width: 760px;
+  min-width: 880px;
 }
 
 .catalog-compact-table-basic {
@@ -4170,11 +4170,11 @@ textarea:disabled {
   }
 
   .resumen-clientes-mora-table {
-    min-width: 890px;
+    min-width: 1010px;
   }
 
   .resumen-proveedores-mora-table {
-    min-width: 735px;
+    min-width: 855px;
   }
 
   .catalog-compact-table-basic {

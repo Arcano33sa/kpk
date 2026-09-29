@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.113-sin-seguimiento';
+  const APP_VERSION = '0.18.114-sin-seguimiento';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -21156,6 +21156,7 @@ Notas importantes:
         <td class="resumen-compact-text"><span title="${escapeHtml(item.cliente)}">${escapeHtml(item.cliente)}</span></td>
         <td class="resumen-compact-text"><span title="${escapeHtml(item.sucursal)}">${escapeHtml(item.sucursal)}</span></td>
         <td class="resumen-compact-doc"><span title="${escapeHtml(item.documento)}">${escapeHtml(item.documento)}</span></td>
+        <td class="resumen-compact-date"><span>${escapeHtml(formatDate(item.fechaOrigen))}</span></td>
         <td class="resumen-compact-date"><span>${escapeHtml(formatDate(item.fechaVencimiento))}</span></td>
         <td class="resumen-compact-mora"><span>${escapeHtml(formatPeriodoMoraLabel(item.diasMora))}</span></td>
         <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.saldoPendiente))}</span></td>
@@ -21173,6 +21174,7 @@ Notas importantes:
           <col class="resumen-col-sucursal">
           <col class="resumen-col-documento">
           <col class="resumen-col-fecha">
+          <col class="resumen-col-fecha">
           <col class="resumen-col-mora">
           <col class="resumen-col-saldo">
         </colgroup>
@@ -21181,6 +21183,7 @@ Notas importantes:
         <th>Cliente</th>
         <th>Sucursal</th>
         <th>Documento</th>
+        <th>Origen</th>
         <th>Vence</th>
         <th>Mora</th>
         <th class="amount-cell">Saldo</th>
@@ -21195,6 +21198,7 @@ Notas importantes:
       <tr class="compact-record-row resumen-compact-row">
         <td class="resumen-compact-text"><span title="${escapeHtml(item.proveedor)}">${escapeHtml(item.proveedor)}</span></td>
         <td class="resumen-compact-doc"><span title="${escapeHtml(item.documento)}">${escapeHtml(item.documento)}</span></td>
+        <td class="resumen-compact-date"><span>${escapeHtml(formatDate(item.fechaOrigen))}</span></td>
         <td class="resumen-compact-date"><span>${escapeHtml(formatDate(item.fechaVencimiento))}</span></td>
         <td class="resumen-compact-mora"><span>${escapeHtml(formatPeriodoMoraLabel(item.diasMora))}</span></td>
         <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.saldoPendiente))}</span></td>
@@ -21211,6 +21215,7 @@ Notas importantes:
           <col class="resumen-col-proveedor">
           <col class="resumen-col-referencia">
           <col class="resumen-col-fecha">
+          <col class="resumen-col-fecha">
           <col class="resumen-col-mora">
           <col class="resumen-col-saldo">
         </colgroup>
@@ -21218,6 +21223,7 @@ Notas importantes:
       headers: `
         <th>Proveedor</th>
         <th>Referencia</th>
+        <th>Origen</th>
         <th>Vence</th>
         <th>Mora</th>
         <th class="amount-cell">Saldo</th>
