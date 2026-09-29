@@ -951,6 +951,20 @@ form :is(input, select, textarea)[aria-invalid="true"] {
   font-weight: 950;
 }
 
+.registered-summary-pills {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 620px) {
+  .registered-summary-pills {
+    justify-content: flex-start;
+  }
+}
+
 .catalog-record-list {
   display: grid;
   gap: 12px;

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.115-sin-seguimiento';
+  const APP_VERSION = '0.18.116-sin-seguimiento';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -24708,6 +24708,7 @@ Notas importantes:
     const visibleCobros = cobrosState.focusVentaId ? cobros.filter((cobro) => cobro.ventaId === cobrosState.focusVentaId) : cobros;
     const focusVenta = cobrosState.focusVentaId ? normalizeVentaRecord(appData.ventas.find((venta) => venta.id === cobrosState.focusVentaId)) : null;
     const totals = getCobrosTotals();
+    const visibleCobrosTotals = getCobrosTotals(visibleCobros, []);
     const selectedVenta = cobrosState.selectedVentaId
       ? (ventasDisponibles.find((venta) => venta.id === cobrosState.selectedVentaId) || null)
       : null;
@@ -24775,7 +24776,10 @@ Notas importantes:
                 <span class="eyebrow mini">Historial</span>
                 <h2>Cobros registrados</h2>
               </div>
-              <div class="count-pill">${visibleCobros.length} registros</div>
+              <div class="registered-summary-pills" aria-label="Resumen de cobros registrados">
+                <div class="count-pill">Total registrado: ${escapeHtml(formatMoney(visibleCobrosTotals.totalCobrado))}</div>
+                <div class="count-pill">${visibleCobros.length} registros</div>
+              </div>
             </div>
             ${focusVenta ? `<div class="filter-chip"><span>Filtrando OC ${escapeHtml(focusVenta.numeroDocumento || 'Sin número')}</span><button type="button" class="secondary-action compact" data-cobro-clear-focus>Ver todos</button></div>` : ''}
             <label class="form-field search-field">
@@ -27412,6 +27416,7 @@ Notas importantes:
     const visiblePagos = pagosState.focusCompraId ? pagos.filter((pago) => pago.compraProveedorId === pagosState.focusCompraId) : pagos;
     const focusCompra = pagosState.focusCompraId ? normalizeCompraProveedorRecord(appData.comprasProveedores.find((compra) => compra.id === pagosState.focusCompraId)) : null;
     const totals = getPagosProveedoresTotals();
+    const visiblePagosTotals = getPagosProveedoresTotals(visiblePagos, []);
     const selectedCompra = pagosState.selectedCompraId
       ? (comprasDisponibles.find((compra) => compra.id === pagosState.selectedCompraId) || null)
       : null;
@@ -27477,7 +27482,10 @@ Notas importantes:
                 <span class="eyebrow mini">Historial</span>
                 <h2>Pagos registrados</h2>
               </div>
-              <div class="count-pill">${visiblePagos.length} registros</div>
+              <div class="registered-summary-pills" aria-label="Resumen de pagos registrados">
+                <div class="count-pill">Total registrado: ${escapeHtml(formatMoney(visiblePagosTotals.totalPagado))}</div>
+                <div class="count-pill">${visiblePagos.length} registros</div>
+              </div>
             </div>
             ${focusCompra ? `<div class="filter-chip"><span>Filtrando ${escapeHtml(getCompraProveedorReferenciaCompacta(focusCompra))}</span><button type="button" class="secondary-action compact" data-pago-clear-focus>Ver todos</button></div>` : ''}
             <label class="form-field search-field">
