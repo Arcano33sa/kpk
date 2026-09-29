@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.114-sin-seguimiento';
+  const APP_VERSION = '0.18.115-sin-seguimiento';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -25104,7 +25104,7 @@ Notas importantes:
           </label>
           <label class="form-field">
             <span>Monto a aplicar a OC C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="text" name="montoCobrado" inputmode="decimal" placeholder="0.00" required data-money-input data-money-max="${escapeHtml(saldo)}" data-cobro-monto-recibido data-cobro-monto-aplicado ${cannotCreate ? 'disabled' : ''} />
+            <input type="text" name="montoCobrado" value="${escapeHtml(selectedVenta ? formatMoneyInputDisplay(saldo) : '')}" inputmode="decimal" placeholder="0.00" required data-money-input data-money-max="${escapeHtml(saldo)}" data-cobro-monto-recibido data-cobro-monto-aplicado ${cannotCreate ? 'disabled' : ''} />
           </label>
           ${renderCobroRetencionBlock(null, retencionesDisponibles, saldo, cannotCreate)}
           <label class="form-field">
@@ -27584,7 +27584,7 @@ Notas importantes:
           </label>
           <label class="form-field">
             <span>Monto pagado C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="text" name="montoPagado" inputmode="decimal" placeholder="0.00" required data-money-input data-money-max="${escapeHtml(saldo)}" ${cannotCreate ? 'disabled' : ''} />
+            <input type="text" name="montoPagado" value="${escapeHtml(selectedCompra ? formatMoneyInputDisplay(saldo) : '')}" inputmode="decimal" placeholder="0.00" required data-money-input data-money-max="${escapeHtml(saldo)}" ${cannotCreate ? 'disabled' : ''} />
           </label>
           <label class="form-field">
             <span>Método de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
