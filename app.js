@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.109-sin-seguimiento';
+  const APP_VERSION = '0.18.113-sin-seguimiento';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -3354,6 +3354,91 @@ Notas importantes:
   function notifyAction(state, message, type = 'success', options = {}) {
     clearActionMessage(state);
     return showToast(message, inferActionToastType(message, type), options);
+  }
+
+  function showFormValidationError(form, message, state = null) {
+    if (!(form instanceof HTMLFormElement)) return false;
+    const safeMessage = cleanText(message) || 'Revisa los datos obligatorios del formulario.';
+    let notice = form.querySelector('[data-local-validation-message]');
+    if (!notice) {
+      notice = document.createElement('div');
+      notice.className = 'form-message is-error';
+      notice.dataset.localValidationMessage = '1';
+      notice.setAttribute('role', 'alert');
+      notice.setAttribute('aria-live', 'assertive');
+      form.prepend(notice);
+    }
+    notice.textContent = safeMessage;
+    notice.hidden = false;
+
+    form.querySelectorAll('[aria-invalid="true"]').forEach((field) => field.removeAttribute('aria-invalid'));
+    const normalized = normalizeNameForCompare(safeMessage);
+    const focusRules = [
+      [normalized.includes('vencimiento'), '[name="fechaVencimiento"]'],
+      [normalized.includes('fecha'), '[name="fechaCobro"], [name="fechaPago"], [name="fecha"], [name="fechaRegistro"], [name="fechaOc"], [name="fechaCompra"], [name="fechaEntrega"], [name="fechaVencimiento"]'],
+      [normalized.includes('retencion'), '[name="retencionId"], [data-cobro-retencion-toggle]'],
+      [normalized.includes('metodo de pago'), '[name="metodoPagoId"], [name="metodoPagoContadoId"]'],
+      [normalized.includes('tipo valido') && normalized.includes('banco'), '[name="tipo"]'],
+      [normalized.includes('banco') || normalized.includes('cuenta'), '[name="cuentaBancoId"], [name="bancoPagoContadoId"], [data-bank-select]'],
+      [normalized.includes('cliente'), '[name="clienteId"]'],
+      [normalized.includes('sucursal'), '[name="sucursalId"]'],
+      [normalized.includes('proveedor'), '[name="proveedorId"]'],
+      [normalized.includes('oc activa'), '[name="ventaId"]'],
+      [normalized.includes('compra') && normalized.includes('activa'), '[name="compraProveedorId"]'],
+      [normalized.includes('tipo de ajuste'), '[name="tipo"]'],
+      [normalized.includes('factura afectada') || normalized.includes('factura seleccionada'), '[name="facturaAfectada"]'],
+      [normalized.includes('tipo de gasto'), '[name="tipoGastoId"]'],
+      [normalized.includes('categoria casa'), '[name="categoriaCasaId"]'],
+      [normalized.includes('estado') && normalized.includes('credito casa'), '[name="estadoCreditoCasa"]'],
+      [normalized.includes('numero') || normalized.includes('documento'), '[name="numeroDocumento"], [data-factura-numero], [data-factura-proveedor-numero]'],
+      [normalized.includes('no de factura') || normalized.includes('no. de factura'), '[name="no"]'],
+      [normalized.includes('subtotal'), '[name="subtotal"], [name="montoOc"], [data-factura-subtotal]'],
+      [normalized.includes('descuento'), '[name="descuento"], [data-factura-descuento]'],
+      [normalized.includes('dias de credito'), '[name="diasCredito"]'],
+      [normalized.includes('condicion'), '[name="condicionCompra"], [name="condicionPago"]'],
+      [normalized.includes('estado'), '[name="estado"]'],
+      [normalized.includes('observacion'), '[name="observaciones"], [name="observacion"]'],
+      [normalized.includes('codigo'), '[name="codigo"]'],
+      [normalized.includes('descripcion'), '[name="descripcion"]'],
+      [normalized.includes('precio'), '[name="precio"]'],
+      [normalized.includes('porcentaje'), '[name="porcentaje"]'],
+      [normalized.includes('nombre') && normalized.includes('equipo'), '[name="deviceName"]'],
+      [normalized.includes('nombre'), '[name="nombre"], [name="appDisplayName"]'],
+      [normalized.includes('correo'), '[name="correo"]'],
+      [normalized.includes('uid'), '[name="uid"]'],
+      [normalized.includes('rol'), '[name="rol"]'],
+      [normalized.includes('dias de alerta'), '[name="diasAlertaVencimiento"]'],
+      [normalized.includes('titulo'), '[name="titulo"]'],
+      [normalized.includes('referencia'), '[name="referencia"]'],
+      [normalized.includes('subcategoria'), '[name="subcategoriaId"]'],
+      [normalized.includes('deudor') || normalized.includes('acreedor'), '[name="deudor"], [name="acreedor"]'],
+      [normalized.includes('debe') || normalized.includes('haber'), '[name="debe"], [name="haber"]'],
+      [normalized.includes('monto') || normalized.includes('total aplicado') || normalized.includes('saldo permitido'), '[name="montoCobrado"], [name="montoPagado"], [name="monto"], [data-factura-proveedor-monto]']
+    ];
+    const selector = focusRules.find(([matches]) => matches)?.[1] || '';
+    const candidates = selector ? Array.from(form.querySelectorAll(selector)) : [];
+    const usableFields = candidates.filter((candidate) => !candidate.disabled && candidate.type !== 'hidden');
+    const field = usableFields.find((candidate) => !cleanText(candidate.value)) || usableFields[0] || null;
+    if (field && !field.disabled && field.type !== 'hidden') {
+      field.setAttribute('aria-invalid', 'true');
+      field.focus({ preventScroll: true });
+      field.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    } else {
+      notice.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
+    if (form.dataset.localValidationBound !== '1') {
+      const clearNotice = (event) => {
+        const current = form.querySelector('[data-local-validation-message]');
+        if (current) current.hidden = true;
+        event.target?.removeAttribute?.('aria-invalid');
+      };
+      form.addEventListener('input', clearNotice);
+      form.addEventListener('change', clearNotice);
+      form.dataset.localValidationBound = '1';
+    }
+    if (state) clearActionMessage(state);
+    return true;
   }
 
   function relayStateFieldToToast(state, messageField, typeField, toastId, options = {}) {
@@ -10820,13 +10905,16 @@ Notas importantes:
     if (validation) {
       usersAuthState.message = validation;
       usersAuthState.messageType = 'error';
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, validation, usersAuthState);
       return { ok: false, message: validation };
     }
     usersAuthState.isSaving = true;
-    usersAuthState.message = 'Guardando autorización en Firestore...';
-    usersAuthState.messageType = 'success';
-    renderRoute({ preserveScroll: true });
+    const submitButton = form.querySelector('button[type="submit"]');
+    const submitButtonText = submitButton?.textContent || '';
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = 'Guardando…';
+    }
     try {
       const result = await withOperationTimeout(
         () => KSAFirebaseAdapter.saveAuthorizedUser(payload),
@@ -10842,15 +10930,24 @@ Notas importantes:
         usersAuthState.messageType = 'success';
         renderRoute({ preserveScroll: true });
       } else {
-        renderRoute({ preserveScroll: true });
+        if (submitButton) {
+          submitButton.disabled = false;
+          submitButton.textContent = submitButtonText;
+        }
+        showFormValidationError(form, usersAuthState.message, usersAuthState);
       }
       return result;
     } catch (error) {
       usersAuthState.isSaving = false;
       usersAuthState.message = isOperationTimeoutError(error) ? FIRESTORE_TIMEOUT_SAVE_USER_MESSAGE : (cleanText(error?.message) || 'No se pudo guardar la autorización.');
       usersAuthState.messageType = 'error';
-      renderRoute({ preserveScroll: true });
-      return { ok: false, message: usersAuthState.message };
+      const errorMessage = usersAuthState.message;
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = submitButtonText;
+      }
+      showFormValidationError(form, errorMessage, usersAuthState);
+      return { ok: false, message: errorMessage };
     }
   }
 
@@ -16193,17 +16290,17 @@ Notas importantes:
     if (isCreateMode) rememberFacturasCaptureFromForm(form);
     if (!no) {
       setFacturasMessage('El No. de factura es obligatorio.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, facturasState.message, facturasState);
       return;
     }
     if (!submittedFechaRegistro || !submittedFecha) {
       setFacturasMessage('La fecha de factura y la fecha de registro son obligatorias.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, facturasState.message, facturasState);
       return;
     }
     if (Number.isNaN(monto) || monto < 0) {
       setFacturasMessage('El monto debe ser válido y no negativo.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, facturasState.message, facturasState);
       return;
     }
     const data = getFacturasData();
@@ -16215,17 +16312,17 @@ Notas importantes:
     const periodo = normalizeWorkPeriodKey(existing?.periodo) || getFacturaPeriodInfoFromDate(fecha).periodo;
     if (existing && fecha !== existing.fecha && getFacturaPeriodInfoFromDate(fecha).periodo !== periodo) {
       setFacturasMessage('La fecha debe permanecer en el período original de esta factura.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, facturasState.message, facturasState);
       return;
     }
     if (estado === 'Anulada' && !observaciones) {
       setFacturasMessage('Indica el motivo de anulación en Observaciones.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, facturasState.message, facturasState);
       return;
     }
     if (isFacturaPeriodClosed(periodo)) {
       setFacturasMessage(`${existing ? 'Actualizar' : 'Crear'} esta factura no está permitido porque ${getFacturaPeriodInfoFromDate(`${periodo}-01`).label} ya está cerrado.`, 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, facturasState.message, facturasState);
       return;
     }
 
@@ -16268,23 +16365,23 @@ Notas importantes:
       || catalogPayload.sucursalId !== existing.sucursalId
     )) {
       setFacturasMessage('No se puede cambiar fecha, número, monto, cliente o sucursal mientras la factura tenga un cobro activo. Puedes editar únicamente la observación.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, facturasState.message, facturasState);
       return;
     }
     if (existing?.estado === 'Pagada' && estado !== 'Pagada') {
       setFacturasMessage('Una factura Pagada no puede cambiarse a Pendiente o Anulada desde el editor. El movimiento financiero debe conservarse.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, facturasState.message, facturasState);
       return;
     }
     if (activeManualCobro && estado !== 'Pagada') {
       setFacturasMessage('La factura tiene un cobro activo asociado y no puede cambiarse de estado.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, facturasState.message, facturasState);
       return;
     }
     if (estado === 'Pagada' && (!existing || existing.estado !== 'Pagada')) {
       if (!isFacturaManualCobrable(nextRecord) || (existing && existing.estado !== 'Pendiente')) {
         setFacturasMessage('Esta factura no es manual cobrable. Las facturas vinculadas a Venta / OC solo se marcan Pagada desde Cobros.', 'error');
-        renderRoute({ preserveScroll: true });
+        showFormValidationError(form, facturasState.message, facturasState);
         return;
       }
       if (activeManualCobro) {
@@ -16298,7 +16395,7 @@ Notas importantes:
       }
       if (getFacturaManualTotal(nextRecord) <= 0) {
         setFacturasMessage('La factura debe tener un monto mayor que cero antes de registrar el cobro.', 'error');
-        renderRoute({ preserveScroll: true });
+        showFormValidationError(form, facturasState.message, facturasState);
         return;
       }
       facturasState.cobroDraft = normalizeFacturaModuloRecord({
@@ -16383,22 +16480,22 @@ Notas importantes:
     const retencion = retencionId ? getCatalogRecordById('retenciones', retencionId) : null;
     if (!fechaCobro) {
       setFacturasMessage('La fecha real del cobro es obligatoria.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, facturasState.message, facturasState);
       return;
     }
     if (totalFactura <= 0) {
       setFacturasMessage('El monto de la factura debe ser mayor que cero.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, facturasState.message, facturasState);
       return;
     }
     if (!metodo || !metodo.activo) {
       setFacturasMessage('Selecciona un método de pago activo.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, facturasState.message, facturasState);
       return;
     }
     if (retencionActiva && (!retencion || !retencion.activo)) {
       setFacturasMessage('Selecciona una retención activa de Catálogos.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, facturasState.message, facturasState);
       return;
     }
     if (!warnIfClosedPeriod(fechaCobro, 'Registrar este cobro')) return;
@@ -16446,7 +16543,7 @@ Notas importantes:
     const bankError = validateBankForPaymentMethod(newRecord);
     if (bankError) {
       setFacturasMessage(bankError, 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, facturasState.message, facturasState);
       return;
     }
 
@@ -16463,7 +16560,7 @@ Notas importantes:
       appData.cobros = previousCobros;
       facturasState.cobroSaving = false;
       setFacturasMessage('No se pudo guardar el cobro. La factura continúa Pendiente.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, facturasState.message, facturasState);
       return;
     }
 
@@ -17514,23 +17611,19 @@ Notas importantes:
     const monto = parseMoney(formData.get('monto'));
 
     if (!fecha) {
-      notifyAction(notasState, 'La fecha del pendiente es obligatoria.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, 'La fecha del pendiente es obligatoria.', notasState);
       return;
     }
     if (!referencia) {
-      notifyAction(notasState, 'La referencia del pendiente es obligatoria.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, 'La referencia del pendiente es obligatoria.', notasState);
       return;
     }
     if (!subcategoria) {
-      notifyAction(notasState, `Selecciona una subcategoría válida de ${categoria}.`, 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, `Selecciona una subcategoría válida de ${categoria}.`, notasState);
       return;
     }
     if (!Number.isFinite(monto) || monto < 0) {
-      notifyAction(notasState, 'El monto del pendiente debe ser válido.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, 'El monto del pendiente debe ser válido.', notasState);
       return;
     }
 
@@ -17797,15 +17890,13 @@ Notas importantes:
     const acreedor = cleanText(formData.get('acreedor'));
     const moneda = normalizeNotasPrestamoMoneda(formData.get('moneda'));
     if (!deudor || !acreedor) {
-      notifyAction(notasState, 'Deudor y Acreedor son obligatorios.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, 'Deudor y Acreedor son obligatorios.', notasState);
       return;
     }
     const data = getNotasPrestamosData();
     const key = getNotasPrestamoCombinationKey(deudor, acreedor, moneda);
     if (data.libros.some((libro) => getNotasPrestamoCombinationKey(libro.deudor, libro.acreedor, libro.moneda) === key)) {
-      notifyAction(notasState, `Ya existe ese libro Deudor → Acreedor en ${getNotasPrestamoMonedaLabel(moneda)}.`, 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, `Ya existe ese libro Deudor → Acreedor en ${getNotasPrestamoMonedaLabel(moneda)}.`, notasState);
       return;
     }
     const timestamp = nowIso();
@@ -17873,23 +17964,19 @@ Notas importantes:
     const debe = parseMoney(formData.get('debe'));
     const haber = parseMoney(formData.get('haber'));
     if (!fecha || !referencia) {
-      notifyAction(notasState, 'Fecha y Referencia son obligatorias.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, 'Fecha y Referencia son obligatorias.', notasState);
       return;
     }
     if (!Number.isFinite(debe) || debe < 0 || !Number.isFinite(haber) || haber < 0) {
-      notifyAction(notasState, 'Debe y Haber deben contener montos válidos.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, 'Debe y Haber deben contener montos válidos.', notasState);
       return;
     }
     if (debe <= 0 && haber <= 0) {
-      notifyAction(notasState, 'Ingresa un monto en Debe o en Haber.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, 'Ingresa un monto en Debe o en Haber.', notasState);
       return;
     }
     if (debe > 0 && haber > 0) {
-      notifyAction(notasState, 'Cada movimiento debe usar Debe o Haber, no ambos.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, 'Cada movimiento debe usar Debe o Haber, no ambos.', notasState);
       return;
     }
     const timestamp = nowIso();
@@ -18411,8 +18498,7 @@ Notas importantes:
     const existing = notasState.editingNoteType === 'nota' ? getNotasRecordByType('nota', notasState.editingNoteId, data) : null;
     const titulo = cleanText(formData.get('titulo'));
     if (!titulo) {
-      notifyAction(notasState, 'La Nota general necesita título.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, 'La Nota general necesita título.', notasState);
       return;
     }
     const estado = normalizeNotasEstado(formData.get('estado'), 'Pendiente');
@@ -18449,15 +18535,13 @@ Notas importantes:
     const existing = notasState.editingNoteType === 'pendiente' ? getNotasRecordByType('pendiente', notasState.editingNoteId, data) : null;
     const descripcion = cleanText(formData.get('descripcion'));
     if (!descripcion) {
-      notifyAction(notasState, 'El Pendiente de registrar necesita descripción.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, 'El Pendiente de registrar necesita descripción.', notasState);
       return;
     }
     const rawMonto = formData.get('monto');
     const monto = rawMonto === null || rawMonto === '' ? 0 : parseMoney(rawMonto);
     if (Number.isNaN(monto) || monto < 0) {
-      notifyAction(notasState, 'El monto del pendiente debe ser válido.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, 'El monto del pendiente debe ser válido.', notasState);
       return;
     }
     const record = normalizePendienteRecord({
@@ -18493,13 +18577,11 @@ Notas importantes:
     const titulo = cleanText(formData.get('titulo'));
     const fecha = toDateInputValue(formData.get('fecha'));
     if (!titulo) {
-      notifyAction(notasState, 'El recordatorio necesita título.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, 'El recordatorio necesita título.', notasState);
       return;
     }
     if (!fecha) {
-      notifyAction(notasState, 'La fecha del recordatorio es obligatoria.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, 'La fecha del recordatorio es obligatoria.', notasState);
       return;
     }
     const estado = normalizeNotasEstado(formData.get('estado'), 'Pendiente');
@@ -22267,8 +22349,7 @@ Notas importantes:
     const payload = readBdatosForm(form);
     const validationError = validateBdatosPayload(payload);
     if (validationError) {
-      notifyAction(bdatosState, validationError, 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, validationError, bdatosState);
       return;
     }
 
@@ -22318,8 +22399,7 @@ Notas importantes:
 
     const validationError = validateBdatosPayload(payload, currentId);
     if (validationError) {
-      notifyAction(bdatosState, validationError, 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, validationError, bdatosState);
       return;
     }
 
@@ -24141,7 +24221,7 @@ Notas importantes:
       ventasState.selectedAjusteVentaId = ventaId;
       ventasState.message = validationError;
       ventasState.messageType = 'error';
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, validationError, ventasState);
       return;
     }
 
@@ -24284,7 +24364,7 @@ Notas importantes:
       ventasState.quickCapture = existingRecord ? null : buildVentaDraftFromForm(form);
       ventasState.message = pendingFacturaError;
       ventasState.messageType = 'error';
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, pendingFacturaError, ventasState);
       return;
     }
     const newRecord = buildVentaFromForm(form, existingRecord);
@@ -24294,7 +24374,7 @@ Notas importantes:
       ventasState.quickCapture = existingRecord ? null : buildVentaDraftFromForm(form);
       ventasState.message = validationError;
       ventasState.messageType = 'error';
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, validationError, ventasState);
       return;
     }
 
@@ -25631,7 +25711,7 @@ Notas importantes:
     if (Number.isNaN(rawMontoAplicar) || rawMontoAplicar < 0) {
       cobrosState.message = 'El monto a aplicar a la OC no puede ser negativo ni inválido.';
       cobrosState.messageType = 'error';
-      renderRoute();
+      showFormValidationError(form, cobrosState.message, cobrosState);
       return;
     }
 
@@ -25641,7 +25721,7 @@ Notas importantes:
     if (validationError) {
       cobrosState.message = validationError;
       cobrosState.messageType = 'error';
-      renderRoute();
+      showFormValidationError(form, validationError, cobrosState);
       return;
     }
 
@@ -26743,7 +26823,7 @@ Notas importantes:
       proveedoresState.quickCapture = buildCompraDraftFromForm(form);
       proveedoresState.message = validationError;
       proveedoresState.messageType = 'error';
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, validationError, proveedoresState);
       return;
     }
 
@@ -26924,7 +27004,7 @@ Notas importantes:
       proveedoresState.selectedAjusteCompraId = compraProveedorId;
       proveedoresState.message = validationError;
       proveedoresState.messageType = 'error';
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, validationError, proveedoresState);
       return;
     }
 
@@ -27792,7 +27872,7 @@ Notas importantes:
     if (validationError) {
       pagosState.message = validationError;
       pagosState.messageType = 'error';
-      renderRoute();
+      showFormValidationError(form, validationError, pagosState);
       return;
     }
 
@@ -28331,7 +28411,7 @@ Notas importantes:
     if (validationError) {
       gastosState.message = validationError;
       gastosState.messageType = 'error';
-      renderRoute();
+      showFormValidationError(form, validationError, gastosState);
       return;
     }
 
@@ -29226,7 +29306,7 @@ Notas importantes:
     if (validationError) {
       casaState.message = validationError;
       casaState.messageType = 'error';
-      renderRoute();
+      showFormValidationError(form, validationError, casaState);
       return;
     }
 
@@ -32283,8 +32363,7 @@ Notas importantes:
     const formData = new FormData(form);
     const alertDays = parsePositiveInteger(formData.get('diasAlertaVencimiento'));
     if (Number.isNaN(alertDays) || alertDays <= 0) {
-      notifyAction(configState, 'Los días de alerta deben ser un entero mayor que cero.', 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, 'Los días de alerta deben ser un entero mayor que cero.', configState);
       return;
     }
     appData.configuracion = normalizeConfiguracion({
@@ -32308,7 +32387,7 @@ Notas importantes:
     if (!deviceName) {
       configState.message = 'El nombre de este equipo no puede quedar vacío.';
       configState.messageType = 'error';
-      renderRoute();
+      showFormValidationError(form, configState.message, configState);
       return;
     }
 
@@ -35192,8 +35271,7 @@ ${rowsXml}
     const validationError = validateCatalogRecord(catalog, newRecord, existingId);
 
     if (validationError) {
-      notifyAction(catalogState, validationError, 'error');
-      renderRoute({ preserveScroll: true });
+      showFormValidationError(form, validationError, catalogState);
       return;
     }
 

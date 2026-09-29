@@ -936,6 +936,11 @@ h3 {
   color: #1e40af;
 }
 
+form :is(input, select, textarea)[aria-invalid="true"] {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px rgba(159, 18, 57, 0.12);
+}
+
 .count-pill {
   flex: 0 0 auto;
   padding: 8px 11px;
