@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.116-sin-seguimiento';
+  const APP_VERSION = '0.18.117-sin-seguimiento';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -4130,7 +4130,7 @@ Notas importantes:
   function getVentaCreditBaseDate(record) {
     const raw = isPlainObject(record) ? record : {};
     if (isVentaRequiereEnvio(raw)) {
-      return toDateInputValue(getVentaLogisticaRecord(raw).fechaReal || '');
+      return toDateInputValue(getVentaLogisticaRecord(raw).fechaEstimada || '');
     }
     return toDateInputValue(raw.fechaEntrega || raw.fechaDeEntrega || raw.entrega || raw.fechaRecepcion || raw.fechaRecepción || '')
       || getVentaFechaRegistro(raw);
@@ -4139,7 +4139,7 @@ Notas importantes:
   function getVentaCreditBaseType(record) {
     const raw = isPlainObject(record) ? record : {};
     if (isVentaRequiereEnvio(raw)) {
-      return getVentaLogisticaRecord(raw).fechaReal ? 'Fecha real' : 'Pendiente recepción';
+      return getVentaLogisticaRecord(raw).fechaEstimada ? 'Fecha estimada' : 'Pendiente estimación';
     }
     return isVentaCreditBaseEntrega(raw) ? 'Entrega' : 'Registro';
   }
@@ -4838,7 +4838,6 @@ Notas importantes:
     if (logistica.guia) parts.push(`Guía: ${logistica.guia}`);
     if (logistica.fechaEmbarque) parts.push(`Embarque: ${formatDate(logistica.fechaEmbarque)}`);
     if (logistica.fechaEstimada) parts.push(`Estimada: ${formatDate(logistica.fechaEstimada)}`);
-    if (logistica.fechaReal) parts.push(`Real: ${formatDate(logistica.fechaReal)}`);
     return parts.join(' · ') || 'Requiere envío';
   }
 
@@ -23649,10 +23648,6 @@ Notas importantes:
               <input type="date" name="logisticaFechaEstimada" value="${escapeHtml(logistica.fechaEstimada)}" />
             </label>
             <label class="form-field">
-              <span>Fecha real</span>
-              <input type="date" name="logisticaFechaReal" value="${escapeHtml(logistica.fechaReal)}" />
-            </label>
-            <label class="form-field">
               <span>Guía</span>
               <input type="text" name="logisticaGuia" value="${escapeHtml(logistica.guia)}" placeholder="Número de guía" autocomplete="off" />
             </label>
@@ -23671,7 +23666,6 @@ Notas importantes:
       ['Transportista', logistica.transportista || '—'],
       ['Fecha de embarque', formatDate(logistica.fechaEmbarque)],
       ['Fecha estimada', formatDate(logistica.fechaEstimada)],
-      ['Fecha real', formatDate(logistica.fechaReal)],
       ['Guía', logistica.guia || '—']
     ];
     const gasto = normalizeLogisticaGastoVentaRecord(logistica.gasto);
@@ -24640,7 +24634,7 @@ Notas importantes:
       updateVentaPreviewFromForm(form, true);
     };
     toggle?.addEventListener('change', updateVisibility);
-    block.querySelector('[name="logisticaFechaReal"]')?.addEventListener('change', () => updateVentaPreviewFromForm(form, true));
+    block.querySelector('[name="logisticaFechaEstimada"]')?.addEventListener('change', () => updateVentaPreviewFromForm(form, true));
     setupPaymentBankField(block);
     updateVisibility();
   }
@@ -24661,7 +24655,7 @@ Notas importantes:
       const dueInput = form.querySelector('[data-venta-due]');
       const requiereEnvio = Boolean(form.querySelector('[data-logistica-toggle]')?.checked);
       const logistica = normalizeLogisticaVentaRecord({
-        fechaReal: form.querySelector('[name="logisticaFechaReal"]')?.value || ''
+        fechaEstimada: form.querySelector('[name="logisticaFechaEstimada"]')?.value || ''
       });
       const due = calculateVentaFechaVencimiento({ fechaOc: dateInput?.value, fechaEntrega: deliveryInput?.value, requiereEnvio, logistica }, Number.parseInt(daysInput?.value || '0', 10) || 0);
       if (dueInput) dueInput.value = due || '';
@@ -33753,7 +33747,7 @@ Exportado: ${exportDateLabel}
       [xlsxTitle('Ventas / OC')],
       [xlsxLabel('Período'), xlsxText(summary.periodLabel)],
       [],
-      xlsxHeaderRow(['Fecha', 'Fecha entrega', 'Cliente', 'Sucursal', 'OC', 'Facturas', 'Envío', 'Transportista', 'Embarque', 'Estimada', 'Real', 'Guía', 'Subtotal', 'Descuento', 'Total', 'Ajustes', 'Cobrado', 'Saldo', 'Vence', 'Mora', 'Estado', 'Detalle', 'Observación'])
+      xlsxHeaderRow(['Fecha', 'Fecha entrega', 'Cliente', 'Sucursal', 'OC', 'Facturas', 'Envío', 'Transportista', 'Embarque', 'Estimada', 'Guía', 'Subtotal', 'Descuento', 'Total', 'Ajustes', 'Cobrado', 'Saldo', 'Vence', 'Mora', 'Estado', 'Detalle', 'Observación'])
     ];
     const ventasExport = Array.isArray(summary.ventasExport) ? summary.ventasExport : getVentasForExport(summary.range, summary.filters);
     ventasExport.forEach((venta) => {
@@ -33771,7 +33765,6 @@ Exportado: ${exportDateLabel}
         xlsxText(logistica.transportista),
         xlsxDate(logistica.fechaEmbarque),
         xlsxDate(logistica.fechaEstimada),
-        xlsxDate(logistica.fechaReal),
         xlsxText(logistica.guia),
         xlsxMoney(venta.subtotal),
         xlsxMoney(venta.descuento),
@@ -33787,7 +33780,7 @@ Exportado: ${exportDateLabel}
       ]);
     });
     pushVentasFacturasDetalleRows(rows, ventasExport);
-    return { name: 'Ventas', rows, cols: [14, 16, 24, 24, 18, 30, 14, 20, 16, 16, 16, 18, 14, 14, 14, 14, 16, 16, 16, 12, 14, 38, 32] };
+    return { name: 'Ventas', rows, cols: [14, 16, 24, 24, 18, 30, 14, 20, 16, 16, 18, 14, 14, 14, 14, 16, 16, 16, 12, 14, 38, 32] };
   }
 
   function buildCobrosSheet(summary) {
