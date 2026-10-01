@@ -23409,11 +23409,11 @@ Notas importantes:
         </label>
         <label class="factura-cell factura-money-cell">
           <span>Subtotal</span>
-          <input type="text" data-factura-subtotal value="${escapeHtml(subtotalValue)}" inputmode="decimal" placeholder="0.00" aria-label="Subtotal factura ${index + 1}" data-money-input />
+          <input type="text" data-factura-subtotal value="${escapeHtml(subtotalValue)}" inputmode="decimal" aria-label="Subtotal factura ${index + 1}" data-money-input />
         </label>
         <label class="factura-cell factura-money-cell">
           <span>Descuento</span>
-          <input type="text" data-factura-descuento value="${escapeHtml(descuentoValue)}" inputmode="decimal" placeholder="0.00" aria-label="Descuento factura ${index + 1}" data-money-input />
+          <input type="text" data-factura-descuento value="${escapeHtml(descuentoValue)}" inputmode="decimal" aria-label="Descuento factura ${index + 1}" data-money-input />
         </label>
         <label class="factura-cell factura-money-cell factura-total-cell">
           <span>Total</span>
@@ -23577,7 +23577,7 @@ Notas importantes:
         <div class="form-grid logistica-gasto-grid">
           <label class="form-field">
             <span>Monto</span>
-            <input type="text" name="logisticaGastoMonto" value="${escapeHtml(formatNumberInput(normalized.monto))}" inputmode="decimal" placeholder="0.00" data-money-input />
+            <input type="text" name="logisticaGastoMonto" value="${escapeHtml(formatNumberInput(normalized.monto))}" inputmode="decimal" data-money-input />
           </label>
           <label class="form-field">
             <span>Método de pago</span>
@@ -23753,11 +23753,11 @@ Notas importantes:
           </label>
           <label class="form-field">
             <span>Subtotal C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="text" name="subtotal" value="${escapeHtml(formatNumberInput(record ? record.subtotal : (draft.subtotal || draft.montoOc)))}" inputmode="decimal" placeholder="0.00" required data-money-input data-venta-calc />
+            <input type="text" name="subtotal" value="${escapeHtml(formatNumberInput(record ? record.subtotal : (draft.subtotal || draft.montoOc)))}" inputmode="decimal" required data-money-input data-venta-calc />
           </label>
           <label class="form-field">
             <span>Descuento C$</span>
-            <input type="text" name="descuento" value="${escapeHtml(formatNumberInput(record ? record.descuento : draft.descuento))}" inputmode="decimal" placeholder="0.00" data-money-input data-venta-calc />
+            <input type="text" name="descuento" value="${escapeHtml(formatNumberInput(record ? record.descuento : draft.descuento))}" inputmode="decimal" data-money-input data-venta-calc />
           </label>
           <label class="form-field venta-credit-days-field">
             <span>Días de crédito</span>
@@ -35821,6 +35821,13 @@ ${rowsXml}
       setupVentaLiveCalculations(form);
       setupVentaFacturasForm(form);
       setupVentaLogisticaForm(form);
+      const selectMoneyValue = (event) => {
+        const input = event.target;
+        if (!(input instanceof HTMLInputElement) || !input.matches('[data-money-input]') || input.readOnly || input.disabled || !input.value) return;
+        input.select();
+      };
+      form.addEventListener('focusin', selectMoneyValue);
+      form.addEventListener('click', selectMoneyValue);
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         saveVentaRecord(form);
