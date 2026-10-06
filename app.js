@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.120-aviso-cobros-verificado';
+  const APP_VERSION = '0.18.121-cobros-sin-oc';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -24994,16 +24994,12 @@ Notas importantes:
   }
 
   function renderCobrosWarning(ventasDisponibles, metodosActivos, cuentasActivas) {
-    const missing = [];
-    if (!ventasDisponibles.length) missing.push('OC con saldo por cobrar');
-    if (!metodosActivos.length) missing.push('métodos de pago activos');
-    if (!missing.length) return '';
+    if (!ventasDisponibles.length || metodosActivos.length) return '';
     return `
       <article class="catalog-warning" role="status">
-        <strong>Faltan ${escapeHtml(missing.join(', '))}.</strong>
-        <p>Para guardar un cobro necesitas una OC activa con saldo y métodos de pago activos. Banco se solicita cuando el método es Transferencia, Depósito o Tarjeta.</p>
+        <strong>Faltan métodos de pago activos.</strong>
+        <p>Para guardar un cobro necesitas un método de pago activo. Banco se solicita cuando el método es Transferencia, Depósito o Tarjeta.</p>
         <div class="placeholder-tools">
-          <button type="button" class="secondary-action compact" data-go="ventas">Ir a Ventas / OC</button>
           <button type="button" class="secondary-action compact" data-go="catalogos">Ir a Catálogos</button>
         </div>
       </article>
