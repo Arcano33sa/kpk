@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.121-cobros-sin-oc';
+  const APP_VERSION = '0.18.122-periodo-fijo';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1388,6 +1388,20 @@ Notas importantes:
 
   const viewRoot = document.querySelector('#viewRoot');
   const periodWorkbar = document.querySelector('#periodWorkbar');
+  const topbarForWorkPeriod = document.querySelector('.app-topbar');
+  function updateWorkPeriodBarLayout() {
+    if (!periodWorkbar) return;
+    const topbarBottom = topbarForWorkPeriod?.getBoundingClientRect().bottom || 0;
+    document.documentElement.style.setProperty('--work-period-top', `${Math.ceil(topbarBottom + 8)}px`);
+    const height = periodWorkbar.getBoundingClientRect().height;
+    document.documentElement.style.setProperty('--work-period-space', `${height ? Math.ceil(height + 18) : 0}px`);
+  }
+  if (periodWorkbar && 'ResizeObserver' in window) {
+    const workPeriodLayoutObserver = new ResizeObserver(updateWorkPeriodBarLayout);
+    workPeriodLayoutObserver.observe(periodWorkbar);
+    if (topbarForWorkPeriod) workPeriodLayoutObserver.observe(topbarForWorkPeriod);
+  }
+  window.addEventListener('resize', updateWorkPeriodBarLayout);
   const navButtons = Array.from(document.querySelectorAll('[data-route]'));
 
   let catalogState = {
@@ -12917,6 +12931,7 @@ Notas importantes:
 
   function renderWorkPeriodSelector() {
     if (!periodWorkbar) return;
+    requestAnimationFrame(updateWorkPeriodBarLayout);
     if (getRoute() === 'calculadora') {
       periodWorkbar.innerHTML = '';
       return;

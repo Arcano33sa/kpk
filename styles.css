@@ -191,7 +191,19 @@ button {
 
 
 .work-period-bar {
+  position: fixed;
+  top: var(--work-period-top, calc(var(--topbar-height) + var(--safe-top) + 8px));
+  width: inherit;
+  z-index: 45;
   margin-bottom: 18px;
+}
+
+.work-period-bar:empty {
+  display: none;
+}
+
+#viewRoot {
+  padding-top: var(--work-period-space, 0px);
 }
 
 .work-period-panel {
@@ -203,7 +215,8 @@ button {
   padding: 14px 16px;
   border: 1px solid rgba(213, 207, 194, 0.96);
   border-radius: 20px;
-  background:
+  background-color: var(--surface);
+  background-image:
     linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(251, 250, 246, 0.82)),
     radial-gradient(circle at top right, rgba(185, 135, 43, 0.15), transparent 18rem);
   box-shadow: 0 12px 28px rgba(17, 24, 39, 0.07);

@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_121_cobros_sin_oc';
+const CACHE_VERSION = 'v0_18_122_periodo_fijo';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
