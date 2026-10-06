@@ -14488,3 +14488,17 @@ input[type="number"]::-webkit-inner-spin-button {
     margin: 0;
   }
 }
+
+/* OC vinculadas a compras de proveedores. */
+.compra-oc-block {
+  min-width: 0;
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.compra-oc-block legend { font-weight: 700; }
+.compra-oc-options { display: grid; gap: 0.5rem; max-height: 18rem; overflow-y: auto; }
+.compra-oc-option { display: flex; align-items: flex-start; gap: 0.6rem; padding: 0.4rem; cursor: pointer; }
+.compra-oc-option input { width: 18px; height: 18px; margin: 0; flex: 0 0 auto; accent-color: var(--accent); }
+.compra-oc-option span { overflow-wrap: anywhere; }

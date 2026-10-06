@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.117-sin-seguimiento';
+  const APP_VERSION = '0.18.120-aviso-cobros-verificado';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1415,6 +1415,7 @@ Notas importantes:
 
   let cobrosState = {
     selectedVentaId: '',
+    proveedorAvisoVentaId: '',
     focusVentaId: '',
     ocFacturaSearch: '',
     facturaReferida: '',
@@ -5042,6 +5043,52 @@ Notas importantes:
     return 'Pendiente';
   }
 
+  function normalizeCompraVentaIds(value) {
+    return [...new Set((Array.isArray(value) ? value : [])
+      .filter((id) => typeof id === 'string').map((id) => cleanText(id)).filter(Boolean))];
+  }
+
+  function validateCompraOcBackupRelations(data, errors, warnings) {
+    const ventas = buildIdSet(data?.ventas);
+    (Array.isArray(data?.comprasProveedores) ? data.comprasProveedores : []).forEach((compra) => {
+      if (!isPlainObject(compra) || compra.ventaIds === undefined) return;
+      if (!Array.isArray(compra.ventaIds) || compra.ventaIds.some((id) => typeof id !== 'string' || !cleanText(id))) {
+        errors.push(`Compra ${compra.id || 'sin ID'}: ventaIds debe ser una lista de IDs de OC válidos.`);
+        return;
+      }
+      const ids = normalizeCompraVentaIds(compra.ventaIds);
+      if (ids.length !== compra.ventaIds.length) pushLimitedWarning(warnings, `Compra ${compra.id || 'sin ID'}: vínculos de OC repetidos; se conservarán una sola vez.`);
+      ids.forEach((id) => {
+        if (!ventas.has(id)) pushLimitedWarning(warnings, `Compra ${compra.id || 'sin ID'}: OC vinculada no encontrada (${id}); se conservará la referencia.`);
+      });
+    });
+  }
+
+  function getCompraOcLabel(ventaId) {
+    const venta = getVentaRecordById(ventaId);
+    if (!venta) return `OC no encontrada · ${ventaId}`;
+    const cliente = getCatalogRecordById('clientes', venta.clienteId);
+    const sucursal = getCatalogRecordById('sucursales', venta.sucursalId);
+    return `${cliente?.nombre || venta.clienteNombre || 'Cliente sin nombre'} · ${sucursal?.nombre || venta.sucursalNombre || 'Sin sucursal'} · OC ${venta.numeroDocumento || 'Sin número'}${venta.activo ? '' : ' · Anulada'}`;
+  }
+
+  function renderCompraOcBlock(record) {
+    const selected = normalizeCompraVentaIds(record?.ventaIds);
+    const ids = normalizeCompraVentaIds([
+      ...selected,
+      ...(Array.isArray(appData.ventas) ? appData.ventas : []).filter((venta) => normalizeVentaRecord(venta).activo).map((venta) => venta.id)
+    ]);
+    return `
+      <fieldset class="compra-oc-block">
+        <legend>OC vinculadas (opcional)</legend>
+        <p class="compact-note">Selecciona las OC que esta compra ayuda a suplir. Una compra puede atender varias OC.</p>
+        <div class="compra-oc-options">
+          ${ids.length ? ids.map((id) => `<label class="compra-oc-option"><input type="checkbox" name="ventaIds" value="${escapeHtml(id)}" ${selected.includes(id) ? 'checked' : ''} /><span>${escapeHtml(getCompraOcLabel(id))}</span></label>`).join('') : '<p class="compact-note">No hay OC disponibles para vincular.</p>'}
+        </div>
+      </fieldset>
+    `;
+  }
+
   function normalizeCompraProveedorRecord(record) {
     const raw = isPlainObject(record) ? record : {};
     const timestamp = nowIso();
@@ -5061,6 +5108,7 @@ Notas importantes:
       proveedorNombre: cleanText(raw.proveedorNombre || raw.proveedor),
       facturaReferencia: cleanText(raw.facturaReferencia || raw.factura || raw.referencia || raw.documento),
       facturasRelacionadas: normalizeCompraProveedorFacturasFromRaw(raw),
+      ventaIds: normalizeCompraVentaIds(raw.ventaIds),
       fechaCompra,
       diasCredito: safeDiasCredito,
       fechaVencimiento,
@@ -9263,6 +9311,7 @@ Notas importantes:
     return normalizeCompraProveedorRecord({
       ...existing,
       ajustes: merged,
+      ventaIds: normalizeCompraVentaIds([...existing.ventaIds, ...incoming.ventaIds]),
       updatedAt: nowIso()
     });
   }
@@ -11515,6 +11564,7 @@ Notas importantes:
     const extracted = extractDataFromJsonBackup(raw);
     const data = extracted.data;
     const activityLog = extractActivityLogFromJsonBackup(raw);
+    validateCompraOcBackupRelations(data, errors, warnings);
     const recognizedCollections = ['ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'casaGastos', 'cierresMensuales', 'exportacionesExcel', 'bdatos'];
     const hasRecognizedData = Boolean(data) && (
       CATALOGS.some((catalog) => Array.isArray(data[catalog.id]))
@@ -24693,6 +24743,36 @@ Notas importantes:
     if (saldoNode) saldoNode.textContent = formatMoney(calculations.saldoPorCobrar);
   }
 
+  function getComprasPendientesForCobroOc(ventaId) {
+    const id = cleanText(ventaId);
+    if (!id) return [];
+    return (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [])
+      .map((record) => normalizeCompraProveedorRecord(record))
+      .filter((compra) => compra.activo && compra.ventaIds.includes(id))
+      .map((compra) => recalculateCompraProveedorWithPagos(compra, appData.pagosProveedores))
+      .filter((compra) => compra.saldoPorPagar > 0);
+  }
+
+  function renderCobroProveedoresWarning(ventaId, afterSave = false) {
+    const compras = getComprasPendientesForCobroOc(ventaId);
+    if (!compras.length) return '';
+    return `
+      <aside class="form-message is-warning" role="status" aria-live="polite">
+        <strong>${afterSave ? 'Cobro guardado. ' : ''}Hay compras de proveedores pendientes de pago para esta OC.</strong>
+        <p class="compact-note">${escapeHtml(getCompraOcLabel(ventaId))}</p>
+        <ul>
+          ${compras.map((compra) => {
+            const proveedor = getCatalogRecordById('proveedores', compra.proveedorId);
+            const facturas = normalizeFacturasProveedorList(compra.facturasRelacionadas);
+            const saldoLabel = facturas.length === 1 ? 'Saldo pendiente de la factura' : 'Saldo pendiente de la compra';
+            return `<li><strong>${escapeHtml(proveedor?.nombre || compra.proveedorNombre || 'Proveedor no encontrado')}</strong> · Facturas: ${escapeHtml(getCompraProveedorReferenciaDocumental(compra))} · ${escapeHtml(compra.estado)} · ${saldoLabel}: <strong>${escapeHtml(formatMoney(compra.saldoPorPagar))}</strong></li>`;
+          }).join('')}
+        </ul>
+        <p class="compact-note">Se muestra el saldo completo de cada compra, sin repartirlo entre las OC vinculadas.${afterSave ? '' : ' Puedes continuar y guardar el cobro.'}</p>
+      </aside>
+    `;
+  }
+
   function renderCobros() {
     const ventasDisponibles = getVentasConSaldoCobro();
     const workPeriodLabel = getWorkPeriodLabelText();
@@ -24738,6 +24818,8 @@ Notas importantes:
 
       <section class="cobros-shell">
         ${cobrosState.message ? `<div class="form-message ${cobrosState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(cobrosState.message)}</div>` : ''}
+
+        ${cobrosState.proveedorAvisoVentaId && !selectedVenta && !editingRecord ? renderCobroProveedoresWarning(cobrosState.proveedorAvisoVentaId, true) : ''}
 
         ${renderWorkPeriodInlineNotice('Cobros')}
         ${renderCobrosWarning(ventasDisponibles, metodosActivos, cuentasActivas)}
@@ -25116,6 +25198,7 @@ Notas importantes:
         </div>
 
         ${selectedVenta ? renderSelectedVentaCobroSummary(selectedVenta, cliente, sucursal, facturaReferida) : renderCobroNoVentaSelectedState()}
+        ${selectedVenta ? renderCobroProveedoresWarning(selectedVenta.id) : ''}
 
         <label class="form-field">
           <span>Observación</span>
@@ -25164,6 +25247,7 @@ Notas importantes:
           ${renderPaymentBankField(cuentasActivas, record, false)}
         </div>
         ${venta ? renderSelectedVentaCobroSummary(venta, cliente, sucursal, record.facturaReferida) : ''}
+        ${venta ? renderCobroProveedoresWarning(venta.id) : ''}
         <p class="compact-note">Máximo aplicado permitido para esta edición: ${escapeHtml(formatMoney(saldoDisponible))}. El vínculo con la OC no se cambia para proteger trazabilidad.</p>
         <label class="form-field">
           <span>Observación</span>
@@ -25699,6 +25783,7 @@ Notas importantes:
   }
 
   function saveCobroRecord(form) {
+    cobrosState.proveedorAvisoVentaId = '';
     const existingId = cleanText(new FormData(form).get('id'));
     const records = Array.isArray(appData.cobros) ? appData.cobros : [];
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
@@ -25757,6 +25842,7 @@ Notas importantes:
     cobrosState.selectedVentaId = '';
     cobrosState.facturaReferida = '';
     cobrosState.focusVentaId = newRecord.ventaId;
+    cobrosState.proveedorAvisoVentaId = newRecord.ventaId;
     openAccordionGroupForRecord('cobros', newRecord);
     cobrosState.editingId = null;
     cobrosState.messageType = 'success';
@@ -25786,6 +25872,7 @@ Notas importantes:
   }
 
   function editCobroRecord(cobroId) {
+    cobrosState.proveedorAvisoVentaId = '';
     const record = (Array.isArray(appData.cobros) ? appData.cobros : []).find((item) => item.id === cobroId);
     if (!record) return;
     const normalized = normalizeCobroRecord(record);
@@ -25810,6 +25897,7 @@ Notas importantes:
 
   function resetCobrosSelectionVisualState() {
     cobrosState.selectedVentaId = '';
+    cobrosState.proveedorAvisoVentaId = '';
     cobrosState.facturaReferida = '';
   }
 
@@ -25821,6 +25909,7 @@ Notas importantes:
   }
 
   function annulFacturaManualCobro(cobro) {
+    cobrosState.proveedorAvisoVentaId = '';
     const normalizedCobro = normalizeCobroRecord(cobro);
     const data = getFacturasData();
     const factura = findFacturaModuloById(normalizedCobro.facturaModuloId, data);
@@ -25904,6 +25993,7 @@ Notas importantes:
   }
 
   function annulCobroRecord(cobroId) {
+    cobrosState.proveedorAvisoVentaId = '';
     if (!canCurrentRole('annulMovements')) {
       cobrosState.message = ADMIN_RESTRICTED_MESSAGE;
       cobrosState.messageType = 'error';
@@ -25962,6 +26052,7 @@ Notas importantes:
   }
 
   function selectCobroVenta(ventaId, options = {}) {
+    cobrosState.proveedorAvisoVentaId = '';
     const cleanVentaId = cleanText(ventaId);
     const facturaReferida = cleanText(options.facturaReferida);
     cobrosState.selectedVentaId = cleanVentaId;
@@ -26346,6 +26437,8 @@ Notas importantes:
 
         ${renderCompraFacturasRelacionadasBlock(facturasSource)}
 
+        ${renderCompraOcBlock(facturasSource)}
+
         ${renderCompraContadoPaymentBlock(record || draft, selectedProveedorId, isContado)}
 
         <label class="form-field">
@@ -26540,10 +26633,11 @@ Notas importantes:
     const facturasCompact = formatFacturasProveedorCompact(facturasRelacionadas);
     const referenciaDocumental = getCompraProveedorReferenciaDocumental(record);
 
+    const ocSummary = record.ventaIds.map(getCompraOcLabel).join('; ');
     const ajustesRow = renderCompraAjustesCompactRow(record, 10);
     return `
       <tr class="compact-record-row compra-row ${record.activo ? 'is-active' : 'is-inactive'}">
-        <td data-label="Facturas"><span class="compact-primary">${escapeHtml(referenciaDocumental)}</span>${facturasCompact && facturasRelacionadas.length > 3 ? `<small>${escapeHtml(facturasCompact)}</small>` : ''}</td>
+        <td data-label="Facturas"><span class="compact-primary">${escapeHtml(referenciaDocumental)}</span>${facturasCompact && facturasRelacionadas.length > 3 ? `<small>${escapeHtml(facturasCompact)}</small>` : ''}${ocSummary ? `<small>OC vinculadas: ${escapeHtml(ocSummary)}</small>` : ''}</td>
         <td data-label="Compra"><span>${escapeHtml(formatDate(record.fechaCompra))}</span></td>
         <td data-label="Vence"><span>${escapeHtml(formatDate(record.fechaVencimiento))}</span></td>
         <td data-label="Original" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.totalCompra))}</span></td>
@@ -26655,6 +26749,7 @@ Notas importantes:
       proveedorNombre: proveedor?.nombre || existingRecord?.proveedorNombre || '',
       facturaReferencia,
       facturasRelacionadas,
+      ventaIds: normalizeCompraVentaIds(formData.getAll('ventaIds')),
       fechaCompra,
       diasCredito,
       fechaVencimiento,
@@ -26705,6 +26800,12 @@ Notas importantes:
 
   function validateCompraProveedorRecord(record, existingRecord = null) {
     if (!record.proveedorId || !getActiveCatalogRecords('proveedores').some((proveedor) => proveedor.id === record.proveedorId)) return 'Selecciona un proveedor activo desde Catálogos.';
+    const previousIds = normalizeCompraVentaIds(existingRecord?.ventaIds);
+    const invalidOc = normalizeCompraVentaIds(record.ventaIds).find((id) => {
+      const venta = getVentaRecordById(id);
+      return (!venta || !venta.activo) && !previousIds.includes(id);
+    });
+    if (invalidOc) return 'Solo puedes agregar vínculos con OC existentes y activas.';
     const facturas = normalizeFacturasProveedorList(record.facturasRelacionadas);
     const stats = getCompraFacturasMontoStats(facturas);
     const legacyPendingUntouched = Boolean(existingRecord)
@@ -26808,6 +26909,7 @@ Notas importantes:
       fechaVencimiento: isContado ? '' : (toDateInputValue(formData.get('fechaVencimiento')) || addDaysToDate(fechaCompra, Number.isNaN(diasCredito) ? 0 : diasCredito) || fechaCompra),
       totalCompra: formatNumberInput(totalCompra),
       facturasRelacionadas,
+      ventaIds: normalizeCompraVentaIds(formData.getAll('ventaIds')),
       condicionPagoSnapshot,
       metodoPagoContadoId: cleanText(formData.get('metodoPagoContadoId')),
       bancoPagoContadoId: cleanText(formData.get('bancoPagoContadoId')),
@@ -26872,7 +26974,7 @@ Notas importantes:
       entityType: 'Compra',
       entityRef: compraRefLabel,
       amount: newRecord.totalAjustado || newRecord.totalCompra,
-      detail: buildActivityDetail([existingRecord ? 'Compra editada' : 'Compra registrada', compraRefLabel, newRecord.condicionPagoSnapshot, formatMoney(newRecord.totalAjustado || newRecord.totalCompra), autoPagoApplied ? 'Pago automático aplicado' : '']),
+      detail: buildActivityDetail([existingRecord ? 'Compra editada' : 'Compra registrada', compraRefLabel, newRecord.condicionPagoSnapshot, formatMoney(newRecord.totalAjustado || newRecord.totalCompra), autoPagoApplied ? 'Pago automático aplicado' : '', `OC vinculadas: ${newRecord.ventaIds.length ? newRecord.ventaIds.map(getCompraOcLabel).join('; ') : 'ninguna'}`]),
       source: 'local'
     });
     if (autoPagoApplied) {
@@ -31785,6 +31887,7 @@ Notas importantes:
     if (!backupDate) warnings.push('El respaldo no trae fecha de exportación; se validará por estructura compatible.');
 
     const data = extracted.data || {};
+    validateCompraOcBackupRelations(data, errors, warnings);
     const notasBackup = getNotasBackupFromSource(data);
     const facturasBackup = getFacturasBackupFromSource(data);
     const seguimientoBackup = getSeguimientoBackupFromSource(data);
@@ -32132,6 +32235,7 @@ Notas importantes:
       const remapped = normalizeCompraProveedorRecord({
         ...compra,
         proveedorId: idMaps.proveedores.get(compra.proveedorId) || compra.proveedorId,
+        ventaIds: normalizeCompraVentaIds(compra.ventaIds).map((id) => ventaIdMap.get(id) || id),
         updatedAt: compra.updatedAt || timestamp
       });
       const existing = target.comprasProveedores.find((item) => item.id === remapped.id || getCompraDuplicateKey(item) === getCompraDuplicateKey(remapped));
