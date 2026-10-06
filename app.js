@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.122-periodo-fijo';
+  const APP_VERSION = '0.18.123-ajuste-venta-modal';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1422,6 +1422,7 @@ Notas importantes:
     editingId: null,
     quickCapture: null,
     selectedAjusteVentaId: '',
+    ajusteModalOpen: false,
     openGroupKey: '',
     message: null,
     messageType: 'success'
@@ -15910,6 +15911,7 @@ Notas importantes:
     ventasState.editingId = id;
     ventasState.quickCapture = null;
     ventasState.selectedAjusteVentaId = '';
+    ventasState.ajusteModalOpen = false;
     ventasState.message = null;
     setRoute('ventas');
   }
@@ -23113,6 +23115,7 @@ Notas importantes:
   function getCatalogModalId() { return 'catalog'; }
   function getBdatosModalId() { return 'bdatos'; }
   function getVentaModalId() { return 'venta'; }
+  function getVentaAjusteModalId() { return 'venta-ajuste'; }
   function getCompraModalId() { return 'compra'; }
   function getCobroModalId() { return 'cobro'; }
   function getPagoModalId() { return 'pago'; }
@@ -23194,7 +23197,7 @@ Notas importantes:
               </div>
             </div>
             <p class="muted-text">Reduce el saldo de una OC existente por quebrado, faltante, devolución o nota, sin crear cobro, caja ni banco. Aquí se descuenta mercadería; no aparece dinero fantasma.</p>
-            ${renderVentaAjusteForm(ventasAjustables)}
+            ${ventasAjustables.length ? `<button type="button" class="secondary-action" data-ajuste-venta-start="">Registrar ajuste</button>` : renderVentaAjusteForm(ventasAjustables)}
           </article>
 
           <article class="panel-card venta-list-card">
@@ -23209,6 +23212,7 @@ Notas importantes:
           </article>
         </div>
         ${editingRecord ? renderEditModal(getVentaModalId(), 'Editar venta / OC', 'La edición se guarda sobre la OC actual, mantiene ajustes/notas y recalcula saldo real.', renderVentaForm(editingRecord, clientesActivos, sucursalesActivas, missingCatalogs)) : ''}
+        ${ventasState.ajusteModalOpen ? renderEditModal(getVentaAjusteModalId(), 'Ajustar venta / OC', 'Reduce el saldo de la OC seleccionada sin crear cobro, caja ni banco.', renderVentaAjusteForm(ventasAjustables)) : ''}
       </section>
     `;
   }
@@ -23298,6 +23302,7 @@ Notas importantes:
         </label>
         <div class="form-actions">
           <button type="submit" class="card-action">Registrar ajuste</button>
+          <button type="button" class="secondary-action" data-modal-close="${getVentaAjusteModalId()}">Cancelar</button>
         </div>
       </form>
     `;
@@ -24231,6 +24236,7 @@ Notas importantes:
     ventasState.editingId = null;
     ventasState.quickCapture = null;
     ventasState.selectedAjusteVentaId = '';
+    ventasState.ajusteModalOpen = false;
   }
 
   function buildVentaAjusteFromForm(form, ventaRecord = null) {
@@ -24308,6 +24314,7 @@ Notas importantes:
       registerFacturasSyncSessionChanges(facturasSyncResult, 'editar', 'Ventas / OC');
     }
     ventasState.selectedAjusteVentaId = ventaId;
+    ventasState.ajusteModalOpen = false;
     openAccordionGroupForRecord('ventas', savedVenta || venta);
     ventasState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${venta.numeroDocumento} (${getAjusteFacturaActivityPart(ajuste)}). Saldo recalculado sin crear cobro.`;
     ventasState.messageType = 'success';
@@ -24328,8 +24335,16 @@ Notas importantes:
   function startAjusteForVenta(ventaId) {
     const cleanVentaId = cleanText(ventaId);
     ventasState.selectedAjusteVentaId = cleanVentaId;
+    ventasState.editingId = null;
+    ventasState.ajusteModalOpen = true;
     const venta = appData.ventas.find((record) => record.id === cleanVentaId);
     if (venta) openAccordionGroupForRecord('ventas', venta);
+    ventasState.message = null;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function closeVentaAjusteModal() {
+    ventasState.ajusteModalOpen = false;
     ventasState.message = null;
     renderRoute({ preserveScroll: true });
   }
@@ -24487,6 +24502,7 @@ Notas importantes:
     const record = appData.ventas.find((item) => item.id === recordId);
     if (!record) return;
     ventasState.editingId = recordId;
+    ventasState.ajusteModalOpen = false;
     ventasState.quickCapture = null;
     ventasState.message = null;
     renderRoute();
@@ -26058,6 +26074,7 @@ Notas importantes:
     ventasState.editingId = cleanVentaId;
     ventasState.quickCapture = null;
     ventasState.selectedAjusteVentaId = '';
+    ventasState.ajusteModalOpen = false;
     ventasState.message = null;
     setRoute('ventas');
   }
@@ -35522,6 +35539,7 @@ ${rowsXml}
     if (id === getCatalogModalId()) clearCatalogForm();
     else if (id === getBdatosModalId()) clearBdatosEdit();
     else if (id === getVentaModalId()) clearVentaForm();
+    else if (id === getVentaAjusteModalId()) closeVentaAjusteModal();
     else if (id === getCompraModalId()) clearCompraProveedorForm();
     else if (id === getCobroModalId()) clearCobroForm();
     else if (id === getPagoModalId()) clearPagoProveedorForm();
