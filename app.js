@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.123-ajuste-venta-modal';
+  const APP_VERSION = '0.18.125-venta-oc-seleccion';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -5087,19 +5087,32 @@ Notas importantes:
     return `${cliente?.nombre || venta.clienteNombre || 'Cliente sin nombre'} · ${sucursal?.nombre || venta.sucursalNombre || 'Sin sucursal'} · OC ${venta.numeroDocumento || 'Sin número'}${venta.activo ? '' : ' · Anulada'}`;
   }
 
+  function getCompraOcManualValidation(record) {
+    const numero = cleanText(record?.numeroOcManual);
+    if (!numero) return { ventaId: '', label: '' };
+    const matches = (Array.isArray(appData.ventas) ? appData.ventas : [])
+      .filter((venta) => normalizeVentaRecord(venta).activo && cleanText(venta.numeroDocumento).toLocaleLowerCase('es') === numero.toLocaleLowerCase('es'));
+    if (matches.length === 1) return { ventaId: matches[0].id, label: `OC ${numero} · Validada` };
+    return { ventaId: '', label: `OC ${numero} · ${matches.length ? 'Varias ventas coinciden; revisa el número' : 'Pendiente de registrar venta'}` };
+  }
+
+  function getCompraEffectiveVentaIds(record) {
+    return normalizeCompraVentaIds([...normalizeCompraVentaIds(record?.ventaIds), getCompraOcManualValidation(record).ventaId]);
+  }
+
   function renderCompraOcBlock(record) {
     const selected = normalizeCompraVentaIds(record?.ventaIds);
-    const ids = normalizeCompraVentaIds([
-      ...selected,
-      ...(Array.isArray(appData.ventas) ? appData.ventas : []).filter((venta) => normalizeVentaRecord(venta).activo).map((venta) => venta.id)
-    ]);
+    const validation = getCompraOcManualValidation(record);
     return `
       <fieldset class="compra-oc-block">
-        <legend>OC vinculadas (opcional)</legend>
-        <p class="compact-note">Selecciona las OC que esta compra ayuda a suplir. Una compra puede atender varias OC.</p>
-        <div class="compra-oc-options">
-          ${ids.length ? ids.map((id) => `<label class="compra-oc-option"><input type="checkbox" name="ventaIds" value="${escapeHtml(id)}" ${selected.includes(id) ? 'checked' : ''} /><span>${escapeHtml(getCompraOcLabel(id))}</span></label>`).join('') : '<p class="compact-note">No hay OC disponibles para vincular.</p>'}
-        </div>
+        <legend>OC de la compra (opcional)</legend>
+        <label class="form-field">
+          <span>Número de OC</span>
+          <input type="text" name="numeroOcManual" value="${escapeHtml(cleanText(record?.numeroOcManual))}" placeholder="Ingresa el número de OC" />
+          <small>Puedes guardar antes de registrar la venta. Se valida cuando exista una única venta activa con el mismo número.</small>
+        </label>
+        ${validation.label ? `<p class="compact-note">${escapeHtml(validation.label)}</p>` : ''}
+        ${selected.length ? `<div class="compra-oc-options">${selected.map((id) => `<label class="compra-oc-option"><input type="checkbox" name="ventaIds" value="${escapeHtml(id)}" checked /><span>${escapeHtml(getCompraOcLabel(id))}</span></label>`).join('')}</div>` : ''}
       </fieldset>
     `;
   }
@@ -5124,6 +5137,7 @@ Notas importantes:
       facturaReferencia: cleanText(raw.facturaReferencia || raw.factura || raw.referencia || raw.documento),
       facturasRelacionadas: normalizeCompraProveedorFacturasFromRaw(raw),
       ventaIds: normalizeCompraVentaIds(raw.ventaIds),
+      numeroOcManual: cleanText(raw.numeroOcManual),
       fechaCompra,
       diasCredito: safeDiasCredito,
       fechaVencimiento,
@@ -9327,6 +9341,7 @@ Notas importantes:
       ...existing,
       ajustes: merged,
       ventaIds: normalizeCompraVentaIds([...existing.ventaIds, ...incoming.ventaIds]),
+      numeroOcManual: existing.numeroOcManual || incoming.numeroOcManual || '',
       updatedAt: nowIso()
     });
   }
@@ -23763,6 +23778,20 @@ Notas importantes:
     `;
   }
 
+  function getCompraOcSuggestions() {
+    const seen = new Set();
+    return (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [])
+      .filter((compra) => normalizeCompraProveedorRecord(compra).activo)
+      .map((compra) => cleanText(compra.numeroOcManual))
+      .filter((numero) => {
+        const key = numero.toLocaleLowerCase('es');
+        if (!numero || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => a.localeCompare(b, 'es', { numeric: true }));
+  }
+
   function renderVentaForm(record, clientesActivos, sucursalesActivas, missingCatalogs, quickCapture = null) {
     const draft = !record && isPlainObject(quickCapture) ? quickCapture : {};
     const selectedClienteId = record?.clienteId || cleanText(draft.clienteId);
@@ -23787,6 +23816,8 @@ Notas importantes:
     const facturasSource = record || draft;
     const ventaSucursales = getVentaSucursalesForCliente(selectedClienteId, selectedSucursalId);
     const sucursalDisabled = missingCatalogs || !selectedClienteId || !ventaSucursales.length;
+    const ocSuggestions = getCompraOcSuggestions();
+    const ocListId = record ? 'venta-oc-compras-editar' : 'venta-oc-compras-nueva';
 
     return `
       <form class="venta-form" data-venta-form data-current-cobrado="${escapeHtml(record?.totalCobrado || 0)}" data-current-ajustes="${escapeHtml(JSON.stringify(record?.ajustes || []))}" novalidate>
@@ -23794,7 +23825,11 @@ Notas importantes:
         <div class="form-grid">
           <label class="form-field">
             <span>Número OC <span class="required-dot" aria-label="obligatorio">*</span></span>
-            <input type="text" name="numeroDocumento" value="${escapeHtml(record?.numeroDocumento || cleanText(draft.numeroDocumento))}" placeholder="Ej. OC-001" required autocomplete="off" />
+            <input type="text" name="numeroDocumento" value="${escapeHtml(record?.numeroDocumento || cleanText(draft.numeroDocumento))}" list="${ocListId}" placeholder="Selecciona o escribe una OC" required autocomplete="off" />
+            <datalist id="${ocListId}">
+              ${ocSuggestions.map((numero) => `<option value="${escapeHtml(numero)}"></option>`).join('')}
+            </datalist>
+            <small>${ocSuggestions.length ? 'Selecciona una OC registrada en Compras o escribe un número nuevo.' : 'Puedes escribir una OC nueva. Las OC registradas en Compras aparecerán como sugerencias.'}</small>
           </label>
           <label class="form-field">
             <span>Fecha de Registro <span class="required-dot" aria-label="obligatorio">*</span></span>
@@ -24779,7 +24814,7 @@ Notas importantes:
     if (!id) return [];
     return (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [])
       .map((record) => normalizeCompraProveedorRecord(record))
-      .filter((compra) => compra.activo && compra.ventaIds.includes(id))
+      .filter((compra) => compra.activo && getCompraEffectiveVentaIds(compra).includes(id))
       .map((compra) => recalculateCompraProveedorWithPagos(compra, appData.pagosProveedores))
       .filter((compra) => compra.saldoPorPagar > 0);
   }
@@ -26661,7 +26696,7 @@ Notas importantes:
     const facturasCompact = formatFacturasProveedorCompact(facturasRelacionadas);
     const referenciaDocumental = getCompraProveedorReferenciaDocumental(record);
 
-    const ocSummary = record.ventaIds.map(getCompraOcLabel).join('; ');
+    const ocSummary = [getCompraOcManualValidation(record).label, ...record.ventaIds.map(getCompraOcLabel)].filter(Boolean).join('; ');
     const ajustesRow = renderCompraAjustesCompactRow(record, 10);
     return `
       <tr class="compact-record-row compra-row ${record.activo ? 'is-active' : 'is-inactive'}">
@@ -26778,6 +26813,7 @@ Notas importantes:
       facturaReferencia,
       facturasRelacionadas,
       ventaIds: normalizeCompraVentaIds(formData.getAll('ventaIds')),
+      numeroOcManual: cleanText(formData.get('numeroOcManual')),
       fechaCompra,
       diasCredito,
       fechaVencimiento,
@@ -26938,6 +26974,7 @@ Notas importantes:
       totalCompra: formatNumberInput(totalCompra),
       facturasRelacionadas,
       ventaIds: normalizeCompraVentaIds(formData.getAll('ventaIds')),
+      numeroOcManual: cleanText(formData.get('numeroOcManual')),
       condicionPagoSnapshot,
       metodoPagoContadoId: cleanText(formData.get('metodoPagoContadoId')),
       bancoPagoContadoId: cleanText(formData.get('bancoPagoContadoId')),
@@ -27002,7 +27039,7 @@ Notas importantes:
       entityType: 'Compra',
       entityRef: compraRefLabel,
       amount: newRecord.totalAjustado || newRecord.totalCompra,
-      detail: buildActivityDetail([existingRecord ? 'Compra editada' : 'Compra registrada', compraRefLabel, newRecord.condicionPagoSnapshot, formatMoney(newRecord.totalAjustado || newRecord.totalCompra), autoPagoApplied ? 'Pago automático aplicado' : '', `OC vinculadas: ${newRecord.ventaIds.length ? newRecord.ventaIds.map(getCompraOcLabel).join('; ') : 'ninguna'}`]),
+      detail: buildActivityDetail([existingRecord ? 'Compra editada' : 'Compra registrada', compraRefLabel, newRecord.condicionPagoSnapshot, formatMoney(newRecord.totalAjustado || newRecord.totalCompra), autoPagoApplied ? 'Pago automático aplicado' : '', `OC vinculadas: ${[newRecord.numeroOcManual, ...newRecord.ventaIds.map(getCompraOcLabel)].filter(Boolean).join('; ') || 'ninguna'}`]),
       source: 'local'
     });
     if (autoPagoApplied) {
