@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.127-compra-oc-compacta';
+  const APP_VERSION = '0.18.128-compra-condicion-proveedor';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -26443,7 +26443,7 @@ Notas importantes:
     const selectedProveedorId = record?.proveedorId || cleanText(draft.proveedorId);
     const selectedTerms = selectedProveedorId ? getCatalogPaymentTerms('proveedores', selectedProveedorId) : { condicionPago: 'Crédito', diasCredito: 0 };
     const storedCondition = cleanText(record?.condicionPagoSnapshot || draft.condicionPagoSnapshot);
-    const condicionPagoSnapshot = storedCondition ? normalizePaymentCondition(storedCondition) : 'Crédito';
+    const condicionPagoSnapshot = storedCondition ? normalizePaymentCondition(storedCondition) : (record ? 'Crédito' : selectedTerms.condicionPago);
     const isContado = condicionPagoSnapshot === 'Contado';
     const fechaCompra = record?.fechaCompra || toDateInputValue(draft.fechaCompra) || getWorkPeriodDefaultDate();
     const draftDias = draft.diasCredito ?? '';
@@ -27123,8 +27123,8 @@ Notas importantes:
       proveedorId: saved.proveedorId,
       fechaCompra: saved.fechaCompra || todayInputValue(),
       diasCredito,
-      fechaVencimiento: addDaysToDate(saved.fechaCompra, diasCredito) || saved.fechaCompra || todayInputValue(),
-      condicionPagoSnapshot: 'Crédito'
+      fechaVencimiento: terms.condicionPago === 'Contado' ? '' : (addDaysToDate(saved.fechaCompra, diasCredito) || saved.fechaCompra || todayInputValue()),
+      condicionPagoSnapshot: terms.condicionPago
     };
   }
 
@@ -27467,7 +27467,7 @@ Notas importantes:
 
     if (conditionSelect) {
       conditionSelect.disabled = !proveedorId;
-      conditionSelect.value = 'Crédito';
+      conditionSelect.value = proveedorId ? terms.condicionPago : 'Crédito';
     }
     if (daysInput) daysInput.value = String(terms.diasCredito || 0);
     if (dueInput) dueInput.value = addDaysToDate(dateInput?.value, Number(terms.diasCredito) || 0) || dateInput?.value || todayInputValue();
