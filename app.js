@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.125-venta-oc-seleccion';
+  const APP_VERSION = '0.18.126-compra-varias-oc';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -5087,17 +5087,34 @@ Notas importantes:
     return `${cliente?.nombre || venta.clienteNombre || 'Cliente sin nombre'} · ${sucursal?.nombre || venta.sucursalNombre || 'Sin sucursal'} · OC ${venta.numeroDocumento || 'Sin número'}${venta.activo ? '' : ' · Anulada'}`;
   }
 
+  function getCompraOcManualNumbers(record) {
+    const seen = new Set();
+    return String(record?.numeroOcManual ?? '').split(/[,;\n\r]+/)
+      .map((numero) => cleanText(numero))
+      .filter((numero) => {
+        const key = numero.toLocaleLowerCase('es');
+        if (!numero || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }
+
   function getCompraOcManualValidation(record) {
-    const numero = cleanText(record?.numeroOcManual);
-    if (!numero) return { ventaId: '', label: '' };
-    const matches = (Array.isArray(appData.ventas) ? appData.ventas : [])
-      .filter((venta) => normalizeVentaRecord(venta).activo && cleanText(venta.numeroDocumento).toLocaleLowerCase('es') === numero.toLocaleLowerCase('es'));
-    if (matches.length === 1) return { ventaId: matches[0].id, label: `OC ${numero} · Validada` };
-    return { ventaId: '', label: `OC ${numero} · ${matches.length ? 'Varias ventas coinciden; revisa el número' : 'Pendiente de registrar venta'}` };
+    const ventas = (Array.isArray(appData.ventas) ? appData.ventas : [])
+      .filter((venta) => normalizeVentaRecord(venta).activo);
+    const results = getCompraOcManualNumbers(record).map((numero) => {
+      const matches = ventas.filter((venta) => cleanText(venta.numeroDocumento).toLocaleLowerCase('es') === numero.toLocaleLowerCase('es'));
+      if (matches.length === 1) return { ventaId: matches[0].id, label: `OC ${numero} · Validada` };
+      return { ventaId: '', label: `OC ${numero} · ${matches.length ? 'Varias ventas coinciden; revisa el número' : 'Pendiente de registrar venta'}` };
+    });
+    return {
+      ventaIds: normalizeCompraVentaIds(results.map((result) => result.ventaId)),
+      label: results.map((result) => result.label).join('; ')
+    };
   }
 
   function getCompraEffectiveVentaIds(record) {
-    return normalizeCompraVentaIds([...normalizeCompraVentaIds(record?.ventaIds), getCompraOcManualValidation(record).ventaId]);
+    return normalizeCompraVentaIds([...normalizeCompraVentaIds(record?.ventaIds), ...getCompraOcManualValidation(record).ventaIds]);
   }
 
   function renderCompraOcBlock(record) {
@@ -5107,9 +5124,9 @@ Notas importantes:
       <fieldset class="compra-oc-block">
         <legend>OC de la compra (opcional)</legend>
         <label class="form-field">
-          <span>Número de OC</span>
-          <input type="text" name="numeroOcManual" value="${escapeHtml(cleanText(record?.numeroOcManual))}" placeholder="Ingresa el número de OC" />
-          <small>Puedes guardar antes de registrar la venta. Se valida cuando exista una única venta activa con el mismo número.</small>
+          <span>Números de OC</span>
+          <textarea name="numeroOcManual" rows="3" placeholder="Ej. OC-001, OC-002, OC-003">${escapeHtml(cleanText(record?.numeroOcManual))}</textarea>
+          <small>Ingresa varias OC separadas por coma, punto y coma o salto de línea. Puedes guardar antes de registrar las ventas; cada OC se valida cuando exista una única venta activa con ese número.</small>
         </label>
         ${validation.label ? `<p class="compact-note">${escapeHtml(validation.label)}</p>` : ''}
         ${selected.length ? `<div class="compra-oc-options">${selected.map((id) => `<label class="compra-oc-option"><input type="checkbox" name="ventaIds" value="${escapeHtml(id)}" checked /><span>${escapeHtml(getCompraOcLabel(id))}</span></label>`).join('')}</div>` : ''}
@@ -5137,7 +5154,7 @@ Notas importantes:
       facturaReferencia: cleanText(raw.facturaReferencia || raw.factura || raw.referencia || raw.documento),
       facturasRelacionadas: normalizeCompraProveedorFacturasFromRaw(raw),
       ventaIds: normalizeCompraVentaIds(raw.ventaIds),
-      numeroOcManual: cleanText(raw.numeroOcManual),
+      numeroOcManual: getCompraOcManualNumbers(raw).join(', '),
       fechaCompra,
       diasCredito: safeDiasCredito,
       fechaVencimiento,
@@ -23782,7 +23799,7 @@ Notas importantes:
     const seen = new Set();
     return (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : [])
       .filter((compra) => normalizeCompraProveedorRecord(compra).activo)
-      .map((compra) => cleanText(compra.numeroOcManual))
+      .flatMap((compra) => getCompraOcManualNumbers(compra))
       .filter((numero) => {
         const key = numero.toLocaleLowerCase('es');
         if (!numero || seen.has(key)) return false;
@@ -26813,7 +26830,7 @@ Notas importantes:
       facturaReferencia,
       facturasRelacionadas,
       ventaIds: normalizeCompraVentaIds(formData.getAll('ventaIds')),
-      numeroOcManual: cleanText(formData.get('numeroOcManual')),
+      numeroOcManual: getCompraOcManualNumbers({ numeroOcManual: formData.get('numeroOcManual') }).join(', '),
       fechaCompra,
       diasCredito,
       fechaVencimiento,
@@ -26974,7 +26991,7 @@ Notas importantes:
       totalCompra: formatNumberInput(totalCompra),
       facturasRelacionadas,
       ventaIds: normalizeCompraVentaIds(formData.getAll('ventaIds')),
-      numeroOcManual: cleanText(formData.get('numeroOcManual')),
+      numeroOcManual: getCompraOcManualNumbers({ numeroOcManual: formData.get('numeroOcManual') }).join(', '),
       condicionPagoSnapshot,
       metodoPagoContadoId: cleanText(formData.get('metodoPagoContadoId')),
       bancoPagoContadoId: cleanText(formData.get('bancoPagoContadoId')),
