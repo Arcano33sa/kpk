@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.130-compra-sin-nota-condicion';
+  const APP_VERSION = '0.18.131-compra-ajuste-modal';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1444,6 +1444,7 @@ Notas importantes:
     editingId: null,
     quickCapture: null,
     selectedAjusteCompraId: '',
+    ajusteModalOpen: false,
     openGroupKey: '',
     message: null,
     messageType: 'success'
@@ -23143,6 +23144,7 @@ Notas importantes:
   function getVentaModalId() { return 'venta'; }
   function getVentaAjusteModalId() { return 'venta-ajuste'; }
   function getCompraModalId() { return 'compra'; }
+  function getCompraAjusteModalId() { return 'compra-ajuste'; }
   function getCobroModalId() { return 'cobro'; }
   function getPagoModalId() { return 'pago'; }
   function getGastoModalId() { return 'gasto'; }
@@ -26311,17 +26313,6 @@ Notas importantes:
             ${renderCompraProveedorForm(null, proveedoresActivos, missingProviders, proveedoresState.quickCapture)}
           </article>
 
-          <article class="panel-card compra-ajuste-card">
-            <div class="section-title-row">
-              <div>
-                <span class="eyebrow mini">Ajustes / notas</span>
-                <h2>Ajuste</h2>
-              </div>
-            </div>
-            <p class="muted-text">Reduce el saldo de una factura existente sin crear pago, caja ni banco. Aquí se descuenta el faltante; el dinero no se teletransporta.</p>
-            ${renderProveedorAjusteForm(comprasAjustables)}
-          </article>
-
           <article class="panel-card compra-list-card">
             <div class="section-title-row">
               <div>
@@ -26334,6 +26325,7 @@ Notas importantes:
           </article>
         </div>
         ${editingRecord ? renderEditModal(getCompraModalId(), 'Editar compra / deuda', 'Actualiza las facturas relacionadas sin borrar pagos ligados ni historial.', renderCompraProveedorForm(editingRecord, proveedoresActivos, missingProviders)) : ''}
+        ${proveedoresState.ajusteModalOpen ? renderEditModal(getCompraAjusteModalId(), 'Ajustar compra / deuda', 'Reduce el saldo de la compra seleccionada sin crear pago, caja ni banco.', renderProveedorAjusteForm(comprasAjustables)) : ''}
       </section>
     `;
   }
@@ -26419,6 +26411,7 @@ Notas importantes:
         </label>
         <div class="form-actions">
           <button type="submit" class="card-action">Registrar ajuste</button>
+          <button type="button" class="secondary-action" data-modal-close="${getCompraAjusteModalId()}">Cancelar</button>
         </div>
       </form>
     `;
@@ -27070,6 +27063,7 @@ Notas importantes:
     const record = appData.comprasProveedores.find((item) => item.id === recordId);
     if (!record) return;
     proveedoresState.editingId = recordId;
+    proveedoresState.ajusteModalOpen = false;
     proveedoresState.quickCapture = null;
     openAccordionGroupForRecord('compras', record);
     proveedoresState.message = null;
@@ -27131,6 +27125,7 @@ Notas importantes:
     proveedoresState.editingId = null;
     proveedoresState.quickCapture = null;
     proveedoresState.selectedAjusteCompraId = '';
+    proveedoresState.ajusteModalOpen = false;
   }
 
   function clearCompraProveedorForm() {
@@ -27202,6 +27197,7 @@ Notas importantes:
     });
 
     const savedCompra = appData.comprasProveedores.find((record) => record.id === compraProveedorId);
+    proveedoresState.ajusteModalOpen = false;
     proveedoresState.selectedAjusteCompraId = compraProveedorId;
     openAccordionGroupForRecord('compras', savedCompra || compra);
     proveedoresState.message = `Ajuste ${ajuste.tipo} por ${formatMoney(ajuste.monto)} aplicado a ${compra.facturaReferencia} (${getAjusteFacturaActivityPart(ajuste)}). Saldo recalculado sin crear pago.`;
@@ -27222,9 +27218,19 @@ Notas importantes:
 
   function startAjusteForCompra(compraProveedorId) {
     const cleanCompraId = cleanText(compraProveedorId);
+    const compra = getComprasProveedoresOrdenadas().find((record) => record.id === cleanCompraId);
+    if (!compra || !compra.activo || compra.saldoPorPagar <= 0) return;
     proveedoresState.selectedAjusteCompraId = cleanCompraId;
-    const compra = appData.comprasProveedores.find((record) => record.id === cleanCompraId);
+    proveedoresState.editingId = null;
+    proveedoresState.ajusteModalOpen = true;
     if (compra) openAccordionGroupForRecord('compras', compra);
+    proveedoresState.message = null;
+    renderRoute({ preserveScroll: true });
+  }
+
+  function closeCompraAjusteModal() {
+    proveedoresState.ajusteModalOpen = false;
+    proveedoresState.selectedAjusteCompraId = '';
     proveedoresState.message = null;
     renderRoute({ preserveScroll: true });
   }
@@ -28184,6 +28190,7 @@ Notas importantes:
     proveedoresState.editingId = cleanCompraId;
     proveedoresState.quickCapture = null;
     proveedoresState.selectedAjusteCompraId = '';
+    proveedoresState.ajusteModalOpen = false;
     openAccordionGroupForRecord('compras', record);
     proveedoresState.message = null;
     setRoute('proveedores');
@@ -35588,6 +35595,7 @@ ${rowsXml}
     else if (id === getVentaModalId()) clearVentaForm();
     else if (id === getVentaAjusteModalId()) closeVentaAjusteModal();
     else if (id === getCompraModalId()) clearCompraProveedorForm();
+    else if (id === getCompraAjusteModalId()) closeCompraAjusteModal();
     else if (id === getCobroModalId()) clearCobroForm();
     else if (id === getPagoModalId()) clearPagoProveedorForm();
     else if (id === getGastoModalId()) clearGastoForm();
