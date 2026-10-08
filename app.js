@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.126-compra-varias-oc';
+  const APP_VERSION = '0.18.127-compra-oc-compacta';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -5119,18 +5119,12 @@ Notas importantes:
 
   function renderCompraOcBlock(record) {
     const selected = normalizeCompraVentaIds(record?.ventaIds);
-    const validation = getCompraOcManualValidation(record);
     return `
-      <fieldset class="compra-oc-block">
-        <legend>OC de la compra (opcional)</legend>
-        <label class="form-field">
-          <span>Números de OC</span>
-          <textarea name="numeroOcManual" rows="3" placeholder="Ej. OC-001, OC-002, OC-003">${escapeHtml(cleanText(record?.numeroOcManual))}</textarea>
-          <small>Ingresa varias OC separadas por coma, punto y coma o salto de línea. Puedes guardar antes de registrar las ventas; cada OC se valida cuando exista una única venta activa con ese número.</small>
-        </label>
-        ${validation.label ? `<p class="compact-note">${escapeHtml(validation.label)}</p>` : ''}
-        ${selected.length ? `<div class="compra-oc-options">${selected.map((id) => `<label class="compra-oc-option"><input type="checkbox" name="ventaIds" value="${escapeHtml(id)}" checked /><span>${escapeHtml(getCompraOcLabel(id))}</span></label>`).join('')}</div>` : ''}
-      </fieldset>
+      <label class="form-field compra-oc-inline">
+        <span>OC relacionadas</span>
+        <input type="text" name="numeroOcManual" value="${escapeHtml(getCompraOcManualNumbers(record).join(', '))}" />
+        ${selected.map((id) => `<input type="hidden" name="ventaIds" value="${escapeHtml(id)}" />`).join('')}
+      </label>
     `;
   }
 
@@ -26477,6 +26471,7 @@ Notas importantes:
               ${proveedoresActivos.map((proveedor) => `<option value="${escapeHtml(proveedor.id)}" ${proveedor.id === selectedProveedorId ? 'selected' : ''}>${escapeHtml(proveedor.nombre || 'Proveedor sin nombre')} · ${escapeHtml(formatPaymentTermsLabel(proveedor))}</option>`).join('')}
             </select>
           </label>
+          ${renderCompraOcBlock(facturasSource)}
           <input type="hidden" name="facturaReferencia" value="${escapeHtml(facturaReferencia)}" />
           <label class="form-field">
             <span>Fecha compra <span class="required-dot" aria-label="obligatorio">*</span></span>
@@ -26517,7 +26512,6 @@ Notas importantes:
 
         ${renderCompraFacturasRelacionadasBlock(facturasSource)}
 
-        ${renderCompraOcBlock(facturasSource)}
 
         ${renderCompraContadoPaymentBlock(record || draft, selectedProveedorId, isContado)}
 
