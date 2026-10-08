@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_128_compra_condicion_proveedor';
+const CACHE_VERSION = 'v0_18_129_compra_oc_etiqueta';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

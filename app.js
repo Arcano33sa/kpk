@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.128-compra-condicion-proveedor';
+  const APP_VERSION = '0.18.129-compra-oc-etiqueta';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -5120,7 +5120,7 @@ Notas importantes:
   function renderCompraOcBlock(record) {
     const selected = normalizeCompraVentaIds(record?.ventaIds);
     return `
-      <label class="form-field compra-oc-inline">
+      <label class="form-field">
         <span>OC relacionadas</span>
         <input type="text" name="numeroOcManual" value="${escapeHtml(getCompraOcManualNumbers(record).join(', '))}" />
         ${selected.map((id) => `<input type="hidden" name="ventaIds" value="${escapeHtml(id)}" />`).join('')}
