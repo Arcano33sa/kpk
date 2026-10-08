@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.129-compra-oc-etiqueta';
+  const APP_VERSION = '0.18.130-compra-sin-nota-condicion';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -26483,7 +26483,6 @@ Notas importantes:
               <option value="Crédito" ${condicionPagoSnapshot === 'Crédito' ? 'selected' : ''}>Crédito</option>
               <option value="Contado" ${condicionPagoSnapshot === 'Contado' ? 'selected' : ''}>Contado</option>
             </select>
-            <small>Aplica solo a esta compra; no modifica al proveedor.</small>
           </label>
           <label class="form-field ${isContado ? 'is-hidden' : ''}" data-compra-credit-days-field>
             <span>Días de crédito</span>
