@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_133_periodo_actualizar_datos';
+const CACHE_VERSION = 'v0_18_135_bdatos_excel_e2';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

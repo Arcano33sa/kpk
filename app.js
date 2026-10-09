@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.133-periodo-actualizar-datos';
+  const APP_VERSION = '0.18.135-bdatos-excel-e2';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1410,6 +1410,8 @@ Notas importantes:
     message: null,
     messageType: 'success'
   };
+
+  let bdatosExcelState = { fileName: '', processing: false, preview: null, error: '', requestId: 0 };
 
   let bdatosState = {
     search: '',
@@ -22304,6 +22306,8 @@ Notas importantes:
         ${bdatosState.message ? `<div class="form-message ${bdatosState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(bdatosState.message)}</div>` : ''}
         ${renderRolePermissionNotice('editCatalogs', 'Usuario normal puede consultar Bdatos, pero agregar, editar o borrar artículos queda reservado para Administrador.')}
 
+        ${renderBdatosExcelImport()}
+
         <div class="bdatos-layout">
           <article class="panel-card bdatos-form-card">
             <div class="section-title-row">
@@ -22337,6 +22341,145 @@ Notas importantes:
         ${editingRecord ? renderEditModal(getBdatosModalId(), 'Editar artículo', 'Modifica Código, Descripción y Precio sin usar el formulario de ingreso.', renderBdatosForm(editingRecord, 'edit', !canEditBdatos)) : ''}
       </section>
     `;
+  }
+
+  function renderBdatosExcelImport() {
+    const state = bdatosExcelState;
+    const preview = state.preview;
+    return `
+      <article class="panel-card">
+        <h2>Actualizar BD desde Excel</h2>
+        <p class="muted-text">Selecciona un .xlsx con columnas Código, Descripción y Precio. Precio debe ser numérico; usa punto para decimales y conserva los códigos como texto si tienen ceros iniciales.</p>
+        <p class="notice compact-notice">El reemplazo se guarda en este dispositivo y elimina de BD los productos ausentes del Excel. Revisa la vista previa antes de confirmar. BD no se sincroniza entre dispositivos mediante la nube actual.</p>
+        <label class="form-field"><span>Archivo Excel</span><input type="file" accept=".xlsx" data-bdatos-excel-file ${!canCurrentRole('editCatalogs') || state.processing ? 'disabled' : ''} /></label>
+        ${state.fileName ? `<p>Archivo: ${escapeHtml(state.fileName)}</p>` : ''}
+        ${state.processing ? '<p role="status">Leyendo archivo Excel…</p>' : ''}
+        ${state.error ? `<p class="form-message is-error" role="alert">${escapeHtml(state.error)}</p>` : ''}
+        ${preview ? `
+          <p class="form-message ${preview.errors.length ? 'is-error' : 'is-success'}" role="status">${preview.errors.length ? 'Archivo con errores. No está listo para reemplazar BD.' : 'Archivo válido. Puedes confirmar el reemplazo de BD.'}</p>
+          <p>Hoja: ${escapeHtml(preview.sheetName)} · Productos actuales: ${getBdatosRecords().length} · Filas del Excel: ${preview.records.length} · Errores: ${preview.errors.length}</p>
+          ${preview.errors.length ? `<ul>${preview.errors.slice(0, 50).map((error) => `<li>${escapeHtml(error)}</li>`).join('')}</ul>${preview.errors.length > 50 ? '<p>Se muestran los primeros 50 errores.</p>' : ''}` : ''}
+          <div class="bdatos-table-wrap"><table><thead><tr><th>Código</th><th>Descripción</th><th>Precio</th></tr></thead><tbody>${preview.records.slice(0, 100).map((record) => `<tr><td>${escapeHtml(record.codigo)}</td><td>${escapeHtml(record.descripcion)}</td><td>${escapeHtml(record.precioRaw)}</td></tr>`).join('')}</tbody></table></div>
+          ${preview.records.length > 100 ? '<p>Vista previa de los primeros 100 productos.</p>' : ''}
+        ` : ''}
+        ${preview ? `<button type="button" class="danger-action" data-bdatos-excel-replace ${!canCurrentRole('editCatalogs') || state.processing || preview.errors.length || !preview.records.length ? 'disabled' : ''}>Reemplazar productos de BD</button>` : ''}
+        ${state.fileName ? '<button type="button" class="secondary-action" data-bdatos-excel-clear>Descartar archivo</button>' : ''}
+      </article>
+    `;
+  }
+
+  function buildBdatosExcelPreview(workbook) {
+    const required = ['codigo', 'descripcion', 'precio'];
+    const candidates = [];
+    Object.values(workbook.sheets).forEach((sheet) => {
+      const headerIndex = sheet.rows.findIndex((row) => required.every((key) => row.map(normalizeExcelKey).includes(key)));
+      if (headerIndex >= 0) candidates.push({ sheet, headerIndex });
+    });
+    if (!candidates.length) throw new Error('No se encontró una hoja con encabezados Código, Descripción y Precio.');
+    if (candidates.length > 1) throw new Error('Hay varias hojas de productos. Deja una sola hoja con Código, Descripción y Precio para evitar ambigüedad.');
+    const { sheet, headerIndex } = candidates[0];
+    const headers = sheet.rows[headerIndex].map(normalizeExcelKey);
+    if (required.some((key) => headers.filter((header) => header === key).length !== 1)) {
+      throw new Error('Los encabezados Código, Descripción y Precio deben aparecer una sola vez.');
+    }
+    const errors = [];
+    const seen = new Set();
+    const records = [];
+    sheet.rows.slice(headerIndex + 1).forEach((row, index) => {
+      if (!row.some((cell) => cleanText(cell))) return;
+      const codigo = cleanText(row[headers.indexOf('codigo')]);
+      const descripcion = cleanText(row[headers.indexOf('descripcion')]);
+      const precioRaw = cleanText(row[headers.indexOf('precio')]);
+      const numericPrice = /^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(precioRaw) ? Number(precioRaw.replace(/,/g, '')) : Number.NaN;
+      const label = `Registro ${index + 1} después del encabezado`;
+      if (!codigo) errors.push(`${label}: falta Código.`);
+      if (!descripcion) errors.push(`${label}: falta Descripción.`);
+      if (!precioRaw || !Number.isFinite(numericPrice) || numericPrice < 0) errors.push(`${label}: Precio debe ser un número válido, sin negativos.`);
+      if (codigo && seen.has(codigo)) errors.push(`${label}: código duplicado “${codigo}”.`);
+      if (codigo) seen.add(codigo);
+      records.push({ codigo, descripcion, precioRaw, precio: Number.isFinite(numericPrice) ? roundMoney(numericPrice) : null });
+    });
+    if (!records.length) errors.push('El archivo no contiene productos. No puede reemplazar BD.');
+    return { sheetName: sheet.name, records, errors };
+  }
+
+  async function handleBdatosExcelFile(file) {
+    if (!file || !canCurrentRole('editCatalogs')) return;
+    const requestId = bdatosExcelState.requestId + 1;
+    bdatosExcelState = { fileName: file.name || '', processing: true, preview: null, error: '', requestId };
+    renderRoute({ preserveScroll: true });
+    try {
+      if (!cleanText(file.name).toLowerCase().endsWith('.xlsx')) throw new Error('Selecciona un archivo .xlsx.');
+      if (typeof window.JSZip === 'undefined') throw new Error('No se encontró JSZip local para leer Excel.');
+      const workbook = await readXlsxWorkbook(await file.arrayBuffer());
+      const preview = buildBdatosExcelPreview(workbook);
+      if (bdatosExcelState.requestId !== requestId) return;
+      bdatosExcelState.preview = preview;
+    } catch (error) {
+      if (bdatosExcelState.requestId !== requestId) return;
+      bdatosExcelState.error = error.message || 'No se pudo leer el Excel.';
+    }
+    bdatosExcelState.processing = false;
+    if (getRoute() === 'bdatos') renderRoute({ preserveScroll: true });
+  }
+
+  function buildBdatosExcelReplacement(preview, existingRecords, timestamp) {
+    if (!preview || preview.errors.length || !preview.records.length) throw new Error('Selecciona un Excel válido con productos antes de reemplazar BD.');
+    const seen = new Set();
+    const existingByCode = new Map(existingRecords.map((record) => [cleanText(record.codigo), record]));
+    return sortBdatosRecords(preview.records.map((record) => {
+      const codigo = cleanText(record.codigo);
+      const descripcion = cleanText(record.descripcion);
+      if (!codigo || !descripcion || !Number.isFinite(record.precio) || record.precio < 0 || seen.has(codigo)) {
+        throw new Error('La lista contiene productos inválidos o códigos duplicados. BD no fue reemplazada.');
+      }
+      seen.add(codigo);
+      const existing = existingByCode.get(codigo);
+      return {
+        id: existing?.id || generateId('bd'),
+        codigo,
+        descripcion,
+        precio: record.precio,
+        createdAt: existing?.createdAt || timestamp,
+        updatedAt: timestamp
+      };
+    }));
+  }
+
+  function confirmBdatosExcelReplacement() {
+    if (!canCurrentRole('editCatalogs')) return;
+    const state = bdatosExcelState;
+    if (state.processing || state.error || !state.preview || state.preview.errors.length || !state.preview.records.length) return;
+    const previousCount = (appData.bdatos || []).length;
+    if (!window.confirm(`El archivo “${state.fileName}” reemplazará los ${previousCount} productos actuales de BD por ${state.preview.records.length} productos. Los productos que no estén en el Excel desaparecerán de BD. ¿Confirmar reemplazo?`)) return;
+    try {
+      const timestamp = nowIso();
+      const records = buildBdatosExcelReplacement(state.preview, appData.bdatos || [], timestamp);
+      const nextData = {
+        ...appData,
+        bdatos: records,
+        bdatosUpdatedAt: timestamp,
+        metadata: {
+          ...appData.metadata,
+          appName: APP_NAME,
+          appVersion: APP_VERSION,
+          schemaVersion: SCHEMA_VERSION,
+          createdAt: appData.metadata?.createdAt || timestamp,
+          updatedAt: timestamp
+        }
+      };
+      // Guardar antes de aplicar: un fallo de almacenamiento conserva la BD actual.
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextData));
+      appData = nextData;
+      bdatosState.editingId = null;
+      bdatosState.search = '';
+      bdatosState.message = `BD reemplazada: ${previousCount} productos anteriores → ${records.length} productos del Excel. Guardado local completado.`;
+      bdatosState.messageType = 'success';
+      bdatosExcelState = { fileName: '', processing: false, preview: null, error: '', requestId: state.requestId + 1 };
+    } catch (error) {
+      bdatosExcelState.error = `No se reemplazó BD: ${error.message || 'no se pudo guardar el archivo.'}`;
+    }
+    renderRoute({ preserveScroll: true });
   }
 
   function renderBdatosForm(record, mode = 'create', disabled = false) {
@@ -36015,6 +36158,19 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-bdatos-delete]').forEach((button) => {
       button.addEventListener('click', () => deleteBdatosRecord(button.dataset.bdatosDelete));
+    });
+
+    viewRoot.querySelectorAll('[data-bdatos-excel-file]').forEach((input) => {
+      input.addEventListener('change', () => handleBdatosExcelFile(input.files?.[0]));
+    });
+    viewRoot.querySelectorAll('[data-bdatos-excel-replace]').forEach((button) => {
+      button.addEventListener('click', confirmBdatosExcelReplacement);
+    });
+    viewRoot.querySelectorAll('[data-bdatos-excel-clear]').forEach((button) => {
+      button.addEventListener('click', () => {
+        bdatosExcelState = { fileName: '', processing: false, preview: null, error: '', requestId: bdatosExcelState.requestId + 1 };
+        renderRoute({ preserveScroll: true });
+      });
     });
 
     setupBdatosSearch();
