@@ -209,7 +209,7 @@ button {
 .work-period-panel {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(190px, 260px);
+  grid-template-columns: auto minmax(0, 1fr) minmax(190px, 260px);
   gap: 14px;
   align-items: center;
   padding: 14px 16px;
@@ -224,7 +224,19 @@ button {
 }
 
 .work-period-panel.is-empty {
-  grid-template-columns: 1fr;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.work-period-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.work-period-panel .work-period-save,
+.work-period-panel .work-period-refresh {
+  min-height: 44px;
+  white-space: nowrap;
 }
 
 .work-period-copy {
@@ -658,13 +670,18 @@ h3 {
     padding-bottom: 30px;
   }
 
-  .work-period-panel {
+  .work-period-panel,
+  .work-period-panel.is-empty {
     grid-template-columns: 1fr;
     padding: 13px;
   }
 
   .work-period-copy strong {
     white-space: normal;
+  }
+
+  .work-period-actions .card-action {
+    flex: 1 1 140px;
   }
 
   .brand-logo {

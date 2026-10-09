@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.131-compra-ajuste-modal';
+  const APP_VERSION = '0.18.133-periodo-actualizar-datos';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -12966,10 +12966,18 @@ Notas importantes:
     }
     const periods = getAvailableWorkPeriods();
     const active = resolveActiveWorkPeriodInfo();
+    const canRefreshData = Boolean(getDataSyncStatusInfo().canRefreshCloud && canCurrentRole('updateData'));
+    const actionsHtml = `
+      <div class="work-period-actions">
+        <button type="button" class="card-action work-period-save" data-session-save>Guardar datos</button>
+        <button type="button" class="card-action work-period-refresh" data-cloud-refresh ${canRefreshData ? '' : 'disabled'}>Actualizar datos</button>
+      </div>
+    `;
 
     if (!periods.length || !active) {
       periodWorkbar.innerHTML = `
         <section class="work-period-panel is-empty" aria-label="Período de trabajo">
+          ${actionsHtml}
           <div class="work-period-copy">
             <span class="eyebrow mini">Período de trabajo</span>
             <strong>No hay períodos disponibles para trabajar.</strong>
@@ -12977,15 +12985,13 @@ Notas importantes:
           </div>
         </section>
       `;
-      return;
-    }
-
-    periodWorkbar.innerHTML = `
+    } else {
+      periodWorkbar.innerHTML = `
       <section class="work-period-panel" aria-label="Selector global de Período de trabajo">
+        ${actionsHtml}
         <div class="work-period-copy">
           <span class="eyebrow mini">Período de trabajo</span>
           <strong>${escapeHtml(active.label)}</strong>
-          <small>Documento por período de origen; cobros y pagos por fecha real.</small>
         </div>
         <label class="work-period-select-shell">
           <span>Período</span>
@@ -12995,6 +13001,14 @@ Notas importantes:
         </label>
       </section>
     `;
+    }
+
+    periodWorkbar.querySelector('[data-session-save]')?.addEventListener('click', (event) => {
+      handleSessionSavePreview(event.currentTarget);
+    });
+    periodWorkbar.querySelector('[data-cloud-refresh]')?.addEventListener('click', (event) => {
+      handleCloudDataRefresh(event.currentTarget);
+    });
 
     periodWorkbar.querySelector('[data-work-period-selector]')?.addEventListener('change', (event) => {
       const next = normalizeWorkPeriodKey(event.target.value);

@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_131_compra_ajuste_modal';
+const CACHE_VERSION = 'v0_18_133_periodo_actualizar_datos';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
