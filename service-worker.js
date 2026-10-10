@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_135_bdatos_excel_e2';
+const CACHE_VERSION = 'v0_18_139_bdatos_e2_validacion';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.135-bdatos-excel-e2';
+  const APP_VERSION = '0.18.139-bdatos-e2-validacion';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1039,6 +1039,7 @@
   const FIRESTORE_TIMEOUT_REFRESH_MESSAGE = 'La actualización alcanzó el tiempo máximo de 120 segundos. Tus datos locales permanecen intactos y la nube continúa activa.';
 
   const CLOUD_REFRESH_BLOCK_DEFINITIONS = Object.freeze([
+    { key: 'bdatos', label: 'BD de productos', status: 'Actualizando BD…' },
     { key: 'catalogos_configuracion', label: 'Catálogos y configuración operativa', status: 'Actualizando Catálogos…' },
     { key: 'ventas_cobros', label: 'Ventas y Cobros', status: 'Actualizando Ventas y Cobros…' },
     { key: 'compras_pagos', label: 'Compras y Pagos', status: 'Actualizando Compras y Pagos…' },
@@ -1321,6 +1322,7 @@ Notas importantes:
 - No se reinician consecutivos de Excel Consulta, Excel Cierre ni JSON.
 - Si aparece el mensaje “Firestore no permite escritura todavía”, confirma que estas reglas hayan sido publicadas correctamente.`;
   const FIRESTORE_COLLECTION_CONTRACTS = Object.freeze([
+    { key: 'bdatos', path: 'workspaces/{workspaceId}/bdatos/{articuloId}', label: 'BD de productos', source: 'bdatos', idPolicy: 'Conservar IDs por código; publicar la lista y retiros en transacción con metadata/bdatos; validar revisión al descargar.' },
     { key: 'configuracion', path: 'workspaces/{workspaceId}/configuracion/sistema', label: 'Configuración', source: 'configuracion', idPolicy: 'Documento estable por área de configuración.' },
     { key: 'usuarios', path: 'workspaces/{workspaceId}/usuarios/{uid}', label: 'Usuarios', source: 'firebase_auth_future', idPolicy: 'uid de Firebase Auth como documentId futuro.' },
     { key: 'catalogos', path: 'workspaces/{workspaceId}/catalogos/{catalogoId}/items/{itemId}', label: 'Catálogos', source: 'catalogos', idPolicy: 'Conservar IDs actuales de clientes, sucursales, proveedores, categorías, métodos y bancos.' },
@@ -1410,6 +1412,9 @@ Notas importantes:
     message: null,
     messageType: 'success'
   };
+
+  let bdatosRecoveryBusy = false;
+  let bdatosPublicationBusy = false;
 
   let bdatosExcelState = { fileName: '', processing: false, preview: null, error: '', requestId: 0 };
 
@@ -3056,7 +3061,7 @@ Notas importantes:
   function applyInitialBdatosSeedIfNeeded(normalized, source = {}) {
     const sourceMetadata = isPlainObject(source?.metadata) ? source.metadata : {};
     const alreadySeeded = cleanText(sourceMetadata.bdatosSeedVersion) === BDATOS_INITIAL_SEED_VERSION;
-    if (alreadySeeded || (Array.isArray(normalized.bdatos) && normalized.bdatos.length > 0)) {
+    if (alreadySeeded || sourceMetadata.bdatosCloudInitialized === true || cleanText(sourceMetadata.bdatosCloudRevision) || (Array.isArray(normalized.bdatos) && normalized.bdatos.length > 0)) {
       normalized.metadata = {
         ...(isPlainObject(normalized.metadata) ? normalized.metadata : {}),
         bdatosSeedVersion: sourceMetadata.bdatosSeedVersion || normalized.metadata?.bdatosSeedVersion || '',
@@ -3652,7 +3657,7 @@ Notas importantes:
     const confirmedIds = new Set((Array.isArray(changes) ? changes : []).map((item) => cleanText(item?.id)).filter(Boolean));
     if (!confirmedIds.size) return 0;
     const before = sessionChangeQueue.length;
-    sessionChangeQueue = sessionChangeQueue.filter((item) => !(item && item.estado === 'pendiente' && confirmedIds.has(cleanText(item.id))));
+    sessionChangeQueue = sessionChangeQueue.filter((item) => !(item && item.estado === 'pendiente' && confirmedIds.has(cleanText(item.id)) && (cleanText(item.module).toLowerCase() !== 'bdatos' || changes.some((change) => change.id === item.id && change.operationSequence === item.operationSequence))));
     syncSessionChangeQueueGlobal();
     updateSessionChangeQueueDom();
     return before - sessionChangeQueue.length;
@@ -3800,6 +3805,7 @@ Notas importantes:
   async function handleSessionSavePreview(button = null) {
     if (button) button.disabled = true;
     ensureNotasStage3BaselineQueued();
+    restoreBdatosCloudPending();
     const pending = getPendingSessionChanges();
     if (!pending.length) {
       clearActionMessage(configState);
@@ -3842,7 +3848,7 @@ Notas importantes:
           ? SESSION_SAVE_MESSAGES.partialCleanupPending
           : (cleanupOnlyFailure
             ? SESSION_SAVE_MESSAGES.cleanupFailure
-            : (operationalFailure ? SESSION_SAVE_MESSAGES.failure : message)));
+            : (operationalFailure ? (result?.bdFailureMessage || SESSION_SAVE_MESSAGES.failure) : message)));
       const resultType = cleanupPendingAfterOperationalSuccess
         ? 'warning'
         : ((result?.ok && !operationalFailure && !unavailable) ? 'success' : 'error');
@@ -6901,8 +6907,19 @@ Notas importantes:
           excelCierre: readCloudSequenceValue(EXCEL_CIERRE_SEQUENCE_STORAGE_KEY)
         };
         let successfulDataBlocks = 0;
+        let bdatosRead = { applied: false };
 
         const blockTasks = [
+          {
+            def: getCloudRefreshBlockDefinition('bdatos'),
+            run: () => readBdatosCloudBlock(db, fs),
+            apply: (read) => {
+              bdatosRead = read;
+              if (!read.applied) return;
+              snapshot.bdatos = read.records;
+              snapshot.bdatosUpdatedAt = read.updatedAt;
+            }
+          },
           {
             def: getCloudRefreshBlockDefinition('catalogos_configuracion'),
             run: async () => {
@@ -7085,7 +7102,7 @@ Notas importantes:
         const pendingNames = report.pendingBlocks.slice();
         const isPartial = pendingNames.length > 0 || report.failed.length > 0 || report.globalExpired;
         const partialMessage = 'Actualización parcial. Algunos bloques continúan usando la copia local.';
-        const completeMessage = 'Actualización completada.';
+        const completeMessage = bdatosRead.notInitialized ? 'Actualización completada. BD aún no fue publicada; se conserva su lista local.' : 'Actualización completada.';
         report.finishedAt = nowIso();
 
         state.cloudActive = true;
@@ -7136,6 +7153,7 @@ Notas importantes:
           code: isPartial ? 'cloud/read-partial' : 'cloud/read-ok',
           message: isPartial ? partialMessage : completeMessage,
           snapshot: normalized,
+          bdatosRead,
           notasModulo,
           facturasModulo,
           seguimiento,
@@ -7743,6 +7761,138 @@ Notas importantes:
       };
     }
 
+    async function readBdatosDocumentsFromServer(db, fs) {
+      if (typeof fs.getDocsFromServer !== 'function') throw new Error('El SDK no permite verificar BD directamente con el servidor. Se conserva la copia local.');
+      const collection = fs.collection(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'bdatos');
+      const snapshot = await fs.getDocsFromServer(collection);
+      const records = [];
+      snapshot.forEach((document) => records.push(normalizeFirestoreDoc(document)));
+      return records;
+    }
+
+    async function readBdatosCloudBlock(db, fs, options = {}) {
+      if (!options.allowPending && hasBdatosCloudPending()) throw new Error('BD tiene cambios locales pendientes de Guardar Datos. Se conserva la lista local.');
+      const localSignature = JSON.stringify(appData.bdatos || []);
+      const localRevision = cleanText(appData.metadata?.bdatosCloudRevision);
+      if (typeof fs.getDocFromServer !== 'function') throw new Error('El SDK no permite verificar el control de BD directamente con el servidor.');
+      const controlRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'metadata', 'bdatos');
+      const beforeSnap = await fs.getDocFromServer(controlRef);
+      const before = beforeSnap.exists() ? normalizeFirestoreDoc(beforeSnap) : {};
+      if (before.initialized !== true) {
+        validateBdatosCloudRead(before, []);
+        return { applied: false, notInitialized: true };
+      }
+      const records = await readBdatosDocumentsFromServer(db, fs);
+      const afterSnap = await fs.getDocFromServer(controlRef);
+      const after = afterSnap.exists() ? normalizeFirestoreDoc(afterSnap) : {};
+      if (after.initialized !== true || before.revision !== after.revision || before.activeCount !== after.activeCount || before.schemaVersion !== after.schemaVersion) throw new Error('BD cambió durante la lectura. Reintenta la actualización; la lista local permanece intacta.');
+      const validated = validateBdatosCloudRead(after, records);
+      if ((!options.allowPending && hasBdatosCloudPending()) || localSignature !== JSON.stringify(appData.bdatos || []) || localRevision !== cleanText(appData.metadata?.bdatosCloudRevision)) throw new Error('BD cambió localmente durante la lectura. Se conserva la lista local.');
+      return { ...validated, applied: true, localSignature, localRevision };
+    }
+
+    async function readBdatosForRecovery() {
+      const { db, fs } = await ensureFirebaseFirestoreReady({ requireAdmin: true });
+      return withOperationTimeout(() => readBdatosCloudBlock(db, fs, { allowPending: true }), {
+        ms: FIRESTORE_REFRESH_BLOCK_TIMEOUT_MS,
+        message: 'Tiempo de espera agotado al recuperar BD. La lista local permanece intacta.',
+        code: 'app/bdatos-recovery-timeout'
+      });
+    }
+
+    async function publishBdatosSessionChanges(changes, context) {
+      const result = { confirmedChanges: [], failedChanges: [], errors: [], writtenCount: 0 };
+      if (!changes.length) return result;
+      if (bdatosRecoveryBusy || bdatosPublicationBusy) {
+        result.failedChanges = changes;
+        result.errors.push('BD ya tiene una recuperación o publicación en curso. Sus cambios permanecen pendientes.');
+        return result;
+      }
+      bdatosPublicationBusy = true;
+      const { db, fs, user } = context;
+      try {
+        if (user?.role !== 'administrador') throw new Error('Solo Administrador puede publicar BD.');
+        const captured = JSON.stringify(appData.bdatos || []);
+        const records = JSON.parse(captured);
+        const signature = (list) => JSON.stringify(list.map((r) => [r.id, r.codigo, r.descripcion, r.precio, r.createdAt, r.updatedAt]));
+        const codes = new Set(), ids = new Set();
+        records.forEach((record) => {
+          const id = cleanText(record.id), codigo = cleanText(record.codigo);
+          const docId = sanitizeFirestoreDocId(id, 'bd');
+          if (!id || !codigo || !cleanText(record.descripcion) || !Number.isFinite(record.precio) || record.precio < 0 || codes.has(codigo) || ids.has(docId)) throw new Error('BD contiene datos inválidos, códigos duplicados o IDs incompatibles.');
+          codes.add(codigo); ids.add(docId);
+        });
+        const controlRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'metadata', 'bdatos');
+        if (typeof fs.getDocFromServer !== 'function') throw new Error('El SDK no permite verificar el control de BD directamente con el servidor.');
+        const initialSnap = await fs.getDocFromServer(controlRef);
+        const control = initialSnap.exists() ? normalizeFirestoreDoc(initialSnap) : {};
+        if (control.initialized === true && control.schemaVersion !== 1) throw new Error('El contrato remoto de BD no es compatible. No se publicó la lista.');
+        const expectedRevision = cleanText(appData.metadata?.bdatosCloudRevision);
+        const remoteRevision = cleanText(control.revision);
+        const previousAttempt = appData.metadata?.bdatosCloudAttempt;
+        const recoveredAttempt = previousAttempt?.revision === remoteRevision && previousAttempt?.input === captured;
+        if ((control.initialized === true && (!remoteRevision || (remoteRevision !== expectedRevision && !recoveredAttempt))) || (control.initialized !== true && expectedRevision)) throw new Error('BD cambió en otro dispositivo o no fue descargada. Actualiza BD antes de publicar.');
+        const remote = await readBdatosDocumentsFromServer(db, fs);
+        const byCode = new Map();
+        remote.forEach((record) => {
+          const code = cleanText(record.codigo);
+          if (!code) return;
+          if (byCode.has(code)) throw new Error('La BD remota tiene códigos duplicados; requiere revisión.');
+          byCode.set(code, record);
+        });
+        const adopted = records.map((record) => {
+          const previous = byCode.get(cleanText(record.codigo));
+          if (previous && !isCloudDeletedRecord(previous) && previous.id !== record.id && !recoveredAttempt) throw new Error('Los IDs locales y remotos difieren. Actualiza BD antes de publicar.');
+          return previous && (isCloudDeletedRecord(previous) || (recoveredAttempt && previous.id !== record.id)) ? { ...record, id: previous.id, createdAt: previous.createdAt || record.createdAt } : record;
+        });
+        const activeIds = new Set();
+        adopted.forEach((record) => {
+          const id = sanitizeFirestoreDocId(record.id, 'bd');
+          if (activeIds.has(id)) throw new Error('Colisión de IDs al recuperar productos retirados.');
+          activeIds.add(id);
+        });
+        const retired = remote.filter((record) => !isCloudDeletedRecord(record) && !activeIds.has(sanitizeFirestoreDocId(record.id, 'bd')));
+        if (adopted.length + retired.length > 450) throw new Error('La publicación de BD supera 450 documentos afectados. No se escribió ningún producto; conserva los pendientes.');
+        const revision = generateId('bdRevision');
+        const change = { operation: 'editar' };
+        const journaled = { ...appData, metadata: { ...appData.metadata, bdatosCloudPending: true, bdatosCloudAttempt: { revision, input: captured } } };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(journaled));
+        appData = journaled;
+        await fs.runTransaction(db, async (transaction) => {
+          const snap = await transaction.get(controlRef);
+          const current = snap.exists() ? normalizeFirestoreDoc(snap) : {};
+          if (cleanText(current.revision) !== remoteRevision || (current.initialized === true) !== (control.initialized === true)) throw new Error('Otra publicación cambió BD. Actualiza antes de reintentar.');
+          adopted.forEach((record) => {
+            const ref = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'bdatos', sanitizeFirestoreDocId(record.id, 'bd'));
+            transaction.set(ref, { ...buildSessionWritePayload(record, normalizeBdatosRecord, change, getFirestoreTimestampValue(fs), user), activo: true, bdRevision: revision });
+          });
+          retired.forEach((record) => {
+            const ref = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'bdatos', sanitizeFirestoreDocId(record.id, 'bd'));
+            transaction.set(ref, { ...record, ...buildSessionDeleteTombstone(record.id, { operation: 'eliminar' }, getFirestoreTimestampValue(fs), user), bdRevision: revision });
+          });
+          transaction.set(controlRef, { initialized: true, schemaVersion: 1, revision, activeCount: adopted.length, updatedAt: getFirestoreTimestampValue(fs), updatedAtLocal: nowIso() });
+        });
+        const unchanged = signature(appData.bdatos || []) === signature(records);
+        const next = { ...appData, bdatos: unchanged ? sortBdatosRecords(adopted) : appData.bdatos, metadata: { ...appData.metadata, bdatosCloudRevision: revision, bdatosCloudInitialized: true, bdatosCloudPending: !unchanged, bdatosCloudAttempt: null } };
+        // Persistir la revisión antes de confirmar los pendientes para soportar recarga.
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        appData = next;
+        if (unchanged) {
+          result.confirmedChanges = changes;
+          result.writtenCount = changes.length;
+        } else {
+          result.failedChanges = changes;
+          result.errors.push('BD fue publicada, pero hubo cambios locales durante el guardado. Permanecen pendientes.');
+        }
+      } catch (error) {
+        result.failedChanges = changes;
+        result.errors.push(buildSessionCloudDiagnostic('BD', error));
+      } finally {
+        bdatosPublicationBusy = false;
+      }
+      return result;
+    }
+
     async function saveSessionChangesToCloud(changesInput = null) {
       const pendingChanges = uniqueSessionChangesById(
         (Array.isArray(changesInput) ? changesInput : getPendingSessionChanges())
@@ -7783,10 +7933,17 @@ Notas importantes:
 
         const stamp = getFirestoreTimestampValue(fs);
         const sharedContext = { db, fs, stamp, user };
-        const operationalResult = await processSessionChangeGroup(operationalChanges, {
+        const bdChanges = operationalChanges.filter((change) => cleanText(change.module || change.modulo).toLowerCase() === 'bdatos');
+        const bdResult = await publishBdatosSessionChanges(bdChanges, sharedContext);
+        const operationalResult = await processSessionChangeGroup(operationalChanges.filter((change) => !bdChanges.includes(change)), {
           ...sharedContext,
           label: 'Cambios operativos'
         });
+        operationalResult.confirmedChanges.push(...bdResult.confirmedChanges);
+        operationalResult.failedChanges.push(...bdResult.failedChanges);
+        operationalResult.errors.push(...bdResult.errors);
+        operationalResult.bdFailureMessage = bdResult.errors.join(" | ");
+        operationalResult.writtenCount += bdResult.writtenCount;
         const cleanupResult = await processSessionChangeGroup(cleanupChanges, {
           ...sharedContext,
           label: 'Limpieza de Facturas'
@@ -7857,7 +8014,7 @@ Notas importantes:
         if (operationalFailed) {
           ok = false;
           code = 'cloud/session-operational-failed';
-          message = SESSION_SAVE_MESSAGES.failure;
+          message = operationalResult.bdFailureMessage || SESSION_SAVE_MESSAGES.failure;
         } else if (cleanupFailed && operationalSaved) {
           ok = true;
           code = 'cloud/session-write-ok-cleanup-pending';
@@ -7904,6 +8061,7 @@ Notas importantes:
           operationalSaved,
           cleanupPending: cleanupFailed,
           cleanupPendingCount: cleanupResult.failedChanges.length,
+          bdFailureMessage: operationalResult.bdFailureMessage,
           operationalResult,
           cleanupResult,
           lastSyncAt: state.lastSyncAt,
@@ -8956,6 +9114,7 @@ Notas importantes:
       activateCloudOperation,
       writeCloudDocument,
       writeCloudOperationalSnapshot,
+      readBdatosForRecovery,
       saveSessionChangesToCloud,
       uploadPendingSessionChangesToCloud: saveSessionChangesToCloud,
       getCloudRuntimeStatus,
@@ -9870,6 +10029,7 @@ Notas importantes:
       const localClosures = Array.isArray(appData?.cierresMensuales) ? appData.cierresMensuales : [];
       const localExports = Array.isArray(appData?.exportacionesExcel) ? appData.exportacionesExcel : [];
       const cloudSnapshot = normalizeData(result.snapshot);
+      reconcileBdatosCloudReadAtApply(cloudSnapshot, result);
       const reconciledClosuresExcel = reconcileClosureExcelReferences(
         [...localClosures, ...(cloudSnapshot.cierresMensuales || [])],
         [...localExports, ...(cloudSnapshot.exportacionesExcel || [])]
@@ -22212,6 +22372,96 @@ Notas importantes:
   }
 
 
+  function hasBdatosCloudPending() {
+    return appData.metadata?.bdatosCloudPending === true
+      || getPendingSessionChanges().some((change) => cleanText(change.module || change.modulo).toLowerCase() === 'bdatos');
+  }
+
+  function validateBdatosCloudRead(control, records) {
+    if (control.initialized !== true) {
+      if (control.revision || control.initialized) throw new Error('El control de BD no es válido. Se conserva la copia local.');
+      return null;
+    }
+    const revision = cleanText(control.revision);
+    if (control.schemaVersion !== 1 || !revision || !Number.isInteger(control.activeCount) || control.activeCount < 0) throw new Error('El control de BD está incompleto o usa un contrato incompatible.');
+    const active = records.filter((record) => !isCloudDeletedRecord(record));
+    const ids = new Set(), codes = new Set();
+    active.forEach((record) => {
+      const id = cleanText(record.id), code = cleanText(record.codigo);
+      const docId = sanitizeFirestoreDocId(id, 'bd');
+      if (!id || !code || !cleanText(record.descripcion) || !Number.isFinite(record.precio) || record.precio < 0
+        || !cleanText(record.createdAt) || !cleanText(record.updatedAt) || record.bdRevision !== revision
+        || ids.has(docId) || codes.has(code)) throw new Error('La BD remota contiene productos inválidos, duplicados o de otra revisión.');
+      ids.add(docId); codes.add(code);
+    });
+    if (active.length !== control.activeCount) throw new Error('La cantidad de productos de BD no coincide con su revisión publicada.');
+    return { records: normalizeBdatosList(active), revision, updatedAt: cleanText(control.updatedAtLocal || control.updatedAt) };
+  }
+
+  function reconcileBdatosCloudReadAtApply(cloudSnapshot, result) {
+    const read = result.bdatosRead;
+    let storageError = '';
+    let canApply = read?.applied === true && !hasBdatosCloudPending()
+      && read.localSignature === JSON.stringify(appData.bdatos || [])
+      && read.localRevision === cleanText(appData.metadata?.bdatosCloudRevision);
+    if (canApply) {
+      try {
+        const persisted = {
+          ...appData,
+          bdatos: cloudSnapshot.bdatos,
+          bdatosUpdatedAt: cloudSnapshot.bdatosUpdatedAt,
+          metadata: {
+            ...appData.metadata,
+            bdatosCloudRevision: read.revision,
+            bdatosCloudInitialized: true,
+            bdatosCloudPending: false,
+            bdatosCloudAttempt: null,
+            bdatosSeedVersion: BDATOS_INITIAL_SEED_VERSION
+          }
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
+      } catch (error) {
+        canApply = false;
+        storageError = 'No se pudo guardar la BD descargada en este dispositivo. Se conserva la copia local.';
+      }
+    }
+    if (!canApply) {
+      cloudSnapshot.bdatos = appData.bdatos;
+      cloudSnapshot.bdatosUpdatedAt = appData.bdatosUpdatedAt;
+      ['bdatosCloudRevision', 'bdatosCloudInitialized', 'bdatosCloudPending', 'bdatosCloudAttempt', 'bdatosSeedVersion', 'bdatosSeededAt'].forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(appData.metadata || {}, key)) cloudSnapshot.metadata[key] = appData.metadata[key];
+        else delete cloudSnapshot.metadata[key];
+      });
+      if (read?.applied === true) {
+        result.partial = true;
+        result.code = 'cloud/read-partial';
+        result.message = storageError || 'Actualización parcial. BD conserva cambios locales realizados durante la lectura.';
+        const report = result.report;
+        if (report) {
+          const def = getCloudRefreshBlockDefinition('bdatos');
+          report.completedBlockKeys = (report.completedBlockKeys || []).filter((key) => key !== 'bdatos');
+          report.completedBlocks = (report.completedBlocks || []).filter((label) => label !== def.label);
+          report.completed = report.completedBlockKeys.length;
+          if (!(report.pendingBlockKeys || []).includes('bdatos')) (report.pendingBlockKeys ||= []).push('bdatos');
+          if (!(report.pendingBlocks || []).includes(def.label)) (report.pendingBlocks ||= []).push(def.label);
+          (report.failed ||= []).push({ key: 'bdatos', label: def.label, code: storageError ? 'cloud/bdatos-local-storage' : 'cloud/bdatos-local-changed', kind: 'error', message: result.message });
+        }
+      }
+      return false;
+    }
+    cloudSnapshot.metadata = {
+      ...cloudSnapshot.metadata,
+      bdatosCloudRevision: read.revision,
+      bdatosCloudInitialized: true,
+      bdatosCloudPending: false,
+      bdatosCloudAttempt: null,
+      bdatosSeedVersion: BDATOS_INITIAL_SEED_VERSION,
+      bdatosSeededAt: appData.metadata?.bdatosSeededAt || ''
+    };
+    bdatosState.editingId = null;
+    return true;
+  }
+
   function normalizeBdatosRecord(record) {
     const raw = isPlainObject(record) ? record : {};
     const timestamp = nowIso();
@@ -22306,6 +22556,7 @@ Notas importantes:
         ${bdatosState.message ? `<div class="form-message ${bdatosState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(bdatosState.message)}</div>` : ''}
         ${renderRolePermissionNotice('editCatalogs', 'Usuario normal puede consultar Bdatos, pero agregar, editar o borrar artículos queda reservado para Administrador.')}
 
+        ${renderBdatosCloudStatus()}
         ${renderBdatosExcelImport()}
 
         <div class="bdatos-layout">
@@ -22343,14 +22594,132 @@ Notas importantes:
     `;
   }
 
+  function buildBdatosRecoveryCopy(reason) {
+    return {
+      savedAt: nowIso(),
+      reason,
+      records: JSON.parse(JSON.stringify(appData.bdatos || [])),
+      updatedAt: appData.bdatosUpdatedAt || ''
+    };
+  }
+
+  async function recoverBdatosFromCloud() {
+    if (!canCurrentRole('editCatalogs') || bdatosRecoveryBusy || bdatosPublicationBusy || cloudOperationState.isWriting || cloudOperationState.isReading) return;
+    bdatosRecoveryBusy = true;
+    renderRoute({ preserveScroll: true });
+    try {
+      const read = await KSAFirebaseAdapter.readBdatosForRecovery();
+      if (!read.applied) throw new Error('BD aún no fue publicada en nube. La lista y los pendientes locales permanecen intactos.');
+      if (!window.confirm(`La nube contiene ${read.records.length} productos. Se guardará una copia de los ${getBdatosRecords().length} productos locales y se cargarán los publicados. Los pendientes de BD se retirarán de Guardar Datos. ¿Continuar?`)) return;
+      if (read.localSignature !== JSON.stringify(appData.bdatos || []) || read.localRevision !== cleanText(appData.metadata?.bdatosCloudRevision) || bdatosPublicationBusy || cloudOperationState.isWriting || cloudOperationState.isReading || !canCurrentRole('editCatalogs')) throw new Error('BD cambió durante la recuperación. Reintenta; la lista local permanece intacta.');
+      const pending = getPendingSessionChanges().filter((change) => cleanText(change.module || change.modulo).toLowerCase() === 'bdatos');
+      const history = Array.isArray(appData.metadata?.bdatosRecoveryHistory) ? appData.metadata.bdatosRecoveryHistory : [];
+      const next = {
+        ...appData,
+        bdatos: read.records,
+        bdatosUpdatedAt: read.updatedAt,
+        metadata: {
+          ...appData.metadata,
+          bdatosCloudRevision: read.revision,
+          bdatosCloudInitialized: true,
+          bdatosCloudPending: false,
+          bdatosCloudAttempt: null,
+          bdatosSeedVersion: BDATOS_INITIAL_SEED_VERSION,
+          bdatosRecoveryHistory: [...history, buildBdatosRecoveryCopy('Antes de recuperar desde nube')]
+        }
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      appData = next;
+      clearConfirmedSessionChanges(pending);
+      bdatosState.editingId = null;
+      bdatosState.search = '';
+      bdatosExcelState = { fileName: '', processing: false, preview: null, error: '', requestId: bdatosExcelState.requestId + 1 };
+      bdatosState.message = 'BD cargada desde nube. La lista anterior está disponible en Copias locales de BD.';
+      bdatosState.messageType = 'success';
+    } catch (error) {
+      bdatosState.message = `No se recuperó BD: ${cleanText(error?.message || 'falló la lectura o el guardado local.')}`;
+      bdatosState.messageType = 'error';
+    } finally {
+      bdatosRecoveryBusy = false;
+      if (getRoute() === 'bdatos') renderRoute({ preserveScroll: true });
+    }
+  }
+
+  function restoreBdatosRecoveryCopy(index) {
+    if (!canCurrentRole('editCatalogs') || bdatosRecoveryBusy || bdatosPublicationBusy || cloudOperationState.isWriting || cloudOperationState.isReading) return;
+    const history = appData.metadata?.bdatosRecoveryHistory;
+    const copy = Array.isArray(history) ? history[Number(index)] : null;
+    if (!copy || !Array.isArray(copy.records)) return;
+    if (!window.confirm(`Restaurar ${copy.records.length} productos de la copia local. Se conservará también la lista actual. La restauración quedará pendiente de Guardar Datos y no modificará Firestore ahora. ¿Continuar?`)) return;
+    try {
+      const next = {
+        ...appData,
+        bdatos: normalizeBdatosList(copy.records).map((record) => {
+          const current = (appData.bdatos || []).find((item) => cleanText(item.codigo) === cleanText(record.codigo));
+          return current ? { ...record, id: current.id, createdAt: current.createdAt } : record;
+        }),
+        bdatosUpdatedAt: nowIso(),
+        metadata: { ...appData.metadata, bdatosCloudPending: true, bdatosCloudAttempt: null, bdatosRecoveryHistory: [...history, buildBdatosRecoveryCopy('Antes de restaurar copia local')] }
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      appData = next;
+      queueBdatosCloudPublication();
+      bdatosState.editingId = null;
+      bdatosState.search = '';
+      bdatosState.message = 'Copia de BD restaurada localmente. Queda pendiente de Guardar Datos.';
+      bdatosState.messageType = 'success';
+    } catch (error) {
+      bdatosState.message = 'No se pudo guardar la restauración; BD conserva su lista anterior.';
+      bdatosState.messageType = 'error';
+    }
+    renderRoute({ preserveScroll: true });
+  }
+
+  function renderBdatosCloudStatus() {
+    const pending = hasBdatosCloudPending();
+    const status = pending ? 'Cambios pendientes de Guardar Datos' : (appData.metadata?.bdatosCloudRevision ? 'Lista publicada o descargada de nube' : 'Lista local; aún no vinculada a una publicación de BD');
+    const history = Array.isArray(appData.metadata?.bdatosRecoveryHistory) ? appData.metadata.bdatosRecoveryHistory : [];
+    const disabled = bdatosRecoveryBusy || bdatosPublicationBusy || cloudOperationState.isWriting || cloudOperationState.isReading;
+    return `<article class="panel-card">
+      <h2>BD y nube</h2><p role="status">${escapeHtml(status)}</p>
+      <p class="muted-text">Guardar Datos publica BD; Actualizar Datos descarga los precios en otros dispositivos. Si existen pendientes o un conflicto, puedes recuperar la publicación conservando una copia local.</p>
+      ${canCurrentRole('editCatalogs') ? `<button type="button" class="secondary-action" data-bdatos-cloud-recover ${disabled ? 'disabled' : ''}>Recuperar BD publicada conservando copia local</button>
+        ${history.length ? `<label class="form-field"><span>Copias locales de BD</span><select data-bdatos-recovery-choice>${history.map((copy, index) => `<option value="${index}">${escapeHtml(formatDateTimeOrText(copy.savedAt, 'Sin fecha'))} · ${Array.isArray(copy.records) ? copy.records.length : 0} productos</option>`).join('')}</select></label><button type="button" class="secondary-action" data-bdatos-recovery-restore ${disabled ? 'disabled' : ''}>Restaurar copia seleccionada</button>` : ''}` : ''}
+      ${bdatosRecoveryBusy ? '<p role="status">Leyendo BD publicada…</p>' : ''}
+    </article>`;
+  }
+
+  function queueBdatosCloudPublication(operation = 'editar', recordId = 'lista') {
+    appData.metadata = { ...appData.metadata, bdatosCloudPending: true };
+    registerSessionChange({ module: 'Bdatos', operation, recordId });
+  }
+
+  function restoreBdatosCloudPending() {
+    if (appData.metadata?.bdatosCloudPending && !getPendingSessionChanges().some((change) => cleanText(change.module).toLowerCase() === 'bdatos')) {
+      registerSessionChange({ module: 'Bdatos', operation: 'editar', recordId: 'lista' });
+    }
+  }
+
+  function prepareBdatosCloudPublication() {
+    if (!canCurrentRole('editCatalogs')) return;
+    if (!window.confirm('Preparar la lista actual de BD para Guardar Datos. Si BD ya fue publicada desde otro dispositivo, será necesario actualizarla antes de publicar. ¿Continuar?')) return;
+    queueBdatosCloudPublication();
+    saveData(appData);
+    bdatosState.message = 'BD preparada. Usa Guardar Datos para publicar la lista. En otros dispositivos usa Actualizar Datos después de publicar.';
+    bdatosState.messageType = 'success';
+    renderRoute({ preserveScroll: true });
+  }
+
   function renderBdatosExcelImport() {
     const state = bdatosExcelState;
     const preview = state.preview;
     return `
       <article class="panel-card">
         <h2>Actualizar BD desde Excel</h2>
+        <button type="button" class="secondary-action" data-bdatos-cloud-prepare ${!canCurrentRole('editCatalogs') ? 'disabled' : ''}>Preparar BD actual para Guardar Datos</button>
+        <p class="muted-text">Publicación completa: máximo 450 documentos afectados, incluidos productos retirados.</p>
         <p class="muted-text">Selecciona un .xlsx con columnas Código, Descripción y Precio. Precio debe ser numérico; usa punto para decimales y conserva los códigos como texto si tienen ceros iniciales.</p>
-        <p class="notice compact-notice">El reemplazo se guarda en este dispositivo y elimina de BD los productos ausentes del Excel. Revisa la vista previa antes de confirmar. BD no se sincroniza entre dispositivos mediante la nube actual.</p>
+        <p class="notice compact-notice">El reemplazo se guarda primero en este dispositivo y queda pendiente de Guardar Datos. Elimina de BD los productos ausentes del Excel. En otros dispositivos usa Actualizar Datos después de guardar.</p>
         <label class="form-field"><span>Archivo Excel</span><input type="file" accept=".xlsx" data-bdatos-excel-file ${!canCurrentRole('editCatalogs') || state.processing ? 'disabled' : ''} /></label>
         ${state.fileName ? `<p>Archivo: ${escapeHtml(state.fileName)}</p>` : ''}
         ${state.processing ? '<p role="status">Leyendo archivo Excel…</p>' : ''}
@@ -22461,6 +22830,7 @@ Notas importantes:
         bdatosUpdatedAt: timestamp,
         metadata: {
           ...appData.metadata,
+          bdatosCloudPending: true,
           appName: APP_NAME,
           appVersion: APP_VERSION,
           schemaVersion: SCHEMA_VERSION,
@@ -22471,9 +22841,10 @@ Notas importantes:
       // Guardar antes de aplicar: un fallo de almacenamiento conserva la BD actual.
       localStorage.setItem(STORAGE_KEY, JSON.stringify(nextData));
       appData = nextData;
+      queueBdatosCloudPublication();
       bdatosState.editingId = null;
       bdatosState.search = '';
-      bdatosState.message = `BD reemplazada: ${previousCount} productos anteriores → ${records.length} productos del Excel. Guardado local completado.`;
+      bdatosState.message = `BD reemplazada: ${previousCount} productos anteriores → ${records.length} productos del Excel. Guardado local completado; pendiente de Guardar Datos.`;
       bdatosState.messageType = 'success';
       bdatosExcelState = { fileName: '', processing: false, preview: null, error: '', requestId: state.requestId + 1 };
     } catch (error) {
@@ -22623,6 +22994,7 @@ Notas importantes:
     bdatosState.editingId = null;
     const resultMessage = `Artículo “${record.descripcion}” agregado.`;
     clearActionMessage(bdatosState);
+    queueBdatosCloudPublication('crear', record.id);
     saveData(appData);
     registerActivity({
       module: 'Bdatos',
@@ -22672,6 +23044,7 @@ Notas importantes:
     bdatosState.editingId = null;
     const resultMessage = `Artículo “${updated.descripcion}” actualizado.`;
     clearActionMessage(bdatosState);
+    queueBdatosCloudPublication('editar', currentId);
     saveData(appData);
     registerActivity({
       module: 'Bdatos',
@@ -22718,6 +23091,7 @@ Notas importantes:
     bdatosState.editingId = null;
     bdatosState.message = `Artículo “${record.descripcion}” borrado.`;
     bdatosState.messageType = 'success';
+    queueBdatosCloudPublication('eliminar', record.id);
     saveData(appData);
     registerActivity({
       module: 'Bdatos',
@@ -22869,7 +23243,11 @@ Notas importantes:
       });
 
       const emptyFilter = viewRoot.querySelector('[data-bdatos-empty-filter]');
-      if (emptyFilter) emptyFilter.hidden = rows.length === 0 || visible > 0;
+      if (emptyFilter) {
+        emptyFilter.hidden = rows.length === 0 || visible > 0;
+        // .empty-state define display propio; respetar la visibilidad del filtro.
+        emptyFilter.style.display = emptyFilter.hidden ? 'none' : '';
+      }
     };
 
     ['input', 'search', 'change'].forEach((eventName) => {
@@ -31467,6 +31845,7 @@ Notas importantes:
         casaGastos: snapshot.casaGastos || [],
         bdatos: snapshot.bdatos || [],
         bdatosUpdatedAt: snapshot.bdatosUpdatedAt || '',
+        bdatosMeta: { seedVersion: cleanText(snapshot.metadata?.bdatosSeedVersion) || BDATOS_INITIAL_SEED_VERSION },
         cierres: snapshot.cierresMensuales || [],
         cierresMensuales: snapshot.cierresMensuales || [],
         exportacionesExcel: snapshot.exportacionesExcel || [],
@@ -31893,6 +32272,10 @@ Notas importantes:
           updatedAt: loadedAt,
           cloudActive: cloudWasActive,
           fuentePrincipal: cloudWasActive ? 'firestore' : cleanText(currentMetadata.fuentePrincipal || incoming.metadata?.fuentePrincipal || 'local'),
+          bdatosCloudRevision: '',
+          bdatosCloudPending: false,
+          bdatosCloudAttempt: null,
+          bdatosRecoveryHistory: currentMetadata.bdatosRecoveryHistory || [],
           localCopyLoadedFromBackup: true,
           localCopyLoadedAt: loadedAt,
           localCopyBackupFileName: cleanText(opts.fileName),
@@ -32235,6 +32618,7 @@ Notas importantes:
           casaGastos: registros.casaGastos || registros.gastosCasa || registros.casa || [],
           bdatos: registros.bdatos || registros.Bdatos || [],
           bdatosUpdatedAt: registros.bdatosUpdatedAt || registros.bdatosLastUpdatedAt || '',
+          metadata: { bdatosSeedVersion: cleanText(registros.bdatosMeta?.seedVersion) },
           cierresMensuales: registros.cierresMensuales || registros.cierres || [],
           exportacionesExcel: registros.exportacionesExcel || [],
           notasModulo: getNotasBackupFromSource(registros) || getNotasBackupFromSource(raw),
@@ -36160,6 +36544,15 @@ ${rowsXml}
       button.addEventListener('click', () => deleteBdatosRecord(button.dataset.bdatosDelete));
     });
 
+    viewRoot.querySelectorAll('[data-bdatos-cloud-recover]').forEach((button) => {
+      button.addEventListener('click', recoverBdatosFromCloud);
+    });
+    viewRoot.querySelectorAll('[data-bdatos-recovery-restore]').forEach((button) => {
+      button.addEventListener('click', () => restoreBdatosRecoveryCopy(viewRoot.querySelector('[data-bdatos-recovery-choice]')?.value));
+    });
+    viewRoot.querySelectorAll('[data-bdatos-cloud-prepare]').forEach((button) => {
+      button.addEventListener('click', prepareBdatosCloudPublication);
+    });
     viewRoot.querySelectorAll('[data-bdatos-excel-file]').forEach((input) => {
       input.addEventListener('change', () => handleBdatosExcelFile(input.files?.[0]));
     });
@@ -36716,5 +37109,6 @@ ${rowsXml}
   renderRoute();
   initPreparedAccessScreen();
 
+  restoreBdatosCloudPending();
   setupPwaUpdateListeners();
 })();
