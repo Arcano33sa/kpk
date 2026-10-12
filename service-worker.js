@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_139_bdatos_e2_validacion';
+const CACHE_VERSION = 'v0_18_140_gastos_casa_fecha_e1';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

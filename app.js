@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.139-bdatos-e2-validacion';
+  const APP_VERSION = '0.18.140-gastos-casa-fecha-e1';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1468,6 +1468,7 @@ Notas importantes:
 
   let gastosState = {
     editingId: null,
+    newRecordDate: '',
     openGroupKey: '',
     message: null,
     messageType: 'success'
@@ -1475,6 +1476,7 @@ Notas importantes:
 
   let casaState = {
     editingId: null,
+    newRecordDate: '',
     openGroupKey: '',
     pendientesOpen: false,
     month: getCurrentMonthValue(),
@@ -12588,6 +12590,8 @@ Notas importantes:
     const isConfigScreen = isConfigRoute(route);
     const wasConfigScreen = isConfigRoute(previousRoute);
     const routeChanged = previousRoute !== null && previousRoute !== route;
+    if (previousRoute === 'gastos' && route !== 'gastos') gastosState.newRecordDate = '';
+    if (previousRoute === 'casa' && route !== 'casa') casaState.newRecordDate = '';
     const explicitReset = options?.resetScroll === true || options?.preserveScroll === false;
     const storedConfigScroll = isConfigScreen ? readConfigScrollRestore() : null;
     const shieldedSnapshot = consumeRouteScrollShield(route);
@@ -28854,7 +28858,8 @@ Notas importantes:
 
   function renderGastoForm(record, tiposActivos, metodosActivos, cuentasActivas, missingCatalogs) {
     const cannotCreate = Boolean(missingCatalogs);
-    const fecha = record?.fecha || getWorkPeriodDefaultDate();
+    if (!record && !gastosState.newRecordDate) gastosState.newRecordDate = todayInputValue();
+    const fecha = record?.fecha || gastosState.newRecordDate;
     return `
       <form class="gasto-form" data-gasto-form novalidate>
         <input type="hidden" name="id" value="${escapeHtml(record?.id || '')}" />
@@ -29149,6 +29154,7 @@ Notas importantes:
       gastosState.message = `Gasto actualizado: ${formatMoney(newRecord.monto)}.`;
     } else {
       appData.gastos = [newRecord, ...records];
+      gastosState.newRecordDate = newRecord.fecha;
       gastosState.message = `Gasto registrado: ${formatMoney(newRecord.monto)}.`;
     }
 
@@ -29363,21 +29369,10 @@ Notas importantes:
     `;
   }
 
-  function getCasaSuggestedDateForNewGasto() {
-    const today = todayInputValue();
-    const month = /^\d{2}$/.test(String(casaState.month || '')) ? String(casaState.month) : '';
-    const year = /^\d{4}$/.test(String(casaState.year || '')) ? String(casaState.year) : '';
-    if (!month || !year) return today;
-
-    const targetPeriod = normalizeWorkPeriodKey(`${year}-${month}`);
-    const todayPeriod = getPeriodKeyFromDateValue(today);
-    if (!targetPeriod) return today;
-    return targetPeriod === todayPeriod ? today : `${targetPeriod}-01`;
-  }
-
   function renderCasaForm(record, categoriasActivas, metodosActivos, cuentasActivas, missingCatalogs) {
     const cannotCreate = Boolean(missingCatalogs);
-    const fecha = record?.fecha || getCasaSuggestedDateForNewGasto();
+    if (!record && !casaState.newRecordDate) casaState.newRecordDate = todayInputValue();
+    const fecha = record?.fecha || casaState.newRecordDate;
     const categorias = record?.categoriaCasaId ? getSelectableCatalogRecords('categoriasCasa', record.categoriaCasaId) : categoriasActivas;
     return `
       <form class="casa-form" data-casa-form novalidate>
@@ -30042,6 +30037,7 @@ Notas importantes:
       casaState.message = `Gasto Casa actualizado: ${formatMoney(newRecord.monto)}.`;
     } else {
       appData.casaGastos = [newRecord, ...records];
+      casaState.newRecordDate = newRecord.fecha;
       casaState.message = `Gasto Casa registrado: ${formatMoney(newRecord.monto)}.`;
     }
 
@@ -36748,6 +36744,9 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-gasto-form]').forEach((form) => {
       setupPaymentBankField(form);
+      form.querySelector('[name="fecha"]')?.addEventListener('change', (event) => {
+        if (!form.querySelector('[name="id"]').value) gastosState.newRecordDate = event.target.value;
+      });
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         saveGastoRecord(form);
@@ -36781,6 +36780,9 @@ ${rowsXml}
     viewRoot.querySelectorAll('[data-casa-form]').forEach((form) => {
       setupPaymentBankField(form);
       setupCasaCreditStateField(form);
+      form.querySelector('[name="fecha"]')?.addEventListener('change', (event) => {
+        if (!form.querySelector('[name="id"]').value) casaState.newRecordDate = event.target.value;
+      });
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         saveCasaGastoRecord(form);
