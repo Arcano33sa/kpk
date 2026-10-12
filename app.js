@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.141-resumen-ipad-ancho-e1';
+  const APP_VERSION = '0.18.142-resumen-saldos-clientes-e1';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -19848,6 +19848,9 @@ Notas importantes:
     const totalGastosPorTipo = summary.gastosPorTipo.reduce((total, item) => total + Number(item.total || 0), 0);
     const totalVentaPorSucursal = summary.ventaPorSucursal.reduce((total, item) => total + Number(item.totalVendido || 0), 0);
     const totalSaldosPorProveedor = summary.saldosPorProveedor.reduce((total, item) => total + Number(item.saldoPorPagar || 0), 0);
+    const saldosPorCliente = buildSaldosPorCliente(summary.ventas.filter((venta) =>
+      venta.activo && venta.saldoPorCobrar > 0 && matchesResumenVenta(venta, filters, null, false)));
+    const totalSaldosPorCliente = sumMoney(saldosPorCliente, (item) => item.saldoPorCobrar);
     const totalClientesMora = summary.clientesMora.reduce((total, item) => total + Number(item.saldoPendiente || 0), 0);
     const totalProveedoresMora = summary.proveedoresMora.reduce((total, item) => total + Number(item.saldoPendiente || 0), 0);
 
@@ -20001,6 +20004,15 @@ Notas importantes:
             ${renderResumenVentaPorSucursal(summary.ventaPorSucursal)}
           </article>
 
+        </section>
+
+        <section class="panel-card resumen-panel">
+          <div class="section-title-row">
+            <div><span class="eyebrow mini">Clientes</span><h2>Saldos por cliente</h2></div>
+            <div class="count-pill">${escapeHtml(formatMoney(totalSaldosPorCliente))} · Cartera general</div>
+          </div>
+          <p class="filter-help">OC con saldo pendiente, agrupadas por cliente y sucursal. Incluye vencidas y no vencidas; no se limita al período.</p>
+          ${renderResumenSaldosCliente(saldosPorCliente)}
         </section>
 
         <section class="panel-card resumen-panel">
@@ -21217,6 +21229,37 @@ Notas importantes:
       .sort((a, b) => compareVisualAmountDesc(a, b, ['totalVendido', 'saldoPorCobrar', 'totalCobrado']) || compareVisualText(a.sucursal, b.sucursal));
   }
 
+  function buildSaldosPorCliente(ventas) {
+    const groups = new Map();
+    ventas.forEach((venta) => {
+      const cliente = getCatalogRecordById('clientes', venta.clienteId);
+      const sucursal = getCatalogRecordById('sucursales', venta.sucursalId);
+      const key = JSON.stringify([
+        venta.clienteId ? ['id', venta.clienteId] : ['nombre', venta.clienteNombre || ''],
+        venta.sucursalId ? ['id', venta.sucursalId] : ['nombre', venta.sucursalNombre || '']
+      ]);
+      const current = groups.get(key) || {
+        key,
+        cliente: cliente?.nombre || venta.clienteNombre || 'Cliente no encontrado',
+        sucursal: sucursal?.nombre || venta.sucursalNombre || 'Sin sucursal',
+        documentos: 0,
+        totalVenta: 0,
+        totalAjustes: 0,
+        totalCobrado: 0,
+        saldoPorCobrar: 0
+      };
+      current.documentos += 1;
+      current.totalVenta = roundMoney(current.totalVenta + venta.ventaNetaOriginal);
+      current.totalAjustes = roundMoney(current.totalAjustes + venta.totalAjustes);
+      current.totalCobrado = roundMoney(current.totalCobrado + venta.totalCobrado);
+      current.saldoPorCobrar = roundMoney(current.saldoPorCobrar + venta.saldoPorCobrar);
+      groups.set(key, current);
+    });
+    return Array.from(groups.values())
+      .sort((a, b) => compareVisualAmountDesc(a, b, ['saldoPorCobrar'])
+        || compareVisualText(a.cliente, b.cliente) || compareVisualText(a.sucursal, b.sucursal));
+  }
+
   function buildSaldosPorProveedor(compras) {
     const groups = new Map();
     compras.forEach((compra) => {
@@ -21380,6 +21423,53 @@ Notas importantes:
         <th class="amount-cell">Saldo</th>
       `,
       rows: `${totalRow}${detailRows}`
+    });
+  }
+
+  function renderResumenSaldosCliente(items) {
+    if (!items.length) return renderMoraEmptyState('Sin saldos por cliente.', 'Las OC activas con saldo pendiente aparecerán agrupadas por cliente y sucursal.');
+    const totals = items.reduce((result, item) => ({
+      documentos: result.documentos + item.documentos,
+      totalVenta: roundMoney(result.totalVenta + item.totalVenta),
+      totalAjustes: roundMoney(result.totalAjustes + item.totalAjustes),
+      totalCobrado: roundMoney(result.totalCobrado + item.totalCobrado),
+      saldoPorCobrar: roundMoney(result.saldoPorCobrar + item.saldoPorCobrar)
+    }), { documentos: 0, totalVenta: 0, totalAjustes: 0, totalCobrado: 0, saldoPorCobrar: 0 });
+    const amountCells = (item) => `
+      <td class="resumen-compact-count"><span>${escapeHtml(String(item.documentos))}</span></td>
+      <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.totalVenta))}</span></td>
+      <td class="amount-cell resumen-compact-amount"><span>${item.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(item.totalAjustes))}</span></td>
+      <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.totalCobrado))}</span></td>
+      <td class="amount-cell resumen-compact-amount"><span>${escapeHtml(formatMoney(item.saldoPorCobrar))}</span></td>
+    `;
+    const rows = items.map((item) => `
+      <tr class="compact-record-row resumen-compact-row">
+        <td class="resumen-compact-text"><span title="${escapeHtml(item.cliente)}">${escapeHtml(item.cliente)}</span></td>
+        <td class="resumen-compact-text"><span title="${escapeHtml(item.sucursal)}">${escapeHtml(item.sucursal)}</span></td>
+        ${amountCells(item)}
+      </tr>
+    `).join('');
+    const totalRow = `
+      <tr class="resumen-saldos-cliente-total-row">
+        <td colspan="2"><strong>Totales visibles</strong></td>
+        ${amountCells(totals)}
+      </tr>
+    `;
+    return renderOperationalTableShell({
+      shellClass: 'resumen-compact-scroll-shell resumen-saldos-cliente-shell',
+      wrapClass: 'resumen-compact-table-wrap',
+      ariaLabel: 'Saldos por cliente y sucursal en líneas compactas',
+      tableClass: 'resumen-compact-table resumen-saldos-cliente-table',
+      colgroup: `<colgroup>
+        <col class="resumen-col-cliente"><col class="resumen-col-sucursal">
+        <col class="resumen-col-documentos">
+        <col class="resumen-col-money"><col class="resumen-col-money">
+        <col class="resumen-col-money"><col class="resumen-col-money">
+      </colgroup>`,
+      headers: `<th>Cliente</th><th>Sucursal</th><th>Documentos</th>
+        <th class="amount-cell">Venta</th><th class="amount-cell">Ajustes</th>
+        <th class="amount-cell">Cobrado</th><th class="amount-cell">Saldo</th>`,
+      rows: `${rows}${totalRow}`
     });
   }
 

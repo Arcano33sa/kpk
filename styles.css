@@ -14547,3 +14547,13 @@ input[type="number"]::-webkit-inner-spin-button {
 .resumen-two-columns.resumen-ipad-full-width {
   grid-template-columns: minmax(0, 1fr);
 }
+
+/* Resumen — E1: cartera pendiente por cliente y sucursal. */
+.resumen-saldos-cliente-table {
+  min-width: 1080px;
+}
+
+.resumen-saldos-cliente-total-row td {
+  border-top: 2px solid var(--line);
+  font-weight: 800;
+}
