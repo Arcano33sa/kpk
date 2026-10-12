@@ -14542,3 +14542,8 @@ input[type="number"]::-webkit-inner-spin-button {
 }
 .compra-form .compra-oc-inline > span { flex: 0 0 auto; }
 .compra-form .compra-oc-inline > input[type="text"] { flex: 1 1 0; min-width: 0; width: 0; }
+
+/* Resumen iPad — E1: cada una de las cuatro tarjetas ocupa una fila completa. */
+.resumen-two-columns.resumen-ipad-full-width {
+  grid-template-columns: minmax(0, 1fr);
+}

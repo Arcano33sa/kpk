@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.140-gastos-casa-fecha-e1';
+  const APP_VERSION = '0.18.141-resumen-ipad-ancho-e1';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -19834,6 +19834,10 @@ Notas importantes:
 
 
   function renderResumenTablero() {
+    // iPadOS puede identificarse como Mac cuando solicita el sitio de escritorio.
+    const isIpad = /iPad/i.test(navigator.userAgent || '')
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const ipadColumnsClass = isIpad ? ' resumen-ipad-full-width' : '';
     const summary = buildResumenTableroSummary();
     const filters = summary.filters;
     const clientesActivos = getActiveCatalogRecords('clientes');
@@ -19980,7 +19984,7 @@ Notas importantes:
 
         ${renderPeriodosPendientesCierreCard(summary.periodosCierre)}
 
-        <section class="panel-grid resumen-two-columns">
+        <section class="panel-grid resumen-two-columns${ipadColumnsClass}">
           <article class="panel-card resumen-panel">
             <div class="section-title-row">
               <div><span class="eyebrow mini">Gastos</span><h2>Gastos por tipo</h2></div>
@@ -20007,7 +20011,7 @@ Notas importantes:
           ${renderResumenSaldosProveedor(summary.saldosPorProveedor)}
         </section>
 
-        <section class="panel-grid resumen-two-columns">
+        <section class="panel-grid resumen-two-columns${ipadColumnsClass}">
           <article class="panel-card resumen-panel">
             <div class="section-title-row">
               <div><span class="eyebrow mini">Clientes</span><h2>Clientes en mora</h2></div>
