@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.142-resumen-saldos-clientes-e1';
+  const APP_VERSION = '0.18.145-pagos-facturas-e3';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1459,6 +1459,7 @@ Notas importantes:
 
   let pagosState = {
     selectedCompraId: '',
+    facturaReferida: '',
     focusCompraId: '',
     openGroupKey: '',
     editingId: null,
@@ -5204,6 +5205,7 @@ Notas importantes:
     return {
       id: raw.id || generateId('pagoProveedor'),
       compraProveedorId,
+      ...(cleanText(raw.facturaReferida) ? { facturaReferida: cleanText(raw.facturaReferida) } : {}),
       proveedorId: cleanText(raw.proveedorId),
       proveedorNombre: cleanText(raw.proveedorNombre || raw.proveedor),
       facturaReferencia: cleanText(raw.facturaReferencia || raw.factura || raw.referencia || raw.documento),
@@ -24113,6 +24115,9 @@ Notas importantes:
               </div>
             </div>
           </div>
+          <div data-facturas-ajustes-detalle>
+            ${renderVentaFacturasAjustesDetalle(record)}
+          </div>
           ${renderVentaFacturasCuadreSummary(record, facturas)}
           <p class="compact-note facturas-message" data-factura-message aria-live="polite"></p>
         </section>
@@ -25314,6 +25319,11 @@ Notas importantes:
         descuento: formData.get('descuento'),
         facturas: list
       };
+      const ajustesDetalle = block.querySelector('[data-facturas-ajustes-detalle]');
+      if (ajustesDetalle) ajustesDetalle.innerHTML = renderVentaFacturasAjustesDetalle({
+        facturas: list,
+        ajustes: form.dataset.currentAjustes ? JSON.parse(form.dataset.currentAjustes) : []
+      });
       const cuadre = getVentaFacturasCuadreData(record);
       const updates = [
         ['[data-facturas-oc-subtotal]', formatMoney(cuadre.subtotalOc), false, 0],
@@ -25650,21 +25660,21 @@ Notas importantes:
       <th>OC</th>
       <th>Cliente</th>
       <th>Sucursal</th>
-      <th>Saldo</th>
+      <th>Saldo OC</th>
       <th>Acción</th>
     `;
     const rows = results.map((result) => {
       const venta = result.venta;
       const facturasEncontradas = normalizeFacturasVentaList(venta.facturas)
         .filter((factura) => normalizeCobroSearchText(factura.numero).includes(normalizeCobroSearchText(cleanQuery)))
-        .map((factura) => formatFacturaCobroConMonto(factura)).join(' · ');
+        .map((factura) => formatFacturaCobroConMonto(factura, venta)).join(' · ');
       return `
         <tr data-cobro-search-row data-operational-search="${escapeHtml(result.searchText)}">
           <td data-label="Factura">${result.facturaEncontrada ? `<span class="compact-primary">${escapeHtml(facturasEncontradas)}</span>` : '<span class="muted-text">—</span>'}</td>
           <td data-label="OC"><span class="compact-primary">${escapeHtml(venta.numeroDocumento || 'Sin número')}</span></td>
           <td data-label="Cliente">${escapeHtml(result.cliente?.nombre || venta.clienteNombre || 'Cliente no encontrado')}</td>
           <td data-label="Sucursal">${escapeHtml(result.sucursal?.nombre || venta.sucursalNombre || '—')}</td>
-          <td data-label="Saldo"><strong>${escapeHtml(formatMoney(venta.saldoPorCobrar))}</strong></td>
+          <td data-label="Saldo OC"><strong>${escapeHtml(formatMoney(venta.saldoPorCobrar))}</strong></td>
           <td data-label="Acción"><button type="button" class="secondary-action compact" data-cobro-select-result="${escapeHtml(venta.id)}" data-cobro-select-factura="${escapeHtml(result.facturaReferida || '')}">Seleccionar</button></td>
         </tr>
       `;
@@ -25839,7 +25849,7 @@ Notas importantes:
         const cliente = getCatalogRecordById('clientes', record.clienteId);
         const sucursal = getCatalogRecordById('sucursales', record.sucursalId);
         const facturas = normalizeFacturasVentaList(record.facturas)
-          .map((factura) => formatFacturaCobroConMonto(factura)).join(' · ') || 'Sin facturas registradas';
+          .map((factura) => formatFacturaCobroConMonto(factura, record)).join(' · ') || 'Sin facturas registradas';
         const isSelected = record.id === cobrosState.selectedVentaId;
         return `
           <tr class="compact-record-row cobros-pending-row${isSelected ? ' is-selected' : ''}">
@@ -25877,13 +25887,18 @@ Notas importantes:
   function renderCobroForm(selectedVenta, ventasDisponibles, metodosActivos, cuentasActivas, cannotCreate) {
     const cliente = selectedVenta ? getCatalogRecordById('clientes', selectedVenta.clienteId) : null;
     const sucursal = selectedVenta ? getCatalogRecordById('sucursales', selectedVenta.sucursalId) : null;
-    const saldo = selectedVenta ? selectedVenta.saldoPorCobrar : 0;
     const facturaReferida = selectedVenta ? cleanText(cobrosState.facturaReferida) : '';
+    const saldo = selectedVenta ? getCobroSaldoPermitido(selectedVenta, facturaReferida) : 0;
     const retencionesDisponibles = getCobroRetencionesForForm();
 
     return `
       <form class="cobro-form" data-cobro-form novalidate>
         <input type="hidden" name="facturaReferida" value="${escapeHtml(facturaReferida)}" />
+        ${selectedVenta ? `<label class="form-field"><span>Aplicar cobro a</span><select data-cobro-factura-select>
+          <option value="">OC completa / sin factura asignada</option>
+          ${normalizeFacturasVentaList(selectedVenta.facturas).map((factura) => `<option value="${escapeHtml(factura.numero)}" ${factura.numero === facturaReferida ? 'selected' : ''}>Factura ${escapeHtml(factura.numero)}</option>`).join('')}
+        </select></label>` : ''}
+        ${facturaReferida && saldo <= 0 ? '<p class="notice">La factura no tiene saldo cobrable individual disponible. Revisa sus abonos y ajustes o selecciona la OC para registrar un cobro sin asignación.</p>' : ''}
         <input type="hidden" name="ventaId" value="${escapeHtml(selectedVenta?.id || '')}" />
         <div class="form-grid">
           <label class="form-field">
@@ -25891,7 +25906,7 @@ Notas importantes:
             <input type="date" name="fechaCobro" value="${escapeHtml(todayInputValue())}" required ${cannotCreate ? 'disabled' : ''} />
           </label>
           <label class="form-field">
-            <span>Monto a aplicar a OC C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <span>Monto a aplicar ${facturaReferida ? 'a factura' : 'a OC'} C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
             <input type="text" name="montoCobrado" value="${escapeHtml(selectedVenta ? formatMoneyInputDisplay(saldo) : '')}" inputmode="decimal" placeholder="0.00" required data-money-input data-money-max="${escapeHtml(saldo)}" data-cobro-monto-recibido data-cobro-monto-aplicado ${cannotCreate ? 'disabled' : ''} />
           </label>
           ${renderCobroRetencionBlock(null, retencionesDisponibles, saldo, cannotCreate)}
@@ -25915,7 +25930,7 @@ Notas importantes:
 
         <div class="form-actions">
           <button type="submit" class="card-action" ${cannotCreate ? 'disabled' : ''}>Guardar cobro</button>
-          ${selectedVenta ? `<button type="button" class="secondary-action" data-cobro-fill-full="${escapeHtml(selectedVenta.id)}" ${cannotCreate ? 'disabled' : ''}>Cobrar saldo completo</button>` : ''}
+          ${selectedVenta ? `<button type="button" class="secondary-action" data-cobro-fill-full="${escapeHtml(selectedVenta.id)}" ${cannotCreate ? 'disabled' : ''}>Cobrar saldo ${facturaReferida ? 'de factura' : 'de OC'}</button>` : ''}
         </div>
       </form>
     `;
@@ -25925,7 +25940,7 @@ Notas importantes:
     const venta = (Array.isArray(appData.ventas) ? appData.ventas : []).map((item) => normalizeVentaRecord(item)).find((item) => item.id === record.ventaId);
     const cliente = venta ? getCatalogRecordById('clientes', venta.clienteId) : null;
     const sucursal = venta ? getCatalogRecordById('sucursales', venta.sucursalId) : null;
-    const saldoDisponible = venta ? roundMoney(venta.saldoPorCobrar + (record.activo ? record.montoAplicadoOC : 0)) : record.montoAplicadoOC;
+    const saldoDisponible = venta ? Math.min(roundMoney(venta.saldoPorCobrar + (record.activo ? record.montoAplicadoOC : 0)), Math.max(getCobroSaldoPermitido(venta, record.facturaReferida, record.id), record.montoAplicadoOC)) : record.montoAplicadoOC;
     const retencionesDisponibles = getCobroRetencionesForForm(record.retencionId);
     return `
       <form class="cobro-form" data-cobro-form data-cobro-edit-form novalidate>
@@ -25978,21 +25993,89 @@ Notas importantes:
     `;
   }
 
-  function formatFacturaCobroConMonto(factura) {
-    const monto = factura.pendienteMonto ? 'Monto no registrado' : formatMoney(factura.total);
-    return `${factura.numero} — ${monto}`;
+  function getVentaFacturaAjustesDetalle(venta, factura) {
+    const ajustes = getActiveAjustesForVenta(venta).filter((ajuste) => {
+      if (!hasAjusteFacturaSnapshot(ajuste)) return false;
+      return Boolean((factura.id && ajuste.facturaAfectadaId === factura.id)
+        || (factura.numero && ajuste.facturaAfectadaNumero
+          && normalizeFacturaModuloNoKey(factura.numero) === normalizeFacturaModuloNoKey(ajuste.facturaAfectadaNumero)));
+    });
+    const totalAjustes = ajustes.reduce((sum, ajuste) => roundMoney(sum + ajuste.monto), 0);
+    return { ajustes, totalAjustes, totalAjustado: roundMoney(Math.max(factura.total - totalAjustes, 0)) };
   }
 
-  function renderSelectedVentaFacturasCobro(facturas) {
-    const list = normalizeFacturasVentaList(facturas);
-    if (!list.length) {
-      return '<div class="cobro-summary-facturas-list is-empty">Sin facturas relacionadas</div>';
-    }
+  function renderVentaFacturasAjustesDetalle(venta = {}) {
+    venta = venta || {};
+    const facturas = normalizeFacturasVentaList(venta.facturas);
+    const generales = getActiveAjustesForVenta(venta).filter((ajuste) => !hasAjusteFacturaSnapshot(ajuste));
+    const renderRegistro = (ajustes) => ajustes.map((ajuste) => `<li>${escapeHtml(formatDate(ajuste.fecha))} · ${escapeHtml(ajuste.tipo)} · −${escapeHtml(formatMoney(ajuste.monto))}${ajuste.observacion ? ` · ${escapeHtml(ajuste.observacion)}` : ''}</li>`).join('');
+    if (!facturas.length && !generales.length) return '';
     return `
-      <div class="cobro-summary-facturas-list">
-        ${list.map((factura) => `<span class="factura-chip">${escapeHtml(formatFacturaCobroConMonto(factura))}</span>`).join('')}
+      <div class="formula-card">
+        <strong>Importes y ajustes por factura</strong>
+        ${facturas.map((factura) => {
+          const detalle = getVentaFacturaAjustesDetalle(venta, factura);
+          return `<div>
+            <p>${escapeHtml(formatFacturaCobroConMonto(factura, venta))}</p>
+            ${detalle.ajustes.length ? `<ul>${renderRegistro(detalle.ajustes)}</ul>` : '<small>Sin ajustes ligados a esta factura.</small>'}
+          </div>`;
+        }).join('')}
+        ${generales.length ? `<p>Ajustes generales de la OC (sin factura asignada):</p><ul>${renderRegistro(generales)}</ul>` : ''}
+        <p class="compact-note">El total ajustado de cada factura es su importe menos sus ajustes. Los cobros y el saldo pendiente se calculan sobre la OC.</p>
       </div>
     `;
+  }
+
+  function formatFacturaCobroConMonto(factura, venta = {}) {
+    if (factura.pendienteMonto) return `${factura.numero} — Monto no registrado`;
+    const detalle = getVentaFacturaAjustesDetalle(venta, factura);
+    return `${factura.numero} — Original: ${formatMoney(factura.total)} · Ajustes: ${detalle.totalAjustes > 0 ? '−' : ''}${formatMoney(detalle.totalAjustes)} · Total ajustado: ${formatMoney(detalle.totalAjustado)}`;
+  }
+
+  function getVentaFacturaCobroSaldo(venta, facturaNumero, cobrosSource = appData.cobros, excludeCobroId = '') {
+    const facturas = normalizeFacturasVentaList(venta.facturas);
+    const key = normalizeFacturaModuloNoKey(facturaNumero);
+    const matches = facturas.filter((factura) => normalizeFacturaModuloNoKey(factura.numero) === key);
+    const cobros = getActiveCobrosForVenta(venta.id, cobrosSource).filter((cobro) => cobro.id !== excludeCobroId);
+    const totalAplicado = cobros.reduce((sum, cobro) => roundMoney(sum + cobro.montoAplicadoOC), 0);
+    const excluded = getActiveCobrosForVenta(venta.id, cobrosSource).find((cobro) => cobro.id === excludeCobroId);
+    const saldoOc = roundMoney(Math.max(venta.saldoPorCobrar + (excluded?.montoAplicadoOC || 0), 0));
+    const sinAsignar = cobros.some((cobro) => !cleanText(cobro.facturaReferida)
+      || facturas.filter((factura) => normalizeFacturaModuloNoKey(factura.numero) === normalizeFacturaModuloNoKey(cobro.facturaReferida)).length !== 1);
+    const desfaseHistorico = Math.abs(venta.totalCobrado - (excluded?.montoAplicadoOC || 0) - totalAplicado) > COBRO_TOLERANCE;
+    const ajustesGenerales = getActiveAjustesForVenta(venta).some((ajuste) => {
+      if (!hasAjusteFacturaSnapshot(ajuste)) return true;
+      return facturas.filter((factura) => (factura.id && factura.id === ajuste.facturaAfectadaId)
+        || (factura.numero && ajuste.facturaAfectadaNumero && normalizeFacturaModuloNoKey(factura.numero) === normalizeFacturaModuloNoKey(ajuste.facturaAfectadaNumero))).length !== 1;
+    });
+    if (matches.length !== 1 || matches[0].pendienteMonto || sinAsignar || desfaseHistorico || ajustesGenerales) {
+      return { determinado: false, saldo: 0, saldoOc, totalAplicado: 0 };
+    }
+    const aplicadoFactura = cobros.filter((cobro) => normalizeFacturaModuloNoKey(cobro.facturaReferida) === key)
+      .reduce((sum, cobro) => roundMoney(sum + cobro.montoAplicadoOC), 0);
+    const ajustado = getVentaFacturaAjustesDetalle(venta, matches[0]).totalAjustado;
+    if (aplicadoFactura - ajustado > COBRO_TOLERANCE) return { determinado: false, saldo: 0, saldoOc, totalAplicado: aplicadoFactura };
+    return { determinado: true, saldo: roundMoney(Math.max(ajustado - aplicadoFactura, 0)), saldoOc, totalAplicado: aplicadoFactura };
+  }
+
+  function getCobroSaldoPermitido(venta, facturaNumero = '', excludeCobroId = '') {
+    const info = getVentaFacturaCobroSaldo(venta, facturaNumero, appData.cobros, excludeCobroId);
+    if (!cleanText(facturaNumero)) return info.saldoOc;
+    return info.determinado ? Math.min(info.saldo, info.saldoOc) : 0;
+  }
+
+  function renderSelectedVentaFacturasCobro(venta) {
+    const facturas = normalizeFacturasVentaList(venta.facturas);
+    return `${renderVentaFacturasAjustesDetalle(venta)}
+      <div class="formula-card"><strong>Saldos por factura</strong>
+        ${facturas.map((factura) => {
+          const info = getVentaFacturaCobroSaldo(venta, factura.numero);
+          return `<p>${escapeHtml(factura.numero)} · ${info.determinado
+            ? `Aplicado: ${escapeHtml(formatMoney(info.totalAplicado))} · Saldo pendiente: ${escapeHtml(formatMoney(info.saldo))}`
+            : 'Saldo individual no determinado: hay importes sin asignación o una referencia de factura incompleta o ambigua.'}</p>`;
+        }).join('')}
+        <small>Los importes sin factura asignada se conservan en la OC. No se reparten automáticamente.</small>
+      </div>`;
   }
 
   function renderSelectedVentaCobroSummary(venta, cliente, sucursal, facturaReferida = '') {
@@ -26041,7 +26124,7 @@ Notas importantes:
         ` : ''}
         <div class="cobro-summary-facturas">
           <span class="cobro-summary-subtitle">Facturas relacionadas</span>
-          ${renderSelectedVentaFacturasCobro(record.facturas)}
+          ${renderSelectedVentaFacturasCobro(record)}
         </div>
       </div>
     `;
@@ -26414,7 +26497,7 @@ Notas importantes:
     const sucursal = venta ? getCatalogRecordById('sucursales', venta.sucursalId) : null;
     const metodo = getCatalogRecordById('metodosPago', cleanText(formData.get('metodoPagoId')));
     const methodValue = metodo?.id || metodo?.nombre || formData.get('metodoPagoId');
-    const facturaReferida = cleanText(formData.get('facturaReferida')) || existingRecord?.facturaReferida || '';
+    const facturaReferida = existingRecord ? cleanText(existingRecord.facturaReferida) : cleanText(formData.get('facturaReferida'));
     const requiredBankType = getBankTypeForPaymentMethod(methodValue);
     const cuenta = requiredBankType ? getValidBankForPaymentMethod(methodValue, formData.get('cuentaBancoId'), existingRecord) : null;
     const retencionActiva = Boolean(form.querySelector('[data-cobro-retencion-toggle]')?.checked);
@@ -26468,7 +26551,14 @@ Notas importantes:
     const currentApplied = existingRecord && existingRecord.ventaId === record.ventaId && existingRecord.activo !== false
       ? normalizeCobroRecord(existingRecord).montoAplicadoOC
       : 0;
-    const saldoPermitido = roundMoney(venta.saldoPorCobrar + currentApplied);
+    let saldoPermitido = roundMoney(venta.saldoPorCobrar + currentApplied);
+    if (record.facturaReferida) {
+      const info = getVentaFacturaCobroSaldo(venta, record.facturaReferida, appData.cobros, existingRecord?.id || '');
+      if (!info.determinado && !existingRecord) return 'No se puede determinar el saldo de esta factura. Revisa los importes sin asignación o registra el cobro contra la OC.';
+      const limiteFactura = info.determinado ? info.saldo : currentApplied;
+      // Preserve historical amounts during an edit, without permitting an increase above current balances.
+      saldoPermitido = Math.min(saldoPermitido, Math.max(limiteFactura, currentApplied));
+    }
     if (saldoPermitido <= 0) return 'La OC seleccionada no tiene saldo disponible para este cobro.';
     if (!record.fechaCobro) return 'La fecha real de cobro es obligatoria.';
     if (record.montoCobrado < 0) return 'El monto recibido real no puede ser negativo.';
@@ -26806,7 +26896,7 @@ Notas importantes:
     const venta = appData.ventas.map((record) => normalizeVentaRecord(record)).find((record) => record.id === ventaId);
     const amountInput = form.querySelector('input[name="montoCobrado"]');
     if (venta && amountInput) {
-      amountInput.value = formatMoneyInputDisplay(venta.saldoPorCobrar);
+      amountInput.value = formatMoneyInputDisplay(getCobroSaldoPermitido(venta, cleanText(form.querySelector('[name="facturaReferida"]')?.value)));
       amountInput.dispatchEvent(new Event('input', { bubbles: true }));
     }
   }
@@ -27182,6 +27272,7 @@ Notas importantes:
               </div>
             </div>
           </div>
+          <div data-facturas-proveedor-ajustes>${renderCompraFacturasAjustesDetalle(record)}</div>
           <div class="facturas-preview" data-facturas-proveedor-preview>${facturas.length ? `Facturas detectadas: ${escapeHtml(formatFacturasProveedorResumen(facturas))}` : 'Facturas detectadas: ninguna'}</div>
           <p class="compact-note facturas-message" data-facturas-proveedor-message aria-live="polite"></p>
         </section>
@@ -28006,6 +28097,11 @@ Notas importantes:
       Array.from(rowsNode.querySelectorAll('[data-factura-proveedor-row]')).forEach(updateRow);
       const list = syncCompraFacturasRelacionadasToHidden(form);
       const stats = getCompraFacturasMontoStats(list);
+      const ajustesDetalle = block.querySelector('[data-facturas-proveedor-ajustes]');
+      if (ajustesDetalle) ajustesDetalle.innerHTML = renderCompraFacturasAjustesDetalle({
+        facturasRelacionadas: list,
+        ajustes: form.dataset.currentAjustes ? JSON.parse(form.dataset.currentAjustes) : []
+      });
       if (countNode) countNode.textContent = `${list.length} factura${list.length === 1 ? '' : 's'}`;
       if (previewNode) {
         const totalText = stats.completas || stats.pendientes ? ` · Total facturas: ${formatMoney(updateCompraTotalInputFromFacturas(form, list))}` : '';
@@ -28232,6 +28328,7 @@ Notas importantes:
       : null;
     if (pagosState.selectedCompraId && !selectedCompra) {
       pagosState.selectedCompraId = '';
+      pagosState.facturaReferida = '';
     }
     const editingRecord = pagosState.editingId ? getPagosProveedoresOrdenados().find((record) => record.id === pagosState.editingId) : null;
     const modalMetodos = editingRecord ? getSelectableCatalogRecords('metodosPago', editingRecord.metodoPagoId) : metodosActivos;
@@ -28388,20 +28485,92 @@ Notas importantes:
     });
   }
 
+  function getCompraFacturaAjustesDetalle(compra, factura) {
+    const ajustes = getActiveAjustesForCompra(compra).filter((ajuste) => {
+      if (!hasAjusteFacturaSnapshot(ajuste)) return false;
+      return Boolean((factura.id && ajuste.facturaAfectadaId === factura.id)
+        || (factura.numero && ajuste.facturaAfectadaNumero
+          && normalizeFacturaModuloNoKey(factura.numero) === normalizeFacturaModuloNoKey(ajuste.facturaAfectadaNumero)));
+    });
+    const totalAjustes = ajustes.reduce((sum, ajuste) => roundMoney(sum + ajuste.monto), 0);
+    return { ajustes, totalAjustes, totalAjustado: roundMoney(Math.max(factura.monto - totalAjustes, 0)) };
+  }
+
+  function renderCompraFacturasAjustesDetalle(compra = {}, mostrarSaldos = false) {
+    compra = compra || {};
+    const facturas = normalizeFacturasProveedorList(compra.facturasRelacionadas);
+    const generales = getActiveAjustesForCompra(compra).filter((ajuste) => !hasAjusteFacturaSnapshot(ajuste));
+    const renderRegistro = (ajustes) => ajustes.map((ajuste) => `<li>${escapeHtml(formatDate(ajuste.fecha))} · ${escapeHtml(ajuste.tipo)} · −${escapeHtml(formatMoney(ajuste.monto))}${ajuste.observacion ? ` · ${escapeHtml(ajuste.observacion)}` : ''}</li>`).join('');
+    if (!facturas.length && !generales.length) return '';
+    return `<div class="formula-card"><strong>Importes y ajustes por factura</strong>
+      ${facturas.map((factura) => {
+        const detalle = getCompraFacturaAjustesDetalle(compra, factura);
+        const saldo = mostrarSaldos ? getCompraFacturaPagoSaldo(compra, factura.numero) : null;
+        return `<div><p>${escapeHtml(factura.numero)} · ${factura.pendienteMonto ? 'Monto no registrado'
+          : `Original: ${escapeHtml(formatMoney(factura.monto))} · Ajustes: ${detalle.totalAjustes > 0 ? '−' : ''}${escapeHtml(formatMoney(detalle.totalAjustes))} · Total ajustado: ${escapeHtml(formatMoney(detalle.totalAjustado))}`}</p>
+          ${detalle.ajustes.length ? `<ul>${renderRegistro(detalle.ajustes)}</ul>` : '<small>Sin ajustes ligados a esta factura.</small>'}
+          ${saldo ? `<p>${saldo.determinado ? `Pagado: ${escapeHtml(formatMoney(saldo.totalPagado))} · Saldo pendiente: ${escapeHtml(formatMoney(saldo.saldo))}` : 'Saldo individual no determinado: hay importes sin asignación o una referencia de factura incompleta o ambigua.'}</p>` : ''}
+        </div>`;
+      }).join('')}
+      ${generales.length ? `<p>Ajustes generales de la compra (sin factura asignada):</p><ul>${renderRegistro(generales)}</ul>` : ''}
+      <p class="compact-note">Los pagos sin factura asignada se conservan en la compra. No se reparten automáticamente.</p>
+    </div>`;
+  }
+
+  function getCompraFacturaPagoSaldo(compra, facturaNumero, pagosSource = appData.pagosProveedores, excludePagoId = '') {
+    const facturas = normalizeFacturasProveedorList(compra.facturasRelacionadas);
+    const key = normalizeFacturaModuloNoKey(facturaNumero);
+    const matches = facturas.filter((factura) => normalizeFacturaModuloNoKey(factura.numero) === key);
+    const activos = getActivePagosForCompra(compra.id, pagosSource);
+    const pagos = activos.filter((pago) => pago.id !== excludePagoId);
+    const excluded = activos.find((pago) => pago.id === excludePagoId);
+    const saldoCompra = roundMoney(Math.max(compra.saldoPorPagar + (excluded?.montoPagado || 0), 0));
+    const totalPagado = pagos.reduce((sum, pago) => roundMoney(sum + pago.montoPagado), 0);
+    const sinAsignar = pagos.some((pago) => !cleanText(pago.facturaReferida)
+      || facturas.filter((factura) => normalizeFacturaModuloNoKey(factura.numero) === normalizeFacturaModuloNoKey(pago.facturaReferida)).length !== 1);
+    const desfaseHistorico = Math.abs(compra.totalPagado - (excluded?.montoPagado || 0) - totalPagado) > COBRO_TOLERANCE;
+    const ajustesAmbiguos = getActiveAjustesForCompra(compra).some((ajuste) => {
+      if (!hasAjusteFacturaSnapshot(ajuste)) return true;
+      return facturas.filter((factura) => (factura.id && factura.id === ajuste.facturaAfectadaId)
+        || (factura.numero && ajuste.facturaAfectadaNumero && normalizeFacturaModuloNoKey(factura.numero) === normalizeFacturaModuloNoKey(ajuste.facturaAfectadaNumero))).length !== 1;
+    });
+    if (matches.length !== 1 || matches[0].pendienteMonto || sinAsignar || desfaseHistorico || ajustesAmbiguos) {
+      return { determinado: false, saldo: 0, saldoCompra, totalPagado: 0 };
+    }
+    const pagadoFactura = pagos.filter((pago) => normalizeFacturaModuloNoKey(pago.facturaReferida) === key)
+      .reduce((sum, pago) => roundMoney(sum + pago.montoPagado), 0);
+    const ajustado = getCompraFacturaAjustesDetalle(compra, matches[0]).totalAjustado;
+    if (pagadoFactura - ajustado > COBRO_TOLERANCE) return { determinado: false, saldo: 0, saldoCompra, totalPagado: pagadoFactura };
+    return { determinado: true, saldo: roundMoney(Math.max(ajustado - pagadoFactura, 0)), saldoCompra, totalPagado: pagadoFactura };
+  }
+
+  function getPagoSaldoPermitido(compra, facturaNumero = '', excludePagoId = '') {
+    const info = getCompraFacturaPagoSaldo(compra, facturaNumero, appData.pagosProveedores, excludePagoId);
+    if (!cleanText(facturaNumero)) return info.saldoCompra;
+    return info.determinado ? Math.min(info.saldo, info.saldoCompra) : 0;
+  }
+
   function renderPagoProveedorForm(selectedCompra, comprasDisponibles, metodosActivos, cuentasActivas, cannotCreate) {
     const proveedor = selectedCompra ? getCatalogRecordById('proveedores', selectedCompra.proveedorId) : null;
-    const saldo = selectedCompra ? selectedCompra.saldoPorPagar : 0;
+    const facturaReferida = selectedCompra ? cleanText(pagosState.facturaReferida) : '';
+    const saldo = selectedCompra ? getPagoSaldoPermitido(selectedCompra, facturaReferida) : 0;
 
     return `
       <form class="pago-form" data-pago-form novalidate>
         <input type="hidden" name="compraProveedorId" value="${escapeHtml(selectedCompra?.id || '')}" />
+        <input type="hidden" name="facturaReferida" value="${escapeHtml(facturaReferida)}" />
+        ${selectedCompra ? `<label class="form-field"><span>Aplicar pago a</span><select data-pago-factura-select>
+          <option value="">Compra completa / sin factura asignada</option>
+          ${normalizeFacturasProveedorList(selectedCompra.facturasRelacionadas).map((factura) => `<option value="${escapeHtml(factura.numero)}" ${factura.numero === facturaReferida ? 'selected' : ''}>Factura ${escapeHtml(factura.numero)}</option>`).join('')}
+        </select></label>` : ''}
+        ${facturaReferida && saldo <= 0 ? '<p class="notice">La factura no tiene saldo individual disponible para pagar. Revisa sus pagos y ajustes o selecciona la compra para registrar un pago sin asignación.</p>' : ''}
         <div class="form-grid">
           <label class="form-field">
             <span>Fecha real de pago <span class="required-dot" aria-label="obligatorio">*</span></span>
             <input type="date" name="fechaPago" value="${escapeHtml(todayInputValue())}" required ${cannotCreate ? 'disabled' : ''} />
           </label>
           <label class="form-field">
-            <span>Monto pagado C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
+            <span>Monto a pagar ${facturaReferida ? 'a factura' : 'a compra'} C$ <span class="required-dot" aria-label="obligatorio">*</span></span>
             <input type="text" name="montoPagado" value="${escapeHtml(selectedCompra ? formatMoneyInputDisplay(saldo) : '')}" inputmode="decimal" placeholder="0.00" required data-money-input data-money-max="${escapeHtml(saldo)}" ${cannotCreate ? 'disabled' : ''} />
           </label>
           <label class="form-field">
@@ -28427,7 +28596,7 @@ Notas importantes:
 
         <div class="form-actions">
           <button type="submit" class="card-action" ${cannotCreate ? 'disabled' : ''}>Guardar pago</button>
-          ${selectedCompra ? `<button type="button" class="secondary-action" data-pago-fill-full="${escapeHtml(selectedCompra.id)}" ${cannotCreate ? 'disabled' : ''}>Pagar saldo completo</button>` : ''}
+          ${selectedCompra ? `<button type="button" class="secondary-action" data-pago-fill-full="${escapeHtml(selectedCompra.id)}" ${cannotCreate ? 'disabled' : ''}>Pagar saldo ${facturaReferida ? 'de factura' : 'de compra'}</button>` : ''}
         </div>
       </form>
     `;
@@ -28436,11 +28605,12 @@ Notas importantes:
   function renderPagoProveedorEditForm(record, metodosActivos, cuentasActivas) {
     const compra = (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : []).map((item) => normalizeCompraProveedorRecord(item)).find((item) => item.id === record.compraProveedorId);
     const proveedor = compra ? getCatalogRecordById('proveedores', compra.proveedorId) : null;
-    const saldoDisponible = compra ? roundMoney(compra.saldoPorPagar + (record.activo ? record.montoPagado : 0)) : record.montoPagado;
+    const saldoDisponible = compra ? Math.min(roundMoney(compra.saldoPorPagar + (record.activo ? record.montoPagado : 0)), Math.max(getPagoSaldoPermitido(compra, record.facturaReferida, record.id), record.montoPagado)) : record.montoPagado;
     return `
       <form class="pago-form" data-pago-form data-pago-edit-form novalidate>
         <input type="hidden" name="id" value="${escapeHtml(record.id)}" />
         <input type="hidden" name="compraProveedorId" value="${escapeHtml(record.compraProveedorId)}" />
+        ${record.facturaReferida ? `<p class="compact-note">Factura aplicada: ${escapeHtml(record.facturaReferida)}. La asignación se conserva.</p>` : ''}
         <div class="form-grid">
           <label class="form-field full-span">
             <span>Compra / facturas ligadas</span>
@@ -28494,9 +28664,12 @@ Notas importantes:
           ['Fecha compra', fechaCompra, criticalValueAttrs(fechaCompra, 'critical-value-date')],
           ['Vencimiento', fechaVencimiento, criticalValueAttrs(fechaVencimiento, 'critical-value-date')],
           ['Total compra/deuda', totalCompra, criticalValueAttrs(totalCompra, 'critical-value-money')],
+          ['Ajustes / notas', `${compra.totalAjustes > 0 ? '−' : ''}${formatMoney(compra.totalAjustes)}`],
+          ['Total ajustado', formatMoney(compra.totalAjustado)],
           ['Pagado actual', totalPagado, criticalValueAttrs(totalPagado, 'critical-value-money')],
           ['Saldo por pagar actual', saldoPorPagar, criticalValueAttrs(saldoPorPagar, 'critical-value-money')]
         ], 'pago-summary-grid critical-summary-grid')}
+        ${renderCompraFacturasAjustesDetalle(compra, true)}
       </div>
     `;
   }
@@ -28555,11 +28728,11 @@ Notas importantes:
     const compra = (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : []).map((item) => normalizeCompraProveedorRecord(item)).find((item) => item.id === record.compraProveedorId);
     const referenciaPago = compra ? getCompraProveedorReferenciaCompacta(compra) : (record.facturaReferencia || '—');
     const estadoClass = record.activo ? 'is-active' : 'is-inactive';
-    const searchable = normalizeNameForCompare(`${record.proveedorNombre} ${referenciaPago} ${record.facturaReferencia} ${record.metodoPagoNombre} ${record.cuentaBancoNombre}`);
+    const searchable = normalizeNameForCompare(`${record.proveedorNombre} ${referenciaPago} ${record.facturaReferencia} ${record.facturaReferida || ''} ${record.metodoPagoNombre} ${record.cuentaBancoNombre}`);
     return `
       <tr class="compact-record-row pago-row ${record.activo ? 'is-active' : 'is-inactive'}" data-pago-card data-search-text="${escapeHtml(searchable)}">
         <td data-label="Fecha"><span class="compact-primary">${escapeHtml(formatDate(record.fechaPago))}</span></td>
-        <td data-label="Compra / facturas"><span class="compact-primary">${escapeHtml(referenciaPago)}</span></td>
+        <td data-label="Compra / facturas"><span class="compact-primary">${escapeHtml(referenciaPago)}</span>${record.facturaReferida ? `<small>Factura aplicada: ${escapeHtml(record.facturaReferida)}</small>` : ''}</td>
         <td data-label="Monto" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.montoPagado))}</span></td>
         <td data-label="Método">
           <span>${escapeHtml(record.metodoPagoNombre || '—')}</span>
@@ -28638,6 +28811,7 @@ Notas importantes:
       ...(existingRecord || {}),
       id: existingRecord?.id || generateId('pagoProveedor'),
       compraProveedorId,
+      facturaReferida: existingRecord ? cleanText(existingRecord.facturaReferida) : cleanText(formData.get('facturaReferida')),
       fechaPago: toDateInputValue(formData.get('fechaPago')),
       proveedorId: compra?.proveedorId || existingRecord?.proveedorId || '',
       proveedorNombre: proveedor?.nombre || compra?.proveedorNombre || existingRecord?.proveedorNombre || '',
@@ -28660,7 +28834,12 @@ Notas importantes:
     const compra = (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : []).map((item) => normalizeCompraProveedorRecord(item)).find((item) => item.id === record.compraProveedorId);
     if (!compra || !compra.activo) return 'Selecciona una factura/referencia activa con saldo por pagar.';
     const currentAmount = existingRecord && existingRecord.compraProveedorId === record.compraProveedorId && existingRecord.activo !== false ? normalizePagoProveedorRecord(existingRecord).montoPagado : 0;
-    const saldoPermitido = roundMoney(compra.saldoPorPagar + currentAmount);
+    let saldoPermitido = roundMoney(compra.saldoPorPagar + currentAmount);
+    if (record.facturaReferida) {
+      const info = getCompraFacturaPagoSaldo(compra, record.facturaReferida, appData.pagosProveedores, existingRecord?.id || '');
+      if (!info.determinado && !existingRecord) return 'No se puede determinar el saldo de esta factura. Revisa los importes sin asignación o registra el pago contra la compra.';
+      saldoPermitido = Math.min(saldoPermitido, Math.max(info.determinado ? info.saldo : currentAmount, currentAmount));
+    }
     if (saldoPermitido <= 0) return 'La factura/referencia seleccionada no tiene saldo disponible para este pago.';
     if (!record.fechaPago) return 'La fecha real de pago es obligatoria.';
     if (Number.isNaN(parseMoney(record.montoPagado)) || record.montoPagado <= 0) return 'El monto pagado debe ser mayor que cero.';
@@ -28714,6 +28893,7 @@ Notas importantes:
     }
 
     pagosState.selectedCompraId = '';
+    pagosState.facturaReferida = '';
     pagosState.focusCompraId = newRecord.compraProveedorId;
     openAccordionGroupForRecord('pagos', newRecord);
     pagosState.editingId = null;
@@ -28761,6 +28941,7 @@ Notas importantes:
 
   function resetPagosSelectionVisualState() {
     pagosState.selectedCompraId = '';
+    pagosState.facturaReferida = '';
   }
 
   function clearPagoProveedorForm() {
@@ -28829,9 +29010,10 @@ Notas importantes:
     setRoute('proveedores');
   }
 
-  function selectPagoCompra(compraProveedorId) {
+  function selectPagoCompra(compraProveedorId, facturaReferida = '') {
     const cleanCompraId = cleanText(compraProveedorId);
     pagosState.selectedCompraId = cleanCompraId;
+    pagosState.facturaReferida = cleanText(facturaReferida);
     pagosState.focusCompraId = cleanCompraId;
     const existingPago = getPagosProveedoresOrdenados().find((record) => record.compraProveedorId === cleanCompraId);
     if (existingPago) openAccordionGroupForRecord('pagos', existingPago);
@@ -28841,6 +29023,7 @@ Notas importantes:
 
   function startPagoForCompra(compraProveedorId) {
     const cleanCompraId = cleanText(compraProveedorId);
+    pagosState.facturaReferida = '';
     pagosState.selectedCompraId = cleanCompraId;
     pagosState.focusCompraId = cleanCompraId;
     const existingPago = getPagosProveedoresOrdenados().find((record) => record.compraProveedorId === cleanCompraId);
@@ -28852,7 +29035,7 @@ Notas importantes:
   function fillPagoFullAmount(form, compraProveedorId) {
     const compra = appData.comprasProveedores.map((record) => normalizeCompraProveedorRecord(record)).find((record) => record.id === compraProveedorId);
     const amountInput = form.querySelector('input[name="montoPagado"]');
-    if (compra && amountInput) amountInput.value = formatMoneyInputDisplay(compra.saldoPorPagar);
+    if (compra && amountInput) amountInput.value = formatMoneyInputDisplay(getPagoSaldoPermitido(compra, cleanText(form.querySelector('[name="facturaReferida"]')?.value)));
   }
 
   function setupPagosSearch() {
@@ -33163,7 +33346,8 @@ Notas importantes:
   function getPagoDuplicateKey(record) {
     const pago = normalizePagoProveedorRecord(record);
     if (isAutoPagoCompraContadoRecord(pago)) return ['auto-compra-contado', pago.compraProveedorId || pago.compraIdOrigen].join('|');
-    return [pago.compraProveedorId, pago.fechaPago, roundMoney(pago.montoPagado), pago.metodoPagoId || normalizeNameForCompare(pago.metodoPagoNombre)].join('|');
+    const key = [pago.compraProveedorId, pago.fechaPago, roundMoney(pago.montoPagado), pago.metodoPagoId || normalizeNameForCompare(pago.metodoPagoNombre)].join('|');
+    return pago.facturaReferida ? `${key}|factura:${normalizeFacturaModuloNoKey(pago.facturaReferida)}` : key;
   }
 
   function clearJsonImportState() {
@@ -34682,7 +34866,7 @@ Exportado: ${exportDateLabel}
       rows.push([
         xlsxDate(pago.fechaPago),
         xlsxText(pago.proveedorNombre || compra?.proveedorNombre || proveedor?.nombre || 'Proveedor no encontrado'),
-        xlsxText(pago.facturaReferencia || compra?.facturaReferencia || ''),
+        xlsxText(`${pago.facturaReferencia || compra?.facturaReferencia || ''}${pago.facturaReferida ? ` · Factura aplicada: ${pago.facturaReferida}` : ''}`),
         xlsxMoney(pago.montoPagado),
         xlsxText(pago.metodoPagoNombre || metodo?.nombre || 'Sin método'),
         xlsxText(pago.cuentaBancoNombre || cuenta?.nombre || 'Sin banco'),
@@ -36713,6 +36897,9 @@ ${rowsXml}
     viewRoot.querySelectorAll('[data-cobro-form]').forEach((form) => {
       setupPaymentBankField(form);
       setupCobroRetencionForm(form);
+      form.querySelector('[data-cobro-factura-select]')?.addEventListener('change', (event) => {
+        selectCobroVenta(form.querySelector('[name="ventaId"]')?.value, { facturaReferida: event.target.value });
+      });
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         saveCobroRecord(form);
@@ -36801,6 +36988,9 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-pago-form]').forEach((form) => {
       setupPaymentBankField(form);
+      form.querySelector('[data-pago-factura-select]')?.addEventListener('change', (event) => {
+        selectPagoCompra(form.querySelector('[name="compraProveedorId"]')?.value, event.target.value);
+      });
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         savePagoProveedorRecord(form);

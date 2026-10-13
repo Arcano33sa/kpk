@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_142_resumen_saldos_clientes_e1';
+const CACHE_VERSION = 'v0_18_145_pagos_facturas_e3';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
