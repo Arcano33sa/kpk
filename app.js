@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.145-pagos-facturas-e3';
+  const APP_VERSION = '0.18.146-ajustes-compactos-e1';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -26006,7 +26006,8 @@ Notas importantes:
 
   function renderVentaFacturasAjustesDetalle(venta = {}) {
     venta = venta || {};
-    const facturas = normalizeFacturasVentaList(venta.facturas);
+    const facturas = normalizeFacturasVentaList(venta.facturas)
+      .filter((factura) => getVentaFacturaAjustesDetalle(venta, factura).ajustes.length > 0);
     const generales = getActiveAjustesForVenta(venta).filter((ajuste) => !hasAjusteFacturaSnapshot(ajuste));
     const renderRegistro = (ajustes) => ajustes.map((ajuste) => `<li>${escapeHtml(formatDate(ajuste.fecha))} · ${escapeHtml(ajuste.tipo)} · −${escapeHtml(formatMoney(ajuste.monto))}${ajuste.observacion ? ` · ${escapeHtml(ajuste.observacion)}` : ''}</li>`).join('');
     if (!facturas.length && !generales.length) return '';
@@ -26017,7 +26018,7 @@ Notas importantes:
           const detalle = getVentaFacturaAjustesDetalle(venta, factura);
           return `<div>
             <p>${escapeHtml(formatFacturaCobroConMonto(factura, venta))}</p>
-            ${detalle.ajustes.length ? `<ul>${renderRegistro(detalle.ajustes)}</ul>` : '<small>Sin ajustes ligados a esta factura.</small>'}
+            <ul>${renderRegistro(detalle.ajustes)}</ul>
           </div>`;
         }).join('')}
         ${generales.length ? `<p>Ajustes generales de la OC (sin factura asignada):</p><ul>${renderRegistro(generales)}</ul>` : ''}
@@ -26029,7 +26030,9 @@ Notas importantes:
   function formatFacturaCobroConMonto(factura, venta = {}) {
     if (factura.pendienteMonto) return `${factura.numero} — Monto no registrado`;
     const detalle = getVentaFacturaAjustesDetalle(venta, factura);
-    return `${factura.numero} — Original: ${formatMoney(factura.total)} · Ajustes: ${detalle.totalAjustes > 0 ? '−' : ''}${formatMoney(detalle.totalAjustes)} · Total ajustado: ${formatMoney(detalle.totalAjustado)}`;
+    const original = `${factura.numero} — ${formatMoney(factura.total)}`;
+    if (!detalle.ajustes.length) return original;
+    return `${original} · Ajuste −${formatMoney(detalle.totalAjustes)} · Ajustado ${formatMoney(detalle.totalAjustado)}`;
   }
 
   function getVentaFacturaCobroSaldo(venta, facturaNumero, cobrosSource = appData.cobros, excludeCobroId = '') {
@@ -28499,22 +28502,27 @@ Notas importantes:
   function renderCompraFacturasAjustesDetalle(compra = {}, mostrarSaldos = false) {
     compra = compra || {};
     const facturas = normalizeFacturasProveedorList(compra.facturasRelacionadas);
+    const ajustadas = facturas.filter((factura) => getCompraFacturaAjustesDetalle(compra, factura).ajustes.length > 0);
     const generales = getActiveAjustesForCompra(compra).filter((ajuste) => !hasAjusteFacturaSnapshot(ajuste));
     const renderRegistro = (ajustes) => ajustes.map((ajuste) => `<li>${escapeHtml(formatDate(ajuste.fecha))} · ${escapeHtml(ajuste.tipo)} · −${escapeHtml(formatMoney(ajuste.monto))}${ajuste.observacion ? ` · ${escapeHtml(ajuste.observacion)}` : ''}</li>`).join('');
-    if (!facturas.length && !generales.length) return '';
-    return `<div class="formula-card"><strong>Importes y ajustes por factura</strong>
-      ${facturas.map((factura) => {
+    const ajustesHtml = ajustadas.length || generales.length ? `<div class="formula-card"><strong>Ajustes por factura</strong>
+      ${ajustadas.map((factura) => {
         const detalle = getCompraFacturaAjustesDetalle(compra, factura);
-        const saldo = mostrarSaldos ? getCompraFacturaPagoSaldo(compra, factura.numero) : null;
-        return `<div><p>${escapeHtml(factura.numero)} · ${factura.pendienteMonto ? 'Monto no registrado'
-          : `Original: ${escapeHtml(formatMoney(factura.monto))} · Ajustes: ${detalle.totalAjustes > 0 ? '−' : ''}${escapeHtml(formatMoney(detalle.totalAjustes))} · Total ajustado: ${escapeHtml(formatMoney(detalle.totalAjustado))}`}</p>
-          ${detalle.ajustes.length ? `<ul>${renderRegistro(detalle.ajustes)}</ul>` : '<small>Sin ajustes ligados a esta factura.</small>'}
-          ${saldo ? `<p>${saldo.determinado ? `Pagado: ${escapeHtml(formatMoney(saldo.totalPagado))} · Saldo pendiente: ${escapeHtml(formatMoney(saldo.saldo))}` : 'Saldo individual no determinado: hay importes sin asignación o una referencia de factura incompleta o ambigua.'}</p>` : ''}
+        return `<div><p>${escapeHtml(factura.numero)} — ${factura.pendienteMonto ? 'Monto no registrado'
+          : `${escapeHtml(formatMoney(factura.monto))} · Ajuste −${escapeHtml(formatMoney(detalle.totalAjustes))} · Ajustado ${escapeHtml(formatMoney(detalle.totalAjustado))}`}</p>
+          <ul>${renderRegistro(detalle.ajustes)}</ul>
         </div>`;
       }).join('')}
       ${generales.length ? `<p>Ajustes generales de la compra (sin factura asignada):</p><ul>${renderRegistro(generales)}</ul>` : ''}
-      <p class="compact-note">Los pagos sin factura asignada se conservan en la compra. No se reparten automáticamente.</p>
-    </div>`;
+    </div>` : '';
+    const saldosHtml = mostrarSaldos && facturas.length ? `<div class="formula-card"><strong>Saldos por factura</strong>
+      ${facturas.map((factura) => {
+        const saldo = getCompraFacturaPagoSaldo(compra, factura.numero);
+        return `<p>${escapeHtml(factura.numero)} · ${saldo.determinado ? `Pagado: ${escapeHtml(formatMoney(saldo.totalPagado))} · Saldo pendiente: ${escapeHtml(formatMoney(saldo.saldo))}` : 'Saldo individual no determinado: hay importes sin asignación o una referencia de factura incompleta o ambigua.'}</p>`;
+      }).join('')}
+      <small>Los pagos sin factura asignada se conservan en la compra. No se reparten automáticamente.</small>
+    </div>` : '';
+    return ajustesHtml + saldosHtml;
   }
 
   function getCompraFacturaPagoSaldo(compra, facturaNumero, pagosSource = appData.pagosProveedores, excludePagoId = '') {
