@@ -14558,7 +14558,7 @@ input[type="number"]::-webkit-inner-spin-button {
   font-weight: 800;
 }
 
-/* Encabezado global: ocho accesos arriba y siete abajo, sin scroll lateral. */
+/* Encabezado global: dos filas en tablet y una en escritorio con espacio. */
 :root {
   --topbar-height: 126px;
 }
@@ -14651,6 +14651,33 @@ input[type="number"]::-webkit-inner-spin-button {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .app-topbar .nav-btn[data-route="configuracion"] {
+    grid-column: auto;
+  }
+}
+
+/* Mantener dos filas en dispositivos táctiles, incluso en iPad grande. */
+@media (min-width: 1280px) and (hover: hover) and (pointer: fine) {
+  :root {
+    --topbar-height: 70px;
+  }
+
+  .app-topbar {
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+
+  .app-topbar .brand {
+    flex-direction: row;
+    align-items: center;
+    gap: 11px;
+  }
+
+  .app-topbar .top-nav {
+    grid-template-columns: repeat(14, minmax(0, 1fr)) minmax(100px, 1.6fr);
+    gap: 5px;
+  }
+
+  .app-topbar .nav-btn,
   .app-topbar .nav-btn[data-route="configuracion"] {
     grid-column: auto;
   }
