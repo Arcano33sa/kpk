@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_147_menu_responsive_e1';
+const CACHE_VERSION = 'v0_18_148_barra_periodo_compacta_e1';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

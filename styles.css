@@ -14682,3 +14682,32 @@ input[type="number"]::-webkit-inner-spin-button {
     grid-column: auto;
   }
 }
+
+/* Barra de período compacta en escritorio; conservar controles táctiles. */
+@media (min-width: 1280px) and (hover: hover) and (pointer: fine) {
+  .work-period-panel {
+    grid-template-columns: auto minmax(0, 1fr) minmax(240px, 280px);
+    padding-block: 8px;
+  }
+
+  .work-period-panel.is-empty {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .work-period-panel:not(.is-empty) .work-period-copy {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+  }
+
+  .work-period-copy strong {
+    font-size: 1rem;
+  }
+
+  .work-period-select-shell {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+  }
+}
