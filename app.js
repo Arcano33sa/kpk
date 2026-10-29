@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.148-barra-periodo-compacta-e1';
+  const APP_VERSION = '0.18.153-compactacion-integral-e5';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -12513,6 +12513,17 @@ Notas importantes:
   function setupResponsiveHardening() {
     if (!viewRoot) return;
 
+    // Conservar los botones y sus eventos; solo hacer desplazable su contenedor.
+    viewRoot.querySelectorAll('td > :is(.record-actions, .compact-row-actions, .form-actions)').forEach((actions) => {
+      actions.classList.add('table-row-actions');
+      actions.setAttribute('tabindex', '0');
+      actions.setAttribute('role', 'group');
+      actions.setAttribute('aria-label', 'Acciones del registro. Desplaza horizontalmente para ver más opciones.');
+      if (!actions.hasAttribute('title')) {
+        actions.setAttribute('title', 'Desplaza horizontalmente para ver todas las acciones');
+      }
+    });
+
     viewRoot.querySelectorAll('.operational-scroll-shell:not([data-operational-scroll-shell])').forEach((shell) => {
       shell.setAttribute('data-operational-scroll-shell', '');
       shell.querySelector('.operational-top-scroll:not([data-operational-top-scroll])')?.setAttribute('data-operational-top-scroll', '');
@@ -12573,6 +12584,8 @@ Notas importantes:
       'td[data-label="Facturas"] > span',
       'td[data-label="Compra / facturas"] > span',
       'td[data-label="Fecha"] > span',
+      'td[data-label="Registro"] > span',
+      'td[data-label="Fecha de Registro"] > span',
       'td[data-label="Vence"] > span',
       'td[data-label="Saldo"] > span',
       'td[data-label="Total"] > span',
@@ -13407,7 +13420,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Post 12 / Casa · Fix Utilidad KPK por período</span>
           <h1>KSA PRÁCTIKA</h1>
-          <p class="lead">Webapp estática para convertir el control de OC, cobros, proveedores, pagos, gastos, Casa y documentación en un sistema operativo continuo. Ya tiene menú, navegación fija, Catálogos editables, Ventas / OC, Cobros de clientes, Proveedores / Compras, Pagos a proveedores, Gastos, Casa independiente, Notas, Facturas, Calculadora temporal, mora avanzada, alertas, historial por documento, Resumen / Tablero operativo, importación inicial desde Excel, Configuración, roles básicos locales y respaldo JSON validado, exportación Excel y cierre mensual.</p>
+          <p class="lead">Control de ventas, cobros, compras, pagos y gastos. Accede a cada módulo desde este menú.</p>
         </div>
         <aside class="hero-status" aria-label="Estado inicial de la app">
           <h3>Estado de la app</h3>
@@ -13426,15 +13439,15 @@ Notas importantes:
       </section>
 
       <section class="panel-grid">
-        <article class="panel-card">
-          <h2>Estructura preparada</h2>
+        <details class="panel-card capture-help menu-reference-help">
+          <summary>Acerca de la app</summary>
           <p class="notice">Catálogos administra las listas maestras, Ventas / OC registra documentos con saldo por cobrar, Cobros aplica abonos a OC, Proveedores / Compras registra deudas con saldo por pagar, Pagos aplica abonos a facturas/referencias, Gastos registra egresos operativos, Casa controla gastos familiares separados, Facturas ordena documentos manuales y Calculadora funciona como herramienta temporal sin persistencia.</p>
           <div class="data-list">
             ${DATA_KEYS.map((key) => `<div class="data-pill"><span>${escapeHtml(key)}</span><strong>${appData[key].length}</strong></div>`).join('')}
           </div>
-        </article>
-        <article class="panel-card">
-          <h2>Metadata</h2>
+        </details>
+        <details class="panel-card capture-help menu-reference-help">
+          <summary>Información técnica</summary>
           <dl class="definition-list">
             <dt>App</dt><dd>${escapeHtml(appData.metadata.appName)}</dd>
             <dt>Versión</dt><dd>${escapeHtml(appData.metadata.appVersion)}</dd>
@@ -13465,7 +13478,7 @@ Notas importantes:
             <span class="badge">Roles locales</span>
             <span class="badge">Respaldo JSON</span>
           </div>
-        </article>
+        </details>
       </section>
     `;
   }
@@ -15864,7 +15877,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Buscador</h1>
-          <p class="lead">Consulta documental organizada en Buscador de Facturas y Buscador de OC, respetando el período de trabajo seleccionado.</p>
+          <p class="lead">Busca facturas y OC del período de trabajo seleccionado.</p>
         </div>
         <aside class="hero-status" aria-label="Estado del módulo Buscador">
           <div class="status-grid compact">
@@ -16022,7 +16035,7 @@ Notas importantes:
             <button type="button" class="secondary-action compact-action" data-buscador-oc-clear>Limpiar</button>
           </div>
         </form>
-        <p class="compact-note muted-text">Se consulta únicamente ${escapeHtml(periodInfo.label)}. Las OC se ordenan por numeración natural, de mayor a menor, antes de paginar.</p>
+        <p class="compact-note capture-note">Período: ${escapeHtml(periodInfo.label)} · OC de mayor a menor numeración.</p>
       </article>
       <article class="panel-card buscador-oc-list-panel">
         <div class="section-title-row">
@@ -17570,7 +17583,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Notas</h1>
-          <p class="lead">Centro rápido para Notas, Pendientes, Préstamos y Recordatorios operativos. Los registros auxiliares permanecen separados de la lógica financiera.</p>
+          <p class="lead">Notas, pendientes, préstamos y recordatorios auxiliares, separados de la operación financiera.</p>
         </div>
         <aside class="hero-status" aria-label="Estado del módulo Notas">
           <h3>Etapa actual</h3>
@@ -17614,14 +17627,14 @@ Notas importantes:
 
       ${renderNotasHomePendingOverview(homePendingItems)}
 
-      <article class="placeholder-card notas-stage-card">
-        <h2>Funcionamiento separado</h2>
+      <details class="placeholder-card notas-stage-card capture-help">
+        <summary>Funcionamiento de Notas</summary>
         <p>Notas usa almacenamiento propio del módulo. Pendientes y Préstamos son auxiliares: no crean gastos, no mueven saldos operativos, no afectan Resumen y no bloquean cierres.</p>
         <p class="notice">Recordatorios ya permite exportación .ics individual/global y Notas queda incluido en el respaldo JSON del proyecto sin tocar datos de negocio.</p>
         <div class="placeholder-tools notas-icon-toolbar">
           <button type="button" class="notas-icon-action" data-go="home" title="Volver" aria-label="Volver al Menú principal">←</button>
         </div>
-      </article>
+      </details>
     `;
   }
 
@@ -17641,7 +17654,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Notas</span>
           <h1>Notas</h1>
-          <p class="lead">Notas generales y pendientes de registrar. Aquí se apunta; el negocio sigue donde debe estar.</p>
+          <p class="lead">Apuntes y pendientes de registrar, sin movimientos financieros.</p>
         </div>
         <aside class="hero-status" aria-label="Conteo de notas">
           <h3>Estado</h3>
@@ -17732,7 +17745,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Pendientes</span>
           <h1>Pendientes</h1>
-          <p class="lead">Registro auxiliar compacto de gastos pendientes para Casa o Gastos. No crea movimientos financieros ni altera saldos.</p>
+          <p class="lead">Pendientes de Casa o Gastos. No crean movimientos financieros ni alteran saldos.</p>
         </div>
         <aside class="hero-status" aria-label="Estado de Pendientes">
           <h3>Estado</h3>
@@ -17968,7 +17981,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Préstamos</span>
           <h1>Préstamos</h1>
-          <p class="lead">Control auxiliar por libros independientes entre Deudor y Acreedor. Cada libro usa una sola moneda (C$ o $) y mantiene su propio Debe, Haber y Saldo.</p>
+          <p class="lead">Libros auxiliares por deudor y acreedor, cada uno con una moneda (C$ o $) y saldo propio.</p>
         </div>
         <aside class="hero-status" aria-label="Estado de Préstamos">
           <h3>Estado</h3>
@@ -18358,7 +18371,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Recordatorios</span>
           <h1>Recordatorios</h1>
-          <p class="lead">Avisos con fecha, prioridad y seguimiento. Exporta recordatorios al calendario sin tocar ventas, cobros, gastos ni cierres.</p>
+          <p class="lead">Avisos con fecha, prioridad y seguimiento. Exportables al calendario, sin afectar la operación financiera.</p>
         </div>
         <aside class="hero-status" aria-label="Conteo de recordatorios">
           <h3>Estado</h3>
@@ -19694,7 +19707,7 @@ Notas importantes:
           <div>
             <span class="eyebrow">Herramienta temporal</span>
             <h1 id="calculatorTitle">Calculadora</h1>
-            <p class="lead">Cálculos rápidos e independientes. No guarda operaciones, resultados, campos ni preferencias.</p>
+            <p class="lead">Cálculos temporales; no se guardan operaciones ni preferencias.</p>
           </div>
           <div class="calculator-header-actions">
             <span class="calculator-status-badge">Sin persistencia</span>
@@ -19861,7 +19874,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Resumen / Tablero</h1>
-          <p class="lead">Vista operativa para leer ventas netas, cobros reales, saldos, gastos, mora y alertas sin convertir el control diario en una novela rusa con fórmulas escondidas.</p>
+          <p class="lead">Ventas, cobros, saldos, gastos y alertas del período seleccionado.</p>
         </div>
         <aside class="hero-status" aria-label="Estado del tablero">
           <h3>Lectura actual</h3>
@@ -21659,7 +21672,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Mora y Alertas</h1>
-          <p class="lead">Cartera viva por documento: quién debe, cuánto debe, desde cuándo debe y qué movimientos explican el saldo. Aquí el Excel deja de susurrar y empieza a declarar.</p>
+          <p class="lead">Saldos pendientes por documento, vencimientos e historial de movimientos.</p>
         </div>
         <aside class="hero-status" aria-label="Resumen de mora y alertas">
           <h3>Cartera crítica</h3>
@@ -22640,7 +22653,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Bdatos</h1>
-          <p class="lead">Base informativa de artículos. Código, descripción y precio: directo al grano, sin meter la cuchara en ventas, compras ni cálculos.</p>
+          <p class="lead">Consulta códigos, descripciones y precios. No modifica ventas, compras ni cálculos.</p>
         </div>
         <aside class="hero-status" aria-label="Resumen de Bdatos">
           <h3>Resumen</h3>
@@ -22667,7 +22680,7 @@ Notas importantes:
                 <h2>Agregar artículo</h2>
               </div>
             </div>
-            <p class="muted-text">Este formulario solo crea artículos nuevos. La edición se hace en ventana modal para evitar cruces raros.</p>
+            <details class="capture-help"><summary>Ayuda de artículos</summary><p>Crea artículos aquí. Para modificar uno existente, usa Editar en el listado.</p></details>
             ${renderBdatosForm(null, 'create', !canEditBdatos)}
           </article>
 
@@ -23369,7 +23382,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Catálogos</h1>
-          <p class="lead">Administra las listas maestras de KSA PRÁCTIKA. Aquí se ordena la bodega mental: clientes, sucursales, proveedores, gastos, métodos y bancos.</p>
+          <p class="lead">Administra clientes, sucursales, proveedores y las demás listas maestras.</p>
         </div>
         <aside class="hero-status" aria-label="Resumen de catálogos">
           <h3>Resumen</h3>
@@ -23398,7 +23411,7 @@ Notas importantes:
                 <h2>Agregar ${activeCatalog.singular}</h2>
               </div>
             </div>
-            <p class="muted-text">${escapeHtml(activeCatalog.description)}</p>
+            <details class="capture-help"><summary>Acerca de este catálogo</summary><p>${escapeHtml(activeCatalog.description)}</p></details>
             ${renderCatalogForm(activeCatalog, null, !canEditCatalogs)}
           </article>
 
@@ -23848,7 +23861,7 @@ Notas importantes:
                 <h2>Crear Venta / OC</h2>
               </div>
             </div>
-            <p class="muted-text">La venta se calcula como Subtotal - Descuento = Total. Los ajustes posteriores siguen ligados a la OC y no son cobros.</p>
+            <details class="capture-help"><summary>Ayuda de Venta / OC</summary><p>Escribe una OC nueva o selecciona una sugerencia de Compras. Total = Subtotal − Descuento. Los ajustes posteriores quedan ligados a la OC; no son cobros.</p></details>
             ${renderVentaForm(null, clientesActivos, sucursalesActivas, missingCatalogs, ventasState.quickCapture)}
           </article>
 
@@ -23859,7 +23872,7 @@ Notas importantes:
                 <h2>Ajuste</h2>
               </div>
             </div>
-            <p class="muted-text">Reduce el saldo de una OC existente por quebrado, faltante, devolución o nota, sin crear cobro, caja ni banco. Aquí se descuenta mercadería; no aparece dinero fantasma.</p>
+            <p class="compact-note capture-note">Reduce el saldo de la OC sin registrar cobro ni movimiento de dinero.</p>
             ${ventasAjustables.length ? `<button type="button" class="secondary-action" data-ajuste-venta-start="">Registrar ajuste</button>` : renderVentaAjusteForm(ventasAjustables)}
           </article>
 
@@ -23953,7 +23966,7 @@ Notas importantes:
             <select name="facturaAfectada" data-ajuste-venta-factura>
               ${renderAjusteFacturaOptions(selectedVenta?.facturas || [])}
             </select>
-            <small>Opcional: si no aplica, queda como ajuste general de la OC.</small>
+            <small>Sin factura: ajuste general de la OC.</small>
           </label>
         </div>
         <div class="formula-card ajuste-preview" aria-live="polite" data-ajuste-venta-preview>
@@ -24097,7 +24110,6 @@ Notas importantes:
             </div>
             <span class="count-pill" data-facturas-count>${facturas.length} factura${facturas.length === 1 ? '' : 's'}</span>
           </div>
-          <p class="muted-text compact-note">Cada factura desglosa la misma OC. El Total se calcula solo: Subtotal - Descuento. No crea cobros ni ventas adicionales.</p>
           <div class="facturas-editor-shell" data-facturas-editor-shell>
             <div class="facturas-grid facturas-venta-grid" role="table" aria-label="Facturas de la OC">
               <div class="facturas-grid-row facturas-grid-head" role="row">
@@ -24119,6 +24131,7 @@ Notas importantes:
             ${renderVentaFacturasAjustesDetalle(record)}
           </div>
           ${renderVentaFacturasCuadreSummary(record, facturas)}
+          <details class="capture-help"><summary>Ayuda de facturas</summary><p>Desglosan la misma OC. Total = Subtotal − Descuento. No crean cobros ni ventas adicionales.</p></details>
           <p class="compact-note facturas-message" data-factura-message aria-live="polite"></p>
         </section>
     `;
@@ -24367,7 +24380,7 @@ Notas importantes:
               <h3>Logística / Envío</h3>
             </div>
           </div>
-          <p class="muted-text compact-note">Completa estos datos solo cuando la OC requiera envío por transportista.</p>
+
           <div class="form-grid logistica-grid">
             <label class="form-field">
               <span>Transportista</span>
@@ -24480,7 +24493,6 @@ Notas importantes:
             <datalist id="${ocListId}">
               ${ocSuggestions.map((numero) => `<option value="${escapeHtml(numero)}"></option>`).join('')}
             </datalist>
-            <small>${ocSuggestions.length ? 'Selecciona una OC registrada en Compras o escribe un número nuevo.' : 'Puedes escribir una OC nueva. Las OC registradas en Compras aparecerán como sugerencias.'}</small>
           </label>
           <label class="form-field">
             <span>Fecha de Registro <span class="required-dot" aria-label="obligatorio">*</span></span>
@@ -25563,7 +25575,7 @@ Notas importantes:
                 <h2>Registrar cobro</h2>
               </div>
             </div>
-            <p class="muted-text">Solo aparecen OC activas con saldo por cobrar mayor que cero. La más reciente por Fecha de Registro aparece arriba.</p>
+            <details class="capture-help"><summary>¿Qué OC aparecen?</summary><p>OC activas con saldo pendiente, ordenadas por Fecha de Registro desde la más reciente.</p></details>
             ${renderCobrosPendingVentasTable(ventasDisponibles)}
             ${renderCobroForm(selectedVenta, ventasDisponibles, metodosActivos, cuentasActivas, cannotCreate)}
           </article>
@@ -27035,7 +27047,7 @@ Notas importantes:
                 <h2>Crear compra</h2>
               </div>
             </div>
-            <p class="muted-text">Los pagos a proveedor se registran en su propio módulo; aquí queda la deuda/factura base con su saldo actualizado.</p>
+            <details class="capture-help"><summary>Ayuda de compras</summary><p>Registra aquí la compra y sus facturas. Los pagos se registran en Pagos; las compras de contado generan su pago automático al guardar.</p></details>
             ${renderCompraProveedorForm(null, proveedoresActivos, missingProviders, proveedoresState.quickCapture)}
           </article>
 
@@ -27125,7 +27137,7 @@ Notas importantes:
             <select name="facturaAfectada" data-ajuste-proveedor-factura>
               ${renderAjusteFacturaOptions(selectedCompra?.facturasRelacionadas || [], '', normalizeFacturasProveedorList)}
             </select>
-            <small>Opcional: si no aplica, queda como ajuste general de la compra.</small>
+            <small>Sin factura: ajuste general de la compra.</small>
           </label>
         </div>
         <div class="formula-card ajuste-preview" aria-live="polite" data-ajuste-preview>
@@ -28381,7 +28393,7 @@ Notas importantes:
                 <h2>Registrar pago</h2>
               </div>
             </div>
-            <p class="muted-text">Solo aparecen compras/deudas activas con saldo por pagar mayor que cero. La más reciente por Fecha de Registro aparece arriba.</p>
+            <details class="capture-help"><summary>¿Qué compras aparecen?</summary><p>Compras/deudas activas con saldo pendiente, ordenadas por Fecha de Registro desde la más reciente.</p></details>
             ${renderPagosPendingComprasTable(comprasDisponibles)}
             ${renderPagoProveedorForm(selectedCompra, comprasDisponibles, metodosActivos, cuentasActivas, cannotCreate)}
           </article>
@@ -29103,7 +29115,7 @@ Notas importantes:
                 <h2>Registrar gasto</h2>
               </div>
             </div>
-            <p class="muted-text">Los tipos, métodos y bancos vienen de Catálogos activos. Banco aparece cuando el método elegido es Transferencia, Depósito o Tarjeta.</p>
+            <details class="capture-help"><summary>Ayuda de gastos</summary><p>Las opciones provienen de Catálogos activos. Banco aparece para Transferencia, Depósito o Tarjeta.</p></details>
             ${renderGastoForm(null, tiposActivos, metodosActivos, cuentasActivas, missingCatalogs)}
           </article>
 
@@ -29534,7 +29546,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Casa</h1>
-          <p class="lead">Registra gastos personales y familiares con categorías propias. Esto vive separado de la parte productiva: cada cosa en su templo, porque mezclar utilidades con supermercado es invocar demonios contables.</p>
+          <p class="lead">Gastos personales y familiares con categorías propias, separados de la operación productiva.</p>
         </div>
         <aside class="hero-status" aria-label="Resumen de Casa">
           <h3>Lectura actual</h3>
@@ -29612,7 +29624,7 @@ Notas importantes:
                 <h2>Registrar gasto</h2>
               </div>
             </div>
-            <p class="muted-text">Categoría viene de Catálogos → Categorías Casa. Método y banco reutilizan los catálogos existentes.</p>
+            <details class="capture-help"><summary>Ayuda de Casa</summary><p>Las categorías se administran en Catálogos → Categorías Casa. Método y banco usan los catálogos existentes.</p></details>
             ${renderCasaForm(null, categoriasActivas, metodosActivos, cuentasActivas, missingCatalogs)}
           </article>
 
@@ -31481,7 +31493,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>Configuración</h1>
-          <p class="lead">Centraliza parámetros generales, usuarios, respaldo JSON auxiliar, sincronización y estado técnico. Firestore se mantiene como fuente principal cuando la nube está activa.</p>
+          <p class="lead">Parámetros, usuarios, respaldo y sincronización. Con nube activa, Firestore es la fuente principal.</p>
         </div>
         <aside class="hero-status" aria-label="Estado de configuración">
           <h3>Sistema</h3>
@@ -33713,7 +33725,7 @@ Notas importantes:
         <div>
           <span class="eyebrow">Módulo activo</span>
           <h1>${escapeHtml(module.title)}</h1>
-          <p class="lead">Carga inicial manual desde 0000- CONTROL.xlsx o una versión compatible. El Excel se lee una vez, se valida y luego la app sigue siendo la base principal.</p>
+          <p class="lead">Carga inicial desde 0000- CONTROL.xlsx o un archivo compatible. Se valida antes de importar; después se opera desde la app.</p>
         </div>
         <aside class="hero-status" aria-label="Estado de importación Excel">
           <h3>Importador</h3>
@@ -33847,7 +33859,7 @@ Notas importantes:
               <label class="form-field excel-file-name-field">
                 <span>Nombre del archivo de consulta</span>
                 <input type="text" name="fileName" maxlength="180" autocomplete="off" spellcheck="false" value="${escapeHtml(excelExportState.consultaFileName || '')}" placeholder="Ej. Consulta Mayo 2026" ${consultaBusy ? 'disabled' : ''} />
-                <small>La extensión .xlsx se agrega automáticamente.</small>
+                <small>.xlsx automático.</small>
               </label>
             </div>
             <div class="form-actions">
@@ -33883,7 +33895,7 @@ Notas importantes:
               <label class="form-field excel-file-name-field">
                 <span>Nombre del archivo de cierre</span>
                 <input type="text" name="fileName" maxlength="180" autocomplete="off" spellcheck="false" value="${escapeHtml(excelExportState.cierreFileName || '')}" placeholder="Ej. Cierre Oficial Mayo 2026" ${cierreBusy ? 'disabled' : ''} />
-                <small>La extensión .xlsx se agrega automáticamente.</small>
+                <small>.xlsx automático.</small>
               </label>
             </div>
             ${renderExcelCierreReadinessBox(cierreExportStatus)}

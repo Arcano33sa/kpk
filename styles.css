@@ -14711,3 +14711,419 @@ input[type="number"]::-webkit-inner-spin-button {
     gap: 10px;
   }
 }
+
+/* Compactación integral — E1: base compartida, sin alturas rígidas de contenido. */
+body .form-grid {
+  align-items: start;
+}
+
+body .form-field {
+  align-content: start;
+}
+
+body .form-field > :is(input, select, textarea) {
+  align-self: start;
+}
+
+/* Reducir espacio en escritorio sin reducir los controles de uso táctil. */
+@media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
+  body .form-grid {
+    gap: 7px 9px;
+  }
+
+  body .form-field {
+    gap: 3px;
+  }
+
+  body .form-field > :is(input, select) {
+    min-height: 36px;
+    padding: 6px 9px;
+    line-height: 1.25;
+  }
+
+  body .form-field > textarea {
+    min-height: 72px;
+    padding: 7px 9px;
+  }
+
+  body .panel-card,
+  body .placeholder-card {
+    padding: 12px;
+  }
+
+  body .section-title-row {
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  body .form-actions,
+  body .record-actions {
+    gap: 6px;
+  }
+
+  body :is(.form-actions, .record-actions) > :is(.primary-action, .secondary-action, .danger-action) {
+    min-height: 34px;
+    padding: 6px 10px;
+  }
+
+  body .formula-card {
+    padding: 9px;
+  }
+
+  body .edit-modal-header {
+    gap: 10px;
+    padding: 12px 16px;
+  }
+}
+
+/* Compactación integral — E2: ayudas y captura de la operación principal.
+   Las ayudas nativas funcionan por teclado y en pantallas táctiles. */
+.capture-help {
+  min-width: 0;
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.3;
+}
+
+.capture-help > summary {
+  width: fit-content;
+  max-width: 100%;
+  padding: 5px 0;
+  color: var(--accent-dark);
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.capture-help > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.capture-help > p {
+  margin: 3px 0 6px;
+}
+
+.facturas-venta-block > .capture-help {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.capture-note {
+  margin: 0 0 6px;
+  line-height: 1.3;
+}
+
+@media (pointer: coarse) {
+  .capture-help > summary {
+    padding-block: 10px;
+  }
+}
+
+@media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
+  :is(.venta-form, .compra-form, .cobro-form, .pago-form, .gasto-form, .ajuste-form) {
+    gap: 6px 9px;
+  }
+
+  :is(.ventas-shell, .proveedores-shell, .cobros-shell, .pagos-shell, .gastos-shell)
+    :is(.venta-form, .compra-form, .cobro-form, .pago-form, .gasto-form, .ajuste-form) .form-grid {
+    align-items: start;
+    gap: 6px 8px;
+  }
+
+  :is(.venta-form, .compra-form, .cobro-form, .pago-form, .gasto-form, .ajuste-form) .form-field {
+    align-content: start;
+  }
+
+  :is(.venta-form, .compra-form, .cobro-form, .pago-form, .gasto-form, .ajuste-form) .form-field > small {
+    font-size: 0.72rem;
+    line-height: 1.2;
+  }
+
+  :is(.ventas-shell, .proveedores-shell) .facturas-block {
+    gap: 6px 10px;
+    padding: 7px 9px;
+  }
+
+  :is(.ventas-shell, .proveedores-shell) .facturas-grid .factura-edit-row {
+    padding: 4px;
+  }
+
+  :is(.ventas-shell, .proveedores-shell) :is(.venta-summary-grid, .compra-summary-grid) > * {
+    min-height: 38px;
+    padding: 5px 7px;
+  }
+
+  :is(.ventas-shell, .proveedores-shell, .cobros-shell, .pagos-shell, .gastos-shell)
+    :is(.venta-form, .compra-form, .cobro-form, .pago-form, .gasto-form, .ajuste-form) > .form-field textarea[name="observacion"] {
+    min-height: 38px;
+    height: 38px;
+    padding: 6px 9px;
+    resize: vertical;
+  }
+
+  :is(.venta-form, .compra-form, .cobro-form, .pago-form, .gasto-form, .ajuste-form)
+    > .form-actions > :is(.card-action, .secondary-action) {
+    min-height: 34px;
+    padding: 6px 10px;
+  }
+}
+
+/* Compactación integral — E3: tablas completas y acciones en una sola línea.
+   La altura sigue dependiendo del contenido; no recortar documentos ni importes. */
+#viewRoot table td:is([data-label="Registro"], [data-label="Fecha de Registro"]) > span {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+#viewRoot table > thead > tr > th,
+#viewRoot table > tbody > tr:not(.compact-adjustments-row):not(.historial-detail-row):not(.resumen-periodo-detail-row) > td {
+  padding: 6px 8px;
+}
+
+#viewRoot table .actions-cell,
+#viewRoot table .catalog-compact-actions {
+  width: 1%;
+  min-width: 0;
+}
+
+#viewRoot table .table-row-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  width: max-content;
+  min-width: 0;
+  max-width: min(240px, 65vw);
+  margin-inline: auto;
+  padding: 3px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) #f3ead8;
+}
+
+#viewRoot table .table-row-actions > * {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+#viewRoot table .table-row-actions:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+#viewRoot table .table-row-actions::-webkit-scrollbar {
+  height: 8px;
+}
+
+#viewRoot table .table-row-actions::-webkit-scrollbar-track {
+  background: #f3ead8;
+  border-radius: 4px;
+}
+
+#viewRoot table .table-row-actions::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 4px;
+}
+
+@media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
+  #viewRoot table > thead > tr > th,
+  #viewRoot table > tbody > tr:not(.compact-adjustments-row):not(.historial-detail-row):not(.resumen-periodo-detail-row) > td {
+    padding: 4px 8px;
+  }
+
+  #viewRoot table .table-row-actions > .compact {
+    min-height: 28px;
+    padding: 4px 8px;
+  }
+}
+
+/* Compactación integral — E4: encabezados y componentes propios de los módulos. */
+#viewRoot .hero {
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+#viewRoot .hero .lead,
+#viewRoot .calculator-header .lead {
+  margin-bottom: 0;
+  line-height: 1.35;
+}
+
+#viewRoot .notas-stage-card.capture-help {
+  min-height: 0;
+}
+
+@media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
+  #viewRoot .hero {
+    margin-bottom: 9px;
+  }
+
+  #viewRoot .hero h1,
+  #viewRoot .calculator-header h1 {
+    margin: 4px 0 6px;
+    font-size: clamp(1.8rem, 2.5vw, 2.4rem);
+    line-height: 1.08;
+  }
+
+  #viewRoot .hero .lead,
+  #viewRoot .calculator-header .lead {
+    font-size: 0.9rem;
+  }
+
+  #viewRoot .hero-status {
+    padding: 10px;
+  }
+
+  #viewRoot .hero-status h3 {
+    margin-bottom: 6px;
+  }
+
+  #viewRoot .status-grid,
+  #viewRoot .card-grid {
+    gap: 8px;
+  }
+
+  #viewRoot .hero-status .status-item {
+    padding: 5px 7px;
+  }
+
+  #viewRoot .module-card {
+    min-height: 0;
+    gap: 7px;
+    padding: 12px;
+  }
+
+  #viewRoot .module-card h3 {
+    margin-bottom: 0;
+  }
+
+  #viewRoot .module-card p {
+    font-size: 0.86rem;
+    line-height: 1.3;
+  }
+
+  #viewRoot .module-card .module-icon {
+    width: 36px;
+    height: 36px;
+    font-size: 1.1rem;
+  }
+
+  #viewRoot .module-card .card-action {
+    min-height: 34px;
+    padding: 6px 10px;
+  }
+
+  #viewRoot :is(.catalog-form, .casa-form, .config-form, .authorized-users-form,
+    .notas-prestamo-modal-form, .facturas-form, .facturas-global-filters,
+    .buscador-oc-filters, .period-form) {
+    gap: 7px 9px;
+  }
+
+  #viewRoot :is(.catalog-form, .casa-form, .config-form, .authorized-users-form,
+    .notas-prestamo-modal-form, .facturas-form, .facturas-global-filters,
+    .buscador-oc-filters, .period-form) .form-field > :is(input, select) {
+    min-height: 36px;
+    padding: 6px 9px;
+    line-height: 1.25;
+  }
+
+  #viewRoot :is(.catalog-form, .casa-form, .config-form, .authorized-users-form,
+    .notas-prestamo-modal-form, .facturas-form) .form-field > textarea {
+    min-height: 52px;
+    height: 52px;
+    padding: 7px 9px;
+    resize: vertical;
+  }
+
+  #viewRoot :is(.catalog-form, .casa-form, .config-form, .authorized-users-form,
+    .notas-prestamo-modal-form, .facturas-form, .period-form)
+    .form-actions > :is(.card-action, .secondary-action) {
+    min-height: 34px;
+    padding: 6px 10px;
+  }
+
+  #viewRoot .config-accordion-panel {
+    gap: 8px;
+  }
+
+  #viewRoot .config-accordion-panel > .panel-card,
+  #viewRoot .config-top-sync-band {
+    padding: 10px;
+  }
+
+  #viewRoot .catalog-branch-record {
+    padding-block: 6px;
+  }
+
+  #viewRoot .calculator-shell,
+  #viewRoot .calculator-grid {
+    gap: 10px;
+  }
+
+  #viewRoot .calculator-header,
+  #viewRoot .calculator-panel {
+    gap: 10px;
+    padding: 12px;
+  }
+
+  #viewRoot .calculator-panel {
+    min-height: 0;
+  }
+
+  #viewRoot .calculator-panel-heading {
+    gap: 9px;
+  }
+
+  #viewRoot .calculator-panel-heading h2 {
+    margin-bottom: 4px;
+  }
+
+  #viewRoot .calculator-panel-heading p {
+    font-size: 0.84rem;
+    line-height: 1.3;
+  }
+
+  #viewRoot .calculator-commercial-field > :is(input, select) {
+    min-height: 36px;
+    padding: 6px 9px;
+  }
+
+  #viewRoot .calculator-commercial-summary > div {
+    gap: 3px;
+    padding: 7px 9px;
+  }
+}
+
+/* Compactación integral — E5: barra de período móvil sin reducir controles táctiles. */
+@media (max-width: 740px) {
+  .work-period-panel,
+  .work-period-panel.is-empty {
+    gap: 6px;
+    padding: 8px 10px;
+  }
+
+  .work-period-panel .work-period-copy {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+  }
+
+  .work-period-panel .work-period-copy strong {
+    font-size: 0.95rem;
+    margin: 0;
+  }
+
+  .work-period-panel .work-period-select-shell {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+  }
+
+  .work-period-panel .work-period-select-shell select {
+    min-height: 44px;
+  }
+}
