@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.153-compactacion-integral-e5';
+  const APP_VERSION = '0.18.154-fecha-entrega-envio';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -4167,7 +4167,7 @@ Notas importantes:
   function getVentaCreditBaseType(record) {
     const raw = isPlainObject(record) ? record : {};
     if (isVentaRequiereEnvio(raw)) {
-      return getVentaLogisticaRecord(raw).fechaEstimada ? 'Fecha estimada' : 'Pendiente estimación';
+      return getVentaLogisticaRecord(raw).fechaEstimada ? 'Fecha de entrega' : 'Pendiente entrega';
     }
     return isVentaCreditBaseEntrega(raw) ? 'Entrega' : 'Registro';
   }
@@ -4865,7 +4865,7 @@ Notas importantes:
     if (logistica.transportista) parts.push(`Transportista: ${logistica.transportista}`);
     if (logistica.guia) parts.push(`Guía: ${logistica.guia}`);
     if (logistica.fechaEmbarque) parts.push(`Embarque: ${formatDate(logistica.fechaEmbarque)}`);
-    if (logistica.fechaEstimada) parts.push(`Estimada: ${formatDate(logistica.fechaEstimada)}`);
+    if (logistica.fechaEstimada) parts.push(`Entrega: ${formatDate(logistica.fechaEstimada)}`);
     return parts.join(' · ') || 'Requiere envío';
   }
 
@@ -24393,8 +24393,9 @@ Notas importantes:
               <input type="date" name="logisticaFechaEmbarque" value="${escapeHtml(logistica.fechaEmbarque)}" />
             </label>
             <label class="form-field">
-              <span>Fecha estimada</span>
+              <span>Fecha de entrega</span>
               <input type="date" name="logisticaFechaEstimada" value="${escapeHtml(logistica.fechaEstimada)}" />
+              <small>Completar cuando la transportista confirme la entrega. Desde esta fecha se calculan los días de crédito.</small>
             </label>
             <label class="form-field">
               <span>Guía</span>
@@ -24414,7 +24415,7 @@ Notas importantes:
     const items = [
       ['Transportista', logistica.transportista || '—'],
       ['Fecha de embarque', formatDate(logistica.fechaEmbarque)],
-      ['Fecha estimada', formatDate(logistica.fechaEstimada)],
+      ['Fecha de entrega', formatDate(logistica.fechaEstimada)],
       ['Guía', logistica.guia || '—']
     ];
     const gasto = normalizeLogisticaGastoVentaRecord(logistica.gasto);
