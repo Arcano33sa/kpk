@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_155_historial_mora';
+const CACHE_VERSION = 'v0_18_156_indicadores_compactos';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
