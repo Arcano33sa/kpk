@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.154-fecha-entrega-envio';
+  const APP_VERSION = '0.18.155-historial-mora';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1575,6 +1575,8 @@ Notas importantes:
   let commercialCalculatorMessageTimer = null;
 
   let moraState = {
+    clientesOpen: false,
+    proveedoresOpen: false,
     selectedKind: '',
     selectedId: ''
   };
@@ -22017,35 +22019,38 @@ Notas importantes:
   }
 
   function renderHistorialDocumentosCompact(summary, selectedHistory) {
-    const ventasMarkup = summary.ventas.length
-      ? renderHistorialVentasCompactTable(summary.ventas, selectedHistory)
-      : renderMoraEmptyState('No hay documentos de clientes.', 'Cuando registres ventas, cada documento tendrá su trazabilidad.');
-    const comprasMarkup = summary.compras.length
-      ? renderHistorialComprasCompactTable(summary.compras, selectedHistory)
-      : renderMoraEmptyState('No hay documentos de proveedores.', 'Cuando registres proveedores/compras, cada referencia tendrá su trazabilidad.');
+    const periodosCerrados = new Set(getCierresMensuales().map((cierre) => cierre.periodo));
+    const ventas = summary.ventas.filter((venta) => !periodosCerrados.has(getVentaOriginPeriodKey(venta)));
+    const compras = summary.compras.filter((compra) => !periodosCerrados.has(getCompraOriginPeriodKey(compra)));
+    const ventasMarkup = ventas.length
+      ? renderHistorialVentasCompactTable(ventas, selectedHistory)
+      : renderMoraEmptyState('No hay documentos de clientes.', 'Aquí aparecen los documentos de períodos sin cierre registrado.');
+    const comprasMarkup = compras.length
+      ? renderHistorialComprasCompactTable(compras, selectedHistory)
+      : renderMoraEmptyState('No hay documentos de proveedores.', 'Aquí aparecen las referencias de períodos sin cierre registrado.');
 
     return `
       <div class="historial-compact-grid">
-        <article class="historial-compact-card">
-          <div class="section-title-row compact-title-row">
+        <details class="historial-compact-card" data-mora-history-panel="clientes" ${moraState.clientesOpen ? 'open' : ''}>
+          <summary class="section-title-row compact-title-row">
             <div>
               <span class="eyebrow mini">Clientes</span>
               <h3>Documentos</h3>
             </div>
-            <div class="count-pill">${summary.ventas.length} registros</div>
-          </div>
+            <div class="count-pill">${ventas.length} registros</div>
+          </summary>
           ${ventasMarkup}
-        </article>
-        <article class="historial-compact-card">
-          <div class="section-title-row compact-title-row">
+        </details>
+        <details class="historial-compact-card" data-mora-history-panel="proveedores" ${moraState.proveedoresOpen ? 'open' : ''}>
+          <summary class="section-title-row compact-title-row">
             <div>
               <span class="eyebrow mini">Proveedores</span>
               <h3>Referencias</h3>
             </div>
-            <div class="count-pill">${summary.compras.length} registros</div>
-          </div>
+            <div class="count-pill">${compras.length} registros</div>
+          </summary>
           ${comprasMarkup}
-        </article>
+        </details>
       </div>
     `;
   }
@@ -22414,6 +22419,8 @@ Notas importantes:
   }
 
   function showDocumentHistory(kind, id) {
+    if (kind === 'venta') moraState.clientesOpen = true;
+    if (kind === 'compra') moraState.proveedoresOpen = true;
     moraState.selectedKind = kind;
     moraState.selectedId = id || '';
     if (getRoute() === 'mora') {
@@ -22424,6 +22431,12 @@ Notas importantes:
   }
 
   function setupMoraSearch() {
+    viewRoot.querySelectorAll('[data-mora-history-panel]').forEach((panel) => {
+      panel.addEventListener('toggle', () => {
+        const key = panel.dataset.moraHistoryPanel === 'clientes' ? 'clientesOpen' : 'proveedoresOpen';
+        moraState[key] = panel.open;
+      });
+    });
     const search = viewRoot.querySelector('[data-mora-search]');
     if (!search) return;
     search.addEventListener('input', () => {
@@ -22432,6 +22445,11 @@ Notas importantes:
         const text = card.getAttribute('data-search-text') || '';
         card.hidden = Boolean(query) && !text.includes(query);
       });
+      if (query) {
+        viewRoot.querySelectorAll('[data-mora-history-panel]').forEach((panel) => {
+          if (panel.querySelector('[data-mora-search-card]:not([hidden])')) panel.open = true;
+        });
+      }
     });
   }
 

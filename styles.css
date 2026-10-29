@@ -3909,6 +3909,33 @@ textarea:disabled {
   box-shadow: 0 12px 28px rgba(17, 24, 39, 0.05);
 }
 
+details.historial-compact-card {
+  display: block;
+}
+
+.historial-compact-card > summary {
+  cursor: pointer;
+  list-style: none;
+  margin-bottom: 0;
+}
+
+.historial-compact-card > summary::-webkit-details-marker {
+  display: none;
+}
+
+.historial-compact-card > summary::before {
+  content: '▸';
+  color: var(--ink);
+}
+
+.historial-compact-card[open] > summary {
+  margin-bottom: 10px;
+}
+
+.historial-compact-card[open] > summary::before {
+  content: '▾';
+}
+
 .historial-compact-card h3 {
   margin: 0;
   color: var(--ink);
