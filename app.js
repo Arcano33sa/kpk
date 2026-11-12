@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.156-indicadores-compactos';
+  const APP_VERSION = '0.18.158-indicadores-encabezado-e2';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -21670,12 +21670,19 @@ Notas importantes:
       : renderMoraEmptyState('No hay proveedores en mora.', 'Las facturas vencidas con saldo aparecerán aquí automáticamente.');
 
     return `
-      <section class="hero mora-hero">
+      <section class="hero mora-hero operational-metrics-hero">
         <div>
-          <span class="eyebrow">Módulo activo</span>
           <h1>Mora y Alertas</h1>
           <p class="lead">Saldos pendientes por documento, vencimientos e historial de movimientos.</p>
         </div>
+        <section class="metric-grid" aria-label="Indicadores de mora">
+          <article class="metric-card"><span>OC pendientes</span><strong>${summary.ventasPendientes}</strong></article>
+          <article class="metric-card"><span>OC próximas a vencer</span><strong>${summary.ventasProximas.length}</strong></article>
+          <article class="metric-card"><span>Facturas pendientes</span><strong>${summary.comprasPendientes}</strong></article>
+          <article class="metric-card"><span>Facturas próximas</span><strong>${summary.comprasProximas.length}</strong></article>
+          <article class="metric-card"><span>Pagos parciales</span><strong>${summary.parciales.length}</strong></article>
+          <article class="metric-card"><span>Alertas activas</span><strong>${summary.alertas.length}</strong></article>
+        </section>
         <aside class="hero-status" aria-label="Resumen de mora y alertas">
           <h3>Cartera crítica</h3>
           <div class="status-grid">
@@ -21688,15 +21695,6 @@ Notas importantes:
       </section>
 
       <section class="mora-shell">
-        <section class="metric-grid" aria-label="Indicadores de mora">
-          <article class="metric-card"><span>OC pendientes</span><strong>${summary.ventasPendientes}</strong></article>
-          <article class="metric-card"><span>OC próximas a vencer</span><strong>${summary.ventasProximas.length}</strong></article>
-          <article class="metric-card"><span>Facturas pendientes</span><strong>${summary.comprasPendientes}</strong></article>
-          <article class="metric-card"><span>Facturas próximas</span><strong>${summary.comprasProximas.length}</strong></article>
-          <article class="metric-card"><span>Pagos parciales</span><strong>${summary.parciales.length}</strong></article>
-          <article class="metric-card"><span>Alertas activas</span><strong>${summary.alertas.length}</strong></article>
-        </section>
-
         <section class="panel-grid mora-two-columns">
           <article class="panel-card mora-panel">
             <div class="section-title-row">
@@ -23825,7 +23823,6 @@ Notas importantes:
 
   function renderVentas() {
     const ventas = getVentasOrdenadas();
-    const workPeriodLabel = getWorkPeriodLabelText();
     const clientesActivos = getActiveCatalogRecords('clientes');
     const sucursalesActivas = getActiveCatalogRecords('sucursales');
     const editingRecord = ventasState.editingId ? appData.ventas.find((record) => record.id === ventasState.editingId) : null;
@@ -23834,20 +23831,27 @@ Notas importantes:
     const ventasAjustables = ventas.filter((venta) => venta.activo && venta.saldoPorCobrar > 0);
 
     return `
-      <section class="hero ventas-hero">
+      <section class="hero ventas-hero operational-metrics-hero">
         <div>
-          <span class="eyebrow">Módulo activo</span>
           <h1>Ventas / OC</h1>
           <p class="lead">Registra órdenes de compra con Subtotal - Descuento = Total, ajustes posteriores, saldo real por cobrar y trazabilidad completa sin crear cobros falsos ni duplicar documentos.</p>
         </div>
+        <section class="metric-grid" aria-label="Resumen operativo de ventas">
+          <article class="metric-card"><span>Subtotal</span><strong>${escapeHtml(formatMoney(totals.subtotal))}</strong></article>
+          <article class="metric-card"><span>Descuento</span><strong>${escapeHtml(formatMoney(totals.descuento))}</strong></article>
+          <article class="metric-card"><span>Total</span><strong>${escapeHtml(formatMoney(totals.ventaNetaOriginal))}</strong></article>
+          <article class="metric-card"><span>Ajustes aplicados</span><strong>${totals.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(totals.totalAjustes))}</strong></article>
+          <article class="metric-card"><span>Total cobrado</span><strong>${escapeHtml(formatMoney(totals.totalCobrado))}</strong></article>
+          <article class="metric-card"><span>Saldo por cobrar</span><strong>${escapeHtml(formatMoney(totals.saldoPorCobrar))}</strong></article>
+          <article class="metric-card"><span>Pendientes</span><strong>${totals.pendientes}</strong></article>
+          <article class="metric-card"><span>Vencidas</span><strong>${totals.vencidas}</strong></article>
+          <article class="metric-card"><span>Anuladas</span><strong>${totals.anuladas}</strong></article>
+        </section>
         <aside class="hero-status" aria-label="Resumen de ventas y OC">
           <h3>Totales básicos</h3>
           <div class="status-grid">
-            <div class="status-item"><strong>Período</strong><span>${escapeHtml(workPeriodLabel)}</span></div>
             <div class="status-item"><strong>OC activas</strong><span>${totals.activas}</span></div>
             <div class="status-item"><strong>Tras ajustes</strong><span>${escapeHtml(formatMoney(totals.ventaNetaAjustada))}</span></div>
-            <div class="status-item"><strong>Saldo cobrar</strong><span>${escapeHtml(formatMoney(totals.saldoPorCobrar))}</span></div>
-            <div class="status-item"><strong>Vencidas</strong><span>${totals.vencidas}</span></div>
           </div>
         </aside>
       </section>
@@ -23857,19 +23861,6 @@ Notas importantes:
 
         ${renderWorkPeriodInlineNotice('Ventas / OC')}
         ${missingCatalogs ? renderVentasCatalogWarning(clientesActivos, sucursalesActivas) : ''}
-
-        <section class="metric-grid" aria-label="Resumen operativo de ventas">
-          <article class="metric-card"><span>Subtotal</span><strong>${escapeHtml(formatMoney(totals.subtotal))}</strong></article>
-          <article class="metric-card"><span>Descuento</span><strong>${escapeHtml(formatMoney(totals.descuento))}</strong></article>
-          <article class="metric-card"><span>Total</span><strong>${escapeHtml(formatMoney(totals.ventaNetaOriginal))}</strong></article>
-          <article class="metric-card"><span>Ajustes aplicados</span><strong>${totals.totalAjustes > 0 ? '-' : ''}${escapeHtml(formatMoney(totals.totalAjustes))}</strong></article>
-          
-          <article class="metric-card"><span>Total cobrado</span><strong>${escapeHtml(formatMoney(totals.totalCobrado))}</strong></article>
-          <article class="metric-card"><span>Saldo por cobrar</span><strong>${escapeHtml(formatMoney(totals.saldoPorCobrar))}</strong></article>
-          <article class="metric-card"><span>Pendientes</span><strong>${totals.pendientes}</strong></article>
-          <article class="metric-card"><span>Vencidas</span><strong>${totals.vencidas}</strong></article>
-          <article class="metric-card"><span>Anuladas</span><strong>${totals.anuladas}</strong></article>
-        </section>
 
         <div class="ventas-layout operational-fullwidth-stack">
           <article class="panel-card venta-form-card">
@@ -25528,7 +25519,6 @@ Notas importantes:
 
   function renderCobros() {
     const ventasDisponibles = getVentasConSaldoCobro();
-    const workPeriodLabel = getWorkPeriodLabelText();
     const metodosActivos = getActiveCatalogRecords('metodosPago');
     const cuentasActivas = getActiveBankRecords();
     const cobros = getCobrosOrdenados();
@@ -25550,21 +25540,24 @@ Notas importantes:
     const cannotCreate = !selectedVenta || missingCatalogs;
 
     return `
-      <section class="hero cobros-hero">
+      <section class="hero cobros-hero operational-metrics-hero">
         <div>
-          <span class="eyebrow">Módulo activo</span>
           <h1>Cobros de clientes</h1>
           <p class="lead">Registra pagos completos o abonos parciales ligados a una Venta / OC, y consulta los cobros originados por facturas manuales. Cada movimiento conserva su documento de origen.</p>
         </div>
+        <section class="metric-grid" aria-label="Resumen operativo de cobros">
+          <article class="metric-card"><span>Total cobrado activo</span><strong>${escapeHtml(formatMoney(totals.totalCobrado))}</strong></article>
+          <article class="metric-card"><span>Cobros registrados</span><strong>${totals.activos}</strong></article>
+          <article class="metric-card"><span>Cobros anulados</span><strong>${totals.anulados}</strong></article>
+          <article class="metric-card"><span>OC pagadas</span><strong>${totals.ocPagadas}</strong></article>
+          <article class="metric-card"><span>OC abonadas</span><strong>${totals.ocAbonadas}</strong></article>
+          <article class="metric-card"><span>Saldo cobrable</span><strong>${escapeHtml(formatMoney(totals.saldoCobrable))}</strong></article>
+        </section>
         <aside class="hero-status" aria-label="Resumen de cobros">
           <h3>Totales básicos</h3>
           <div class="status-grid">
-            <div class="status-item"><strong>Período</strong><span>${escapeHtml(workPeriodLabel)}</span></div>
             <div class="status-item"><strong>OC cobrables</strong><span>${ventasDisponibles.length}</span></div>
-            <div class="status-item"><strong>Cobros activos</strong><span>${totals.activos}</span></div>
             <div class="status-item"><strong>Facturas manuales</strong><span>${totals.facturasManuales}</span></div>
-            <div class="status-item"><strong>Total cobrado</strong><span>${escapeHtml(formatMoney(totals.totalCobrado))}</span></div>
-            <div class="status-item"><strong>Anulados</strong><span>${totals.anulados}</span></div>
           </div>
         </aside>
       </section>
@@ -25576,15 +25569,6 @@ Notas importantes:
 
         ${renderWorkPeriodInlineNotice('Cobros')}
         ${renderCobrosWarning(ventasDisponibles, metodosActivos, cuentasActivas)}
-
-        <section class="metric-grid" aria-label="Resumen operativo de cobros">
-          <article class="metric-card"><span>Total cobrado activo</span><strong>${escapeHtml(formatMoney(totals.totalCobrado))}</strong></article>
-          <article class="metric-card"><span>Cobros registrados</span><strong>${totals.activos}</strong></article>
-          <article class="metric-card"><span>Cobros anulados</span><strong>${totals.anulados}</strong></article>
-          <article class="metric-card"><span>OC pagadas</span><strong>${totals.ocPagadas}</strong></article>
-          <article class="metric-card"><span>OC abonadas</span><strong>${totals.ocAbonadas}</strong></article>
-          <article class="metric-card"><span>Saldo cobrable</span><strong>${escapeHtml(formatMoney(totals.saldoCobrable))}</strong></article>
-        </section>
 
         <div class="cobros-layout">
           <article class="panel-card cobro-form-card">
@@ -27015,7 +26999,6 @@ Notas importantes:
 
   function renderProveedoresCompras() {
     const compras = getComprasProveedoresOrdenadas();
-    const workPeriodLabel = getWorkPeriodLabelText();
     const proveedoresActivos = getActiveCatalogRecords('proveedores');
     const editingRecord = proveedoresState.editingId ? appData.comprasProveedores.find((record) => record.id === proveedoresState.editingId) : null;
     const totals = getComprasProveedoresTotals();
@@ -27023,30 +27006,11 @@ Notas importantes:
     const missingProviders = !proveedoresActivos.length;
 
     return `
-      <section class="hero proveedores-hero">
+      <section class="hero proveedores-hero operational-metrics-hero">
         <div>
-          <span class="eyebrow">Módulo activo</span>
           <h1>Proveedores / Compras</h1>
           <p class="lead">Registra deudas y facturas relacionadas de proveedor con fecha de compra, vencimiento, saldo por pagar y estado automático básico. Es cartera por pagar sin circo contable: orden, fecha, monto y listo.</p>
         </div>
-        <aside class="hero-status" aria-label="Resumen de proveedores y compras">
-          <h3>Totales básicos</h3>
-          <div class="status-grid">
-            <div class="status-item"><strong>Período</strong><span>${escapeHtml(workPeriodLabel)}</span></div>
-            <div class="status-item"><strong>Compras activas</strong><span>${totals.activas}</span></div>
-            <div class="status-item"><strong>Saldo pagar</strong><span>${escapeHtml(formatMoney(totals.saldoPorPagar))}</span></div>
-            <div class="status-item"><strong>Vencidas</strong><span>${totals.vencidas}</span></div>
-            <div class="status-item"><strong>Anuladas</strong><span>${totals.anuladas}</span></div>
-          </div>
-        </aside>
-      </section>
-
-      <section class="proveedores-shell">
-        ${proveedoresState.message ? `<div class="form-message ${proveedoresState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(proveedoresState.message)}</div>` : ''}
-
-        ${renderWorkPeriodInlineNotice('Proveedores / Compras')}
-        ${missingProviders ? renderProveedoresCatalogWarning() : ''}
-
         <section class="metric-grid" aria-label="Resumen operativo de proveedores y compras">
           <article class="metric-card"><span>Original activo</span><strong>${escapeHtml(formatMoney(totals.totalCompra))}</strong></article>
           <article class="metric-card"><span>Ajustes aplicados</span><strong>-${escapeHtml(formatMoney(totals.totalAjustes))}</strong></article>
@@ -27057,6 +27021,19 @@ Notas importantes:
           <article class="metric-card"><span>Vencidas</span><strong>${totals.vencidas}</strong></article>
           <article class="metric-card"><span>Anuladas</span><strong>${totals.anuladas}</strong></article>
         </section>
+        <aside class="hero-status" aria-label="Resumen de proveedores y compras">
+          <h3>Totales básicos</h3>
+          <div class="status-grid">
+            <div class="status-item"><strong>Compras activas</strong><span>${totals.activas}</span></div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="proveedores-shell">
+        ${proveedoresState.message ? `<div class="form-message ${proveedoresState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(proveedoresState.message)}</div>` : ''}
+
+        ${renderWorkPeriodInlineNotice('Proveedores / Compras')}
+        ${missingProviders ? renderProveedoresCatalogWarning() : ''}
 
         <div class="compras-layout operational-fullwidth-stack">
           <article class="panel-card compra-form-card">
@@ -28349,7 +28326,6 @@ Notas importantes:
 
   function renderPagosProveedores() {
     const comprasDisponibles = getComprasConSaldoPago();
-    const workPeriodLabel = getWorkPeriodLabelText();
     const metodosActivos = getActiveCatalogRecords('metodosPago');
     const cuentasActivas = getActiveBankRecords();
     const pagos = getPagosProveedoresOrdenados();
@@ -28371,20 +28347,23 @@ Notas importantes:
     const cannotCreate = !selectedCompra || missingCatalogs;
 
     return `
-      <section class="hero pagos-hero">
+      <section class="hero pagos-hero operational-metrics-hero">
         <div>
-          <span class="eyebrow">Módulo activo</span>
           <h1>Pagos a proveedores</h1>
           <p class="lead">Registra pagos completos o abonos parciales ligados a una factura/referencia específica. Cada pago actualiza total pagado, saldo por pagar y estado de la compra/deuda.</p>
         </div>
+        <section class="metric-grid" aria-label="Resumen operativo de pagos a proveedores">
+          <article class="metric-card"><span>Pagado activo</span><strong>${escapeHtml(formatMoney(totals.totalPagado))}</strong></article>
+          <article class="metric-card"><span>Pagos registrados</span><strong>${totals.activos}</strong></article>
+          <article class="metric-card"><span>Pagos anulados</span><strong>${totals.anulados}</strong></article>
+          <article class="metric-card"><span>Facturas pagadas</span><strong>${totals.facturasPagadas}</strong></article>
+          <article class="metric-card"><span>Facturas abonadas</span><strong>${totals.facturasAbonadas}</strong></article>
+          <article class="metric-card"><span>Saldo por pagar</span><strong>${escapeHtml(formatMoney(totals.saldoPorPagar))}</strong></article>
+        </section>
         <aside class="hero-status" aria-label="Resumen de pagos a proveedores">
           <h3>Totales básicos</h3>
           <div class="status-grid">
-            <div class="status-item"><strong>Período</strong><span>${escapeHtml(workPeriodLabel)}</span></div>
             <div class="status-item"><strong>Facturas pagables</strong><span>${comprasDisponibles.length}</span></div>
-            <div class="status-item"><strong>Pagos activos</strong><span>${totals.activos}</span></div>
-            <div class="status-item"><strong>Pagado</strong><span>${escapeHtml(formatMoney(totals.totalPagado))}</span></div>
-            <div class="status-item"><strong>Anulados</strong><span>${totals.anulados}</span></div>
           </div>
         </aside>
       </section>
@@ -28394,15 +28373,6 @@ Notas importantes:
 
         ${renderWorkPeriodInlineNotice('Pagos a proveedores')}
         ${renderPagosWarning(comprasDisponibles, metodosActivos, cuentasActivas)}
-
-        <section class="metric-grid" aria-label="Resumen operativo de pagos a proveedores">
-          <article class="metric-card"><span>Pagado activo</span><strong>${escapeHtml(formatMoney(totals.totalPagado))}</strong></article>
-          <article class="metric-card"><span>Pagos registrados</span><strong>${totals.activos}</strong></article>
-          <article class="metric-card"><span>Pagos anulados</span><strong>${totals.anulados}</strong></article>
-          <article class="metric-card"><span>Facturas pagadas</span><strong>${totals.facturasPagadas}</strong></article>
-          <article class="metric-card"><span>Facturas abonadas</span><strong>${totals.facturasAbonadas}</strong></article>
-          <article class="metric-card"><span>Saldo por pagar</span><strong>${escapeHtml(formatMoney(totals.saldoPorPagar))}</strong></article>
-        </section>
 
         <div class="pagos-layout">
           <article class="panel-card pago-form-card">
@@ -29084,7 +29054,6 @@ Notas importantes:
 
   function renderGastos() {
     const tiposActivos = getActiveCatalogRecords('tiposGasto');
-    const workPeriodLabel = getWorkPeriodLabelText();
     const metodosActivos = getActiveCatalogRecords('metodosPago');
     const cuentasActivas = getActiveBankRecords();
     const gastos = getGastosOrdenados();
@@ -29093,30 +29062,11 @@ Notas importantes:
     const missingCatalogs = !tiposActivos.length || !metodosActivos.length;
 
     return `
-      <section class="hero gastos-hero">
+      <section class="hero gastos-hero operational-metrics-hero">
         <div>
-          <span class="eyebrow">Módulo activo</span>
           <h1>Gastos</h1>
           <p class="lead">Registra gastos operativos por tipo, método de pago y banco cuando aplique. Los anulados quedan visibles para trazabilidad, pero no suman en reportes futuros: orden sin maquillaje contable.</p>
         </div>
-        <aside class="hero-status" aria-label="Resumen de gastos">
-          <h3>Totales básicos</h3>
-          <div class="status-grid">
-            <div class="status-item"><strong>Período</strong><span>${escapeHtml(workPeriodLabel)}</span></div>
-            <div class="status-item"><strong>Gastos activos</strong><span>${totals.activos}</span></div>
-            <div class="status-item"><strong>Total activo</strong><span>${escapeHtml(formatMoney(totals.totalActivo))}</span></div>
-            <div class="status-item"><strong>Anulados</strong><span>${totals.anulados}</span></div>
-            <div class="status-item"><strong>Tipos usados</strong><span>${totals.tiposUsados}</span></div>
-          </div>
-        </aside>
-      </section>
-
-      <section class="gastos-shell">
-        ${gastosState.message ? `<div class="form-message ${gastosState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(gastosState.message)}</div>` : ''}
-
-        ${renderWorkPeriodInlineNotice('Gastos')}
-        ${renderGastosWarning(tiposActivos, metodosActivos, cuentasActivas)}
-
         <section class="metric-grid" aria-label="Resumen operativo de gastos">
           <article class="metric-card"><span>Total gastos activos</span><strong>${escapeHtml(formatMoney(totals.totalActivo))}</strong></article>
           <article class="metric-card"><span>Registrados activos</span><strong>${totals.activos}</strong></article>
@@ -29125,6 +29075,13 @@ Notas importantes:
           <article class="metric-card"><span>Tipos usados</span><strong>${totals.tiposUsados}</strong></article>
           <article class="metric-card"><span>No suman</span><strong>${escapeHtml(formatMoney(totals.totalAnulado))}</strong></article>
         </section>
+      </section>
+
+      <section class="gastos-shell">
+        ${gastosState.message ? `<div class="form-message ${gastosState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(gastosState.message)}</div>` : ''}
+
+        ${renderWorkPeriodInlineNotice('Gastos')}
+        ${renderGastosWarning(tiposActivos, metodosActivos, cuentasActivas)}
 
         <div class="gastos-layout">
           <article class="panel-card gasto-form-card">
@@ -29561,19 +29518,20 @@ Notas importantes:
     const activeFilterLabel = getCasaFilterLabel();
 
     return `
-      <section class="hero casa-hero">
+      <section class="hero casa-hero operational-metrics-hero">
         <div>
-          <span class="eyebrow">Módulo activo</span>
           <h1>Casa</h1>
           <p class="lead">Gastos personales y familiares con categorías propias, separados de la operación productiva.</p>
         </div>
+        <section class="metric-grid casa-finance-grid" aria-label="Resumen interno de Casa">
+          <article class="metric-card casa-finance-card"><span>Utilidad KPK</span><strong>${escapeHtml(formatMoney(casaFinancialSummary.utilidadKpk))}</strong><small>${escapeHtml(casaFinancialSummary.periodLabel)}</small></article>
+          <article class="metric-card casa-finance-card"><span>Total global Casa</span><strong>${escapeHtml(formatMoney(casaFinancialSummary.totalGlobalCasa))}</strong><small>${totals.registros} gastos en filtro activo</small></article>
+          <article class="metric-card casa-finance-card"><span>Disponible después de Casa</span><strong>${escapeHtml(formatMoney(casaFinancialSummary.disponibleDespuesCasa))}</strong><small>Utilidad KPK - Total global Casa</small></article>
+        </section>
         <aside class="hero-status" aria-label="Resumen de Casa">
           <h3>Lectura actual</h3>
           <div class="status-grid">
             <div class="status-item"><strong>Filtro</strong><span>${escapeHtml(activeFilterLabel)}</span></div>
-            <div class="status-item"><strong>Gastos</strong><span>${totals.registros}</span></div>
-            <div class="status-item"><strong>Total global Casa</strong><span>${escapeHtml(formatMoney(totals.total))}</span></div>
-            <div class="status-item"><strong>Utilidad KPK</strong><span>${escapeHtml(formatMoney(casaFinancialSummary.utilidadKpk))}</span></div>
           </div>
         </aside>
       </section>
@@ -29581,12 +29539,6 @@ Notas importantes:
       <section class="casa-shell">
         ${casaState.message ? `<div class="form-message ${casaState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status">${escapeHtml(casaState.message)}</div>` : ''}
         ${renderCasaWarning(categoriasActivas, metodosActivos, cuentasActivas)}
-
-        <section class="metric-grid casa-finance-grid" aria-label="Resumen interno de Casa">
-          <article class="metric-card casa-finance-card"><span>Utilidad KPK</span><strong>${escapeHtml(formatMoney(casaFinancialSummary.utilidadKpk))}</strong><small>${escapeHtml(casaFinancialSummary.periodLabel)}</small></article>
-          <article class="metric-card casa-finance-card"><span>Total global Casa</span><strong>${escapeHtml(formatMoney(casaFinancialSummary.totalGlobalCasa))}</strong><small>${totals.registros} gastos en filtro activo</small></article>
-          <article class="metric-card casa-finance-card"><span>Disponible después de Casa</span><strong>${escapeHtml(formatMoney(casaFinancialSummary.disponibleDespuesCasa))}</strong><small>Utilidad KPK - Total global Casa</small></article>
-        </section>
 
         <article class="panel-card casa-category-totals-card" aria-label="Totales por categoría Casa">
           <div class="section-title-row">
