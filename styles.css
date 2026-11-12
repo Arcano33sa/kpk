@@ -13936,7 +13936,7 @@ input[type="number"]::-webkit-inner-spin-button {
   }
 
   .pagos-shell .pagos-pending-table-wrap {
-    max-height: min(220px, 25vh);
+    max-height: min(440px, 50vh);
     overflow: auto;
   }
 
@@ -14049,7 +14049,7 @@ input[type="number"]::-webkit-inner-spin-button {
   }
 
   .cobros-shell .cobros-pending-table-wrap {
-    max-height: min(220px, 25vh);
+    max-height: min(440px, 50vh);
     overflow: auto;
   }
 
