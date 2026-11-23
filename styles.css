@@ -14623,3 +14623,9 @@ body .form-field > :is(input, select, textarea) {
 .resumen-finance-table caption { text-align: left; padding: 10px 0; font-weight: 700; }
 .resumen-finance-due { padding-left: 20px; overflow-wrap: anywhere; }
 .resumen-finance-due li { margin: 8px 0; }
+
+/* Vista previa local del calendario PDF BAC. */
+.bank-pdf-table { max-width: 100%; overflow-x: auto; }
+.bank-pdf-table table { width: 100%; border-collapse: collapse; }
+.bank-pdf-table th,
+.bank-pdf-table td { padding: 10px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--border); }

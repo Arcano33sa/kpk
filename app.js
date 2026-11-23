@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.166-financiero-oc-escrita-e1';
+  const APP_VERSION = '0.18.168-financiero-pdf-calendario-e2';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -19398,13 +19398,13 @@ Notas importantes:
     return '';
   }
 
-  function renderBancoCuotaRow(numero = 1) {
+  function renderBancoCuotaRow(numero = 1, cuota = {}) {
     return `<div class="bank-calendar-row" data-bank-quota-row>
-      <label class="form-field"><span>N.º cuota</span><input type="number" name="cuotaNumero" min="1" step="1" value="${numero}" required></label>
-      <label class="form-field"><span>Vencimiento</span><input type="date" name="cuotaFecha" required></label>
-      <label class="form-field"><span>Capital</span><input type="number" name="cuotaCapital" min="0" step="0.01" required></label>
-      <label class="form-field"><span>Intereses</span><input type="number" name="cuotaIntereses" min="0" step="0.01" value="0" required></label>
-      <label class="form-field"><span>Otros cargos</span><input type="number" name="cuotaCargos" min="0" step="0.01" value="0" required></label>
+      <label class="form-field"><span>N.º cuota</span><input type="number" name="cuotaNumero" min="1" step="1" value="${escapeHtml(numero)}" required></label>
+      <label class="form-field"><span>Vencimiento</span><input type="date" name="cuotaFecha" value="${escapeHtml(cuota.fechaVencimiento || '')}" required></label>
+      <label class="form-field"><span>Capital</span><input type="number" name="cuotaCapital" min="0" step="0.01" value="${escapeHtml(cuota.capital ?? '')}" required></label>
+      <label class="form-field"><span>Intereses</span><input type="number" name="cuotaIntereses" min="0" step="0.01" value="${escapeHtml(cuota.intereses ?? 0)}" required></label>
+      <label class="form-field"><span>Otros cargos</span><input type="number" name="cuotaCargos" min="0" step="0.01" value="${escapeHtml(cuota.cargos ?? 0)}" required></label>
       <button type="button" class="secondary-action compact" data-bank-remove-row>Quitar fila</button>
     </div>`;
   }
@@ -19418,6 +19418,12 @@ Notas importantes:
         <label class="form-field"><span>Fecha de vigencia del calendario</span><input type="date" name="fechaVigencia" value="${todayInputValue()}" max="${todayInputValue()}" required></label>
         <label class="form-field"><span>Referencia del documento bancario</span><input name="referenciaCalendario" maxlength="160" required></label>
         <label class="form-field financial-form-wide"><span>Motivo / observación</span><input name="observacionCalendario" maxlength="2000" ${summary.calendario ? 'required' : ''}></label>
+      </div>
+      <div class="bank-form">
+        <label class="form-field"><span>Cargar PDF BAC (hasta 10 MB)</span><input type="file" accept=".pdf,application/pdf" data-bank-calendar-pdf></label>
+        <p class="compact-note">La lectura es local. Revisa las cuotas y usa el botón para reemplazar las filas y la referencia del documento. Después podrás corregirlas y guardar. El seguro de vida se carga en Otros cargos.</p>
+        <div data-bank-calendar-pdf-preview aria-live="polite"></div>
+        <button type="button" class="secondary-action" data-bank-calendar-pdf-apply hidden>Usar cuotas del PDF y reemplazar filas</button>
       </div>
       <div data-bank-calendar-rows>${renderBancoCuotaRow()}</div>
       <p class="compact-note" data-bank-calendar-total>Capital por distribuir: ${escapeHtml(financieroMoney(summary.capitalPendiente, loan.moneda))}</p>
@@ -19563,6 +19569,61 @@ Notas importantes:
     saveBancoChange(loan,next,'Abono al banco anulado',paymentId,payment.montoPagado);
   }
 
+  function validateBancoPdfForLoan(loan, result, bookToken) {
+    if (!loan?.activo) return 'El préstamo ya no está disponible.';
+    if (bancoBookToken(loan) !== bookToken) return 'El calendario o los abonos cambiaron. Abre de nuevo el formulario.';
+    const summary = bancoResumen(loan);
+    if (summary.cancelado || summary.capitalPendiente <= 0) return 'El préstamo ya no tiene capital pendiente para distribuir.';
+    if (result.moneda !== loan.moneda) return `El PDF está en ${result.moneda} y el préstamo en ${loan.moneda}.`;
+    if (bancoCentavos(result.capitalBase) !== bancoCentavos(summary.capitalPendiente)) return `El capital del PDF (${financieroMoney(result.capitalBase, result.moneda)}) no coincide con el capital pendiente (${financieroMoney(summary.capitalPendiente, loan.moneda)}). Usa el calendario vigente del banco; no se descontarán cuotas automáticamente.`;
+    return '';
+  }
+
+  function bindBancoPdfCalendar(form, previewTotals) {
+    const input = form.querySelector('[data-bank-calendar-pdf]');
+    const target = form.querySelector('[data-bank-calendar-pdf-preview]');
+    const apply = form.querySelector('[data-bank-calendar-pdf-apply]');
+    let pending = null;
+    const showMessage = (text, error = false) => {
+      const message = document.createElement('p');
+      message.className = `form-message ${error ? 'is-error' : 'is-success'}`;
+      message.setAttribute('role', error ? 'alert' : 'status');
+      message.textContent = text;
+      target.replaceChildren(message);
+    };
+    input.addEventListener('change', async () => {
+      if (!requireRolePermission('registerOperations', financieroState)) return;
+      pending = null; apply.hidden = true; target.replaceChildren();
+      const file = input.files?.[0];
+      if (!file) return;
+      input.disabled = true;
+      target.textContent = 'Leyendo PDF en este dispositivo…';
+      try {
+        const result = await window.KSABankPdf.read(file);
+        if (!form.isConnected) return;
+        if (!canCurrentRole('registerOperations')) throw new Error('Ya no tienes permiso para registrar operaciones.');
+        const loan = appData.prestamosFinancieros.find((item) => item.id === form.dataset.loanId);
+        const error = validateBancoPdfForLoan(loan, result, form.dataset.bookToken);
+        if (error) throw new Error(error);
+        target.innerHTML = renderBancoPdfPreview(result);
+        pending = result; apply.hidden = false;
+      } catch (error) {
+        if (form.isConnected) showMessage(`No se pudo cargar el calendario: ${error?.message || 'PDF no compatible.'}`, true);
+      } finally { input.disabled = false; input.value = ''; }
+    });
+    apply.addEventListener('click', () => {
+      if (!requireRolePermission('registerOperations', financieroState) || !pending) return;
+      const loan = appData.prestamosFinancieros.find((item) => item.id === form.dataset.loanId);
+      const error = validateBancoPdfForLoan(loan, pending, form.dataset.bookToken);
+      if (error) { pending = null; apply.hidden = true; showMessage(error, true); return; }
+      form.querySelector('[data-bank-calendar-rows]').innerHTML = pending.cuotas.map((cuota) => renderBancoCuotaRow(cuota.numero, cuota)).join('');
+      form.elements.referenciaCalendario.value = pending.referencia;
+      pending = null; apply.hidden = true;
+      previewTotals();
+      showMessage('Cuotas cargadas en el formulario. Revisa vencimientos, capital, intereses y otros cargos; puedes corregirlos antes de Guardar calendario.');
+    });
+  }
+
   function bindBancoActions() {
     const open=(id,type='',cuota='') => {
       if (!requireRolePermission('registerOperations',financieroState)) return;
@@ -19578,6 +19639,7 @@ Notas importantes:
     viewRoot.querySelectorAll('[data-bank-calendar-form]').forEach((form) => {
       const rows=form.querySelector('[data-bank-calendar-rows]');
       const preview=() => {const sum=Array.from(rows.querySelectorAll('[name="cuotaCapital"]')).reduce((total,input) => total+(Number(input.value)||0),0);form.querySelector('[data-bank-calendar-total]').textContent=`Capital distribuido: ${financieroMoney(roundMoney(sum),appData.prestamosFinancieros.find(loan=>loan.id===form.dataset.loanId).moneda)}`;};
+      bindBancoPdfCalendar(form, preview);
       form.querySelector('[data-bank-add-row]').addEventListener('click',() => {const next=Math.max(0,...Array.from(rows.querySelectorAll('[name="cuotaNumero"]')).map(input=>Number(input.value)||0))+1;rows.insertAdjacentHTML('beforeend',renderBancoCuotaRow(next));});
       rows.addEventListener('click',(event) => {const button=event.target.closest('[data-bank-remove-row]');if(button){button.closest('[data-bank-quota-row]').remove();preview();}});
       rows.addEventListener('input',preview);
@@ -19799,6 +19861,16 @@ Notas importantes:
     financieroState.message = 'Préstamo anulado; se conserva su historial.';
     financieroState.messageType = 'success';
     renderRoute();
+  }
+
+  function renderBancoPdfPreview(result) {
+    const money = (amount) => escapeHtml(financieroMoney(amount, result.moneda));
+    return `<p class="form-message is-success" role="status">Calendario leído y validado. Revisa los datos antes de utilizarlos.</p>
+      <p>Préstamo: ${escapeHtml(result.referencia)} · Moneda: ${escapeHtml(result.moneda)} · ${result.cuotas.length} cuotas</p>
+      <p>Capital: ${money(result.totales.capital)} · Intereses: ${money(result.totales.intereses)} · Seguro de vida: ${money(result.totales.cargos)} · Total: ${money(result.totales.total)}</p>
+      <p class="compact-note">El seguro de vida corresponde a Otros cargos del calendario.</p>
+      <div class="bank-pdf-table"><table><caption>Cuotas extraídas del PDF</caption><thead><tr><th scope="col">N.º</th><th scope="col">Vencimiento</th><th scope="col">Capital</th><th scope="col">Intereses</th><th scope="col">Seguro / otros cargos</th><th scope="col">Total cuota</th><th scope="col">Saldo capital</th></tr></thead>
+      <tbody>${result.cuotas.map((cuota) => `<tr><td>${cuota.numero}</td><td>${escapeHtml(formatDate(cuota.fechaVencimiento))}</td><td>${money(cuota.capital)}</td><td>${money(cuota.intereses)}</td><td>${money(cuota.cargos)}</td><td>${money(cuota.total)}</td><td>${money(cuota.saldo)}</td></tr>`).join('')}</tbody></table></div>`;
   }
 
   function bindFinancieroActions() {

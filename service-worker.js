@@ -1,12 +1,15 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_166_financiero_oc_escrita_e1';
+const CACHE_VERSION = 'v0_18_168_financiero_pdf_calendario_e2';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './bank-pdf.js',
+  './vendor/pdfjs/pdf.min.mjs',
+  './vendor/pdfjs/pdf.worker.min.mjs',
   './firebase-config.js',
   './FIRESTORE_RULES_KSA_PRACTIKA.rules',
   './GUIA_APLICAR_REGLAS_FIRESTORE.txt',
