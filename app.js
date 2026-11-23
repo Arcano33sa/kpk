@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.163-financiero-e6';
+  const APP_VERSION = '0.18.164-financiero-permiso-admin-e1';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -975,6 +975,7 @@
       label: 'Administrador',
       description: 'Puede gestionar usuarios, importar JSON maestro a nube, exportar respaldos, cerrar períodos, anular movimientos, modificar catálogos y acceder a configuración delicada.',
       permissions: new Set([
+        'registerOperations',
         'manageUsers',
         'initialJsonToCloud',
         'editCatalogs',
