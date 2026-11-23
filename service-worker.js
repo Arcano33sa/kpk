@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_165_financiero_oc_manual_e1';
+const CACHE_VERSION = 'v0_18_166_financiero_oc_escrita_e1';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

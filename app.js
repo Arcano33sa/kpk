@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.165-financiero-oc-manual-e1';
+  const APP_VERSION = '0.18.166-financiero-oc-escrita-e1';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -19621,6 +19621,7 @@ Notas importantes:
       cuentaBancoId: cleanText(raw.cuentaBancoId),
       cuentaBancoNombre: cleanText(raw.cuentaBancoNombre),
       ventaIds: normalizeCompraVentaIds(raw.ventaIds),
+      numeroOcManual: cleanText(raw.numeroOcManual),
       observacion: cleanText(raw.observacion),
       activo: raw.activo !== false && raw.estado !== 'Anulado',
       estado: raw.activo === false || raw.estado === 'Anulado' ? 'Anulado' : 'Registrado',
@@ -19651,6 +19652,7 @@ Notas importantes:
       if (![capital, neto, cargos].every((amount) => Number.isFinite(amount) && Number.isSafeInteger(Math.round(amount * 100)) && Math.abs(amount * 100 - Math.round(amount * 100)) < 0.00001) || capital <= 0 || neto <= 0 || cargos < 0 || Math.round(capital * 100) !== Math.round(neto * 100) + Math.round(cargos * 100)) errors.push(`${label}: el capital debe ser positivo e igual al neto recibido más cargos retenidos.`);
       if (!cleanText(raw.cuentaBancoId)) errors.push(`${label}: falta la cuenta receptora.`);
       if (!Array.isArray(raw.ventaIds) || raw.ventaIds.some((id) => typeof id !== 'string' || !id.trim()) || new Set(raw.ventaIds).size !== raw.ventaIds.length) errors.push(`${label}: vínculos de OC inválidos.`);
+      if (raw.numeroOcManual !== undefined && typeof raw.numeroOcManual !== 'string') errors.push(`${label}: el número de OC manual debe ser texto.`);
       errors.push(...validateBancoBook(raw, relations).map((error) => `${label}: ${error}`));
       if (relations) {
         if (!(relations.cuentasBancos || []).some((item) => item.id === raw.cuentaBancoId)) errors.push(`${label}: la cuenta receptora no existe.`);
@@ -19671,7 +19673,6 @@ Notas importantes:
     const editable = canCurrentRole('registerOperations');
     const protectedBook = bancoCalendarios(value).length || bancoAbonos(value).length;
     const banks = getCatalogRecords('cuentasBancos').filter((record) => record.activo || record.id === value.cuentaBancoId);
-    const ventas = (appData.ventas || []).filter((record) => record.activo || (value.ventaIds || []).includes(record.id));
     const totals = ['NIO', 'USD'].map((moneda) => {
       const active = loans.filter((record) => record.activo && record.moneda === moneda);
       return `<article class="metric-card"><span>Desembolso neto registrado · ${moneda}</span><strong>${escapeHtml(financieroMoney(sumMoney(active, (record) => record.netoRecibido), moneda))}</strong><small>Utilizado: ${escapeHtml(financieroMoney(sumMoney(active, (record) => getPrestamoFondos(record.id).utilizados), moneda))} · Disponible: ${escapeHtml(financieroMoney(sumMoney(active, (record) => getPrestamoFondos(record.id).disponibles), moneda))}<br>Capital pendiente: ${escapeHtml(financieroMoney(sumMoney(active, (record) => bancoResumen(record).capitalPendiente), moneda))}<br>Capital registrado: ${escapeHtml(financieroMoney(sumMoney(active, (record) => record.capitalDesembolsado), moneda))}</small></article>`;
@@ -19695,7 +19696,8 @@ Notas importantes:
             <label class="form-field"><span>Cargos retenidos al desembolsar</span><input type="number" name="cargosRetenidos" ${protectedBook ? 'readonly' : ''} min="0" step="0.01" required value="${value.cargosRetenidos ?? 0}"></label>
             <label class="form-field"><span>Dinero neto recibido</span><input type="number" name="netoRecibido" ${protectedBook ? 'readonly' : ''} min="0.01" step="0.01" required value="${value.netoRecibido ?? ''}"></label>
             <label class="form-field"><span>Cuenta receptora</span><select name="cuentaBancoId" required><option value="">Seleccionar cuenta</option>${banks.map((bank) => `<option value="${escapeHtml(bank.id)}" ${bank.id === value.cuentaBancoId ? 'selected' : ''}>${escapeHtml(bank.nombre)}</option>`).join('')}</select></label>
-            <fieldset class="financial-oc-field financial-form-wide"><legend>OC relacionadas (opcional)</legend><div class="financial-oc-options">${ventas.length ? ventas.map((venta) => `<label class="financial-oc-option"><input type="checkbox" name="ventaIds" value="${escapeHtml(venta.id)}" ${(value.ventaIds || []).includes(venta.id) ? 'checked' : ''}><span>${escapeHtml(venta.numeroDocumento || venta.id)}</span></label>`).join('') : '<span>No hay OC disponibles.</span>'}</div><small>Marca manualmente las OC que deseas relacionar. Sin marcar, el préstamo queda sin OC vinculadas. Relacionar una OC no descuenta fondos ni genera pagos.</small></fieldset>
+            <label class="form-field financial-form-wide"><span>Número de OC (opcional)</span><input type="text" name="numeroOcManual" value="${escapeHtml(value.numeroOcManual || '')}"><small>Escribe la OC del cliente aunque la venta todavía no esté registrada. No crea una venta ni descuenta fondos.</small></label>
+            ${(value.ventaIds || []).length ? `<p class="compact-note financial-form-wide">OC vinculadas anteriormente: ${escapeHtml(value.ventaIds.map((id) => appData.ventas.find((venta) => venta.id === id)?.numeroDocumento || id).join(', '))}. Se conservan al guardar.</p>` : ''}
             <label class="form-field financial-form-wide"><span>Observación</span><textarea name="observacion" rows="2" maxlength="2000">${escapeHtml(value.observacion || '')}</textarea></label>
           </div>
           <p class="compact-note">El capital debe coincidir con el neto recibido más los cargos retenidos. Si no hubo cargos, capital y neto son iguales.</p>
@@ -19712,7 +19714,7 @@ Notas importantes:
             ${renderPrestamoAplicaciones(loan)}
             ${renderBancoControl(loan)}
             <p>Cuenta: ${escapeHtml(loan.cuentaBancoNombre || loan.cuentaBancoId)}</p>
-            <p>OC: ${escapeHtml(loan.ventaIds.map((id) => appData.ventas.find((venta) => venta.id === id)?.numeroDocumento || id).join(', ') || 'Sin vincular')}</p>
+            <p>OC: ${escapeHtml([loan.numeroOcManual, ...loan.ventaIds.map((id) => appData.ventas.find((venta) => venta.id === id)?.numeroDocumento || id)].filter(Boolean).join(', ') || 'Sin vincular')}</p>
             ${loan.observacion ? `<p class="financial-observation">${escapeHtml(loan.observacion)}</p>` : ''}
             ${loan.motivoAnulacion ? `<p>Anulación: ${escapeHtml(loan.motivoAnulacion)}</p>` : ''}
             ${loan.activo && !closed ? `<div class="form-actions">${editable ? `<button type="button" class="secondary-action compact" data-financiero-edit="${escapeHtml(loan.id)}">Editar</button>` : ''}${canCurrentRole('annulMovements') ? `<button type="button" class="danger-action compact" data-financiero-annul="${escapeHtml(loan.id)}">Anular</button>` : ''}</div>` : ''}
@@ -19751,7 +19753,7 @@ Notas importantes:
       moneda: cleanText(fields.get('moneda')), fechaDesembolso: cleanText(fields.get('fechaDesembolso')),
       capitalDesembolsado: fields.get('capitalDesembolsado'), netoRecibido: fields.get('netoRecibido'), cargosRetenidos: fields.get('cargosRetenidos'),
       cuentaBancoId: bank.id, cuentaBancoNombre: bank.nombre,
-      ventaIds: fields.getAll('ventaIds').map(cleanText), observacion: cleanText(fields.get('observacion')),
+      ventaIds: [...(existing?.ventaIds || [])], numeroOcManual: cleanText(fields.get('numeroOcManual')), observacion: cleanText(fields.get('observacion')),
       activo: true, estado: 'Registrado', createdAt: existing?.createdAt || nowIso(), updatedAt: nowIso()
     };
     const transitionError = validateBancoTransition(existing, normalizePrestamoFinancieroRecord(raw));
@@ -20432,7 +20434,7 @@ Notas importantes:
       ...clonePlainObject(loan, {}),
       cuentaBancoNombre: loan.cuentaBancoNombre || getCatalogRecordById('cuentasBancos',loan.cuentaBancoId)?.nombre || '',
       ...(Array.isArray(loan.abonos) ? {abonos:loan.abonos.map((abono)=>({...clonePlainObject(abono,{}),cuentaBancoNombre:abono.cuentaBancoNombre || getCatalogRecordById('cuentasBancos',abono.cuentaBancoId)?.nombre || ''}))} : {}),
-      ocDocumentos: (loan.ventaIds || []).map((id) => appData.ventas.find((venta) => venta.id === id)?.numeroDocumento || id),
+      ocDocumentos: [loan.numeroOcManual, ...(loan.ventaIds || []).map((id) => appData.ventas.find((venta) => venta.id === id)?.numeroDocumento || id)].filter(Boolean),
       fondosExport: getPrestamoFondos(loan.id), bancoExport: bancoResumen(loan)
     }));
     const auditPayments = Array.isArray(appData.excelFinancePaymentsAudit) ? appData.excelFinancePaymentsAudit : appData.pagosProveedores;

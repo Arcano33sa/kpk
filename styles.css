@@ -14563,11 +14563,6 @@ body .form-field > :is(input, select, textarea) {
 .financial-form-grid textarea { width: 100%; max-width: 100%; box-sizing: border-box; }
 .financial-form-wide { grid-column: 1 / -1; }
 .financial-form-grid select[multiple] { min-height: 120px; }
-.financial-oc-field { min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--border); border-radius: 12px; }
-.financial-oc-options { display: grid; gap: 10px; max-height: 220px; overflow-y: auto; margin-bottom: 10px; }
-.financial-oc-option { display: flex; align-items: center; gap: 10px; cursor: pointer; }
-.financial-oc-option input[type="checkbox"] { width: auto; flex: 0 0 auto; margin: 0; }
-.financial-oc-option span { overflow-wrap: anywhere; min-width: 0; }
 .financial-loans { display: grid; gap: 14px; }
 .financial-loan {
   padding: 16px;
