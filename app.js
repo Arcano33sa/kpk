@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.164-financiero-permiso-admin-e1';
+  const APP_VERSION = '0.18.165-financiero-oc-manual-e1';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -19695,7 +19695,7 @@ Notas importantes:
             <label class="form-field"><span>Cargos retenidos al desembolsar</span><input type="number" name="cargosRetenidos" ${protectedBook ? 'readonly' : ''} min="0" step="0.01" required value="${value.cargosRetenidos ?? 0}"></label>
             <label class="form-field"><span>Dinero neto recibido</span><input type="number" name="netoRecibido" ${protectedBook ? 'readonly' : ''} min="0.01" step="0.01" required value="${value.netoRecibido ?? ''}"></label>
             <label class="form-field"><span>Cuenta receptora</span><select name="cuentaBancoId" required><option value="">Seleccionar cuenta</option>${banks.map((bank) => `<option value="${escapeHtml(bank.id)}" ${bank.id === value.cuentaBancoId ? 'selected' : ''}>${escapeHtml(bank.nombre)}</option>`).join('')}</select></label>
-            <label class="form-field financial-form-wide"><span>OC relacionadas (opcional; selección múltiple)</span><select name="ventaIds" multiple size="5">${ventas.map((venta) => `<option value="${escapeHtml(venta.id)}" ${(value.ventaIds || []).includes(venta.id) ? 'selected' : ''}>${escapeHtml(venta.numeroDocumento || venta.id)}</option>`).join('')}</select><small>Relacionar una OC no descuenta fondos ni genera pagos.</small></label>
+            <fieldset class="financial-oc-field financial-form-wide"><legend>OC relacionadas (opcional)</legend><div class="financial-oc-options">${ventas.length ? ventas.map((venta) => `<label class="financial-oc-option"><input type="checkbox" name="ventaIds" value="${escapeHtml(venta.id)}" ${(value.ventaIds || []).includes(venta.id) ? 'checked' : ''}><span>${escapeHtml(venta.numeroDocumento || venta.id)}</span></label>`).join('') : '<span>No hay OC disponibles.</span>'}</div><small>Marca manualmente las OC que deseas relacionar. Sin marcar, el préstamo queda sin OC vinculadas. Relacionar una OC no descuenta fondos ni genera pagos.</small></fieldset>
             <label class="form-field financial-form-wide"><span>Observación</span><textarea name="observacion" rows="2" maxlength="2000">${escapeHtml(value.observacion || '')}</textarea></label>
           </div>
           <p class="compact-note">El capital debe coincidir con el neto recibido más los cargos retenidos. Si no hubo cargos, capital y neto son iguales.</p>
