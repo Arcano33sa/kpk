@@ -20,13 +20,54 @@ const names = [
   'commitBankConsolidationTransaction', 'applyBankConsolidation', 'cancelBlockedBankConsolidation',
   'normalizeKeyForCompare', 'normalizeBankType', 'getBankEnabledMethods', 'getBankTypeDisplay',
   'getBankTypeForPaymentMethod', 'findPaymentMethodByValue', 'bankMatchesType', 'parseFinanciamientoPool',
+  'bankConsolidationStore', 'readBankConsolidationBackup', 'persistBankConsolidationJournal', 'loadBankConsolidationJournal',
   'normalizeCatalogRecord', 'validateTiposCambioFinancieros', 'bancoFechaValida', 'simpleHashText'
 ];
 const storage = new Map();
 let failKey = '', failed = false, downloads = 0, transactionCalls = 0, writes = 0;
+const durableStores = new Map();
+let failDurable = false;
+const fakeIndexedDB = {
+  open() {
+    const request = {};
+    const db = {
+      objectStoreNames: { contains: name => durableStores.has(name) },
+      createObjectStore(name) { durableStores.set(name,new Map()); },
+      close() {},
+      transaction(name) {
+        const transaction = {};
+        transaction.objectStore = () => Object.fromEntries(['get','add','put'].map(action => [action, (...args) => {
+          const operation = {};
+          queueMicrotask(() => {
+            const key = action==='get' ? args[0] : args[1];
+            const store = durableStores.get(name);
+            if (failDurable || action==='add' && store.has(key)) {
+              transaction.error = new Error('Fallo IndexedDB simulado');
+              transaction.onabort?.(); return;
+            }
+            if (action!=='get') store.set(key,clone(args[0]));
+            operation.result = action==='get' ? clone(store.get(key) ?? null) : key;
+            operation.onsuccess?.();
+            transaction.oncomplete?.();
+          });
+          return operation;
+        }]));
+        return transaction;
+      }
+    };
+    queueMicrotask(() => {
+      request.result=db;
+      if (!durableStores.size) request.onupgradeneeded?.();
+      request.onsuccess?.();
+    });
+    return request;
+  }
+};
 const localStorage = {
   getItem: (key) => storage.has(key) ? storage.get(key) : null,
   setItem(key, value) {
+    if (key.startsWith('KSA_PRACTIKA_BANK_CONSOLIDATION_BACKUP_v1:')) throw new Error('No cabe otra copia completa en localStorage');
+    if (key==='KSA_PRACTIKA_BANK_CONSOLIDATION_JOURNAL_v1' && String(value).length>1000) throw new Error('El diario completo no cabe en localStorage');
     if (key === failKey && !failed) { failed = true; throw new Error('Almacenamiento simulado lleno'); }
     storage.set(key, String(value));
   }
@@ -51,7 +92,7 @@ const context = vm.createContext({
   canCurrentRole: () => true, getPendingSessionChanges: () => [],
   cloudOperationState: { isReading: false, isWriting: false, isHydrating: false },
   isCloudDataSourceActive: () => false,
-  localStorage, viewRoot: { inert: false, querySelector: () => ({ checked: true }) },
+  indexedDB: fakeIndexedDB, localStorage, viewRoot: { inert: false, querySelector: () => ({ checked: true }) },
   downloadTextFile: () => { downloads += 1; },
   renderRoute: () => {}, registerActivity: () => {},
   escapeHtml: (value) => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'),
@@ -199,13 +240,13 @@ function fakeFirestore(plan, conflict = false) {
   // Copia previa inmutable y descarga; no se toca el consecutivo JSON.
   storage.set('main', JSON.stringify(context.appData)); storage.set('notes', JSON.stringify(context.notes));
   storage.set('KSA_PRACTIKA_JSON_EXPORT_SEQUENCE_v1', '42');
-  run('bankConsolidationState.plan=plan;prepareBankConsolidationBackup()');
+  await run('bankConsolidationState.plan=plan;prepareBankConsolidationBackup()');
   const backupKey = run('bankConsolidationState.backupKey');
-  assert(backupKey); const backup = storage.get(backupKey);
+  assert(backupKey); const backup = await run('readBankConsolidationBackup(bankConsolidationState.backupKey)');
   assert.equal(JSON.parse(backup).registros.gastos[0].cuentaBancoId,'old-card');
   assert.equal(JSON.parse(backup).almacenamiento.KSA_PRACTIKA_JSON_EXPORT_SEQUENCE_v1,'42');
-  run('prepareBankConsolidationBackup()');
-  assert.equal(storage.get(backupKey), backup); assert.equal(downloads, 2);
+  await run('prepareBankConsolidationBackup()');
+  assert.equal(await run('readBankConsolidationBackup(' + JSON.stringify(backupKey) + ')'), backup); assert.equal(downloads, 2);
   assert.equal(storage.get('KSA_PRACTIKA_JSON_EXPORT_SEQUENCE_v1'), '42');
   // Fallo local después de escribir Notas: diario permite finalizar sin volver a crear registros.
   failKey = 'main'; failed = false;
@@ -218,16 +259,16 @@ function fakeFirestore(plan, conflict = false) {
   assert.equal(run('readBankConsolidationJournal().phase'), 'complete');
   assert.equal(context.appData.gastos[0].cuentaBancoId, 'new');
   assert.equal(context.appData.gastos.length, 1);
-  assert.equal(storage.get(backupKey), backup);
+  assert.equal(await run('readBankConsolidationBackup(' + JSON.stringify(backupKey) + ')'), backup);
   assert.equal(storage.get('KSA_PRACTIKA_JSON_EXPORT_SEQUENCE_v1'), '42');
   assert.deepEqual(context.appData.cierresMensuales, original.cierresMensuales);
   assert.deepEqual(context.appData.exportacionesExcel, original.exportacionesExcel);
   assert.equal(run('bankConsolidationState.error'), false);
   // Ruta de nube completa simulada: commit confirmado + fallo local + reintento.
-  storage.clear(); context.appData = fixture(); context.notes = notesFixture();
+  storage.clear(); durableStores.clear(); context.appData = fixture(); context.notes = notesFixture();
   context.isCloudDataSourceActive = () => true;
   storage.set('main', JSON.stringify(context.appData)); storage.set('notes', JSON.stringify(context.notes));
-  run("bankConsolidationState={plan:buildBankConsolidationPlan(appData,notes,'new',['old-card','old-transfer']),backupKey:'',busy:false};prepareBankConsolidationBackup()");
+  await run("bankConsolidationState={plan:buildBankConsolidationPlan(appData,notes,'new',['old-card','old-transfer']),backupKey:'',busy:false};prepareBankConsolidationBackup()");
   const cloudPlan = json('bankConsolidationState.plan');
   const cloud = fakeFirestore(cloudPlan);
   cloud.docs.get('workspaces/test/gastos/expense').opaqueServerField = { conservar: 'sin cambios' };
@@ -252,9 +293,9 @@ function fakeFirestore(plan, conflict = false) {
   assert.equal(context.cloudOperationState.isWriting,true);
   context.cloudOperationState.isWriting=false;
   // La herramienta rechaza una vista previa que dejó de representar los datos.
-  storage.clear();context.appData=fixture();context.notes=notesFixture();
+  storage.clear();durableStores.clear();context.appData=fixture();context.notes=notesFixture();
   storage.set('main',JSON.stringify(context.appData));storage.set('notes',JSON.stringify(context.notes));
-  run("bankConsolidationState={plan:buildBankConsolidationPlan(appData,notes,'new',['old-card']),backupKey:'',busy:false};prepareBankConsolidationBackup()");
+  await run("bankConsolidationState={plan:buildBankConsolidationPlan(appData,notes,'new',['old-card']),backupKey:'',busy:false};prepareBankConsolidationBackup()");
   context.appData.gastos[0].monto=123;
   const attempts=transactionCalls;
   await run('applyBankConsolidation()');
@@ -283,5 +324,26 @@ function fakeFirestore(plan, conflict = false) {
   context.txContext={db:{},fs:volumeConflict.api,user:{email:''}};
   await assert.rejects(run('commitBankConsolidationTransaction(volumePlan,txContext)'),/otro dispositivo/);
   assert.equal(writes,volumeWrites,'Un conflicto al final del grupo de 271 tampoco publica cambios');
+  assert.equal(storage.has(backupKey),false,'El respaldo grande no se duplica en localStorage');
+  context.appData=fixture();context.notes=notesFixture();
+  storage.clear();durableStores.clear();
+  storage.set('main',JSON.stringify(context.appData));storage.set('notes',JSON.stringify(context.notes));
+  await run("bankConsolidationState={plan:buildBankConsolidationPlan(appData,notes,'new',['old-card']),backupKey:'',busy:false};prepareBankConsolidationBackup()");
+  context.txContext={db:{},fs:fakeFirestore(json('bankConsolidationState.plan')).api,user:{email:''}};
+  await run('applyBankConsolidation()');
+  const summary=JSON.parse(storage.get('KSA_PRACTIKA_BANK_CONSOLIDATION_JOURNAL_v1'));
+  assert.equal(summary.phase,'complete');
+  assert.equal(summary.plan,undefined,'localStorage solo contiene un índice pequeño');
+  assert(storage.get('KSA_PRACTIKA_BANK_CONSOLIDATION_JOURNAL_v1').length<1000);
+  assert.equal((await run('loadBankConsolidationJournal()')).plan.afterData.gastos[0].cuentaBancoId,'new');
+  // Si falla la persistencia de respaldo, nunca se habilita la aplicación remota.
+  context.appData=fixture();context.notes=notesFixture();failDurable=true;
+  run("bankConsolidationState={plan:buildBankConsolidationPlan(appData,notes,'new',['old-card'],{id:'failed-backup'}),backupKey:'',busy:false}");
+  const beforeBackupFailure=transactionCalls;
+  await run('prepareBankConsolidationBackup()');
+  assert.equal(run('bankConsolidationState.backupKey'),'');
+  assert.equal(context.appData.gastos[0].cuentaBancoId,'old-card');
+  assert.equal(transactionCalls,beforeBackupFailure);
+  failDurable=false;
   console.log('OK E4: vista previa pura, referencias anidadas, conflictos, retiro y aliases, transacción atómica simulada, reintentos idempotentes, respaldo inmutable, fallo local y recuperación, históricos y consecutivos intactos.');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

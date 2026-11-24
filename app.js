@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.181-bancos-consolidacion-volumen';
+  const APP_VERSION = '0.18.182-bancos-respaldo-indexeddb';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1572,6 +1572,55 @@ Notas importantes:
     return raw ? JSON.parse(raw) : { version: 1, notas: [], pendientes: [], recordatorios: [] };
   }
 
+  function bankConsolidationStore(storeName, action, key, value) {
+    return new Promise((resolve, reject) => {
+      let stopped = false;
+      const fail = (error) => { stopped = true; reject(error || new Error('No se pudo conservar el respaldo de consolidación.')); };
+      if (typeof indexedDB === 'undefined') { fail(new Error('Este navegador no permite guardar el respaldo de consolidación.')); return; }
+      const request = indexedDB.open('KSA_PRACTIKA_BANK_CONSOLIDATION_v1', 1);
+      request.onupgradeneeded = () => {
+        ['backups', 'journals'].forEach((name) => { if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name); });
+      };
+      request.onerror = () => fail(request.error);
+      request.onblocked = () => fail(new Error('Cierra otras ventanas que estén preparando una consolidación y vuelve a intentar.'));
+      request.onsuccess = () => {
+        const db = request.result;
+        if (stopped) { db.close(); return; }
+        try {
+          const transaction = db.transaction(storeName, action === 'get' ? 'readonly' : 'readwrite');
+          const store = transaction.objectStore(storeName);
+          const operation = action === 'get' ? store.get(key) : action === 'add' ? store.add(value, key) : store.put(value, key);
+          let result = null;
+          operation.onsuccess = () => { result = operation.result ?? null; };
+          transaction.oncomplete = () => { db.close(); resolve(result); };
+          transaction.onerror = transaction.onabort = () => { db.close(); fail(transaction.error); };
+        } catch (error) { db.close(); fail(error); }
+      };
+    });
+  }
+
+  async function readBankConsolidationBackup(key) {
+    const legacy = localStorage.getItem(key);
+    return legacy !== null ? legacy : bankConsolidationStore('backups', 'get', key);
+  }
+
+  async function persistBankConsolidationJournal(journal) {
+    await bankConsolidationStore('journals', 'put', journal.plan.id, journal);
+    // Solo un índice pequeño en localStorage; los datos completos viven en IndexedDB.
+    localStorage.setItem(BANK_CONSOLIDATION_JOURNAL_KEY, JSON.stringify({
+      id: journal.plan.id, phase: journal.phase, cloud: journal.cloud, backupKey: journal.backupKey, cancelado: journal.cancelado === true
+    }));
+  }
+
+  async function loadBankConsolidationJournal() {
+    const summary = readBankConsolidationJournal();
+    if (!summary || summary.plan) return summary; // Compatibilidad con diarios anteriores.
+    if (!summary.id) throw new Error('El diario de consolidación requiere revisión. Conserva tus respaldos.');
+    const journal = await bankConsolidationStore('journals', 'get', summary.id);
+    if (!journal) throw new Error('No se encontró el diario completo de consolidación. Conserva tus respaldos.');
+    return journal;
+  }
+
   function readBankConsolidationJournal() {
     const raw = localStorage.getItem(BANK_CONSOLIDATION_JOURNAL_KEY);
     if (!raw) return null;
@@ -1619,13 +1668,13 @@ Notas importantes:
     renderRoute({ preserveScroll: true });
   }
 
-  function prepareBankConsolidationBackup() {
+  async function prepareBankConsolidationBackup() {
     try {
       if (!canCurrentRole('editCatalogs')) throw new Error(ADMIN_RESTRICTED_MESSAGE);
       const plan = bankConsolidationState.plan;
       if (!plan || plan.errors.length) throw new Error('Primero revisa una selección válida.');
       const key = BANK_CONSOLIDATION_BACKUP_PREFIX + plan.id;
-      let backup = localStorage.getItem(key);
+      let backup = await readBankConsolidationBackup(key);
       if (backup === null) {
         const storage = {};
         const keys = [STORAGE_KEY, NOTES_STORAGE_KEY, 'ksa_notas_pendientes_v1', 'ksa_notas_prestamos_v1', 'ksa_seguimiento_v1', 'ksa_facturas_v1',
@@ -1644,10 +1693,11 @@ Notas importantes:
           registros: { ...appData, notasModulo: notes, facturasModulo: storedJson('ksa_facturas_v1'), seguimiento: storedJson('ksa_seguimiento_v1') },
           almacenamiento: storage
         }, null, 2);
-        localStorage.setItem(key, backup);
+        await bankConsolidationStore('backups', 'add', key, backup);
       }
       if (JSON.parse(backup)?.plan?.id !== plan.id) throw new Error('El respaldo existente no corresponde a esta vista previa; no se sobrescribió.');
       downloadTextFile(backup, `KSA_Respaldo_Consolidacion_${plan.id}.json`, 'application/json;charset=utf-8');
+      if (bankConsolidationState.plan !== plan) throw new Error('La selección cambió mientras se preparaba el respaldo. Revisa nuevamente el impacto.');
       bankConsolidationState.backupKey = key;
       bankConsolidationState.message = 'Respaldo previo conservado en este dispositivo y descarga solicitada. Confirma que recibiste el archivo antes de aplicar.';
       bankConsolidationState.error = false;
@@ -1698,15 +1748,17 @@ Notas importantes:
     });
   }
 
-  function cancelBlockedBankConsolidation() {
+  async function cancelBlockedBankConsolidation() {
     if (!canCurrentRole('editCatalogs') || bankConsolidationState.busy) return;
-    const journal = readBankConsolidationJournal();
-    if (!journal || journal.phase !== 'blocked') return;
-    localStorage.setItem(BANK_CONSOLIDATION_JOURNAL_KEY, JSON.stringify({ ...journal, phase: 'complete', cancelado: true }));
-    bankConsolidationState.plan = null;
-    bankConsolidationState.backupKey = '';
-    bankConsolidationState.message = 'Intento cerrado sin consolidar. El respaldo previo se conserva; actualiza los datos antes de preparar otra vista previa.';
-    bankConsolidationState.error = false;
+    try {
+      const journal = await loadBankConsolidationJournal();
+      if (!journal || journal.phase !== 'blocked') return;
+      await persistBankConsolidationJournal({ ...journal, phase: 'complete', cancelado: true });
+      bankConsolidationState.plan = null;
+      bankConsolidationState.backupKey = '';
+      bankConsolidationState.message = 'Intento cerrado sin consolidar. El respaldo previo se conserva; actualiza los datos antes de preparar otra vista previa.';
+      bankConsolidationState.error = false;
+    } catch (error) { bankConsolidationState.message = error.message; bankConsolidationState.error = true; }
     renderRoute({ preserveScroll: true });
   }
 
@@ -1717,17 +1769,24 @@ Notas importantes:
     try {
       if (!canCurrentRole('editCatalogs')) throw new Error(ADMIN_RESTRICTED_MESSAGE);
       if (getPendingSessionChanges().length || cloudOperationState.isReading || cloudOperationState.isWriting || cloudOperationState.isHydrating) throw new Error('Guarda los cambios pendientes y espera a que termine cualquier actualización antes de consolidar.');
+      const storageAtEntry = localStorage.getItem(STORAGE_KEY);
+      state.busy = true;
+      state.previousInert = viewRoot.inert;
+      state.acquiredViewLock = true;
+      viewRoot.inert = true;
       if (resume) {
-        journal = readBankConsolidationJournal();
+        journal = await loadBankConsolidationJournal();
         if (!journal || journal.phase === 'complete') throw new Error('No hay una consolidación pendiente.');
       } else {
         const plan = state.plan;
-        if (!plan || plan.errors.length || !state.backupKey || !localStorage.getItem(state.backupKey)) throw new Error('Revisa el impacto y prepara el respaldo previo.');
+        if (!plan || plan.errors.length || !state.backupKey) throw new Error('Revisa el impacto y prepara el respaldo previo.');
+        const backup = await readBankConsolidationBackup(state.backupKey);
+        if (!backup || JSON.parse(backup)?.plan?.id !== plan.id) throw new Error('El respaldo no corresponde a esta selección. Revisa nuevamente el impacto.');
         if (!viewRoot.querySelector('[data-bank-consolidation-confirm]')?.checked) throw new Error('Confirma que se trata de la misma cuenta real y que recibiste el respaldo.');
         const fresh = buildBankConsolidationPlan(appData, readBankConsolidationNotes(), plan.targetId, plan.sourceIds, plan);
         if (fresh.errors.length || fresh.signature !== plan.signature) throw new Error('Los datos cambiaron desde la vista previa. Revisa el impacto nuevamente.');
         journal = { phase: 'prepared', cloud: isCloudDataSourceActive(), backupKey: state.backupKey, plan: fresh };
-        localStorage.setItem(BANK_CONSOLIDATION_JOURNAL_KEY, JSON.stringify(journal));
+        await persistBankConsolidationJournal(journal);
       }
       if (Boolean(journal.cloud) !== isCloudDataSourceActive()) throw new Error('Cambió el origen de datos. Revisa la consolidación pendiente antes de continuar.');
       const assertCurrent = () => {
@@ -1742,12 +1801,11 @@ Notas importantes:
         return notes;
       };
       assertCurrent();
-      const storageAtStart = localStorage.getItem(STORAGE_KEY);
-      state.busy = true;
-      state.previousInert = viewRoot.inert;
-      state.acquiredViewLock = true;
-      viewRoot.inert = true;
+      if (localStorage.getItem(STORAGE_KEY) !== storageAtEntry) throw new Error('El almacenamiento cambió mientras se preparaba la operación. Revisa el intento pendiente antes de continuar.');
+      const storageAtStart = storageAtEntry;
+
       if (journal.cloud) {
+        if (cloudOperationState.isReading || cloudOperationState.isWriting || cloudOperationState.isHydrating) throw new Error('Espera a que termine la otra operación de nube y reintenta la finalización.');
         cloudOperationState.isWriting = true;
         state.acquiredCloudLock = true;
         await KSAFirebaseAdapter.consolidateBankAccounts(journal.plan);
@@ -1755,14 +1813,14 @@ Notas importantes:
       if (localStorage.getItem(STORAGE_KEY) !== storageAtStart) throw new Error('Otro proceso cambió el almacenamiento local durante la operación. No se reemplazó su trabajo.');
       const latestNotes = assertCurrent();
       journal.phase = 'remote_confirmed';
-      localStorage.setItem(BANK_CONSOLIDATION_JOURNAL_KEY, JSON.stringify(journal));
+      await persistBankConsolidationJournal(journal);
       const next = { ...appData, cuentasBancos: journal.plan.afterData.cuentasBancos, metadata: { ...appData.metadata, consolidacionesBancos: [...(appData.metadata?.consolidacionesBancos || []).filter((entry) => entry.id !== journal.plan.id), journal.plan.audit] } };
       BANK_CONSOLIDATION_KEYS.forEach((key) => { next[key] = journal.plan.afterData[key]; });
       if (journal.plan.entries.some((entry) => entry.key === 'pendientes')) localStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify({ ...latestNotes, pendientes: journal.plan.afterNotes.pendientes }));
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       appData = next;
       journal.phase = 'complete';
-      localStorage.setItem(BANK_CONSOLIDATION_JOURNAL_KEY, JSON.stringify(journal));
+      await persistBankConsolidationJournal(journal);
       state.plan = null;
       state.backupKey = '';
       state.message = 'Consolidación completada. Los anteriores quedaron retirados; el respaldo previo se conserva.';
@@ -1771,7 +1829,7 @@ Notas importantes:
     } catch (error) {
       if (journal && ['bank/consolidation-conflict', 'permission-denied', 'unauthenticated', 'firebase/not-initial-admin', 'firebase/user-inactive'].includes(error.code)) {
         journal.phase = 'blocked';
-        try { localStorage.setItem(BANK_CONSOLIDATION_JOURNAL_KEY, JSON.stringify(journal)); } catch (_) { /* El respaldo previo permanece intacto. */ }
+        try { await persistBankConsolidationJournal(journal); } catch (_) { /* El respaldo previo permanece intacto. */ }
       }
       state.message = `${error.message || 'No se pudo completar la consolidación.'}${journal ? ' El respaldo y el diario se conservan para revisión o reintento.' : ''}`;
       state.error = true;
