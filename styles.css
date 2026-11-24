@@ -14653,8 +14653,8 @@ body .form-field > :is(input, select, textarea) {
 .financial-bank-summary { min-width: 0; }
 .financial-bank-table { width: 100%; min-width: 660px; border-collapse: collapse; }
 .financial-bank-table th,
-.financial-bank-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }
-.financial-bank-table .financial-bank-amount { text-align: right; white-space: nowrap; }
+.financial-bank-table td { padding: 10px 12px; text-align: center; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.financial-bank-table .financial-bank-amount { text-align: center; white-space: nowrap; }
 .financial-bank-debt { margin-top: 14px; }
 .financial-bank-debt summary { cursor: pointer; }
 
