@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.172-financiero-moneda-verificacion-e4';
+  const APP_VERSION = '0.18.175-financiero-vista-e3';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1546,7 +1546,7 @@ Notas importantes:
     messageType: 'success'
   };
 
-  const financieroState = { tab: 'prestamos', editingId: '', calendarioLoanId: '', abonoLoanId: '', abonoTipo: '', abonoCuotaId: '', message: '', messageType: 'success' };
+  const financieroState = { expandedLoanIds: new Set(), tab: 'prestamos', editingId: '', calendarioLoanId: '', abonoLoanId: '', abonoTipo: '', abonoCuotaId: '', message: '', messageType: 'success' };
 
   let moraState = {
     clientesOpen: false,
@@ -19890,6 +19890,39 @@ Notas importantes:
     renderRoute();
   }
 
+  function buildFinancieroCuentaGroups(loans = appData.prestamosFinancieros) {
+    const groups = new Map();
+    for (const loan of loans || []) {
+      if (!loan.activo || loan.estado === 'Anulado') continue;
+      const key = JSON.stringify([loan.cuentaBancoId || `sin-cuenta:${loan.id}`, loan.moneda]);
+      if (!groups.has(key)) groups.set(key, { cuentaBancoId: loan.cuentaBancoId, cuentaNombre: getCatalogRecordById('cuentasBancos', loan.cuentaBancoId)?.nombre || loan.cuentaBancoNombre || 'Sin cuenta', moneda: loan.moneda, loans: [] });
+      groups.get(key).loans.push(loan);
+    }
+    return Array.from(groups.values()).map((group) => ({
+      cuentaBancoId: group.cuentaBancoId, cuentaNombre: group.cuentaNombre, moneda: group.moneda, prestamos: group.loans.length,
+      recibido: sumMoney(group.loans, (loan) => loan.netoRecibido),
+      utilizado: sumMoney(group.loans, (loan) => getPrestamoFondos(loan.id).utilizados),
+      disponible: sumMoney(group.loans, (loan) => getPrestamoFondos(loan.id).disponibles),
+      capitalDesembolsado: sumMoney(group.loans, (loan) => loan.capitalDesembolsado),
+      capitalAbonado: sumMoney(group.loans, (loan) => bancoResumen(loan).capitalPagado),
+      capitalPendiente: sumMoney(group.loans, (loan) => bancoResumen(loan).capitalPendiente)
+    })).sort((a,b) => a.cuentaNombre.localeCompare(b.cuentaNombre, 'es') || String(a.cuentaBancoId).localeCompare(String(b.cuentaBancoId)) || a.moneda.localeCompare(b.moneda));
+  }
+
+  function renderFinancieroCuentaSummary(loans) {
+    const groups = buildFinancieroCuentaGroups(loans);
+    if (!groups.length) return '<article class="panel-card financial-bank-summary"><h2>Disponible por banco y cuenta</h2><p>Sin préstamos activos para agrupar.</p></article>';
+    const currencies = [...new Set(groups.map((group) => group.moneda))];
+    return `<article class="panel-card financial-bank-summary"><h2>Disponible por banco y cuenta</h2>
+      <p class="compact-note">Préstamos activos de cada cuenta. Total recibido: desembolso neto; utilizado y disponible: fondos para compras. C$ y USD se conservan separados.</p>
+      <p class="financial-loans-mobile-help compact-note">Desliza la tabla horizontalmente para ver todos los importes.</p>
+      <div class="financial-loans-scroll"><table class="financial-bank-table"><caption class="sr-only">Fondos de préstamos activos agrupados por cuenta y moneda</caption><thead><tr><th scope="col">Banco / cuenta</th><th scope="col">Moneda</th><th scope="col">Préstamos</th><th scope="col">Total recibido</th><th scope="col">Utilizado</th><th scope="col">Disponible</th></tr></thead><tbody>${groups.map((group) => `<tr><td>${escapeHtml(group.cuentaNombre)}</td><td>${escapeHtml(group.moneda)}</td><td class="financial-bank-amount">${group.prestamos}</td><td class="financial-bank-amount">${escapeHtml(financieroMoney(group.recibido, group.moneda))}</td><td class="financial-bank-amount">${escapeHtml(financieroMoney(group.utilizado, group.moneda))}</td><td class="financial-bank-amount">${escapeHtml(financieroMoney(group.disponible, group.moneda))}</td></tr>`).join('')}</tbody></table></div>
+      <details class="financial-bank-debt"><summary>Deuda y capital abonado al banco por moneda</summary><div class="financial-loans-scroll"><table class="financial-bank-table"><thead><tr><th scope="col">Moneda</th><th scope="col">Capital desembolsado</th><th scope="col">Capital abonado</th><th scope="col">Capital pendiente</th></tr></thead><tbody>${currencies.map((currency) => {
+        const records = groups.filter((group) => group.moneda === currency);
+        return `<tr><td>${escapeHtml(currency)}</td><td class="financial-bank-amount">${escapeHtml(financieroMoney(sumMoney(records, (item) => item.capitalDesembolsado), currency))}</td><td class="financial-bank-amount">${escapeHtml(financieroMoney(sumMoney(records, (item) => item.capitalAbonado), currency))}</td><td class="financial-bank-amount">${escapeHtml(financieroMoney(sumMoney(records, (item) => item.capitalPendiente), currency))}</td></tr>`;
+      }).join('')}</tbody></table></div></details></article>`;
+  }
+
   function renderFinanciero() {
     if (financieroState.tab === 'monedas') return renderTiposCambioFinancieros();
     const loans = appData.prestamosFinancieros || [];
@@ -19898,15 +19931,11 @@ Notas importantes:
     const editable = canCurrentRole('registerOperations');
     const protectedBook = bancoCalendarios(value).length || bancoAbonos(value).length;
     const banks = getCatalogRecords('cuentasBancos').filter((record) => record.activo || record.id === value.cuentaBancoId);
-    const totals = ['NIO', 'USD'].map((moneda) => {
-      const active = loans.filter((record) => record.activo && record.moneda === moneda);
-      return `<article class="metric-card"><span>Desembolso neto registrado · ${moneda}</span><strong>${escapeHtml(financieroMoney(sumMoney(active, (record) => record.netoRecibido), moneda))}</strong><small>Utilizado: ${escapeHtml(financieroMoney(sumMoney(active, (record) => getPrestamoFondos(record.id).utilizados), moneda))} · Disponible: ${escapeHtml(financieroMoney(sumMoney(active, (record) => getPrestamoFondos(record.id).disponibles), moneda))}<br>Capital pendiente: ${escapeHtml(financieroMoney(sumMoney(active, (record) => bancoResumen(record).capitalPendiente), moneda))}<br>Capital registrado: ${escapeHtml(financieroMoney(sumMoney(active, (record) => record.capitalDesembolsado), moneda))}</small></article>`;
-    }).join('');
     return `
       <section class="financiero-shell">
       <section class="hero"><div><span class="eyebrow">Financiamiento de la operación</span><h1>Financiero</h1><p class="lead">Préstamos efectivamente desembolsados, cuentas receptoras y OC relacionadas.</p></div></section>
       ${renderFinancieroTabs()}
-      <div class="financial-summary-grid">${totals}</div>
+      ${renderFinancieroCuentaSummary(loans)}
       <p class="notice">El disponible para compras corresponde al desembolso menos sus aplicaciones a proveedores. Los abonos al banco reducen la deuda y conservan por separado capital, intereses y cargos.</p>
       <p class="compact-note muted-text">Se muestran todos los préstamos. La fecha del desembolso se conserva independientemente del período seleccionado.</p>
       <p class="form-message ${financieroState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status" data-financiero-message ${financieroState.message ? '' : 'hidden'}>${escapeHtml(financieroState.message)}</p>
@@ -19931,9 +19960,20 @@ Notas importantes:
         </form>
       </article>` : renderRolePermissionNotice('registerOperations')}
       <article class="panel-card"><h2>Préstamos registrados</h2>
-        <div class="financial-loans">${loans.length ? loans.map((loan) => {
+        <p class="compact-note">Recibido: desembolso neto. Abonado: capital devuelto al banco. Pendiente: capital de la deuda bancaria.</p>
+        ${loans.length ? `<p class="financial-loans-mobile-help compact-note">Desliza la tabla horizontalmente para ver todas las columnas y acciones.</p><div class="financial-loans-scroll"><table class="financial-loans-table"><caption class="sr-only">Préstamos registrados y capital pendiente</caption><thead><tr><th scope="col">Banco</th><th scope="col">Préstamo</th><th scope="col">Recibido</th><th scope="col">Abonado</th><th scope="col">Pendiente</th><th scope="col">Acciones</th></tr></thead><tbody>${loans.map((loan, index) => {
           const closed = isWorkPeriodClosed(loan.fechaDesembolso.slice(0, 7));
-          return `<article class="financial-loan ${loan.activo ? '' : 'is-annulled'}">
+          const summary = bancoResumen(loan);
+          const expanded = financieroState.expandedLoanIds.has(loan.id) || financieroState.calendarioLoanId === loan.id || financieroState.abonoLoanId === loan.id;
+          const detailId = `financial-loan-detail-${index}`;
+          return `<tr class="financial-loan-row ${loan.activo ? '' : 'is-annulled'}" data-financial-loan-row="${escapeHtml(loan.id)}">
+            <td>${escapeHtml(loan.acreedor)}<small>${escapeHtml(loan.cuentaBancoNombre || loan.cuentaBancoId)}</small></td>
+            <td>${escapeHtml(loan.referencia)}<small>${escapeHtml(loan.moneda)} · ${escapeHtml(loan.estado)}${closed ? ' · Período cerrado' : ''}</small></td>
+            <td class="financial-loan-amount">${escapeHtml(financieroMoney(loan.netoRecibido, loan.moneda))}</td>
+            <td class="financial-loan-amount">${escapeHtml(financieroMoney(summary.capitalPagado, loan.moneda))}</td>
+            <td class="financial-loan-amount">${escapeHtml(financieroMoney(summary.capitalPendiente, loan.moneda))}</td>
+            <td><div class="financial-loan-actions"><button type="button" class="secondary-action compact" data-financiero-toggle="${escapeHtml(loan.id)}" aria-controls="${detailId}" aria-expanded="${expanded}">${expanded ? 'Cerrar detalle' : 'Ver detalle'}</button>${loan.activo && !closed ? `${editable ? `<button type="button" class="secondary-action compact" data-financiero-edit="${escapeHtml(loan.id)}">Editar</button>` : ''}${canCurrentRole('annulMovements') ? `<button type="button" class="danger-action compact" data-financiero-annul="${escapeHtml(loan.id)}">Anular</button>` : ''}` : ''}</div></td>
+          </tr><tr id="${detailId}" class="financial-loan-detail-row" ${expanded ? '' : 'hidden'}><td colspan="6"><article class="financial-loan">
             <h3>${escapeHtml(loan.acreedor)} · ${escapeHtml(loan.referencia)}</h3>
             <p>${escapeHtml(formatDate(loan.fechaDesembolso))} · ${escapeHtml(loan.moneda)} · <strong>${escapeHtml(loan.estado)}</strong>${closed ? ' · Período cerrado' : ''}</p>
             <dl class="financial-loan-values"><div><dt>Capital desembolsado</dt><dd>${escapeHtml(financieroMoney(loan.capitalDesembolsado, loan.moneda))}</dd></div><div><dt>Neto recibido</dt><dd>${escapeHtml(financieroMoney(loan.netoRecibido, loan.moneda))}</dd></div><div><dt>Cargos retenidos</dt><dd>${escapeHtml(financieroMoney(loan.cargosRetenidos, loan.moneda))}</dd></div></dl>
@@ -19943,9 +19983,8 @@ Notas importantes:
             <p>OC: ${escapeHtml([loan.numeroOcManual, ...loan.ventaIds.map((id) => appData.ventas.find((venta) => venta.id === id)?.numeroDocumento || id)].filter(Boolean).join(', ') || 'Sin vincular')}</p>
             ${loan.observacion ? `<p class="financial-observation">${escapeHtml(loan.observacion)}</p>` : ''}
             ${loan.motivoAnulacion ? `<p>Anulación: ${escapeHtml(loan.motivoAnulacion)}</p>` : ''}
-            ${loan.activo && !closed ? `<div class="form-actions">${editable ? `<button type="button" class="secondary-action compact" data-financiero-edit="${escapeHtml(loan.id)}">Editar</button>` : ''}${canCurrentRole('annulMovements') ? `<button type="button" class="danger-action compact" data-financiero-annul="${escapeHtml(loan.id)}">Anular</button>` : ''}</div>` : ''}
-          </article>`;
-        }).join('') : '<p class="muted-text">No hay préstamos registrados.</p>'}</div>
+          </article></td></tr>`;
+        }).join('')}</tbody></table></div>` : '<p class="muted-text">No hay préstamos registrados.</p>'}
       </article></section>`;
   }
 
@@ -20038,6 +20077,20 @@ Notas importantes:
   }
 
   function bindFinancieroActions() {
+    viewRoot.querySelectorAll('[data-financiero-toggle]').forEach((button) => button.addEventListener('click', () => {
+      const detail = document.getElementById(button.getAttribute('aria-controls'));
+      if (!detail) return;
+      const open = button.getAttribute('aria-expanded') !== 'true';
+      detail.hidden = !open;
+      button.setAttribute('aria-expanded', String(open));
+      button.textContent = open ? 'Cerrar detalle' : 'Ver detalle';
+      if (open) financieroState.expandedLoanIds.add(button.dataset.financieroToggle);
+      else financieroState.expandedLoanIds.delete(button.dataset.financieroToggle);
+      if (open && window.matchMedia('(max-width: 620px)').matches) {
+        const scroll = button.closest('.financial-loans-scroll');
+        if (scroll) scroll.scrollLeft = 0;
+      }
+    }));
     viewRoot.querySelectorAll('[data-financiero-tab]').forEach((button) => button.addEventListener('click', () => {
       financieroState.tab = button.dataset.financieroTab;
       financieroState.message = '';
