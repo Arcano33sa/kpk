@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.168-financiero-pdf-calendario-e2';
+  const APP_VERSION = '0.18.172-financiero-moneda-verificacion-e4';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -10,6 +10,9 @@
   const JSON_EXPORT_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_JSON_EXPORT_SEQUENCE_v1';
   const EXCEL_CONSULTA_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_EXCEL_CONSULTA_SEQUENCE_v1';
   const EXCEL_CIERRE_SEQUENCE_STORAGE_KEY = 'KSA_PRACTIKA_EXCEL_CIERRE_SEQUENCE_v1';
+  const EXCEL_MANUAL_FILE_NAME_MAX_LENGTH = 180;
+  const EXCEL_INVALID_FILE_NAME_PATTERN = /[\/\\:*?"<>|\u0000-\u001F]/;
+  const EXCEL_RESERVED_FILE_NAMES = new Set(['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9']);
   const JSON_APPLIED_STORAGE_KEY = 'KSA_PRACTIKA_LAST_JSON_APPLIED_v1';
   const JSON_IMPORT_HISTORY_STORAGE_KEY = 'KSA_PRACTIKA_JSON_IMPORT_HISTORY_v1';
   const LOCAL_JSON_LOAD_METADATA_STORAGE_KEY = 'KSA_PRACTIKA_LOCAL_JSON_LOAD_METADATA_v1';
@@ -180,6 +183,7 @@
     'comprasProveedores',
     'pagosProveedores',
     'prestamosFinancieros',
+    'tiposCambioFinancieros',
     'gastos',
     'casaGastos',
     'cierresMensuales',
@@ -1542,7 +1546,7 @@ Notas importantes:
     messageType: 'success'
   };
 
-  const financieroState = { editingId: '', calendarioLoanId: '', abonoLoanId: '', abonoTipo: '', abonoCuotaId: '', message: '', messageType: 'success' };
+  const financieroState = { tab: 'prestamos', editingId: '', calendarioLoanId: '', abonoLoanId: '', abonoTipo: '', abonoCuotaId: '', message: '', messageType: 'success' };
 
   let moraState = {
     clientesOpen: false,
@@ -2544,6 +2548,7 @@ Notas importantes:
       pagosProveedores: Number.isNaN(pagos) ? 0 : pagos,
       pagos: Number.isNaN(pagos) ? 0 : pagos,
       prestamosFinancieros: safeNumber(raw.prestamosFinancieros),
+      tiposCambioFinancieros: safeNumber(raw.tiposCambioFinancieros),
       gastos: safeNumber(raw.gastos),
       casaGastos: safeNumber(raw.casaGastos || raw.casa || raw.gastosCasa),
       catalogos: safeNumber(raw.catalogos),
@@ -2569,6 +2574,7 @@ Notas importantes:
       + normalized.cobros
       + normalized.comprasProveedores
       + normalized.pagosProveedores
+      + normalized.tiposCambioFinancieros
       + normalized.prestamosFinancieros
       + normalized.gastos
       + normalized.casaGastos
@@ -2587,6 +2593,7 @@ Notas importantes:
   function formatBackupCountsSummary(counts) {
     const normalized = normalizeBackupCounts(counts);
     const parts = [
+      normalized.tiposCambioFinancieros ? `${normalized.tiposCambioFinancieros} tipo(s) de cambio` : '',
       normalized.prestamosFinancieros ? `${normalized.prestamosFinancieros} préstamo(s) financiero(s)` : '',
       `${normalized.ventas} OC`,
       `${normalized.cobros} cobros`,
@@ -2914,6 +2921,7 @@ Notas importantes:
       comprasProveedores: [],
       pagosProveedores: [],
       prestamosFinancieros: [],
+      tiposCambioFinancieros: [],
       gastos: [],
       casaGastos: [],
       cierresMensuales: [],
@@ -3004,6 +3012,7 @@ Notas importantes:
     normalized.bdatosUpdatedAt = cleanText(source.bdatosUpdatedAt || source.bdatosLastUpdatedAt || source.bdatosMeta?.updatedAt || normalized.bdatosUpdatedAt);
 
     normalized.prestamosFinancieros = normalized.prestamosFinancieros.map(normalizePrestamoFinancieroRecord);
+    normalized.tiposCambioFinancieros = normalized.tiposCambioFinancieros.map(normalizeTipoCambioFinanciero);
     normalized.cobros = normalized.cobros.map((record) => normalizeCobroRecord(record));
     normalized.pagosProveedores = reconcileAutoPagosCompraContadoRecords(
       normalized.pagosProveedores.map((record) => normalizePagoProveedorRecord(record))
@@ -7704,14 +7713,14 @@ Notas importantes:
           if (oldFunding?.prestamoId) {
             const loan = loans.get(oldFunding.prestamoId);
             const reserved = loan.applications.get(payment.id);
-            if (previous.activo !== false && previous.estado !== 'Anulado' && (!reserved || roundMoney(reserved.monto) !== roundMoney(oldFunding.montoPrestamo))) throw new Error('El pago no coincide con el control de fondos del préstamo. Actualiza los datos antes de guardar.');
+            if (previous.activo !== false && previous.estado !== 'Anulado' && (!reserved || roundMoney(reserved.monto) !== roundMoney(getFinanciamientoMontoMoneda(oldFunding)))) throw new Error('El pago no coincide con el control de fondos del préstamo. Actualiza los datos antes de guardar.');
             loan.applications.delete(payment.id);
           }
           const error = validateFinanciamientoPago(payment, previous, { prestamosFinancieros: Array.from(loans.values()).map((loan) => loan.desired) }, { skipAvailability: true });
           if (error) throw new Error(error);
           const funding = payment.financiamiento;
           if (payment.activo !== false && payment.estado !== 'Anulado' && funding?.prestamoId) {
-            loans.get(funding.prestamoId).applications.set(payment.id, { pagoId: payment.id, monto: funding.montoPrestamo, fechaPago: payment.fechaPago });
+            loans.get(funding.prestamoId).applications.set(payment.id, { pagoId: payment.id, monto: getFinanciamientoMontoMoneda(funding), fechaPago: payment.fechaPago });
           }
         }
         // A cash purchase and its automatic payment must be committed together.
@@ -7730,7 +7739,7 @@ Notas importantes:
           if (bankError) throw new Error(bankError);
           const used = sumMoney(Array.from(loan.applications.values()), (item) => item.monto);
           if (used > loan.desired.netoRecibido) throw new Error('Fondos insuficientes: otro equipo ya utilizó parte del préstamo. Actualiza los datos y revisa el pago.');
-          if (used && (!loan.desired.activo || loan.desired.estado === 'Anulado' || loan.desired.moneda !== 'NIO')) throw new Error('No puedes anular ni cambiar la moneda de un préstamo con fondos aplicados.');
+          if (used && (!loan.desired.activo || loan.desired.estado === 'Anulado' || !['NIO','USD'].includes(loan.desired.moneda) || (loan.previous && loan.previous.moneda !== loan.desired.moneda))) throw new Error('No puedes anular ni cambiar la moneda de un préstamo con fondos aplicados.');
           if (Array.from(loan.applications.values()).some((item) => !item.fechaPago || item.fechaPago < loan.desired.fechaDesembolso)) throw new Error('El desembolso no puede quedar después de los pagos financiados.');
         }
         const results = [];
@@ -9997,6 +10006,8 @@ Notas importantes:
         return initial;
       }
       const parsed = JSON.parse(raw);
+      // Los normalizadores consultan los catálogos locales durante el arranque.
+      appData = isPlainObject(parsed) ? parsed : {};
       const normalized = applyInitialBdatosSeedIfNeeded(normalizeData(parsed), parsed);
       saveData(normalized);
       return normalized;
@@ -10147,6 +10158,8 @@ Notas importantes:
       const localClosures = Array.isArray(appData?.cierresMensuales) ? appData.cierresMensuales : [];
       const localExports = Array.isArray(appData?.exportacionesExcel) ? appData.exportacionesExcel : [];
       const cloudSnapshot = normalizeData(result.snapshot);
+      // E1: las tasas son locales; una lectura de nube no debe reemplazarlas.
+      cloudSnapshot.tiposCambioFinancieros = (appData.tiposCambioFinancieros || []).map(normalizeTipoCambioFinanciero);
       reconcileBdatosCloudReadAtApply(cloudSnapshot, result);
       const reconciledClosuresExcel = reconcileClosureExcelReferences(
         [...localClosures, ...(cloudSnapshot.cierresMensuales || [])],
@@ -10735,7 +10748,8 @@ Notas importantes:
     });
   }
 
-  let appData = loadData();
+  let appData;
+  appData = loadData();
   let seguimientoData = loadSeguimientoData();
   reconcileFacturasEstadosWithVentas();
   runFacturasProveedorCleanupMigration({ showMessage: true });
@@ -11748,7 +11762,7 @@ Notas importantes:
     addStandardList('cobros', 'Cobros', snapshot.cobros);
     addStandardList('prestamosFinancieros', 'Préstamos financieros', (snapshot.prestamosFinancieros || []).map((loan) => ({
       ...loan,
-      fondosAplicaciones: (snapshot.pagosProveedores || []).filter((pago) => pago.activo && pago.financiamiento?.prestamoId === loan.id).map((pago) => ({ pagoId: pago.id, monto: pago.financiamiento.montoPrestamo, fechaPago: pago.fechaPago }))
+      fondosAplicaciones: (snapshot.pagosProveedores || []).filter((pago) => pago.activo && pago.financiamiento?.prestamoId === loan.id).map((pago) => ({ pagoId: pago.id, monto: getFinanciamientoMontoMoneda(pago.financiamiento), fechaPago: pago.fechaPago }))
     })));
     addStandardList('comprasProveedores', 'Compras/Proveedores', snapshot.comprasProveedores);
     addStandardList('pagosProveedores', 'Pagos proveedores', snapshot.pagosProveedores);
@@ -19106,25 +19120,45 @@ Notas importantes:
       origen: cleanText(source.origen || 'sin_clasificar'),
       prestamoId: cleanText(source.prestamoId),
       montoPrestamo: Number(String(source.montoPrestamo ?? 0).replace(/,/g, '').trim()),
-      moneda: cleanText(source.moneda || 'NIO')
+      moneda: cleanText(source.moneda || 'NIO'),
+      ...(isPlainObject(source.conversion) ? { conversion: { ...source.conversion } } : {})
     };
+  }
+
+  function getFinanciamientoMontoMoneda(funding) {
+    return funding?.conversion?.monedaOrigen === 'USD' ? Number(funding.conversion.montoOrigen) : Number(funding?.montoPrestamo || 0);
+  }
+
+  function getTipoCambioParaPago(loan, fecha, preferredId = '') {
+    return (appData.tiposCambioFinancieros || []).filter((rate) => rate.bancoId === loan.cuentaBancoId && rate.fecha <= fecha && (!preferredId || rate.id === preferredId)).sort((a,b) => b.fecha.localeCompare(a.fecha) || b.version-a.version)[0] || null;
+  }
+
+  function buildFinanciamientoPago(origen, prestamoId, monto, fecha, rateId = '', existing = null) {
+    const funding = normalizeFinanciamientoPago({ origen, prestamoId: ['prestamo','mixto'].includes(origen) ? prestamoId : '', montoPrestamo: ['prestamo','mixto'].includes(origen) ? monto : 0, moneda: 'NIO' });
+    const loan = (appData.prestamosFinancieros || []).find((item) => item.id === funding.prestamoId);
+    if (!loan || loan.moneda !== 'USD') return funding;
+    const original = existing?.prestamoId === loan.id && existing.conversion?.fechaOperacion === fecha ? existing.conversion : null;
+    const rate = original ? null : getTipoCambioParaPago(loan, fecha, rateId);
+    if (!original && !rate) return funding;
+    const conversion = original ? { ...original } : { monedaOrigen: 'USD', monedaDestino: 'NIO', tipo: 'compra', tasa: rate.compra, tipoCambioId: rate.id, bancoId: rate.bancoId, bancoNombre: rate.bancoNombre, fechaTipoCambio: rate.fecha, version: rate.version, fechaOperacion: fecha };
+    funding.conversion = { ...conversion, montoOrigen: roundMoney(funding.montoPrestamo / conversion.tasa) };
+    return funding;
   }
 
   function readFinanciamientoForm(form, monto, existing = null) {
     const fields = new FormData(form);
     if (!fields.has('fondosOrigen')) return existing;
     const origen = cleanText(fields.get('fondosOrigen'));
-    return normalizeFinanciamientoPago({
-      origen,
-      prestamoId: ['prestamo', 'mixto'].includes(origen) ? fields.get('fondosPrestamoId') : '',
-      montoPrestamo: origen === 'prestamo' ? monto : (origen === 'mixto' ? fields.get('fondosMontoPrestamo') : 0),
-      moneda: 'NIO'
-    });
+    const fecha = cleanText(fields.get('fechaPago') || fields.get('fechaCompra'));
+    if (!existing) {
+      try { existing = JSON.parse(form.querySelector('[data-funding-fields]')?.dataset.fundingOriginal || 'null'); } catch (_) {}
+    }
+    return buildFinanciamientoPago(origen, cleanText(fields.get('fondosPrestamoId')), origen === 'prestamo' ? monto : fields.get('fondosMontoPrestamo'), fecha, cleanText(fields.get('fondosTipoCambioId')), existing);
   }
 
   function getPrestamoFondos(prestamoId, pagos = appData.pagosProveedores, excludePagoId = '', loans = appData.prestamosFinancieros) {
     const loan = (loans || []).find((record) => record.id === prestamoId);
-    const utilizados = sumMoney((pagos || []).filter((pago) => pago.activo !== false && pago.estado !== 'Anulado' && pago.id !== excludePagoId && pago.financiamiento?.prestamoId === prestamoId), (pago) => pago.financiamiento.montoPrestamo);
+    const utilizados = sumMoney((pagos || []).filter((pago) => pago.activo !== false && pago.estado !== 'Anulado' && pago.id !== excludePagoId && pago.financiamiento?.prestamoId === prestamoId), (pago) => getFinanciamientoMontoMoneda(pago.financiamiento));
     return { utilizados, disponibles: roundMoney((loan?.netoRecibido || 0) - utilizados) };
   }
 
@@ -19134,23 +19168,29 @@ Notas importantes:
     const funding = normalizeFinanciamientoPago(raw);
     if (!['propios', 'prestamo', 'mixto', 'sin_clasificar'].includes(funding.origen)) return 'Selecciona un origen de fondos válido.';
     if (!['prestamo', 'mixto'].includes(funding.origen)) {
-      if (funding.prestamoId || funding.montoPrestamo !== 0) return 'Los fondos propios o sin clasificar no pueden llevar un importe de préstamo.';
+      if (funding.prestamoId || funding.montoPrestamo !== 0 || funding.conversion) return 'Los fondos propios o sin clasificar no pueden llevar un importe de préstamo.';
       return '';
     }
     const rawAmount = Number(String(raw.montoPrestamo ?? '').replace(/,/g, '').trim());
     if (!Number.isFinite(rawAmount) || !Number.isSafeInteger(Math.round(rawAmount * 100)) || Math.abs(rawAmount * 100 - Math.round(rawAmount * 100)) > 0.00001 || rawAmount <= 0 || rawAmount > pago.montoPagado) return 'El importe financiado debe ser positivo, tener hasta dos decimales y no superar el pago.';
     if (funding.origen === 'prestamo' && roundMoney(rawAmount) !== roundMoney(pago.montoPagado)) return 'El pago con préstamo debe financiar el importe completo.';
     if (funding.origen === 'mixto' && rawAmount >= pago.montoPagado) return 'El pago mixto debe incluir una parte de recursos propios.';
-    if (funding.moneda !== 'NIO') return 'Los pagos a proveedores están expresados en C$; no se admite conversión automática.';
+    if (funding.moneda !== 'NIO') return 'El importe del pago al proveedor debe estar expresado en C$.';
     const loan = (data.prestamosFinancieros || []).find((record) => record.id === funding.prestamoId);
     if (!loan) return 'El préstamo seleccionado no existe.';
-    if (loan.moneda !== 'NIO') return 'Selecciona un préstamo en C$ para financiar este pago.';
+    if (!['NIO','USD'].includes(loan.moneda)) return 'Moneda de préstamo no admitida.';
+    if (loan.moneda === 'USD') {
+      const fx = funding.conversion;
+      if (!fx) return 'Falta el tipo de cambio de compra del banco para esa fecha. Regístralo en Financiero → Monedas y tipo de cambio.';
+      if (fx.monedaOrigen !== 'USD' || fx.monedaDestino !== 'NIO' || fx.tipo !== 'compra' || fx.bancoId !== loan.cuentaBancoId || !cleanText(fx.tipoCambioId) || !cleanText(fx.bancoNombre) || !Number.isSafeInteger(fx.version) || fx.version < 1 || !bancoFechaValida(fx.fechaTipoCambio) || fx.fechaTipoCambio > pago.fechaPago || fx.fechaOperacion !== pago.fechaPago) return 'La conversión no corresponde al banco, fecha o moneda de esta operación.';
+      if (typeof fx.tasa !== 'number' || !Number.isFinite(fx.tasa) || fx.tasa <= 0 || !Number.isSafeInteger(Math.round(fx.tasa*1000000)) || Math.abs(fx.tasa*1000000-Math.round(fx.tasa*1000000)) > 0.00001 || typeof fx.montoOrigen !== 'number' || !Number.isFinite(fx.montoOrigen) || fx.montoOrigen <= 0 || !Number.isSafeInteger(Math.round(fx.montoOrigen*100)) || Math.abs(fx.montoOrigen*100-Math.round(fx.montoOrigen*100)) > 0.00001 || fx.montoOrigen !== roundMoney(funding.montoPrestamo/fx.tasa)) return 'Revisa el cambio de compra y el importe en USD (redondeado a dos decimales; debe ser al menos US$0.01).';
+    } else if (funding.conversion) return 'Un préstamo en C$ no debe llevar conversión de USD.';
     if (pago.activo === false || pago.estado === 'Anulado') return '';
     if (!loan.activo || loan.estado === 'Anulado') return 'El préstamo seleccionado está anulado.';
     if (pago.fechaPago < loan.fechaDesembolso) return 'La fecha de pago no puede ser anterior al desembolso del préstamo.';
     if (!options.skipAvailability) {
       const available = getPrestamoFondos(loan.id, data.pagosProveedores, existing?.id || pago.id, data.prestamosFinancieros).disponibles;
-      if (funding.montoPrestamo > available) return `Fondos insuficientes del préstamo. Disponible para este pago: ${financieroMoney(available, 'NIO')}.`;
+      if (getFinanciamientoMontoMoneda(funding) > available) return `Fondos insuficientes del préstamo. Disponible para este pago: ${financieroMoney(available, loan.moneda)}.`;
     }
     return '';
   }
@@ -19171,8 +19211,8 @@ Notas importantes:
 
   function renderOrigenFondos(source = null, pagoId = '', disabled = false) {
     const funding = source ? normalizeFinanciamientoPago(source) : { origen: 'propios', prestamoId: '', montoPrestamo: 0 };
-    const loans = (appData.prestamosFinancieros || []).filter((loan) => (loan.activo && loan.moneda === 'NIO') || loan.id === funding.prestamoId);
-    return `<fieldset class="funding-fields" data-funding-fields ${disabled ? 'disabled' : ''}>
+    const loans = (appData.prestamosFinancieros || []).filter((loan) => (loan.activo && ['NIO','USD'].includes(loan.moneda)) || loan.id === funding.prestamoId);
+    return `<fieldset class="funding-fields" data-funding-fields data-funding-original="${escapeHtml(JSON.stringify(source || null))}" ${disabled ? 'disabled' : ''}>
       <legend>Origen de fondos</legend>
       <div class="form-grid">
         <label class="form-field"><span>Financiar este pago con</span><select name="fondosOrigen" data-funding-origin>
@@ -19181,26 +19221,48 @@ Notas importantes:
           <option value="prestamo" ${funding.origen === 'prestamo' ? 'selected' : ''}>Préstamo</option>
           <option value="mixto" ${funding.origen === 'mixto' ? 'selected' : ''}>Mixto: propios y préstamo</option>
         </select></label>
-        <label class="form-field" data-funding-loan-field><span>Préstamo en C$</span><select name="fondosPrestamoId" data-funding-loan><option value="">Seleccionar préstamo</option>${loans.map((loan) => `<option value="${escapeHtml(loan.id)}" ${loan.id === funding.prestamoId ? 'selected' : ''}>${escapeHtml(loan.acreedor)} · ${escapeHtml(loan.referencia)} · disponible ${escapeHtml(financieroMoney(getPrestamoFondos(loan.id, appData.pagosProveedores, pagoId).disponibles, 'NIO'))}${loan.activo ? '' : ' · anulado'}</option>`).join('')}</select></label>
+        <label class="form-field" data-funding-loan-field><span>Préstamo en C$ o USD</span><select name="fondosPrestamoId" data-funding-loan><option value="">Seleccionar préstamo</option>${loans.map((loan) => `<option value="${escapeHtml(loan.id)}" ${loan.id === funding.prestamoId ? 'selected' : ''}>${escapeHtml(loan.acreedor)} · ${escapeHtml(loan.referencia)} · disponible ${escapeHtml(financieroMoney(getPrestamoFondos(loan.id, appData.pagosProveedores, pagoId).disponibles, loan.moneda))}${loan.activo ? '' : ' · anulado'}</option>`).join('')}</select></label>
         <label class="form-field" data-funding-amount-field><span>Parte pagada con préstamo C$</span><input type="number" min="0.01" step="0.01" name="fondosMontoPrestamo" value="${Number.isFinite(funding.montoPrestamo) && funding.montoPrestamo > 0 ? funding.montoPrestamo : ''}"></label>
       </div>
+      <input type="hidden" name="fondosTipoCambioId" value="">
+      <p class="notice" data-funding-conversion aria-live="polite" hidden></p>
       <p class="compact-note">El origen identifica de dónde sale el dinero; no crea otro pago. En mixto, el resto corresponde a recursos propios.</p>
     </fieldset>`;
   }
 
   function bindOrigenFondos() {
     viewRoot.querySelectorAll('[data-funding-fields]').forEach((block) => {
-      const origin = block.querySelector('[data-funding-origin]');
-      const loan = block.querySelector('[data-funding-loan]');
-      const amount = block.querySelector('[name="fondosMontoPrestamo"]');
+      const form = block.closest('form'), origin = block.querySelector('[data-funding-origin]'), loanSelect = block.querySelector('[data-funding-loan]'), amount = block.querySelector('[name="fondosMontoPrestamo"]'), rateInput = block.querySelector('[name="fondosTipoCambioId"]'), notice = block.querySelector('[data-funding-conversion]');
+      let original = null;
+      try { original = JSON.parse(block.dataset.fundingOriginal || 'null'); } catch (_) {}
       const sync = () => {
         const financed = ['prestamo', 'mixto'].includes(origin.value);
         block.querySelector('[data-funding-loan-field]').hidden = !financed;
         block.querySelector('[data-funding-amount-field]').hidden = origin.value !== 'mixto';
-        loan.disabled = !financed; loan.required = financed;
+        loanSelect.disabled = !financed; loanSelect.required = financed;
         amount.disabled = origin.value !== 'mixto'; amount.required = origin.value === 'mixto';
+        rateInput.value = ''; notice.hidden = true; notice.textContent = '';
+        const loan = (appData.prestamosFinancieros || []).find((item) => item.id === loanSelect.value);
+        if (!financed || loan?.moneda !== 'USD') return;
+        notice.hidden = false;
+        const fields = new FormData(form), fecha = cleanText(fields.get('fechaPago') || fields.get('fechaCompra'));
+        const saved = original?.prestamoId === loan.id && original.conversion?.fechaOperacion === fecha ? original.conversion : null;
+        const rate = saved ? null : getTipoCambioParaPago(loan, fecha);
+        if (!saved && !rate) {
+          notice.textContent = 'No hay cambio de compra para la cuenta receptora del préstamo en esta fecha. Regístralo en Financiero → Monedas y tipo de cambio antes de guardar.';
+          return;
+        }
+        rateInput.value = saved?.tipoCambioId || rate.id;
+        let total = parseMoney(fields.get('montoPagado') || 0);
+        if (form.matches('[data-compra-form]')) {
+          const existing = (appData.comprasProveedores || []).find((item) => item.id === cleanText(fields.get('id')));
+          const calculated = getCompraProveedorCalculations({ ...(existing || {}), totalCompra: parseMoney(fields.get('totalCompra')), ajustes: existing?.ajustes || [] });
+          total = roundMoney(Math.max(calculated.totalAjustado - (existing ? calculateManualPagadoForCompra(existing.id, appData.pagosProveedores) : 0), 0));
+        }
+        const funding = buildFinanciamientoPago(origin.value, loan.id, origin.value === 'prestamo' ? total : amount.value, fecha, rateInput.value, original), fx = funding.conversion;
+        notice.textContent = `${fx.bancoNombre} · cambio de compra C$ ${fx.tasa} por US$1 · vigente desde ${formatDate(fx.fechaTipoCambio)} · v${fx.version}. Parte financiada: ${financieroMoney(funding.montoPrestamo, 'NIO')} → consumo ${financieroMoney(fx.montoOrigen, 'USD')} (redondeado a centavos).${origin.value === 'mixto' ? ` Recursos propios: ${financieroMoney(roundMoney(total - funding.montoPrestamo), 'NIO')}.` : ''}${saved ? ' Se conserva el cambio original de esta operación.' : ''}`;
       };
-      origin.addEventListener('change', sync); sync();
+      form.addEventListener('input', sync); form.addEventListener('change', sync); form.addEventListener('ksa-funding-amount-change', sync); sync();
     });
   }
 
@@ -19209,7 +19271,7 @@ Notas importantes:
     const funding = pago.financiamiento;
     if (funding.origen === 'propios') return 'Recursos propios';
     const loan = appData.prestamosFinancieros.find((record) => record.id === funding.prestamoId);
-    return `${funding.origen === 'mixto' ? 'Mixto' : 'Préstamo'} · ${loan?.referencia || funding.prestamoId} · ${financieroMoney(funding.montoPrestamo, 'NIO')}${funding.origen === 'mixto' ? ` · propios ${financieroMoney(roundMoney(pago.montoPagado - funding.montoPrestamo), 'NIO')}` : ''}`;
+    return `${funding.origen === 'mixto' ? 'Mixto' : 'Préstamo'} · ${loan?.referencia || funding.prestamoId} · ${financieroMoney(funding.montoPrestamo, 'NIO')}${funding.conversion ? ` · ${financieroMoney(funding.conversion.montoOrigen, 'USD')} · compra C$ ${funding.conversion.tasa}/USD · ${funding.conversion.bancoNombre} · ${formatDate(funding.conversion.fechaTipoCambio)} · v${funding.conversion.version}` : ''}${funding.origen === 'mixto' ? ` · propios ${financieroMoney(roundMoney(pago.montoPagado - funding.montoPrestamo), 'NIO')}` : ''}`;
   }
 
   function validateFundingReplacement(incoming) {
@@ -19239,13 +19301,32 @@ Notas importantes:
     }
   }
 
+  function getConversionesProveedores(pagos = appData.pagosProveedores) {
+    return (pagos || []).filter((pago) => pago.financiamiento?.conversion?.monedaOrigen === 'USD').map((pago) => {
+      const funding = pago.financiamiento, fx = funding.conversion;
+      return { pagoId: pago.id, fecha: pago.fechaPago, proveedor: pago.proveedorNombre || '', referencia: pago.facturaReferencia || '', prestamoId: funding.prestamoId, montoNio: funding.montoPrestamo, montoUsd: fx.montoOrigen, tasa: fx.tasa, banco: fx.bancoNombre, fechaTipoCambio: fx.fechaTipoCambio, tipoCambioId: fx.tipoCambioId, version: fx.version, activo: pago.activo !== false && pago.estado !== 'Anulado' };
+    });
+  }
+
+  function renderConversionesProveedores(records) {
+    if (!records?.length) return '';
+    return `<details><summary>Conversiones para pagos a proveedores (${records.length})</summary><div class="bank-pdf-table"><table><thead><tr><th>Fecha</th><th>Proveedor / referencia</th><th>Parte financiada C$</th><th>USD consumidos</th><th>Compra C$/USD</th><th>Banco / fecha / versión</th><th>Estado</th></tr></thead><tbody>${records.map((item) => `<tr><td>${escapeHtml(formatDate(item.fecha))}</td><td>${escapeHtml(item.proveedor)} · ${escapeHtml(item.referencia)}</td><td>${escapeHtml(financieroMoney(item.montoNio, 'NIO'))}</td><td>${escapeHtml(financieroMoney(item.montoUsd, 'USD'))}</td><td>${escapeHtml(item.tasa)}</td><td>${escapeHtml(item.banco)} · ${escapeHtml(formatDate(item.fechaTipoCambio))} · v${item.version}</td><td>${item.activo ? 'Aplicado' : 'Anulado; USD liberados'}</td></tr>`).join('')}</tbody></table></div></details>`;
+  }
+
+  function remapFinanciamientoConversion(funding, bankMap) {
+    if (!funding) return funding;
+    const result = normalizeFinanciamientoPago(funding);
+    if (result.conversion) result.conversion.bancoId = bankMap.get(result.conversion.bancoId) || result.conversion.bancoId;
+    return result;
+  }
+
   function renderPrestamoAplicaciones(loan) {
     const pagos = (appData.pagosProveedores || []).filter((pago) => pago.financiamiento?.prestamoId === loan.id);
     const fondos = getPrestamoFondos(loan.id);
     return `<div class="financial-loan-values"><p><strong>Utilizado en compras:</strong> ${escapeHtml(financieroMoney(fondos.utilizados, loan.moneda))}</p><p><strong>Disponible del desembolso:</strong> ${escapeHtml(financieroMoney(fondos.disponibles, loan.moneda))}</p></div>
       ${pagos.length ? `<details><summary>Aplicaciones a proveedores (${pagos.length})</summary><ul class="funding-applications">${pagos.map((pago) => {
         const compra = appData.comprasProveedores.find((record) => record.id === pago.compraProveedorId);
-        return `<li>${escapeHtml(formatDate(pago.fechaPago))} · ${escapeHtml(pago.proveedorNombre)} · ${escapeHtml(pago.facturaReferencia)} · ${escapeHtml(financieroMoney(pago.financiamiento.montoPrestamo, 'NIO'))} · ${pago.activo ? 'Aplicado' : 'Anulado; fondos liberados'}${compra?.ventaIds?.length ? ` · OC ${escapeHtml(compra.ventaIds.map(getCompraOcLabel).join(', '))}` : ''}</li>`;
+        return `<li>${escapeHtml(formatDate(pago.fechaPago))} · ${escapeHtml(pago.proveedorNombre)} · ${escapeHtml(pago.facturaReferencia)} · ${escapeHtml(financieroMoney(pago.financiamiento.montoPrestamo, 'NIO'))}${pago.financiamiento.conversion ? ` · ${escapeHtml(financieroMoney(pago.financiamiento.conversion.montoOrigen, 'USD'))} · compra C$ ${escapeHtml(pago.financiamiento.conversion.tasa)}/USD · ${escapeHtml(pago.financiamiento.conversion.bancoNombre)} · ${escapeHtml(formatDate(pago.financiamiento.conversion.fechaTipoCambio))} · v${pago.financiamiento.conversion.version}` : ''} · ${pago.activo ? 'Aplicado' : 'Anulado; fondos liberados'}${compra?.ventaIds?.length ? ` · OC ${escapeHtml(compra.ventaIds.map(getCompraOcLabel).join(', '))}` : ''}</li>`;
       }).join('')}</ul></details>` : '<p class="compact-note">Sin aplicaciones a proveedores.</p>'}`;
   }
 
@@ -19728,7 +19809,89 @@ Notas importantes:
     return `${moneda === 'USD' ? 'US$' : 'C$'} ${new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}`;
   }
 
+  function normalizeTipoCambioFinanciero(record = {}) {
+    record = isPlainObject(record) ? record : {};
+    return { ...record, id: cleanText(record.id), bancoId: cleanText(record.bancoId), bancoNombre: cleanText(record.bancoNombre), fecha: cleanText(record.fecha), compra: Number(record.compra), venta: Number(record.venta), version: Number(record.version), observacion: cleanText(record.observacion), createdAt: cleanText(record.createdAt) };
+  }
+
+  function validateTiposCambioFinancieros(records, banks = null) {
+    if (!Array.isArray(records)) return ['Los tipos de cambio deben ser una lista.'];
+    const errors = [], ids = new Set(), versions = new Set();
+    records.forEach((rate, index) => {
+      const label = `Tipo de cambio ${index + 1}`;
+      if (!isPlainObject(rate)) { errors.push(`${label}: registro inválido.`); return; }
+      if (typeof rate.id !== 'string' || !cleanText(rate.id) || rate.id.includes('/') || ids.has(rate.id)) errors.push(`${label}: ID inválido o duplicado.`);
+      ids.add(rate.id);
+      if (!cleanText(rate.bancoId) || !cleanText(rate.bancoNombre)) errors.push(`${label}: falta el banco.`);
+      if (banks && !banks.some((bank) => bank.id === rate.bancoId)) errors.push(`${label}: el banco no existe en el respaldo.`);
+      if (!bancoFechaValida(rate.fecha) || rate.fecha > todayInputValue()) errors.push(`${label}: la fecha debe ser real y no futura.`);
+      const validRate = (value) => typeof value === 'number' && Number.isFinite(value) && value > 0 && Number.isSafeInteger(Math.round(value * 1000000)) && Math.abs(value * 1000000 - Math.round(value * 1000000)) < 0.00001;
+      if (!validRate(rate.compra) || !validRate(rate.venta) || rate.venta < rate.compra) errors.push(`${label}: compra y venta deben ser positivas, con hasta seis decimales; venta no puede ser menor que compra.`);
+      const key = `${rate.bancoId}:${rate.fecha}:${rate.version}`;
+      if (!Number.isSafeInteger(rate.version) || rate.version < 1 || versions.has(key)) errors.push(`${label}: versión inválida o duplicada para ese banco y fecha.`);
+      versions.add(key);
+      if (!cleanText(rate.createdAt) || !Number.isFinite(Date.parse(rate.createdAt))) errors.push(`${label}: falta una fecha de registro válida.`);
+      if (rate.observacion !== undefined && (typeof rate.observacion !== 'string' || rate.observacion.length > 2000)) errors.push(`${label}: observación inválida.`);
+    });
+    return errors;
+  }
+
+  function mergeTiposCambioFinancieros(current, incoming, banks = null) {
+    const result = current.map((record) => ({ ...record }));
+    for (const rate of incoming) {
+      const previous = result.find((record) => record.id === rate.id);
+      if (previous) {
+        if (bancoSignature(previous) !== bancoSignature(rate)) throw new Error('Un tipo de cambio histórico no puede sobrescribirse desde un JSON. Registra una nueva versión.');
+      } else result.push({ ...rate });
+    }
+    const errors = validateTiposCambioFinancieros(result, banks);
+    if (errors.length) throw new Error(errors[0]);
+    return result;
+  }
+
+  function renderFinancieroTabs() {
+    return `<nav class="form-actions" aria-label="Secciones de Financiero"><button type="button" class="${financieroState.tab === 'monedas' ? 'secondary-action' : 'card-action'}" data-financiero-tab="prestamos" aria-pressed="${financieroState.tab !== 'monedas'}">Préstamos</button><button type="button" class="${financieroState.tab === 'monedas' ? 'card-action' : 'secondary-action'}" data-financiero-tab="monedas" aria-pressed="${financieroState.tab === 'monedas'}">Monedas y tipo de cambio</button></nav>`;
+  }
+
+  function renderTiposCambioFinancieros() {
+    const rates = (appData.tiposCambioFinancieros || []).slice().sort((a, b) => b.fecha.localeCompare(a.fecha) || b.createdAt.localeCompare(a.createdAt) || b.version - a.version);
+    const banks = getCatalogRecords('cuentasBancos').filter((bank) => bank.activo);
+    const formatRate = (value) => escapeHtml(new Intl.NumberFormat('en-US', { maximumFractionDigits: 6, minimumFractionDigits: 2 }).format(value));
+    return `<section class="financiero-shell"><section class="hero"><div><span class="eyebrow">Financiamiento de la operación</span><h1>Monedas y tipo de cambio</h1><p class="lead">Córdobas por cada dólar estadounidense · C$ por US$1</p></div></section>
+      ${renderFinancieroTabs()}
+      <p class="notice">Compra: entregas USD y recibes C$. Venta: entregas C$ y recibes USD. Se registran desde la perspectiva del banco.</p>
+      <p class="compact-note">Las tasas se guardan en este dispositivo y en el respaldo JSON. Cada compra o pago conserva el cambio aplicado. El historial de tasas todavía no se comparte entre dispositivos.</p>
+      <p class="form-message ${financieroState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status" data-financiero-message ${financieroState.message ? '' : 'hidden'}>${escapeHtml(financieroState.message)}</p>
+      ${canCurrentRole('registerOperations') ? `<article class="panel-card"><h2>Registrar tipo de cambio</h2><form data-tipo-cambio-form><div class="financial-form-grid">
+        <label class="form-field"><span>Banco / cuenta bancaria</span><select name="bancoId" required><option value="">Seleccionar banco</option>${banks.map((bank) => `<option value="${escapeHtml(bank.id)}">${escapeHtml(bank.nombre)}</option>`).join('')}</select></label>
+        <label class="form-field"><span>Fecha de vigencia</span><input type="date" name="fecha" value="${todayInputValue()}" max="${todayInputValue()}" required></label>
+        <label class="form-field"><span>Compra · C$ por US$1</span><input type="number" name="compra" min="0.000001" step="0.000001" required></label>
+        <label class="form-field"><span>Venta · C$ por US$1</span><input type="number" name="venta" min="0.000001" step="0.000001" required></label>
+        <label class="form-field financial-form-wide"><span>Referencia / observación</span><input name="observacion" maxlength="2000"></label>
+        </div><p class="compact-note">Para corregir un registro, agrega otra versión con el mismo banco y fecha. Los anteriores se conservan.</p><button type="submit" class="card-action">Registrar tipo de cambio</button></form></article>` : renderRolePermissionNotice('registerOperations')}
+      <article class="panel-card"><h2>Historial de tipos de cambio</h2>${rates.length ? `<div class="bank-pdf-table"><table><thead><tr><th>Fecha</th><th>Banco</th><th>Compra C$/USD</th><th>Venta C$/USD</th><th>Versión</th><th>Estado</th><th>Registrado</th><th>Referencia / observación</th></tr></thead><tbody>${rates.map((rate) => `<tr><td>${escapeHtml(formatDate(rate.fecha))}</td><td>${escapeHtml(rate.bancoNombre)}</td><td>${formatRate(rate.compra)}</td><td>${formatRate(rate.venta)}</td><td>${rate.version}</td><td>${rates.some((next) => next.bancoId === rate.bancoId && next.fecha === rate.fecha && next.version > rate.version) ? 'Anterior' : 'Última versión de la fecha'}</td><td>${escapeHtml(formatDateTime(rate.createdAt))}</td><td>${escapeHtml(rate.observacion)}</td></tr>`).join('')}</tbody></table></div>` : '<p>Sin tipos de cambio registrados.</p>'}</article></section>`;
+  }
+
+  function saveTipoCambioFinanciero(form) {
+    if (!requireRolePermission('registerOperations', financieroState)) return;
+    const fields = new FormData(form), bank = getCatalogRecordById('cuentasBancos', cleanText(fields.get('bancoId')));
+    if (!bank?.activo) { financieroError('Selecciona un banco activo.'); return; }
+    const fecha = cleanText(fields.get('fecha')), records = appData.tiposCambioFinancieros || [];
+    const rate = { id: generateId('tipoCambio'), bancoId: bank.id, bancoNombre: bank.nombre, fecha, compra: Number(fields.get('compra')), venta: Number(fields.get('venta')), version: Math.max(0, ...records.filter((item) => item.bancoId === bank.id && item.fecha === fecha).map((item) => item.version)) + 1, observacion: cleanText(fields.get('observacion')), createdAt: nowIso() };
+    const error = validateTiposCambioFinancieros([rate], appData.cuentasBancos)[0];
+    if (error) { financieroError(error); return; }
+    const next = { ...appData, tiposCambioFinancieros: [...records, rate], metadata: { ...appData.metadata, updatedAt: nowIso() } };
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); }
+    catch (_) { financieroError('No se pudo guardar el tipo de cambio. No se aplicaron cambios.'); return; }
+    appData = next;
+    withLocalOnlyBackupApplication(() => registerActivity({ module: 'Financiero', action: 'Creado', entityType: 'Tipo de cambio', entityRef: rate.id, detail: `${rate.bancoNombre} · ${rate.fecha} · Compra ${rate.compra} · Venta ${rate.venta} · v${rate.version}`, source: 'local-only' }));
+    financieroState.message = 'Tipo de cambio guardado localmente. Se conservaron las versiones anteriores.';
+    financieroState.messageType = 'success';
+    renderRoute();
+  }
+
   function renderFinanciero() {
+    if (financieroState.tab === 'monedas') return renderTiposCambioFinancieros();
     const loans = appData.prestamosFinancieros || [];
     const editing = loans.find((record) => record.id === financieroState.editingId && record.activo);
     const value = editing || {};
@@ -19742,6 +19905,7 @@ Notas importantes:
     return `
       <section class="financiero-shell">
       <section class="hero"><div><span class="eyebrow">Financiamiento de la operación</span><h1>Financiero</h1><p class="lead">Préstamos efectivamente desembolsados, cuentas receptoras y OC relacionadas.</p></div></section>
+      ${renderFinancieroTabs()}
       <div class="financial-summary-grid">${totals}</div>
       <p class="notice">El disponible para compras corresponde al desembolso menos sus aplicaciones a proveedores. Los abonos al banco reducen la deuda y conservan por separado capital, intereses y cargos.</p>
       <p class="compact-note muted-text">Se muestran todos los préstamos. La fecha del desembolso se conserva independientemente del período seleccionado.</p>
@@ -19874,6 +20038,12 @@ Notas importantes:
   }
 
   function bindFinancieroActions() {
+    viewRoot.querySelectorAll('[data-financiero-tab]').forEach((button) => button.addEventListener('click', () => {
+      financieroState.tab = button.dataset.financieroTab;
+      financieroState.message = '';
+      renderRoute();
+    }));
+    viewRoot.querySelector('[data-tipo-cambio-form]')?.addEventListener('submit', (event) => { event.preventDefault(); saveTipoCambioFinanciero(event.currentTarget); });
     viewRoot.querySelector('[data-financiero-form]')?.addEventListener('submit', (event) => { event.preventDefault(); savePrestamoFinanciero(event.currentTarget); });
     viewRoot.querySelector('[data-financiero-cancel]')?.addEventListener('click', () => { financieroState.editingId = ''; financieroState.message = ''; renderRoute(); });
     viewRoot.querySelectorAll('[data-financiero-edit]').forEach((button) => button.addEventListener('click', () => {
@@ -20187,12 +20357,15 @@ Notas importantes:
         }
       };
     });
+    const conversionesProveedores = getConversionesProveedores().filter((item) => isDateInResumenRange(item.fecha, range));
+    const entradasConversionUSD = sumMoney(conversionesProveedores.filter((item) => item.activo), (item) => item.montoNio);
     const nio = currencies.find((item) => item.moneda === 'NIO');
     return {
-      fechaSaldos: today, scope: 'global_por_fechas', filtrosOperativosActivos: operationalFilters, currencies, acumuladoRange: accumulatedRange,
+      fechaSaldos: today, scope: 'global_por_fechas', filtrosOperativosActivos: operationalFilters, currencies, conversionesProveedores, acumuladoRange: accumulatedRange,
       globalNio: {
         flujoOperativo: flujoOperativoGlobal,
-        flujoTotal: roundMoney(flujoOperativoGlobal + nio.periodo.flujoFinanciamiento),
+        entradasConversionUSD,
+        flujoTotal: roundMoney(flujoOperativoGlobal + nio.periodo.flujoFinanciamiento + entradasConversionUSD),
         utilidadOperativa: utilidadMetrics.utilidadPeriodo,
         resultadoDespuesCostos: roundMoney(utilidadMetrics.utilidadPeriodo - nio.periodo.costosFinancieros),
         utilidadOperativaAcumulada: utilidadMetrics.utilidadAcumulada,
@@ -20223,11 +20396,11 @@ Notas importantes:
           </div>
           ${currency === 'NIO' ? `<h3>Resultado global del período · C$</h3><div class="metric-grid resumen-finance-metrics">
             ${card('Flujo operativo global', global.flujoOperativo, currency, 'Cobros − pagos a proveedores − gastos')}
-            ${card('Flujo total con financiamiento', global.flujoTotal, currency, 'Flujo operativo global + financiamiento')}
+            ${card('Flujo total con financiamiento', global.flujoTotal, currency, 'Flujo operativo + financiamiento C$ + conversiones USD a C$')}
             ${card('Utilidad operativa global', global.utilidadOperativa, currency, 'Ventas − compras − gastos productivos')}
             ${card('Resultado después de costos financieros', global.resultadoDespuesCostos, currency, 'Utilidad operativa − costos financieros')}
             ${card('Resultado acumulado después de costos', global.resultadoAcumuladoDespuesCostos, currency, financing.acumuladoRange ? `Hasta ${formatDate(financing.acumuladoRange.to)}` : 'Todo el histórico, sin corte final')}
-          </div>` : '<p class="compact-note">USD se conserva por separado. No se convierte ni se suma a los resultados operativos en C$.</p>'}
+          </div>` : '<p class="compact-note">Los saldos USD se conservan por separado. Solo los C$ realmente obtenidos al pagar proveedores se incorporan al flujo en C$, sin aumentar ventas ni utilidad.</p>'}
           <details><summary>Detalle de movimientos (${item.movimientos.length})</summary>
             ${item.movimientos.length ? `<div class="bank-table-scroll"><table class="operational-table resumen-finance-table"><caption>Movimientos de préstamos · ${escapeHtml(currency)} · ${escapeHtml(summary.periodLabel)}</caption><thead><tr><th>Fecha</th><th>Préstamo / comprobante</th><th>Movimiento</th><th>Entrada / salida neta</th><th>Capital pagado</th><th>Intereses</th><th>Cargos pagados</th><th>Cargos retenidos</th></tr></thead><tbody>${item.movimientos.map((record) => `<tr><td>${escapeHtml(formatDate(record.fecha))}</td><td>${escapeHtml(record.acreedor)} · ${escapeHtml(record.prestamoReferencia)}<br>${escapeHtml(record.referencia)}</td><td>${escapeHtml(record.tipo)}</td><td>${escapeHtml(financieroMoney(record.neto, currency))}</td><td>${escapeHtml(financieroMoney(record.capital, currency))}</td><td>${escapeHtml(financieroMoney(record.intereses, currency))}</td><td>${escapeHtml(financieroMoney(record.cargos, currency))}</td><td>${escapeHtml(financieroMoney(record.retenidos, currency))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="compact-note">Sin movimientos de préstamos en estas fechas.</p>'}
           </details>
@@ -20246,6 +20419,8 @@ Notas importantes:
           ${renderResumenVencimientosBanco(a.proximas, currency, 'Cuotas de hoy a 7 días')}
         </section>`;
       }).join('')}
+      <p class="notice">C$ obtenidos al convertir préstamos USD para proveedores: ${escapeHtml(financieroMoney(global.entradasConversionUSD || 0, 'NIO'))}. Se incluyen una sola vez como fondos en el flujo total; no son ventas ni utilidad.</p>
+      ${renderConversionesProveedores(financing.conversionesProveedores)}
       <p class="compact-note">Los intereses y cargos se toman de Financiero. El capital devuelto no reduce la utilidad. Los cargos retenidos no se restan de nuevo del flujo, porque el desembolso ya se muestra neto.</p>
     </section>`;
   }
@@ -20515,12 +20690,12 @@ Notas importantes:
       const compra = appData.comprasProveedores.find((item) => item.id === pago.compraProveedorId);
       return { id: pago.id, prestamoId: pago.financiamiento.prestamoId, prestamoReferencia: loan?.referencia || pago.financiamiento.prestamoId,
         fecha: pago.fechaPago, proveedor: pago.proveedorNombre || compra?.proveedorNombre || getCatalogRecordById('proveedores',pago.proveedorId || compra?.proveedorId)?.nombre || '', referencia: pago.facturaReferencia || compra?.facturaReferencia || '',
-        importePago: pago.montoPagado, importePrestamo: pago.financiamiento.montoPrestamo, origen: pago.financiamiento.origen,
+        importePago: pago.montoPagado, importePrestamo: pago.financiamiento.montoPrestamo, monedaPrestamo: loan?.moneda || 'NIO', importeMonedaPrestamo: getFinanciamientoMontoMoneda(pago.financiamiento), conversion: pago.financiamiento.conversion ? clonePlainObject(pago.financiamiento.conversion,{}) : null, origen: pago.financiamiento.origen,
         estado: pago.activo ? 'Aplicado' : 'Anulado', automatico: Boolean(pago.autoGenerado), enPeriodo: isDateInResumenRange(pago.fechaPago, range),
         ocDocumentos: (compra?.ventaIds || []).map((id) => appData.ventas.find((venta) => venta.id === id)?.numeroDocumento || id)
       };
     });
-    return clonePlainObject({ ...finance, version: '1.0', registrosPrestamos, aplicacionesProveedores }, {});
+    return clonePlainObject({ ...finance, version: '2.0', registrosPrestamos, aplicacionesProveedores, tiposCambio: (appData.tiposCambioFinancieros || []).filter((rate) => !appData.excelFinanceCutoffAt || (isExcelFinanceRecordAtCutoff(rate, appData.excelFinanceCutoffAt) && rate.fecha <= fechaSaldos)) }, {});
   }
 
   function xlsxCurrency(value, currency = 'NIO', total = false) {
@@ -20541,6 +20716,7 @@ Notas importantes:
       [xlsxText('Costos financieros del período'), xlsxMoney(nio.periodo.costosFinancieros)],
       [xlsxText('Flujo de financiamiento'), xlsxMoney(nio.periodo.flujoFinanciamiento)],
       [xlsxText('Flujo operativo global'), xlsxMoney(global.flujoOperativo)],
+      ...(finance.version === '2.0' ? [[xlsxText('C$ obtenidos de préstamos USD para proveedores'), xlsxMoney(global.entradasConversionUSD || 0)]] : []),
       [xlsxTotalText('Flujo total con financiamiento'), xlsxTotalMoney(global.flujoTotal)],
       [xlsxText('Utilidad operativa'), xlsxMoney(global.utilidadOperativa)],
       [xlsxTotalText('Resultado después de costos'), xlsxTotalMoney(global.resultadoDespuesCostos)],
@@ -20555,7 +20731,7 @@ Notas importantes:
       [xlsxTitle('KSA PRÁCTIKA — Financiero')],
       [xlsxLabel('Período de movimientos'), xlsxText(summary.periodLabel)],
       [xlsxLabel(summary.excelCierreMode ? 'Corte oficial' : 'Saldos a fecha de consulta'), summary.excelCierreMode ? xlsxText(formatDateTime(summary.corteOficialAt)) : xlsxDate(f.fechaSaldos)],
-      [xlsxText('Monedas'), xlsxText('NIO y USD separados; sin conversión')],
+      [xlsxText('Monedas'), xlsxText(f.version === '2.0' ? 'Saldos NIO/USD separados; conversiones por pago con tasa original' : 'NIO y USD separados; sin conversión')],
       [xlsxText('Fondos para proveedores'), xlsxText('No son el saldo bancario')]
     ];
     for (const currency of f.currencies.filter((item) => item.moneda === 'NIO' || item.prestamos)) {
@@ -20576,6 +20752,15 @@ Notas importantes:
     }
     rows.push([], [xlsxSubtitle('Aplicaciones a proveedores registradas')], xlsxHeaderRow(['Fecha', 'Proveedor', 'Préstamo', 'Origen', 'Pago completo C$', 'Parte préstamo C$', 'Estado', 'Automático', 'En período', 'Referencia', 'OC relacionadas']));
     for(const pago of f.aplicacionesProveedores)rows.push([xlsxDate(pago.fecha),xlsxText(pago.proveedor),xlsxText(pago.prestamoReferencia),xlsxText(pago.origen==='mixto'?'Mixto':'Préstamo'),xlsxMoney(pago.importePago),xlsxMoney(pago.importePrestamo),xlsxText(pago.estado),xlsxText(pago.automatico?'Sí':'No'),xlsxText(pago.enPeriodo?'Sí':'No'),xlsxText(pago.referencia),xlsxText(pago.ocDocumentos.join(', '))]);
+    if (f.version === '2.0') {
+      rows.push([], [xlsxSubtitle('Conversiones USD a C$ para proveedores')], xlsxHeaderRow(['Fecha', 'Proveedor', 'Préstamo', 'Parte financiada C$', 'USD consumidos', 'Compra C$/USD', 'Banco conversión', 'Vigencia cambio', 'Versión cambio', 'ID cambio', 'Estado', 'Referencia']));
+      for (const pago of f.aplicacionesProveedores.filter((item) => item.conversion)) {
+        const fx = pago.conversion;
+        rows.push([xlsxDate(pago.fecha), xlsxText(pago.proveedor), xlsxText(pago.prestamoReferencia), xlsxMoney(pago.importePrestamo), xlsxCurrency(fx.montoOrigen,'USD'), xlsxNumber(fx.tasa), xlsxText(fx.bancoNombre), xlsxDate(fx.fechaTipoCambio), xlsxNumber(fx.version), xlsxText(fx.tipoCambioId), xlsxText(pago.estado), xlsxText(pago.referencia)]);
+      }
+      rows.push([], [xlsxSubtitle('Historial de tipos de cambio registrados')], xlsxHeaderRow(['Fecha', 'Banco', 'Compra C$/USD', 'Venta C$/USD', 'Versión', 'Registrado', 'Referencia', 'ID']));
+      for (const rate of f.tiposCambio || []) rows.push([xlsxDate(rate.fecha),xlsxText(rate.bancoNombre),xlsxNumber(rate.compra),xlsxNumber(rate.venta),xlsxNumber(rate.version),xlsxText(formatDateTime(rate.createdAt)),xlsxText(rate.observacion),xlsxText(rate.id)]);
+    }
     rows.push([], [xlsxSubtitle('Calendarios y cuotas registradas')], xlsxHeaderRow(['Préstamo', 'Calendario', 'Cuota', 'Vencimiento', 'Moneda', 'Capital', 'Intereses', 'Cargos', 'Pagado', 'Pendiente', 'Estado', 'Referencia bancaria']));
     for(const loan of f.registrosPrestamos)for(const calendar of bancoCalendarios(loan))for(const cuota of calendar.cuotas){
       const balance=bancoSaldoCuota(loan,calendar.id,cuota.id),historical=loan.bancoExport.calendario?.id!==calendar.id;
@@ -27997,6 +28182,7 @@ Notas importantes:
     const legacyTotal = parseMoney(form?.dataset?.legacyTotalCompra || 0);
     const total = preserveLegacyTotal ? legacyTotal : stats.total;
     if (totalInput) totalInput.value = formatMoneyInputDisplay(total);
+    form?.dispatchEvent(new Event('ksa-funding-amount-change'));
     return total;
   }
 
@@ -28160,7 +28346,7 @@ Notas importantes:
     if (!persistFundingOperation(fundingBefore, proveedoresState)) return;
     proveedoresState.editingId = null;
     proveedoresState.quickCapture = null;
-    proveedoresState.message = `Compra/deuda ${record.facturaReferencia || ''} quedó ${shouldActivate ? 'reactivada' : 'anulada'}.`;
+    proveedoresState.message = `Compra/deuda ${record.facturaReferencia || ''} quedó ${shouldActivate ? 'reactivada' : 'anulada'}.${!shouldActivate && priorAuto?.financiamiento?.conversion ? ` Se liberaron ${financieroMoney(priorAuto.financiamiento.conversion.montoOrigen, 'USD')} del préstamo usando el importe original.` : ''}`;
     proveedoresState.messageType = 'success';
     saveData(appData);
     registerSessionChange({ module: 'Proveedores / Compras', operation: shouldActivate ? 'editar' : 'anular', recordId });
@@ -29324,7 +29510,7 @@ Notas importantes:
     if (!persistFundingOperation(fundingBefore, pagosState)) return;
     pagosState.selectedCompraId = pago.compraProveedorId;
     pagosState.focusCompraId = pago.compraProveedorId;
-    pagosState.message = `Pago de ${formatMoney(pago.montoPagado)} anulado y factura/referencia recalculada.`;
+    pagosState.message = `Pago de ${formatMoney(pago.montoPagado)} anulado y factura/referencia recalculada.${pago.financiamiento?.conversion ? ` Se liberaron ${financieroMoney(pago.financiamiento.conversion.montoOrigen, 'USD')} del préstamo usando el importe original.` : ''}`;
     pagosState.messageType = 'success';
     saveData(appData);
     registerSessionChange({ module: 'Pagos a proveedores', operation: 'anular', recordId: pagoId });
@@ -32272,6 +32458,7 @@ Notas importantes:
       comprasProveedores,
       pagosProveedores,
       prestamosFinancieros: Array.isArray(data.prestamosFinancieros) ? data.prestamosFinancieros.length : 0,
+      tiposCambioFinancieros: Array.isArray(data.tiposCambioFinancieros) ? data.tiposCambioFinancieros.length : 0,
       gastos: Array.isArray(data.gastos) ? data.gastos.length : 0,
       casaGastos: Array.isArray(data.casaGastos) ? data.casaGastos.length : 0,
       bdatos: Array.isArray(data.bdatos) ? data.bdatos.length : 0,
@@ -32355,6 +32542,7 @@ Notas importantes:
     const cloudSource = cleanText(opts.source).toLowerCase() === 'firestore' || opts.cloudSource === true;
     const sourceData = isPlainObject(opts.sourceData) ? opts.sourceData : appData;
     const snapshot = normalizeData(sourceData);
+    snapshot.tiposCambioFinancieros = mergeTiposCambioFinancieros(appData.tiposCambioFinancieros || [], snapshot.tiposCambioFinancieros);
     const exportedAt = cleanText(opts.exportedAt) || nowIso();
     const identity = normalizeDeviceIdentity(appDeviceIdentity);
     const exportUser = getCurrentJsonExportUserInfo(opts.user);
@@ -32447,6 +32635,7 @@ Notas importantes:
         comprasProveedores: snapshot.comprasProveedores || [],
         pagosProveedores: snapshot.pagosProveedores || [],
         prestamosFinancieros: snapshot.prestamosFinancieros || [],
+        tiposCambioFinancieros: snapshot.tiposCambioFinancieros || [],
         gastos: snapshot.gastos || [],
         casaGastos: snapshot.casaGastos || [],
         bdatos: snapshot.bdatos || [],
@@ -32850,7 +33039,9 @@ Notas importantes:
     const currentTransportes = getCatalogRecords('transportes').map((record) => normalizeCatalogRecord(record, CATALOGS.find((catalog) => catalog.id === 'transportes')));
     const incoming = normalizeData(importData);
     if (importData.__financieroOmitted === true || !Object.prototype.hasOwnProperty.call(importData, 'prestamosFinancieros')) incoming.prestamosFinancieros = (appData.prestamosFinancieros || []).map(normalizePrestamoFinancieroRecord);
+    if (importData.__tiposCambioOmitted === true || !Object.prototype.hasOwnProperty.call(importData, 'tiposCambioFinancieros')) incoming.tiposCambioFinancieros = (appData.tiposCambioFinancieros || []).map(normalizeTipoCambioFinanciero);
     if (importData.__transportesOmitted === true) incoming.transportes = currentTransportes;
+    incoming.tiposCambioFinancieros = mergeTiposCambioFinancieros(appData.tiposCambioFinancieros || [], incoming.tiposCambioFinancieros);
     const fundingError = validateFundingReplacement(incoming);
     if (fundingError) throw new Error(fundingError);
     const incomingNotas = getNotasBackupFromSource(importData) || createInitialNotasData();
@@ -33126,6 +33317,7 @@ Notas importantes:
     const missingRequiredKeys = requiredKeys.filter((key) => !Array.isArray(data[key]));
     const rawRecordsSource = isPlainObject(raw?.registros) ? raw.registros : raw;
     const rawCatalogsSource = isPlainObject(rawRecordsSource?.catalogos) ? rawRecordsSource.catalogos : {};
+    if (Object.prototype.hasOwnProperty.call(rawRecordsSource, 'tiposCambioFinancieros')) errors.push(...validateTiposCambioFinancieros(data.tiposCambioFinancieros, data.cuentasBancos));
     if (Object.prototype.hasOwnProperty.call(rawRecordsSource, 'prestamosFinancieros')) errors.push(...validatePrestamosFinancieros(data.prestamosFinancieros, data));
     errors.push(...validateFinanciamientoSnapshot({ ...data, prestamosFinancieros: Array.isArray(data.prestamosFinancieros) ? data.prestamosFinancieros : appData.prestamosFinancieros }));
     const transportesPresentInBackup = Array.isArray(rawCatalogsSource?.transportes)
@@ -33136,7 +33328,7 @@ Notas importantes:
       ...CATALOGS.map((catalog) => catalog.id),
       'ventas', 'cobros', 'comprasProveedores', 'proveedoresCompras', 'compras',
       'pagosProveedores', 'pagos', 'gastos', 'casaGastos', 'gastosCasa', 'casa', 'cierresMensuales', 'cierres',
-      'bdatos', 'Bdatos', 'exportacionesExcel'
+      'bdatos', 'Bdatos', 'exportacionesExcel', 'tiposCambioFinancieros'
     ];
     const hasAnyBusinessArray = businessArrayAliases.some((key) => (
       Array.isArray(rawRecordsSource?.[key]) || Array.isArray(rawCatalogsSource?.[key])
@@ -33159,6 +33351,7 @@ Notas importantes:
       __partialImport: isModulePartialBackup,
       __transportesOmitted: !transportesPresentInBackup,
       __financieroOmitted: !Object.prototype.hasOwnProperty.call(rawRecordsSource, 'prestamosFinancieros'),
+      __tiposCambioOmitted: !Object.prototype.hasOwnProperty.call(rawRecordsSource, 'tiposCambioFinancieros'),
       __partialModules: isModulePartialBackup ? { notasModulo: Boolean(notasBackup), facturasModulo: Boolean(facturasBackup), seguimiento: Boolean(seguimientoBackup) } : {},
       configuracion: data.configuracion || {},
       metadata: {
@@ -33231,6 +33424,7 @@ Notas importantes:
           comprasProveedores: registros.comprasProveedores || registros.proveedoresCompras || registros.compras || [],
           pagosProveedores: registros.pagosProveedores || registros.pagos || [],
           prestamosFinancieros: registros.prestamosFinancieros,
+          tiposCambioFinancieros: registros.tiposCambioFinancieros,
           gastos: registros.gastos,
           casaGastos: registros.casaGastos || registros.gastosCasa || registros.casa || [],
           bdatos: registros.bdatos || registros.Bdatos || [],
@@ -33267,6 +33461,7 @@ Notas importantes:
         comprasProveedores: raw.comprasProveedores,
         pagosProveedores: raw.pagosProveedores,
         prestamosFinancieros: raw.prestamosFinancieros,
+        tiposCambioFinancieros: raw.tiposCambioFinancieros,
         gastos: raw.gastos,
         casaGastos: raw.casaGastos || raw.gastosCasa || raw.casa || [],
         bdatos: raw.bdatos || raw.Bdatos || [],
@@ -33378,14 +33573,16 @@ Notas importantes:
     const incomingSeguimiento = getSeguimientoBackupFromSource(importData);
     const incoming = normalizeData(importData);
     if (importData.__financieroOmitted === true || !Object.prototype.hasOwnProperty.call(importData, 'prestamosFinancieros')) incoming.prestamosFinancieros = (appData.prestamosFinancieros || []).map(normalizePrestamoFinancieroRecord);
+    if (importData.__tiposCambioOmitted === true || !Object.prototype.hasOwnProperty.call(importData, 'tiposCambioFinancieros')) incoming.tiposCambioFinancieros = (appData.tiposCambioFinancieros || []).map(normalizeTipoCambioFinanciero);
+    if (mode === 'replace') incoming.tiposCambioFinancieros = mergeTiposCambioFinancieros(appData.tiposCambioFinancieros || [], incoming.tiposCambioFinancieros);
     if (incomingNotas) incoming.notasModulo = incomingNotas;
     if (incomingFacturas) incoming.facturasModulo = incomingFacturas;
     if (incomingSeguimiento) incoming.seguimiento = incomingSeguimiento;
     const loaded = getJsonRecordCounts(incoming);
-    const hasBusinessArraysForPartial = [...CATALOGS.map((catalog) => catalog.id), 'ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'casaGastos', 'cierresMensuales'].some((key) => Array.isArray(importData?.[key]));
+    const hasBusinessArraysForPartial = [...CATALOGS.map((catalog) => catalog.id), 'ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'casaGastos', 'cierresMensuales', 'tiposCambioFinancieros'].some((key) => Array.isArray(importData?.[key]));
     const isPartialModulesImport = Boolean(importData?.__partialImport || incoming.__partialImport || ((incomingNotas || incomingFacturas || incomingSeguimiento) && !hasBusinessArraysForPartial));
     if (isPartialModulesImport) {
-      const added = { prestamosFinancieros: 0, catalogos: 0, bdatos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, casaGastos: 0, cierresMensuales: 0, exportacionesExcel: 0, notasModulo: 0, notas: 0, facturasModulo: 0, facturas: 0, seguimiento: 0, total: 0 };
+      const added = { tiposCambioFinancieros: 0, prestamosFinancieros: 0, catalogos: 0, bdatos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, casaGastos: 0, cierresMensuales: 0, exportacionesExcel: 0, notasModulo: 0, notas: 0, facturasModulo: 0, facturas: 0, seguimiento: 0, total: 0 };
       let skipped = 0;
       if (incomingNotas) {
         if (mode === 'replace') {
@@ -33460,7 +33657,7 @@ Notas importantes:
     const ventaIdMap = new Map();
     const compraIdMap = new Map();
     const facturaModuloIdMap = buildFacturaModuloImportIdMap(getFacturasData(), incomingFacturas || {});
-    const added = { prestamosFinancieros: 0, catalogos: 0, bdatos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, casaGastos: 0, cierresMensuales: 0, exportacionesExcel: 0, notasModulo: 0, notas: 0, facturasModulo: 0, facturas: 0, seguimiento: 0, total: 0 };
+    const added = { tiposCambioFinancieros: 0, prestamosFinancieros: 0, catalogos: 0, bdatos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, casaGastos: 0, cierresMensuales: 0, exportacionesExcel: 0, notasModulo: 0, notas: 0, facturasModulo: 0, facturas: 0, seguimiento: 0, total: 0 };
     let skipped = 0;
 
     CATALOGS.forEach((catalog) => {
@@ -33487,6 +33684,10 @@ Notas importantes:
       added.ventas += 1;
     });
 
+    const previousRateCount = target.tiposCambioFinancieros.length;
+    target.tiposCambioFinancieros = mergeTiposCambioFinancieros(target.tiposCambioFinancieros, incoming.tiposCambioFinancieros.map((rate) => ({ ...rate, bancoId: idMaps.cuentasBancos.get(rate.bancoId) || rate.bancoId })), target.cuentasBancos);
+    added.tiposCambioFinancieros = target.tiposCambioFinancieros.length - previousRateCount;
+
     incoming.prestamosFinancieros.forEach((prestamo) => {
       const existingLoan = target.prestamosFinancieros.find((item) => item.id === prestamo.id);
       if (existingLoan) {
@@ -33512,6 +33713,7 @@ Notas importantes:
     incoming.comprasProveedores.forEach((compra) => {
       const remapped = normalizeCompraProveedorRecord({
         ...compra,
+        ...(compra.financiamientoContado ? { financiamientoContado: remapFinanciamientoConversion(compra.financiamientoContado, idMaps.cuentasBancos) } : {}),
         proveedorId: idMaps.proveedores.get(compra.proveedorId) || compra.proveedorId,
         ventaIds: normalizeCompraVentaIds(compra.ventaIds).map((id) => ventaIdMap.get(id) || id),
         updatedAt: compra.updatedAt || timestamp
@@ -33555,6 +33757,7 @@ Notas importantes:
       const compraProveedorId = compraIdMap.get(pago.compraProveedorId) || pago.compraProveedorId;
       const remapped = normalizePagoProveedorRecord({
         ...pago,
+        ...(pago.financiamiento ? { financiamiento: remapFinanciamientoConversion(pago.financiamiento, idMaps.cuentasBancos) } : {}),
         compraProveedorId,
         compraIdOrigen: compraIdMap.get(pago.compraIdOrigen) || compraProveedorId,
         proveedorId: idMaps.proveedores.get(pago.proveedorId) || pago.proveedorId,
@@ -33681,7 +33884,7 @@ Notas importantes:
 
     target.ventas = recalculateVentasWithCobros(target.ventas, target.cobros);
     target.comprasProveedores = recalculateComprasProveedoresWithPagos(target.comprasProveedores, target.pagosProveedores);
-    added.total = added.prestamosFinancieros + added.catalogos + added.bdatos + added.ventas + added.cobros + added.comprasProveedores + added.pagosProveedores + added.gastos + added.casaGastos + added.cierresMensuales + added.exportacionesExcel + added.notasModulo + added.facturasModulo + added.seguimiento;
+    added.total = added.tiposCambioFinancieros + added.prestamosFinancieros + added.catalogos + added.bdatos + added.ventas + added.cobros + added.comprasProveedores + added.pagosProveedores + added.gastos + added.casaGastos + added.cierresMensuales + added.exportacionesExcel + added.notasModulo + added.facturasModulo + added.seguimiento;
     const fundingErrors = validateFinanciamientoSnapshot(target);
     if (fundingErrors.length) throw new Error(fundingErrors[0]);
     appData = normalizeData({
@@ -34387,9 +34590,7 @@ Notas importantes:
     return { month, year, periodo: getPeriodKey(month, year) };
   }
 
-  const EXCEL_MANUAL_FILE_NAME_MAX_LENGTH = 180;
-  const EXCEL_INVALID_FILE_NAME_PATTERN = /[\/\\:*?"<>|\u0000-\u001F]/;
-  const EXCEL_RESERVED_FILE_NAMES = new Set(['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9']);
+
 
   function validateExcelManualFileName(value) {
     const original = String(value ?? '');
@@ -34769,7 +34970,7 @@ Exportado: ${exportDateLabel}
 
   function buildClosingTotals(summary) {
     return {
-      ...(summary.financiamiento ? { financiamiento: { version: '1.0', fechaSaldos: summary.financiamiento.fechaSaldos, globalNio: clonePlainObject(summary.financiamiento.globalNio,{}), monedas: summary.financiamiento.currencies.map((item) => ({moneda:item.moneda,periodo:clonePlainObject(item.periodo,{}),capitalPendiente:item.actual.capitalPendiente,disponibleCompras:item.actual.disponibleCompras})) } } : {}),
+      ...(summary.financiamiento ? { financiamiento: { version: summary.financiamiento.version || '1.0', fechaSaldos: summary.financiamiento.fechaSaldos, globalNio: clonePlainObject(summary.financiamiento.globalNio,{}), monedas: summary.financiamiento.currencies.map((item) => ({moneda:item.moneda,periodo:clonePlainObject(item.periodo,{}),capitalPendiente:item.actual.capitalPendiente,disponibleCompras:item.actual.disponibleCompras})) } } : {}),
       totalSubtotalVentas: roundMoney(summary.totalSubtotalVentas || summary.totalVendidoOriginal || 0),
       totalDescuentosVentas: roundMoney(summary.totalDescuentosVentas || 0),
       totalVendidoOriginal: roundMoney(summary.totalVendidoOriginal || 0),
@@ -35243,7 +35444,7 @@ Exportado: ${exportDateLabel}
       [xlsxLabel('Período'), xlsxText(summary.periodLabel)],
       ...(summary.excelCierreMode ? [[xlsxLabel('Corte oficial'), xlsxText(formatDateTime(summary.corteOficialAt))]] : []),
       [],
-      xlsxHeaderRow(['Fecha pago', 'Proveedor', 'Referencia', 'Monto pagado', 'Método', 'Banco', 'Automático', 'Estado', 'Observación', ...(summary.financiamiento ? ['Origen de fondos','Préstamo','Parte préstamo C$','Parte propia C$'] : [])])
+      xlsxHeaderRow(['Fecha pago', 'Proveedor', 'Referencia', 'Monto pagado', 'Método', 'Banco', 'Automático', 'Estado', 'Observación', ...(summary.financiamiento ? ['Origen de fondos','Préstamo','Parte préstamo C$','Parte propia C$', ...(summary.financiamiento.version === '2.0' ? ['Moneda préstamo','Consumo moneda préstamo','Compra C$/USD','Banco conversión','Vigencia cambio','Versión cambio','ID cambio'] : [])] : [])])
     ];
     const pagosExport = Array.isArray(summary.pagosPeriodo) ? summary.pagosPeriodo : [];
     pagosExport.forEach((pago) => {
@@ -35265,11 +35466,12 @@ Exportado: ${exportDateLabel}
           xlsxText({propios:'Recursos propios',prestamo:'Préstamo',mixto:'Mixto',sin_clasificar:'Sin clasificar'}[pago.financiamiento?.origen] || 'Sin clasificar'),
           xlsxText(summary.financiamiento.registrosPrestamos.find((loan) => loan.id === pago.financiamiento?.prestamoId)?.referencia || pago.financiamiento?.prestamoId || ''),
           pago.financiamiento?.prestamoId ? xlsxMoney(pago.financiamiento.montoPrestamo) : xlsxText(''),
-          pago.financiamiento && pago.financiamiento.origen !== 'sin_clasificar' ? xlsxMoney(pago.montoPagado - pago.financiamiento.montoPrestamo) : xlsxText('')
+          pago.financiamiento && pago.financiamiento.origen !== 'sin_clasificar' ? xlsxMoney(pago.montoPagado - pago.financiamiento.montoPrestamo) : xlsxText(''),
+          ...(summary.financiamiento.version === '2.0' ? [xlsxText(pago.financiamiento?.prestamoId ? (pago.financiamiento.conversion?.monedaOrigen || 'NIO') : ''), pago.financiamiento?.prestamoId ? xlsxCurrency(getFinanciamientoMontoMoneda(pago.financiamiento), pago.financiamiento.conversion?.monedaOrigen || 'NIO') : xlsxText(''), pago.financiamiento?.conversion ? xlsxNumber(pago.financiamiento.conversion.tasa) : xlsxText(''), xlsxText(pago.financiamiento?.conversion?.bancoNombre || ''), pago.financiamiento?.conversion ? xlsxDate(pago.financiamiento.conversion.fechaTipoCambio) : xlsxText(''), pago.financiamiento?.conversion ? xlsxNumber(pago.financiamiento.conversion.version) : xlsxText(''), xlsxText(pago.financiamiento?.conversion?.tipoCambioId || '')] : [])
         ] : [])
       ]);
     });
-    return { name: 'Pagos', rows, cols: [16, 28, 22, 16, 18, 22, 14, 14, 34, ...(summary.financiamiento ? [20,24,18,18] : [])] };
+    return { name: 'Pagos', rows, cols: [16, 28, 22, 16, 18, 22, 14, 14, 34, ...(summary.financiamiento ? [20,24,18,18, ...(summary.financiamiento.version === '2.0' ? [18,22,18,24,18,18,24] : [])] : [])] };
   }
 
   function buildGastosSheet(summary) {

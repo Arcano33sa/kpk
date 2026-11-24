@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_168_financiero_pdf_calendario_e2';
+const CACHE_VERSION = 'v0_18_172_financiero_moneda_verificacion_e4';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
