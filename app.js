@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.183-bancos-catalogo-limpio';
+  const APP_VERSION = '0.18.184-bancos-referencia';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -24669,6 +24669,37 @@ Notas importantes:
     `;
   }
 
+  function setupBankReferenceForm(form) {
+    if (form.dataset.catalogForm !== 'cuentasBancos') return;
+    const input = form.elements.namedItem('referenciaCatalogo');
+    if (!input) return;
+    const format = () => {
+      const raw = input.value;
+      if (!/^[\d\s]*$/.test(raw)) return;
+      const position = (offset) => {
+        const digits = raw.slice(0, offset).replace(/\s/g, '').length;
+        return digits ? digits + Math.floor((digits - 1) / 4) : 0;
+      };
+      const start = position(input.selectionStart ?? raw.length);
+      const end = position(input.selectionEnd ?? raw.length);
+      const direction = input.selectionDirection;
+      input.value = raw.replace(/\s/g, '').replace(/(.{4})(?=.)/g, '$1 ');
+      input.setSelectionRange(start, end, direction);
+    };
+    input.addEventListener('beforeinput', (event) => {
+      if (event.isComposing || !/^[\d\s]*$/.test(input.value) || input.selectionStart !== input.selectionEnd) return;
+      const cursor = input.selectionStart;
+      // Borrar junto a un separador debe borrar un dígito, sin dejar el cursor atrapado.
+      if (event.inputType === 'deleteContentBackward' && cursor > 1 && input.value[cursor - 1] === ' ') {
+        input.setSelectionRange(cursor - 2, cursor);
+      } else if (event.inputType === 'deleteContentForward' && input.value[cursor] === ' ') {
+        input.setSelectionRange(cursor, cursor + 2);
+      }
+    });
+    input.addEventListener('input', (event) => { if (!event.isComposing) format(); });
+    input.addEventListener('compositionend', format);
+  }
+
   function renderCatalogForm(catalog, record, disabled = false) {
     const fields = catalog.fields.map((field) => renderCatalogField(field, record, disabled)).join('');
     return `
@@ -38225,6 +38256,7 @@ ${rowsXml}
 
     viewRoot.querySelectorAll('[data-catalog-form]').forEach((form) => {
       setupCatalogPaymentTermsForm(form);
+      setupBankReferenceForm(form);
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         saveCatalogRecord(form);
