@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.179-financiero-fondos-combinados-e3';
+  const APP_VERSION = '0.18.180-bancos-mejorados';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -269,10 +269,11 @@
       label: 'Bancos',
       singular: 'banco',
       icon: 'BK',
-      description: 'Bancos por tipo para asociar cobros, pagos y gastos: Transferencia, Depósito o Tarjeta.',
+      description: 'Una cuenta o tarjeta por registro, con los métodos que admite. Depósito corresponde solo a cobros. La referencia se consulta únicamente en este catálogo.',
       fields: [
-        { name: 'nombre', label: 'Nombre del banco', type: 'text', required: true, placeholder: 'Ej. BAC, Lafise, Banpro' },
-        { name: 'tipo', label: 'Tipo', type: 'select', options: BANK_TYPE_OPTIONS, required: true, placeholder: 'Seleccionar tipo' },
+        { name: 'nombre', label: 'Nombre de cuenta o tarjeta', type: 'text', required: true, placeholder: 'Ej. Débito KLM' },
+        { name: 'referenciaCatalogo', label: 'Número / referencia (solo catálogo)', type: 'text', placeholder: 'Referencia opcional de la cuenta o tarjeta' },
+        { name: 'metodosHabilitados', label: 'Métodos habilitados', type: 'checkbox-group', options: BANK_TYPE_OPTIONS, required: true },
         { name: 'observacion', label: 'Observación', type: 'textarea', placeholder: 'Notas internas del banco' }
       ]
     },
@@ -1422,6 +1423,365 @@ Notas importantes:
     message: null,
     messageType: 'success'
   };
+
+  const BANK_CONSOLIDATION_JOURNAL_KEY = 'KSA_PRACTIKA_BANK_CONSOLIDATION_JOURNAL_v1';
+  const BANK_CONSOLIDATION_BACKUP_PREFIX = 'KSA_PRACTIKA_BANK_CONSOLIDATION_BACKUP_v1:';
+  const BANK_CONSOLIDATION_KEYS = ['ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'casaGastos', 'prestamosFinancieros', 'tiposCambioFinancieros'];
+  let bankConsolidationState = { plan: null, backupKey: '', busy: false, message: '', error: false };
+
+  function getCanonicalBankId(bankId, records = []) {
+    let current = cleanText(bankId);
+    const visited = new Set();
+    while (current && !visited.has(current)) {
+      visited.add(current);
+      const record = records.find((item) => item.id === current);
+      if (!record && visited.size > 1) return cleanText(bankId);
+      if (!cleanText(record?.consolidadoEnId)) return current;
+      current = cleanText(record.consolidadoEnId);
+    }
+    return cleanText(bankId); // Una cadena inválida nunca se aplica parcialmente.
+  }
+
+  function mapBankReferences(value, resolveId) {
+    if (Array.isArray(value)) return value.map((item) => mapBankReferences(item, resolveId));
+    if (!value || typeof value !== 'object' || value instanceof Date || typeof value.toDate === 'function') return value;
+    const result = {};
+    Object.entries(value).forEach(([key, item]) => {
+      if (['snapshot', 'snapshots', 'historial', 'bitacora', 'cierresMensuales', 'exportacionesExcel', 'calendarios'].includes(key)) result[key] = item;
+      else if (['cuentaBancoId', 'bancoPagoContadoId', 'bancoId'].includes(key) && typeof item === 'string') result[key] = resolveId(item);
+      else if (key === 'prestamoId' && typeof item === 'string' && item.startsWith('pool:')) {
+        const pool = parseFinanciamientoPool(item);
+        result[key] = pool ? 'pool:' + encodeURIComponent(JSON.stringify([resolveId(pool.cuentaBancoId), pool.moneda])) : item;
+      } else result[key] = mapBankReferences(item, resolveId);
+    });
+    return result;
+  }
+
+  function applyBankAliasesToData(data) {
+    const banks = Array.isArray(data?.cuentasBancos) ? data.cuentasBancos : [];
+    if (!banks.some((bank) => cleanText(bank.consolidadoEnId))) return data;
+    const result = { ...data };
+    BANK_CONSOLIDATION_KEYS.forEach((key) => {
+      if (Array.isArray(data[key])) result[key] = mapBankReferences(data[key], (id) => getCanonicalBankId(id, banks));
+    });
+    return result;
+  }
+
+  function bankConsolidationSignature(value) {
+    const stable = (item) => {
+      if (Array.isArray(item)) return item.map(stable);
+      if (item instanceof Date) return item.toISOString();
+      if (item && typeof item.toDate === 'function') return item.toDate().toISOString();
+      if (!item || typeof item !== 'object') return item;
+      return Object.fromEntries(Object.keys(item).sort().filter((key) => !['_cloudSync', '_deleted', '_cloudDeleted', 'eliminadoEnNube', 'catalogoId'].includes(key)).map((key) => [key, stable(item[key])]));
+    };
+    return JSON.stringify(stable(value));
+  }
+
+  function bankConsolidationNormalizer(key) {
+    const normalizers = {
+      cuentasBancos: (record) => normalizeCatalogRecord(record, CATALOGS.find((catalog) => catalog.id === 'cuentasBancos')),
+      ventas: normalizeVentaRecord, cobros: normalizeCobroRecord, comprasProveedores: normalizeCompraProveedorRecord,
+      pagosProveedores: normalizePagoProveedorRecord, gastos: normalizeGastoRecord, casaGastos: normalizeCasaGastoRecord,
+      prestamosFinancieros: normalizePrestamoFinancieroRecord, tiposCambioFinancieros: normalizeTipoCambioFinanciero,
+      pendientes: normalizePendienteRecord
+    };
+    return normalizers[key];
+  }
+
+  function buildBankConsolidationPlan(data, notes, targetId, sourceIds, identity = {}) {
+    const banks = Array.isArray(data?.cuentasBancos) ? data.cuentasBancos : [];
+    const target = banks.find((bank) => bank.id === cleanText(targetId));
+    const ids = [...new Set((Array.isArray(sourceIds) ? sourceIds : []).map(cleanText).filter(Boolean))];
+    const sources = ids.map((id) => banks.find((bank) => bank.id === id));
+    const errors = [];
+    if (!target || !target.activo || target.consolidadoEnId) errors.push('Selecciona un registro definitivo activo y sin consolidar.');
+    if (!ids.length || ids.includes(targetId) || sources.some((bank) => !bank || bank.consolidadoEnId)) errors.push('Selecciona registros anteriores distintos del definitivo y sin consolidar.');
+    if (new Set(banks.map((bank) => bank.id)).size !== banks.length) errors.push('El catálogo contiene IDs duplicados; requiere revisión antes de consolidar.');
+    if (errors.length) return { targetId: cleanText(targetId), sourceIds: ids, errors, entries: [], counts: {} };
+    const sourceSet = new Set(ids);
+    const resolve = (id) => sourceSet.has(getCanonicalBankId(id, banks)) ? target.id : id;
+    const targetMethods = getBankEnabledMethods(target);
+    sources.forEach((bank) => {
+      if (getBankEnabledMethods(bank).some((method) => !targetMethods.includes(method))) errors.push(`El definitivo debe admitir todos los métodos de “${bank.nombre}”.`);
+    });
+    const id = identity.id || generateId('consolidacionBanco');
+    const timestamp = identity.timestamp || nowIso();
+    const entries = [];
+    const counts = {};
+    const checkMethods = (value) => {
+      if (Array.isArray(value)) { value.forEach(checkMethods); return; }
+      if (!isPlainObject(value)) return;
+      const method = getBankTypeForPaymentMethod(value.metodoPagoId || value.metodoPagoNombre);
+      if (sourceSet.has(getCanonicalBankId(value.cuentaBancoId, banks)) && method && !targetMethods.includes(method)) errors.push('El definitivo no admite un método utilizado en los movimientos seleccionados.');
+      Object.values(value).forEach((item) => { if (item && typeof item === 'object') checkMethods(item); });
+    };
+    BANK_CONSOLIDATION_KEYS.forEach((key) => checkMethods(data[key] || []));
+    checkMethods(notes?.pendientes || []);
+    const afterData = { ...data };
+    const add = (key, before, after) => {
+      if (bankConsolidationSignature(before) === bankConsolidationSignature(after)) return;
+      entries.push({ key, id: before.id, before, after });
+      counts[key] = (counts[key] || 0) + 1;
+    };
+    BANK_CONSOLIDATION_KEYS.forEach((key) => {
+      afterData[key] = (data[key] || []).map((record) => {
+        const after = mapBankReferences(record, resolve);
+        if (bankConsolidationSignature(record) !== bankConsolidationSignature(after)) {
+          if (['prestamosFinancieros', 'pagosProveedores'].includes(key)) after.revisionFinanciamiento = (record.revisionFinanciamiento || 0) + 1;
+          add(key, record, after);
+          if (key === 'comprasProveedores' && sourceSet.has(record.bancoPagoContadoId) && after.condicionPagoSnapshot === 'Contado' && getBankTypeForPaymentMethod(after.metodoPagoContadoId || after.metodoPagoContadoNombre)
+            && !bankMatchesType(target, getBankTypeForPaymentMethod(after.metodoPagoContadoId || after.metodoPagoContadoNombre))) errors.push('El definitivo no admite un método usado en compras de contado.');
+          const method = getBankTypeForPaymentMethod(after.metodoPagoId || after.metodoPagoNombre);
+          if (method && sourceSet.has(record.cuentaBancoId) && !targetMethods.includes(method)) errors.push('El definitivo no admite un método utilizado en los movimientos seleccionados.');
+        }
+        return after;
+      });
+    });
+    const afterNotes = { ...notes, pendientes: (notes?.pendientes || []).map((record) => {
+      const after = mapBankReferences(record, resolve);
+      const originalBankId = cleanText(record.cuentaBancoId || record.banco || record.cuentaBanco);
+      if (sourceSet.has(getCanonicalBankId(originalBankId, banks))) after.cuentaBancoId = target.id;
+      add('pendientes', record, after);
+      return after;
+    }) };
+    const audit = { id, fecha: timestamp, definitivoId: target.id, anterioresIds: ids, conteos: { ...counts } };
+    afterData.cuentasBancos = banks.map((bank) => {
+      const after = sourceSet.has(bank.id)
+        ? { ...bank, activo: false, consolidadoEnId: target.id, consolidadoAt: timestamp, consolidacionId: id, updatedAt: timestamp }
+        : bank.id === target.id ? { ...bank, consolidacionesRecibidas: [...new Set([...(bank.consolidacionesRecibidas || []), id])], updatedAt: timestamp } : bank;
+      add('cuentasBancos', bank, after);
+      return after;
+    });
+    audit.conteos = { ...counts };
+    afterData.metadata = { ...data.metadata, consolidacionesBancos: [...(data.metadata?.consolidacionesBancos || []), audit] };
+    errors.push(...validateTiposCambioFinancieros(afterData.tiposCambioFinancieros, afterData.cuentasBancos));
+    errors.push(...validatePrestamosFinancieros(afterData.prestamosFinancieros, afterData));
+    errors.push(...validateFinanciamientoSnapshot(afterData));
+    const remoteCount = entries.filter((entry) => entry.key !== 'tiposCambioFinancieros').length + 1;
+    if (new Set(entries.map((entry) => `${entry.key}/${entry.id}`)).size !== entries.length) errors.push('Hay IDs duplicados en los registros afectados; requiere revisión.');
+    if (entries.some((entry) => !cleanText(entry.id))) errors.push('Hay referencias sin ID; requiere revisión antes de consolidar.');
+    if (remoteCount > 200) errors.push('Esta consolidación supera el límite de 200 documentos de la herramienta. Reduce el grupo de registros anteriores.');
+    const signature = bankConsolidationSignature({ banks, records: BANK_CONSOLIDATION_KEYS.map((key) => data[key] || []), pendientes: notes?.pendientes || [] });
+    return { id, timestamp, targetId: target.id, sourceIds: ids, signature, entries, counts, errors: [...new Set(errors)], audit, afterData, afterNotes };
+  }
+
+  function readBankConsolidationNotes() {
+    const raw = localStorage.getItem(NOTES_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : { version: 1, notas: [], pendientes: [], recordatorios: [] };
+  }
+
+  function readBankConsolidationJournal() {
+    const raw = localStorage.getItem(BANK_CONSOLIDATION_JOURNAL_KEY);
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch (_) { return { phase: 'invalid' }; }
+  }
+
+  function renderBankConsolidationTool() {
+    if (!canCurrentRole('editCatalogs')) return '';
+    const banks = getSortedCatalogRecords('cuentasBancos').filter((bank) => !bank.consolidadoEnId);
+    const state = bankConsolidationState;
+    const plan = state.plan;
+    const labels = { ventas: 'Ventas / logística', cobros: 'Cobros', comprasProveedores: 'Compras de contado', pagosProveedores: 'Pagos', gastos: 'Gastos', casaGastos: 'Casa', prestamosFinancieros: 'Préstamos y abonos', tiposCambioFinancieros: 'Tipos de cambio locales', pendientes: 'Notas / pendientes', cuentasBancos: 'Registros del catálogo' };
+    const journal = readBankConsolidationJournal();
+    const pending = journal && journal.phase !== 'complete';
+    return `<article class="panel-card">
+      <h2>Consolidar cuentas / tarjetas</h2>
+      <p>Selecciona registros que representan la misma cuenta real. Se conservarán los métodos, importes, fechas y nombres históricos; los anteriores quedarán retirados y vinculados al definitivo.</p>
+      ${state.message ? `<p class="form-message ${state.error ? 'is-error' : 'is-success'}" role="status">${escapeHtml(state.message)}</p>` : ''}
+      ${pending ? `<p class="form-message is-error">Hay una consolidación pendiente de finalizar. No prepares otra hasta resolverla.</p><button type="button" class="secondary-action" data-bank-consolidation-resume>Reintentar finalización</button>${journal.phase === 'blocked' ? '<button type="button" class="secondary-action" data-bank-consolidation-cancel>Cerrar intento sin cambios</button>' : ''}` : ''}
+      <form data-bank-consolidation-form novalidate>
+        <label class="form-field"><span>Registro definitivo</span><select name="definitivoId" required><option value="">Seleccionar definitivo</option>${banks.filter((bank) => bank.activo).map((bank) => `<option value="${escapeHtml(bank.id)}" ${plan?.targetId === bank.id ? 'selected' : ''}>${escapeHtml(bank.nombre)}</option>`).join('')}</select></label>
+        <fieldset class="form-field"><legend>Registros anteriores</legend>${banks.map((bank) => `<label class="checkbox-field catalog-checkbox"><input type="checkbox" name="anterioresIds" value="${escapeHtml(bank.id)}" ${plan?.sourceIds?.includes(bank.id) ? 'checked' : ''}><span>${escapeHtml(bank.nombre)} · ${escapeHtml(getBankTypeDisplay(bank))}${bank.activo ? '' : ' · inactivo'}</span></label>`).join('')}</fieldset>
+        <button type="submit" class="secondary-action" ${pending || state.busy ? 'disabled' : ''}>Revisar impacto</button>
+      </form>
+      ${plan ? `<section data-bank-consolidation-preview aria-label="Vista previa de consolidación"><h3>Vista previa</h3><p>${escapeHtml(plan.sourceIds.map((id) => getBankAccountDisplayName(id)).join(' + '))} → ${escapeHtml(getBankAccountDisplayName(plan.targetId))}</p>
+        <ul>${Object.entries(plan.counts).map(([key, count]) => `<li>${escapeHtml(labels[key] || key)}: ${count}</li>`).join('')}</ul>
+        <p>Cierres, exportaciones emitidas, bitácoras y consecutivos no se modificarán. Los préstamos de una misma cuenta y moneda aparecerán agrupados bajo el definitivo.</p>
+        ${plan.errors.map((error) => `<p class="form-message is-error">${escapeHtml(error)}</p>`).join('')}
+        ${!plan.errors.length ? `<button type="button" class="secondary-action" data-bank-consolidation-backup>Preparar y descargar respaldo previo</button><label class="checkbox-field"><input type="checkbox" data-bank-consolidation-confirm><span>Confirmo que los registros seleccionados representan la misma cuenta real revisé el impacto y recibí el respaldo previo.</span></label><button type="button" class="card-action" data-bank-consolidation-apply ${!state.backupKey || pending || state.busy ? 'disabled' : ''}>Aplicar consolidación</button>` : ''}
+      </section>` : ''}
+    </article>`;
+  }
+
+  function previewBankConsolidation(form) {
+    if (!canCurrentRole('editCatalogs') || bankConsolidationState.busy) return;
+    try {
+      if (readBankConsolidationJournal()?.phase && readBankConsolidationJournal().phase !== 'complete') throw new Error('Finaliza la consolidación pendiente antes de preparar otra.');
+      const fields = new FormData(form);
+      const plan = buildBankConsolidationPlan(appData, readBankConsolidationNotes(), cleanText(fields.get('definitivoId')), fields.getAll('anterioresIds'));
+      bankConsolidationState = { plan, backupKey: '', busy: false, message: '', error: false };
+    } catch (error) {
+      bankConsolidationState.message = error.message;
+      bankConsolidationState.error = true;
+    }
+    renderRoute({ preserveScroll: true });
+  }
+
+  function prepareBankConsolidationBackup() {
+    try {
+      if (!canCurrentRole('editCatalogs')) throw new Error(ADMIN_RESTRICTED_MESSAGE);
+      const plan = bankConsolidationState.plan;
+      if (!plan || plan.errors.length) throw new Error('Primero revisa una selección válida.');
+      const key = BANK_CONSOLIDATION_BACKUP_PREFIX + plan.id;
+      let backup = localStorage.getItem(key);
+      if (backup === null) {
+        const storage = {};
+        const keys = [STORAGE_KEY, NOTES_STORAGE_KEY, 'ksa_notas_pendientes_v1', 'ksa_notas_prestamos_v1', 'ksa_seguimiento_v1', 'ksa_facturas_v1',
+          'KSA_PRACTIKA_DEVICE_IDENTITY_v1', 'KSA_PRACTIKA_ACTIVITY_LOG_v1', 'KSA_PRACTIKA_JSON_EXPORT_SEQUENCE_v1',
+          'KSA_PRACTIKA_EXCEL_CONSULTA_SEQUENCE_v1', 'KSA_PRACTIKA_EXCEL_CIERRE_SEQUENCE_v1',
+          'KSA_PRACTIKA_LAST_JSON_APPLIED_v1', 'KSA_PRACTIKA_JSON_IMPORT_HISTORY_v1',
+          'KSA_PRACTIKA_LOCAL_JSON_LOAD_METADATA_v1', 'KSA_PRACTIKA_LOCAL_JSON_LOAD_HISTORY_v1', 'KSA_PRACTIKA_WORK_PERIOD_v1'];
+        keys.forEach((name) => { storage[name] = localStorage.getItem(name); });
+        const storedJson = (name) => storage[name] ? JSON.parse(storage[name]) : undefined;
+        const notes = { ...readBankConsolidationNotes(), pendientesOperativos: storedJson('ksa_notas_pendientes_v1'), prestamos: storedJson('ksa_notas_prestamos_v1') };
+        backup = JSON.stringify({
+          appName: APP_NAME, appVersion: APP_VERSION, schemaVersion: SCHEMA_VERSION, exportedAt: nowIso(),
+          metadata: { appName: APP_NAME, backupVersion: 2, schemaVersion: SCHEMA_VERSION, exportedAt: nowIso(), notaUso: 'Respaldo previo local de consolidación; recuperación controlada.' },
+          tipo: 'respaldo-previo-consolidacion-bancaria', version: 1, fecha: nowIso(),
+          plan: { id: plan.id, definitivoId: plan.targetId, anterioresIds: plan.sourceIds, conteos: plan.counts },
+          registros: { ...appData, notasModulo: notes, facturasModulo: storedJson('ksa_facturas_v1'), seguimiento: storedJson('ksa_seguimiento_v1') },
+          almacenamiento: storage
+        }, null, 2);
+        localStorage.setItem(key, backup);
+      }
+      if (JSON.parse(backup)?.plan?.id !== plan.id) throw new Error('El respaldo existente no corresponde a esta vista previa; no se sobrescribió.');
+      downloadTextFile(backup, `KSA_Respaldo_Consolidacion_${plan.id}.json`, 'application/json;charset=utf-8');
+      bankConsolidationState.backupKey = key;
+      bankConsolidationState.message = 'Respaldo previo conservado en este dispositivo y descarga solicitada. Confirma que recibiste el archivo antes de aplicar.';
+      bankConsolidationState.error = false;
+    } catch (error) { bankConsolidationState.message = error.message; bankConsolidationState.error = true; }
+    renderRoute({ preserveScroll: true });
+  }
+
+  async function commitBankConsolidationTransaction(plan, context) {
+    const { db, fs, user } = context;
+    const pathFor = (entry) => entry.key === 'cuentasBancos'
+      ? fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'catalogos', 'cuentasBancos', 'items', sanitizeFirestoreDocId(entry.id, 'cuentasBancos_item'))
+      : fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, entry.key === 'pendientes' ? 'notasModulo' : entry.key, sanitizeFirestoreDocId(entry.key === 'pendientes' ? `pendiente_${entry.id}` : entry.id, entry.key));
+    const auditRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
+    const beforeBanks = JSON.parse(plan.signature).banks;
+    const writes = plan.entries.filter((entry) => entry.key !== 'tiposCambioFinancieros');
+    if (writes.length + 1 > 200) throw new Error('Demasiados documentos para esta consolidación.');
+    await fs.runTransaction(db, async (transaction) => {
+      const auditSnap = await transaction.get(auditRef);
+      const recorded = auditSnap.exists() ? auditSnap.data()?.bankConsolidationReceipts?.[plan.id] : null;
+      if (recorded) {
+        if (recorded.firma !== simpleHashText(plan.signature)) throw Object.assign(new Error('El identificador de consolidación tiene otro contenido.'), { code: 'bank/consolidation-conflict' });
+        return; // Reintento idempotente después de un fallo local o de confirmación.
+      }
+      const checked = [];
+      for (const entry of writes) {
+        const ref = pathFor(entry);
+        const snap = await transaction.get(ref);
+        if (!snap.exists()) throw Object.assign(new Error('Faltan registros en nube. Actualiza los datos y prepara nuevamente la vista previa.'), { code: 'bank/consolidation-conflict' });
+        const raw = snap.data();
+        if (raw._deleted === true || raw._cloudDeleted === true || raw.eliminadoEnNube === true) throw Object.assign(new Error('Un registro fue retirado en otro dispositivo. Actualiza y revisa nuevamente.'), { code: 'bank/consolidation-conflict' });
+        const normalize = bankConsolidationNormalizer(entry.key);
+        const actual = mapBankReferences(normalize(JSON.parse(bankConsolidationSignature({ id: entry.id, ...raw }))), (id) => getCanonicalBankId(id, beforeBanks));
+        const expected = normalize(entry.before);
+        if (bankConsolidationSignature(actual) !== bankConsolidationSignature(expected)) throw Object.assign(new Error('Hay cambios en otro dispositivo. No se consolidó ningún registro; actualiza y revisa nuevamente.'), { code: 'bank/consolidation-conflict' });
+        checked.push({ entry, ref, raw });
+      }
+      const sourceSet = new Set(plan.sourceIds);
+      checked.forEach(({ entry, ref, raw }) => {
+        const mapped = mapBankReferences(raw, (id) => sourceSet.has(getCanonicalBankId(id, beforeBanks)) ? plan.targetId : id);
+        const payload = entry.key === 'cuentasBancos' ? { ...raw, ...entry.after } : mapped;
+        ['cuentaBancoId', 'bancoPagoContadoId'].forEach((key) => { if (Object.prototype.hasOwnProperty.call(entry.after, key)) payload[key] = entry.after[key]; });
+        if (entry.key === 'ventas' && entry.after.logistica?.gasto?.cuentaBancoId) payload.logistica = { ...payload.logistica, gasto: { ...payload.logistica?.gasto, cuentaBancoId: entry.after.logistica.gasto.cuentaBancoId } };
+        if (['prestamosFinancieros', 'pagosProveedores'].includes(entry.key)) payload.revisionFinanciamiento = entry.after.revisionFinanciamiento;
+        transaction.set(ref, { ...payload, _cloudSync: { source: 'bank_consolidation', operation: 'editar', syncedAt: plan.timestamp, syncedBy: user.email || '' } });
+      });
+      transaction.set(auditRef, { bankConsolidationReceipts: { [plan.id]: { ...plan.audit, firma: simpleHashText(plan.signature) } } }, { merge: true });
+    });
+  }
+
+  function cancelBlockedBankConsolidation() {
+    if (!canCurrentRole('editCatalogs') || bankConsolidationState.busy) return;
+    const journal = readBankConsolidationJournal();
+    if (!journal || journal.phase !== 'blocked') return;
+    localStorage.setItem(BANK_CONSOLIDATION_JOURNAL_KEY, JSON.stringify({ ...journal, phase: 'complete', cancelado: true }));
+    bankConsolidationState.plan = null;
+    bankConsolidationState.backupKey = '';
+    bankConsolidationState.message = 'Intento cerrado sin consolidar. El respaldo previo se conserva; actualiza los datos antes de preparar otra vista previa.';
+    bankConsolidationState.error = false;
+    renderRoute({ preserveScroll: true });
+  }
+
+  async function applyBankConsolidation(resume = false) {
+    const state = bankConsolidationState;
+    if (state.busy) return;
+    let journal;
+    try {
+      if (!canCurrentRole('editCatalogs')) throw new Error(ADMIN_RESTRICTED_MESSAGE);
+      if (getPendingSessionChanges().length || cloudOperationState.isReading || cloudOperationState.isWriting || cloudOperationState.isHydrating) throw new Error('Guarda los cambios pendientes y espera a que termine cualquier actualización antes de consolidar.');
+      if (resume) {
+        journal = readBankConsolidationJournal();
+        if (!journal || journal.phase === 'complete') throw new Error('No hay una consolidación pendiente.');
+      } else {
+        const plan = state.plan;
+        if (!plan || plan.errors.length || !state.backupKey || !localStorage.getItem(state.backupKey)) throw new Error('Revisa el impacto y prepara el respaldo previo.');
+        if (!viewRoot.querySelector('[data-bank-consolidation-confirm]')?.checked) throw new Error('Confirma que se trata de la misma cuenta real y que recibiste el respaldo.');
+        const fresh = buildBankConsolidationPlan(appData, readBankConsolidationNotes(), plan.targetId, plan.sourceIds, plan);
+        if (fresh.errors.length || fresh.signature !== plan.signature) throw new Error('Los datos cambiaron desde la vista previa. Revisa el impacto nuevamente.');
+        journal = { phase: 'prepared', cloud: isCloudDataSourceActive(), backupKey: state.backupKey, plan: fresh };
+        localStorage.setItem(BANK_CONSOLIDATION_JOURNAL_KEY, JSON.stringify(journal));
+      }
+      if (Boolean(journal.cloud) !== isCloudDataSourceActive()) throw new Error('Cambió el origen de datos. Revisa la consolidación pendiente antes de continuar.');
+      const assertCurrent = () => {
+        const original = JSON.parse(journal.plan.signature);
+        const currentCore = bankConsolidationSignature({ banks: appData.cuentasBancos, records: BANK_CONSOLIDATION_KEYS.map((key) => appData[key] || []) });
+        const beforeCore = bankConsolidationSignature({ banks: original.banks, records: original.records });
+        const afterCore = bankConsolidationSignature({ banks: journal.plan.afterData.cuentasBancos, records: BANK_CONSOLIDATION_KEYS.map((key) => journal.plan.afterData[key] || []) });
+        const notes = readBankConsolidationNotes();
+        const pendingSignature = bankConsolidationSignature(notes.pendientes || []);
+        if ((currentCore !== beforeCore && currentCore !== afterCore)
+          || (pendingSignature !== bankConsolidationSignature(original.pendientes) && pendingSignature !== bankConsolidationSignature(journal.plan.afterNotes.pendientes))) throw new Error('Los registros locales cambiaron. Conserva el respaldo y revisa la consolidación pendiente antes de continuar.');
+        return notes;
+      };
+      assertCurrent();
+      const storageAtStart = localStorage.getItem(STORAGE_KEY);
+      state.busy = true;
+      state.previousInert = viewRoot.inert;
+      state.acquiredViewLock = true;
+      viewRoot.inert = true;
+      if (journal.cloud) {
+        cloudOperationState.isWriting = true;
+        state.acquiredCloudLock = true;
+        await KSAFirebaseAdapter.consolidateBankAccounts(journal.plan);
+      }
+      if (localStorage.getItem(STORAGE_KEY) !== storageAtStart) throw new Error('Otro proceso cambió el almacenamiento local durante la operación. No se reemplazó su trabajo.');
+      const latestNotes = assertCurrent();
+      journal.phase = 'remote_confirmed';
+      localStorage.setItem(BANK_CONSOLIDATION_JOURNAL_KEY, JSON.stringify(journal));
+      const next = { ...appData, cuentasBancos: journal.plan.afterData.cuentasBancos, metadata: { ...appData.metadata, consolidacionesBancos: [...(appData.metadata?.consolidacionesBancos || []).filter((entry) => entry.id !== journal.plan.id), journal.plan.audit] } };
+      BANK_CONSOLIDATION_KEYS.forEach((key) => { next[key] = journal.plan.afterData[key]; });
+      if (journal.plan.entries.some((entry) => entry.key === 'pendientes')) localStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify({ ...latestNotes, pendientes: journal.plan.afterNotes.pendientes }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      appData = next;
+      journal.phase = 'complete';
+      localStorage.setItem(BANK_CONSOLIDATION_JOURNAL_KEY, JSON.stringify(journal));
+      state.plan = null;
+      state.backupKey = '';
+      state.message = 'Consolidación completada. Los anteriores quedaron retirados; el respaldo previo se conserva.';
+      state.error = false;
+      registerActivity({ module: 'Catálogos', action: 'Consolidado', entityType: 'Cuenta / tarjeta', entityRef: journal.plan.targetId, detail: `${journal.plan.sourceIds.length} registro(s) retirados. Respaldo: ${journal.plan.id}.`, source: journal.cloud ? 'firestore' : 'local' });
+    } catch (error) {
+      if (journal && ['bank/consolidation-conflict', 'permission-denied', 'unauthenticated', 'firebase/not-initial-admin', 'firebase/user-inactive'].includes(error.code)) {
+        journal.phase = 'blocked';
+        try { localStorage.setItem(BANK_CONSOLIDATION_JOURNAL_KEY, JSON.stringify(journal)); } catch (_) { /* El respaldo previo permanece intacto. */ }
+      }
+      state.message = `${error.message || 'No se pudo completar la consolidación.'}${journal ? ' El respaldo y el diario se conservan para revisión o reintento.' : ''}`;
+      state.error = true;
+    } finally {
+      state.busy = false;
+      if (state.acquiredViewLock) viewRoot.inert = state.previousInert;
+      state.acquiredViewLock = false;
+      if (journal && state.acquiredCloudLock) cloudOperationState.isWriting = false;
+      state.acquiredCloudLock = false;
+      renderRoute({ preserveScroll: true });
+    }
+  }
 
   let bdatosRecoveryBusy = false;
   let bdatosPublicationBusy = false;
@@ -2997,7 +3357,7 @@ Notas importantes:
 
   function normalizeData(candidate) {
     const base = createInitialData();
-    const source = isPlainObject(candidate) ? candidate : {};
+    const source = applyBankAliasesToData(isPlainObject(candidate) ? candidate : {});
     const normalized = { ...base, ...source };
 
     DATA_KEYS.forEach((key) => {
@@ -3044,7 +3404,7 @@ Notas importantes:
       updatedAt: nowIso()
     };
 
-    return normalized;
+    return applyBankAliasesToData(normalized);
   }
 
   function applyInitialBdatosSeedIfNeeded(normalized, source = {}) {
@@ -3083,17 +3443,12 @@ Notas importantes:
 
     catalog.fields.forEach((field) => {
       if (['nombre', 'observacion'].includes(field.name)) return;
+      if (catalog.id === 'cuentasBancos' && field.name === 'metodosHabilitados') {
+        normalized.metodosHabilitados = getBankEnabledMethods(raw);
+        return;
+      }
       if (field.name === 'tipo') {
-        if (catalog.id === 'cuentasBancos') {
-          const normalizedType = normalizeBankType(raw.tipo);
-          normalized.tipo = normalizedType;
-          const legacyType = cleanText(raw.tipo || raw.tipoAnterior);
-          if (!normalizedType && legacyType) {
-            normalized.tipoAnterior = legacyType;
-          }
-        } else {
-          normalized.tipo = field.options.includes(raw.tipo) ? raw.tipo : field.options[0];
-        }
+        normalized.tipo = field.options.includes(raw.tipo) ? raw.tipo : field.options[0];
         return;
       }
       if (field.name === 'porcentaje') {
@@ -3118,6 +3473,20 @@ Notas importantes:
       }
       normalized[field.name] = cleanText(raw[field.name]);
     });
+
+    if (catalog.id === 'cuentasBancos') {
+      // Compatibilidad con consumidores y respaldos que todavía usan tipo único.
+      normalized.tipo = normalizeBankType(raw.tipo) || normalized.metodosHabilitados[0] || '';
+      if (cleanText(raw.consolidadoEnId)) {
+        normalized.consolidadoEnId = cleanText(raw.consolidadoEnId);
+        normalized.consolidadoAt = cleanText(raw.consolidadoAt);
+        normalized.consolidacionId = cleanText(raw.consolidacionId);
+        normalized.activo = false;
+      }
+      if (Array.isArray(raw.consolidacionesRecibidas)) normalized.consolidacionesRecibidas = [...new Set(raw.consolidacionesRecibidas.map(cleanText).filter(Boolean))];
+      const legacyType = cleanText(raw.tipoAnterior || raw.tipo);
+      if (!normalizeBankType(raw.tipo) && legacyType) normalized.tipoAnterior = legacyType;
+    }
 
     if (isPaymentTermsCatalog(catalog.id)) {
       const terms = normalizePaymentTermsFields(normalized);
@@ -3391,6 +3760,7 @@ Notas importantes:
       [normalized.includes('fecha'), '[name="fechaCobro"], [name="fechaPago"], [name="fecha"], [name="fechaRegistro"], [name="fechaOc"], [name="fechaCompra"], [name="fechaEntrega"], [name="fechaVencimiento"]'],
       [normalized.includes('retencion'), '[name="retencionId"], [data-cobro-retencion-toggle]'],
       [normalized.includes('metodo de pago'), '[name="metodoPagoId"], [name="metodoPagoContadoId"]'],
+      [normalized.includes('metodo habilitado'), '[name="metodosHabilitados"]'],
       [normalized.includes('tipo valido') && normalized.includes('banco'), '[name="tipo"]'],
       [normalized.includes('banco') || normalized.includes('cuenta'), '[name="cuentaBancoId"], [name="bancoPagoContadoId"], [data-bank-select]'],
       [normalized.includes('cliente'), '[name="clienteId"]'],
@@ -9215,6 +9585,13 @@ Notas importantes:
       }
     }
 
+    async function consolidateBankAccounts(plan) {
+      const context = await ensureFirebaseDiagnosticReady();
+      if (plan.errors?.length) throw new Error('La consolidación tiene conflictos pendientes.');
+      await commitBankConsolidationTransaction(plan, context);
+      return { ok: true, id: plan.id };
+    }
+
     return Object.freeze({
       name: 'KSAFirebaseAdapter',
       stage: 'Facturas Clientes - Etapa 4/4',
@@ -9243,6 +9620,7 @@ Notas importantes:
       writeCloudOperationalSnapshot,
       readBdatosForRecovery,
       saveSessionChangesToCloud,
+      consolidateBankAccounts,
       uploadPendingSessionChangesToCloud: saveSessionChangesToCloud,
       getCloudRuntimeStatus,
       importInitialBackupToCloud,
@@ -9557,7 +9935,7 @@ Notas importantes:
       tipoGastoNombre: cleanText(gasto.tipoGastoNombre || tipo?.nombre || ''),
       metodoPagoNombre: cleanText(gasto.metodoPagoNombre || metodo?.nombre || ''),
       cuentaBancoNombre: cleanText(gasto.cuentaBancoNombre || cuenta?.nombre || ''),
-      cuentaBancoTipo: normalizeBankType(gasto.cuentaBancoTipo || cuenta?.tipo || '')
+      cuentaBancoTipo: getMovementBankType(gasto, appData)
     };
   }
 
@@ -9760,7 +10138,7 @@ Notas importantes:
       metodoPagoNombre: metodo?.nombre || compra.metodoPagoContadoNombre || existingPago?.metodoPagoNombre || '',
       cuentaBancoId: requiredBankType ? (banco?.id || compra.bancoPagoContadoId || '') : '',
       cuentaBancoNombre: requiredBankType ? (banco?.nombre || compra.bancoPagoContadoNombre || '') : '',
-      cuentaBancoTipo: requiredBankType ? normalizeBankType(banco?.tipo || compra.bancoPagoContadoTipo) : '',
+      cuentaBancoTipo: requiredBankType || '',
       observacion: compra.observacionPagoContado || `Pago automático por compra de contado${compra.facturaReferencia ? ` · ${compra.facturaReferencia}` : ''}.`,
       activo: activeAuto,
       estado: activeAuto ? 'Registrado' : 'Anulado',
@@ -9896,7 +10274,7 @@ Notas importantes:
       metodoPagoNombre: metodo?.nombre || '',
       cuentaBancoId: requiredBankType ? (banco?.id || '') : '',
       cuentaBancoNombre: requiredBankType ? (banco?.nombre || '') : '',
-      cuentaBancoTipo: requiredBankType ? normalizeBankType(banco?.tipo) : '',
+      cuentaBancoTipo: requiredBankType || '',
       observacion: gastoLogistico.observacion,
       origen: 'venta_envio',
       origenId: venta.id,
@@ -9927,7 +10305,7 @@ Notas importantes:
       cuentaBancoId: gastoLogistico.cuentaBancoId,
       cuentaBancoNombre: gastoLogistico.cuentaBancoNombre,
       cuentaBancoTipo: gastoLogistico.cuentaBancoTipo
-    }, existingGasto || gastoLogistico);
+    }, existingGasto);
     if (bankError) return `La OC se guardó, pero no se creó el gasto automático: ${bankError}`;
     return '';
   }
@@ -12216,27 +12594,70 @@ Notas importantes:
     return match || '';
   }
 
+  function getBankEnabledMethods(record) {
+    const values = Array.isArray(record?.metodosHabilitados)
+      ? record.metodosHabilitados
+      : [record?.tipo];
+    return [...new Set(values.map(normalizeBankType).filter(Boolean))];
+  }
+
   function getBankTypeDisplay(record) {
-    const type = normalizeBankType(record?.tipo);
-    if (type) return type;
+    const methods = getBankEnabledMethods(record);
+    if (methods.length) return methods.join(', ');
     const legacy = cleanText(record?.tipoAnterior || record?.tipo);
-    return legacy ? `Sin tipo · anterior: ${legacy}` : 'Sin tipo';
+    return legacy ? `Sin métodos · anterior: ${legacy}` : 'Sin métodos';
+  }
+
+  function getBankAccountDisplayName(bankId, historicalName = '', fallback = '—') {
+    const bank = cleanText(bankId) ? getCatalogRecordById('cuentasBancos', cleanText(bankId)) : null;
+    return cleanText(bank?.nombre) || cleanText(historicalName) || fallback;
+  }
+
+  function getMovementBankType(record, dataSource) {
+    const saved = normalizeBankType(record?.cuentaBancoTipo || record?.bancoTipo || record?.tipoBanco || record?.bankType || record?.tipoCuentaBanco);
+    if (saved) return saved;
+    const methodRecords = Array.isArray(dataSource?.metodosPago) ? dataSource.metodosPago : [];
+    const method = methodRecords.find((item) => item.id === record?.metodoPagoId);
+    const methodName = normalizeKeyForCompare(method?.nombre || record?.metodoPagoNombre);
+    const inferred = BANK_TYPE_OPTIONS.find((option) => methodName.includes(normalizeKeyForCompare(option)));
+    if (inferred) return inferred;
+    const bank = findBankInData(dataSource, record?.cuentaBancoId, record?.cuentaBancoNombre);
+    const methods = getBankEnabledMethods(bank);
+    return methods.length === 1 ? methods[0] : '';
+  }
+
+  function bankCatalogRecordsHaveSameMethods(left, right) {
+    const leftMethods = getBankEnabledMethods(left);
+    const rightMethods = getBankEnabledMethods(right);
+    return leftMethods.length === rightMethods.length && leftMethods.every((method) => rightMethods.includes(method));
+  }
+
+  function validateBankCatalogMethods(records) {
+    const errors = [];
+    (Array.isArray(records) ? records : []).forEach((record, index) => {
+      if (!isPlainObject(record)) return;
+      if (cleanText(record.consolidadoEnId) && (!(records || []).some((bank) => bank.id === record.consolidadoEnId) || getCanonicalBankId(record.id, records) === record.id)) errors.push(`Cuenta / tarjeta ${index + 1}: referencia de consolidación inválida.`);
+      if (!Object.prototype.hasOwnProperty.call(record, 'metodosHabilitados')) return;
+      if (!Array.isArray(record.metodosHabilitados) || record.metodosHabilitados.some((method) => typeof method !== 'string' || !normalizeBankType(method))) {
+        errors.push(`Cuenta / tarjeta ${index + 1}: métodos habilitados inválidos.`);
+      }
+    });
+    return errors;
   }
 
   function findBankInData(dataSource, bankId = '', bankName = '') {
     const records = Array.isArray(dataSource?.cuentasBancos) ? dataSource.cuentasBancos : [];
     const safeId = cleanText(bankId);
     const safeName = normalizeNameForCompare(bankName);
-    return records.find((bank) => safeId && cleanText(bank.id) === safeId)
-      || records.find((bank) => safeName && normalizeNameForCompare(bank.nombre) === safeName)
-      || null;
+    if (safeId) return records.find((bank) => cleanText(bank.id) === safeId) || null;
+    const matches = records.filter((bank) => safeName && normalizeNameForCompare(bank.nombre) === safeName);
+    return matches.length === 1 ? matches[0] : null;
   }
 
   function enrichMovementBankSnapshot(record, dataSource) {
     const movement = isPlainObject(record) ? record : {};
     const bank = findBankInData(dataSource, movement.cuentaBancoId, movement.cuentaBancoNombre);
-    const bankType = normalizeBankType(movement.cuentaBancoTipo || movement.bancoTipo || movement.tipoBanco || movement.bankType || movement.tipoCuentaBanco)
-      || normalizeBankType(bank?.tipo);
+    const bankType = getMovementBankType(movement, dataSource);
     const bankName = cleanText(movement.cuentaBancoNombre) || cleanText(bank?.nombre);
     return {
       ...movement,
@@ -12247,7 +12668,7 @@ Notas importantes:
 
   function enrichBankSnapshotsForData(dataSource) {
     if (!isPlainObject(dataSource)) return dataSource;
-    ['cobros', 'pagosProveedores', 'gastos'].forEach((key) => {
+    ['cobros', 'pagosProveedores', 'gastos', 'casaGastos'].forEach((key) => {
       dataSource[key] = Array.isArray(dataSource[key])
         ? dataSource[key].map((record) => enrichMovementBankSnapshot(record, dataSource))
         : [];
@@ -12261,7 +12682,11 @@ Notas importantes:
     const rightName = normalizeNameForCompare(right?.nombre);
     if (!leftName || !rightName || leftName !== rightName) return false;
     if (catalogId === 'cuentasBancos') {
-      return normalizeBankType(left?.tipo) === normalizeBankType(right?.tipo);
+      // Una coincidencia por nombre no debe consolidar cuentas ni descartar métodos.
+      const leftReference = cleanText(left?.referenciaCatalogo);
+      const rightReference = cleanText(right?.referenciaCatalogo);
+      return bankCatalogRecordsHaveSameMethods(left, right)
+        && (!leftReference || !rightReference || leftReference === rightReference);
     }
     return true;
   }
@@ -12313,17 +12738,34 @@ Notas importantes:
     return '';
   }
 
+  function outgoingPaymentMethodAllowed(value, existingRecord = null) {
+    if (getBankTypeForPaymentMethod(value) !== 'Depósito') return true;
+    const previous = existingRecord?.metodoPagoId || existingRecord?.metodoPagoNombre;
+    return Boolean(previous && getBankTypeForPaymentMethod(previous) === 'Depósito'
+      && cleanText(value) === cleanText(previous));
+  }
+
+  function getOutgoingPaymentMethods(currentId = '') {
+    return getSelectableCatalogRecords('metodosPago', currentId).filter((method) => (
+      outgoingPaymentMethodAllowed(method.id, currentId ? { metodoPagoId: currentId } : null)
+    ));
+  }
+
+  function bankOptionMatchesMethod(option, type) {
+    return Boolean(type && (option.dataset.bankMethods || option.dataset.bankType || '').split('|').includes(type));
+  }
+
   function getBankEmptyMessage(type) {
     const safeType = cleanText(type) || 'este método';
     return `No hay bancos configurados para ${safeType}. Agrega uno en Catálogos → Bancos.`;
   }
 
   function isBankCatalogRecord(record) {
-    return Boolean(record && cleanText(record.nombre || record.id));
+    return Boolean(record && !record.consolidadoEnId && cleanText(record.nombre || record.id));
   }
 
   function bankMatchesType(record, type) {
-    return normalizeBankType(record?.tipo) === cleanText(type);
+    return getBankEnabledMethods(record).includes(normalizeBankType(type));
   }
 
   function getActiveBankRecords() {
@@ -12373,7 +12815,7 @@ Notas importantes:
     const hasMatchingBanks = requiresBank && banks.some((bank) => bankMatchesType(bank, requiredBankType));
     const optional = Boolean(options.optional);
     const alwaysVisible = Boolean(options.alwaysVisible);
-    const fieldLabel = cleanText(options.label) || 'Banco';
+    const fieldLabel = cleanText(options.label) || 'Cuenta / tarjeta';
     const selectName = cleanText(options.selectName) || 'cuentaBancoId';
     const isDisabled = Boolean(disabled || !requiresBank || !hasMatchingBanks);
     const requiredDotClass = requiresBank && hasMatchingBanks && !optional ? '' : ' is-hidden';
@@ -12381,12 +12823,12 @@ Notas importantes:
       <label class="form-field payment-bank-field${requiresBank || alwaysVisible ? '' : ' is-hidden'}" data-bank-field data-bank-optional="${optional ? 'true' : 'false'}" data-bank-always-visible="${alwaysVisible ? 'true' : 'false'}">
         <span>${escapeHtml(fieldLabel)} <span class="required-dot${requiredDotClass}" data-bank-required-dot aria-label="obligatorio">*</span></span>
         <select name="${escapeHtml(selectName)}" data-bank-select data-bank-base-disabled="${disabled ? 'true' : 'false'}" ${requiresBank && hasMatchingBanks && !optional ? 'required' : ''} ${isDisabled ? 'disabled' : ''}>
-          <option value="">Seleccionar banco</option>
+          <option value="">Seleccionar cuenta / tarjeta</option>
           ${banks.map((banco) => {
-            const bankType = normalizeBankType(banco.tipo);
-            const matchesType = requiresBank && bankType === requiredBankType;
+            const bankMethods = getBankEnabledMethods(banco);
+            const matchesType = requiresBank && bankMatchesType(banco, requiredBankType);
             const optionHidden = requiresBank && !matchesType ? ' hidden disabled' : '';
-            return `<option value="${escapeHtml(banco.id)}" data-bank-type="${escapeHtml(bankType)}"${optionHidden} ${banco.id === selectedBankId ? 'selected' : ''}>${escapeHtml(banco.nombre || 'Banco sin nombre')} · ${escapeHtml(getBankTypeDisplay(banco))}${banco.activo ? '' : ' · inactivo'}</option>`;
+            return `<option value="${escapeHtml(banco.id)}" data-bank-methods="${escapeHtml(bankMethods.join('|'))}"${optionHidden} ${banco.id === selectedBankId ? 'selected' : ''}>${escapeHtml(banco.nombre || 'Banco sin nombre')}${banco.activo ? '' : ' · inactivo'}</option>`;
           }).join('')}
         </select>
         <small class="compact-note bank-empty-message${requiresBank && !hasMatchingBanks ? '' : ' is-hidden'}" data-bank-empty-message>${escapeHtml(getBankEmptyMessage(requiredBankType))}</small>
@@ -12412,7 +12854,7 @@ Notas importantes:
 
       Array.from(bankSelect.options).forEach((option) => {
         if (!option.value) return;
-        const matchesType = requiresBank && option.dataset.bankType === requiredBankType;
+        const matchesType = requiresBank && bankOptionMatchesMethod(option, requiredBankType);
         option.hidden = !matchesType;
         option.disabled = !matchesType;
         if (matchesType) matchingBanks += 1;
@@ -12437,7 +12879,10 @@ Notas importantes:
     sync();
   }
 
-  function validateBankForPaymentMethod(record, existingRecord = null) {
+  function validateBankForPaymentMethod(record, existingRecord = null, allowDeposit = false) {
+    if (!allowDeposit && !outgoingPaymentMethodAllowed(record.metodoPagoId || record.metodoPagoNombre, existingRecord)) {
+      return 'Depósito solo está disponible para cobros. Selecciona otro método para esta salida.';
+    }
     const requiredBankType = getBankTypeForPaymentMethod(record.metodoPagoId || record.metodoPagoNombre);
     if (!requiredBankType) return '';
     const banks = getSelectableBankRecordsByType(requiredBankType, existingRecord?.cuentaBancoId);
@@ -13894,7 +14339,7 @@ Notas importantes:
       tipo: 'pendiente',
       monto: roundMoney(parseMoney(raw.monto || raw.total || 0) || 0),
       metodoPagoId: cleanText(raw.metodoPagoId || raw.metodo || raw.metodoPago || ''),
-      cuentaBancoId: cleanText(raw.cuentaBancoId || raw.banco || raw.cuentaBanco || ''),
+      cuentaBancoId: getCanonicalBankId(cleanText(raw.cuentaBancoId || raw.banco || raw.cuentaBanco || ''), appData?.cuentasBancos || []),
       descripcion: cleanText(raw.descripcion || raw.descripción || raw.observacion || ''),
       estado: isCompleted ? 'Cumplido' : 'Pendiente',
       completed: isCompleted,
@@ -16948,14 +17393,14 @@ Notas importantes:
       metodoPagoNombre: metodo.nombre,
       cuentaBancoId: requiredBankType ? (cuenta?.id || '') : '',
       cuentaBancoNombre: requiredBankType ? (cuenta?.nombre || '') : '',
-      cuentaBancoTipo: requiredBankType ? normalizeBankType(cuenta?.tipo) : '',
+      cuentaBancoTipo: requiredBankType || '',
       observacion: cleanText(formData.get('observacion')),
       activo: true,
       estado: 'Registrado',
       createdAt: timestamp,
       updatedAt: timestamp
     });
-    const bankError = validateBankForPaymentMethod(newRecord);
+    const bankError = validateBankForPaymentMethod(newRecord, null, true);
     if (bankError) {
       setFacturasMessage(bankError, 'error');
       showFormValidationError(form, facturasState.message, facturasState);
@@ -19362,7 +19807,7 @@ Notas importantes:
           total = roundMoney(Math.max(calculated.totalAjustado - (existing ? calculateManualPagadoForCompra(existing.id, appData.pagosProveedores) : 0), 0));
         }
         const funding = buildFinanciamientoPago(origin.value, loan.id, origin.value === 'prestamo' ? total : amount.value, fecha, rateInput.value, original), fx = funding.conversion;
-        notice.textContent = `${fx.bancoNombre} · cambio de compra C$ ${fx.tasa} por US$1 · vigente desde ${formatDate(fx.fechaTipoCambio)} · v${fx.version}. Parte financiada: ${financieroMoney(funding.montoPrestamo, 'NIO')} → consumo ${financieroMoney(fx.montoOrigen, 'USD')} (redondeado a centavos).${origin.value === 'mixto' ? ` Recursos propios: ${financieroMoney(roundMoney(total - funding.montoPrestamo), 'NIO')}.` : ''}${saved ? ' Se conserva el cambio original de esta operación.' : ''}`;
+        notice.textContent = `${getBankAccountDisplayName(fx.bancoId, fx.bancoNombre)} · cambio de compra C$ ${fx.tasa} por US$1 · vigente desde ${formatDate(fx.fechaTipoCambio)} · v${fx.version}. Parte financiada: ${financieroMoney(funding.montoPrestamo, 'NIO')} → consumo ${financieroMoney(fx.montoOrigen, 'USD')} (redondeado a centavos).${origin.value === 'mixto' ? ` Recursos propios: ${financieroMoney(roundMoney(total - funding.montoPrestamo), 'NIO')}.` : ''}${saved ? ' Se conserva el cambio original de esta operación.' : ''}`;
       };
       form.addEventListener('input', sync); form.addEventListener('change', sync); form.addEventListener('ksa-funding-amount-change', sync); sync();
     });
@@ -19430,7 +19875,7 @@ Notas importantes:
     return `<div class="financial-loan-values"><p><strong>Utilizado en compras:</strong> ${escapeHtml(financieroMoney(fondos.utilizados, loan.moneda))}</p><p><strong>Disponible del desembolso:</strong> ${escapeHtml(financieroMoney(fondos.disponibles, loan.moneda))}</p></div>
       ${pagos.length ? `<details><summary>Aplicaciones a proveedores (${pagos.length})</summary><ul class="funding-applications">${pagos.map((pago) => {
         const compra = appData.comprasProveedores.find((record) => record.id === pago.compraProveedorId);
-        return `<li>${escapeHtml(formatDate(pago.fechaPago))} · ${escapeHtml(pago.proveedorNombre)} · ${escapeHtml(pago.facturaReferencia)} · ${escapeHtml(financieroMoney(getFinanciamientoMontoMoneda(pago.financiamiento, loan.id), loan.moneda))}${pago.financiamiento.conversion ? ` · compra C$ ${escapeHtml(pago.financiamiento.conversion.tasa)}/USD · ${escapeHtml(pago.financiamiento.conversion.bancoNombre)} · ${escapeHtml(formatDate(pago.financiamiento.conversion.fechaTipoCambio))} · v${pago.financiamiento.conversion.version}` : ''} · ${pago.activo ? 'Aplicado' : 'Anulado; fondos liberados'}${compra?.ventaIds?.length ? ` · OC ${escapeHtml(compra.ventaIds.map(getCompraOcLabel).join(', '))}` : ''}</li>`;
+        return `<li>${escapeHtml(formatDate(pago.fechaPago))} · ${escapeHtml(pago.proveedorNombre)} · ${escapeHtml(pago.facturaReferencia)} · ${escapeHtml(financieroMoney(getFinanciamientoMontoMoneda(pago.financiamiento, loan.id), loan.moneda))}${pago.financiamiento.conversion ? ` · compra C$ ${escapeHtml(pago.financiamiento.conversion.tasa)}/USD · ${escapeHtml(getBankAccountDisplayName(pago.financiamiento.conversion.bancoId, pago.financiamiento.conversion.bancoNombre))} · ${escapeHtml(formatDate(pago.financiamiento.conversion.fechaTipoCambio))} · v${pago.financiamiento.conversion.version}` : ''} · ${pago.activo ? 'Aplicado' : 'Anulado; fondos liberados'}${compra?.ventaIds?.length ? ` · OC ${escapeHtml(compra.ventaIds.map(getCompraOcLabel).join(', '))}` : ''}</li>`;
       }).join('')}</ul></details>` : '<p class="compact-note">Sin aplicaciones a proveedores.</p>'}`;
   }
 
@@ -19705,7 +20150,7 @@ Notas importantes:
         ${payments.length ? `<ul class="bank-payment-history">${payments.slice().reverse().map((payment) => `<li>
           <strong>${escapeHtml(formatDate(payment.fechaPago))} · ${escapeHtml(payment.referencia)} · ${escapeHtml(financieroMoney(payment.montoPagado,loan.moneda))} · ${bancoActivo(payment) ? 'Registrado' : 'Anulado'}</strong>
           <p>${escapeHtml({cuota:'Pago de cuota',anticipo_cuotas:'Anticipo de cuotas',anticipo_capital:'Abono extraordinario a capital',cancelacion:'Liquidación bancaria'}[payment.tipo] || payment.tipo)} · Capital ${escapeHtml(financieroMoney(payment.capital,loan.moneda))} · Intereses ${escapeHtml(financieroMoney(payment.intereses,loan.moneda))} · Cargos ${escapeHtml(financieroMoney(payment.cargos,loan.moneda))}</p>
-          <p>Cuenta: ${escapeHtml(payment.cuentaBancoNombre || payment.cuentaBancoId)}${payment.aplicaciones.length ? ` · ${escapeHtml(payment.aplicaciones.map((item) => {const calendar=calendars.find(c=>c.id===item.calendarioId);return `Calendario v${calendar?.version || '?'} / cuota ${calendar?.cuotas.find(c=>c.id===item.cuotaId)?.numero || '?'}`;}).join(', '))}` : ''}</p>
+          <p>Cuenta: ${escapeHtml(getBankAccountDisplayName(payment.cuentaBancoId, payment.cuentaBancoNombre, payment.cuentaBancoId))}${payment.aplicaciones.length ? ` · ${escapeHtml(payment.aplicaciones.map((item) => {const calendar=calendars.find(c=>c.id===item.calendarioId);return `Calendario v${calendar?.version || '?'} / cuota ${calendar?.cuotas.find(c=>c.id===item.cuotaId)?.numero || '?'}`;}).join(', '))}` : ''}</p>
           ${payment.observacion ? `<p>${escapeHtml(payment.observacion)}</p>` : ''}${payment.motivoAnulacion ? `<p>Anulación: ${escapeHtml(payment.motivoAnulacion)}</p>` : ''}
           ${bancoActivo(payment) && !isWorkPeriodClosed(payment.fechaPago.slice(0,7)) && canCurrentRole('annulMovements') ? `<button type="button" class="danger-action compact" data-bank-annul-payment="${escapeHtml(payment.id)}" data-loan-id="${escapeHtml(loan.id)}">Anular abono</button>` : ''}
         </li>`).join('')}</ul>` : '<p class="compact-note">Sin pagos al banco.</p>'}
@@ -20004,7 +20449,7 @@ Notas importantes:
         <label class="form-field"><span>Venta · C$ por US$1</span><input type="number" name="venta" min="0.000001" step="0.000001" required></label>
         <label class="form-field financial-form-wide"><span>Referencia / observación</span><input name="observacion" maxlength="2000"></label>
         </div><p class="compact-note">Para corregir un registro, agrega otra versión con el mismo banco y fecha. Los anteriores se conservan.</p><button type="submit" class="card-action">Registrar tipo de cambio</button></form></article>` : renderRolePermissionNotice('registerOperations')}
-      <article class="panel-card"><h2>Historial de tipos de cambio</h2>${rates.length ? `<div class="bank-pdf-table"><table><thead><tr><th>Fecha</th><th>Banco</th><th>Compra C$/USD</th><th>Venta C$/USD</th><th>Versión</th><th>Estado</th><th>Registrado</th><th>Referencia / observación</th></tr></thead><tbody>${rates.map((rate) => `<tr><td>${escapeHtml(formatDate(rate.fecha))}</td><td>${escapeHtml(rate.bancoNombre)}</td><td>${formatRate(rate.compra)}</td><td>${formatRate(rate.venta)}</td><td>${rate.version}</td><td>${rates.some((next) => next.bancoId === rate.bancoId && next.fecha === rate.fecha && next.version > rate.version) ? 'Anterior' : 'Última versión de la fecha'}</td><td>${escapeHtml(formatDateTime(rate.createdAt))}</td><td>${escapeHtml(rate.observacion)}</td></tr>`).join('')}</tbody></table></div>` : '<p>Sin tipos de cambio registrados.</p>'}</article></section>`;
+      <article class="panel-card"><h2>Historial de tipos de cambio</h2>${rates.length ? `<div class="bank-pdf-table"><table><thead><tr><th>Fecha</th><th>Banco</th><th>Compra C$/USD</th><th>Venta C$/USD</th><th>Versión</th><th>Estado</th><th>Registrado</th><th>Referencia / observación</th></tr></thead><tbody>${rates.map((rate) => `<tr><td>${escapeHtml(formatDate(rate.fecha))}</td><td>${escapeHtml(getBankAccountDisplayName(rate.bancoId, rate.bancoNombre))}</td><td>${formatRate(rate.compra)}</td><td>${formatRate(rate.venta)}</td><td>${rate.version}</td><td>${rates.some((next) => next.bancoId === rate.bancoId && next.fecha === rate.fecha && next.version > rate.version) ? 'Anterior' : 'Última versión de la fecha'}</td><td>${escapeHtml(formatDateTime(rate.createdAt))}</td><td>${escapeHtml(rate.observacion)}</td></tr>`).join('')}</tbody></table></div>` : '<p>Sin tipos de cambio registrados.</p>'}</article></section>`;
   }
 
   function saveTipoCambioFinanciero(form) {
@@ -20107,7 +20552,7 @@ Notas importantes:
           const expanded = financieroState.expandedLoanIds.has(loan.id) || financieroState.calendarioLoanId === loan.id || financieroState.abonoLoanId === loan.id;
           const detailId = `financial-loan-detail-${index}`;
           return `<tr class="financial-loan-row ${loan.activo ? '' : 'is-annulled'}" data-financial-loan-row="${escapeHtml(loan.id)}">
-            <td>${escapeHtml(loan.acreedor)}<small>${escapeHtml(loan.cuentaBancoNombre || loan.cuentaBancoId)}</small></td>
+            <td>${escapeHtml(loan.acreedor)}<small>${escapeHtml(getBankAccountDisplayName(loan.cuentaBancoId, loan.cuentaBancoNombre, loan.cuentaBancoId))}</small></td>
             <td>${escapeHtml(loan.referencia)}<small>${escapeHtml(loan.moneda)} · ${escapeHtml(loan.estado)}${closed ? ' · Período cerrado' : ''}</small></td>
             <td class="financial-loan-amount">${escapeHtml(financieroMoney(loan.netoRecibido, loan.moneda))}</td>
             <td class="financial-loan-amount">${escapeHtml(financieroMoney(summary.capitalPagado, loan.moneda))}</td>
@@ -20119,7 +20564,7 @@ Notas importantes:
             <dl class="financial-loan-values"><div><dt>Capital desembolsado</dt><dd>${escapeHtml(financieroMoney(loan.capitalDesembolsado, loan.moneda))}</dd></div><div><dt>Neto recibido</dt><dd>${escapeHtml(financieroMoney(loan.netoRecibido, loan.moneda))}</dd></div><div><dt>Cargos retenidos</dt><dd>${escapeHtml(financieroMoney(loan.cargosRetenidos, loan.moneda))}</dd></div></dl>
             ${renderPrestamoAplicaciones(loan)}
             ${renderBancoControl(loan)}
-            <p>Cuenta: ${escapeHtml(loan.cuentaBancoNombre || loan.cuentaBancoId)}</p>
+            <p>Cuenta: ${escapeHtml(getBankAccountDisplayName(loan.cuentaBancoId, loan.cuentaBancoNombre, loan.cuentaBancoId))}</p>
             <p>OC: ${escapeHtml([loan.numeroOcManual, ...loan.ventaIds.map((id) => appData.ventas.find((venta) => venta.id === id)?.numeroDocumento || id)].filter(Boolean).join(', ') || 'Sin vincular')}</p>
             ${loan.observacion ? `<p class="financial-observation">${escapeHtml(loan.observacion)}</p>` : ''}
             ${loan.motivoAnulacion ? `<p>Anulación: ${escapeHtml(loan.motivoAnulacion)}</p>` : ''}
@@ -24146,6 +24591,7 @@ Notas importantes:
             ${renderCatalogList(activeCatalog, records)}
           </article>
         </div>
+        ${activeCatalog.id === 'cuentasBancos' ? renderBankConsolidationTool() : ''}
         ${editingRecord ? renderEditModal(getCatalogModalId(), `Editar ${activeCatalog.singular}`, 'Modifica el registro sin usar el formulario de alta.', renderCatalogForm(activeCatalog, editingRecord, !canEditCatalogs)) : ''}
       </section>
     `;
@@ -24181,6 +24627,17 @@ Notas importantes:
   function renderCatalogField(field, record, disabled = false) {
     const value = record?.[field.name] ?? '';
     const requiredLabel = field.required ? '<span class="required-dot" aria-label="obligatorio">*</span>' : '';
+
+    if (field.type === 'checkbox-group') {
+      const selected = getBankEnabledMethods(record);
+      return `
+        <fieldset class="form-field">
+          <legend>${escapeHtml(field.label)} ${requiredLabel}</legend>
+          ${field.options.map((option) => `<label class="checkbox-field catalog-checkbox"><input type="checkbox" name="${escapeHtml(field.name)}" value="${escapeHtml(option)}" ${selected.includes(option) ? 'checked' : ''} ${disabled ? 'disabled' : ''} /><span>${escapeHtml(option)}</span></label>`).join('')}
+          <small class="compact-note">Selecciona los métodos que admite esta cuenta o tarjeta. Depósito se ofrece únicamente en cobros.</small>
+        </fieldset>
+      `;
+    }
 
     if (field.type === 'checkbox') {
       const checked = normalizeBooleanField(value, false);
@@ -24270,9 +24727,10 @@ Notas importantes:
     if (catalog.id === 'retenciones') return renderRetencionesCatalogList(catalog, sortedRecords);
 
     const showType = shouldShowCatalogTypeColumn(catalog, sortedRecords);
-    const rows = sortedRecords.map((record) => renderCatalogRecord(catalog, record, showType)).join('');
+    const rows = sortedRecords.filter((record) => catalog.id !== 'cuentasBancos' || !record.consolidadoEnId).map((record) => renderCatalogRecord(catalog, record, showType)).join('');
+    const retired = catalog.id === 'cuentasBancos' ? sortedRecords.filter((record) => record.consolidadoEnId) : [];
 
-    return renderOperationalTableShell({
+    const list = renderOperationalTableShell({
       shellClass: `catalog-compact-scroll-shell ${showType ? 'catalog-compact-with-type' : 'catalog-compact-basic'}`,
       wrapClass: 'catalog-compact-table-wrap',
       ariaLabel: `Listado compacto de ${catalog.label}`,
@@ -24293,6 +24751,7 @@ Notas importantes:
       `,
       rows
     });
+    return list + (retired.length ? `<details class="capture-help"><summary>Registros retirados (${retired.length})</summary><ul>${retired.map((record) => `<li>${escapeHtml(record.nombre)} → ${escapeHtml(getBankAccountDisplayName(record.consolidadoEnId))}</li>`).join('')}</ul></details>` : '');
   }
 
   function renderSucursalesCatalogList(catalog, records) {
@@ -24441,12 +24900,13 @@ Notas importantes:
   }
 
   function shouldShowCatalogTypeColumn(catalog, records) {
+    if (catalog.id === 'cuentasBancos') return false;
     return catalog.fields.some((field) => field.name === 'tipo') || records.some((record) => cleanText(record.tipo));
   }
 
   function renderCatalogRecord(catalog, record, showType = false) {
     const secondary = getCatalogCompactSecondaryText(catalog, record);
-    const canEdit = canCurrentRole('editCatalogs');
+    const canEdit = canCurrentRole('editCatalogs') && (catalog.id !== 'cuentasBancos' || !record.consolidadoEnId);
     const toggleLabel = getCatalogToggleLabel(catalog, record);
     return `
       <tr class="compact-record-row catalog-compact-row ${record.activo ? 'is-active' : 'is-inactive'}">
@@ -24456,7 +24916,7 @@ Notas importantes:
           ${record.observacion ? `<small class="catalog-compact-note" title="${escapeHtml(record.observacion)}">${escapeHtml(record.observacion)}</small>` : ''}
         </td>
         ${showType ? `<td class="catalog-compact-type"><span title="${escapeHtml(getCatalogCompactTypeText(record))}">${escapeHtml(getCatalogCompactTypeText(record))}</span></td>` : ''}
-        <td class="catalog-compact-state"><span class="state-pill ${record.activo ? 'is-active' : 'is-inactive'}">${record.activo ? 'Activo' : 'Inactivo'}</span></td>
+        <td class="catalog-compact-state"><span class="state-pill ${record.activo ? 'is-active' : 'is-inactive'}">${record.consolidadoEnId ? 'Retirado' : record.activo ? 'Activo' : 'Inactivo'}</span></td>
         <td class="catalog-compact-actions">
           <div class="record-actions compact-row-actions">
             ${canEdit ? `<button type="button" class="secondary-action compact" data-catalog-edit="${escapeHtml(record.id)}">Editar</button>` : '<span class="muted-text compact-note">Lectura</span>'}
@@ -24482,7 +24942,13 @@ Notas importantes:
   }
 
   function getCatalogCompactSecondaryText(catalog, record) {
-    if (catalog.id === 'cuentasBancos') return '';
+    if (catalog.id === 'cuentasBancos') {
+      return [
+        `Métodos: ${getBankEnabledMethods(record).join(', ') || 'Sin configurar'}`,
+        record.consolidadoEnId ? `Consolidado en: ${getBankAccountDisplayName(record.consolidadoEnId)}` : '',
+        record.referenciaCatalogo ? `Referencia: ${record.referenciaCatalogo}` : ''
+      ].filter(Boolean).join(' · ');
+    }
     return getRecordSecondaryText(catalog, record);
   }
 
@@ -25011,7 +25477,7 @@ Notas importantes:
       metodoPagoNombre: metodo?.nombre || '',
       cuentaBancoId: requiredBankType ? (cuenta?.id || '') : '',
       cuentaBancoNombre: requiredBankType ? (cuenta?.nombre || '') : '',
-      cuentaBancoTipo: requiredBankType ? normalizeBankType(cuenta?.tipo) : '',
+      cuentaBancoTipo: requiredBankType || '',
       observacion: formData.get('logisticaGastoObservacion')
     });
   }
@@ -25028,7 +25494,7 @@ Notas importantes:
       cuentaBancoNombre: base.cuentaBancoNombre || matchedBanco?.nombre || '',
       cuentaBancoTipo: base.cuentaBancoTipo || matchedBanco?.tipo || ''
     });
-    const metodos = getSelectableCatalogRecords('metodosPago', normalized.metodoPagoId);
+    const metodos = getOutgoingPaymentMethods(normalized.metodoPagoId);
     const cuentas = getSelectableBankRecords(normalized.cuentaBancoId);
     return `
       <div class="logistica-gasto-subblock" data-logistica-gasto>
@@ -25135,7 +25601,7 @@ Notas importantes:
     const gastoItems = [
       ['Monto', gasto.monto ? formatMoney(gasto.monto) : '—'],
       ['Método', gasto.metodoPagoNombre || '—'],
-      ['Banco / Cuenta', gasto.cuentaBancoNombre || '—'],
+      ['Banco / Cuenta', getBankAccountDisplayName(gasto.cuentaBancoId, gasto.cuentaBancoNombre)],
       ['Observación', gasto.observacion || '—']
     ];
     return `
@@ -25514,6 +25980,8 @@ Notas importantes:
   }
 
   function validateVentaRecord(record, existingRecord = null) {
+    const shipping = record.logistica?.gasto;
+    if (record.requiereEnvio && shipping?.monto > 0 && !outgoingPaymentMethodAllowed(shipping.metodoPagoId || shipping.metodoPagoNombre, existingRecord?.logistica?.gasto)) return 'Depósito solo está disponible para cobros; selecciona otro método para el gasto de envío.';
     if (!record.numeroDocumento) return 'El número OC es obligatorio.';
     if (!record.clienteId || !getActiveCatalogRecords('clientes').some((cliente) => cliente.id === record.clienteId)) return 'Selecciona un cliente activo desde Catálogos.';
     if (!record.sucursalId || !getActiveCatalogRecords('sucursales').some((sucursal) => sucursal.id === record.sucursalId)) return 'Selecciona una sucursal activa desde Catálogos.';
@@ -26993,7 +27461,7 @@ Notas importantes:
     return {
       key: makeAccordionGroupKey('pagos-proveedor', proveedorId, label),
       label,
-      searchText: `${label} ${record.facturaReferencia || compra?.facturaReferencia || ''} ${record.metodoPagoNombre} ${record.cuentaBancoNombre} ${record.estado} ${record.observacion}`
+      searchText: `${label} ${record.facturaReferencia || compra?.facturaReferencia || ''} ${record.metodoPagoNombre} ${record.cuentaBancoNombre} ${getBankAccountDisplayName(record.cuentaBancoId, record.cuentaBancoNombre)} ${record.estado} ${record.observacion}`
     };
   }
 
@@ -27008,7 +27476,7 @@ Notas importantes:
     return {
       key: makeAccordionGroupKey('cobros-cliente', clienteId, label),
       label,
-      searchText: `${label} ${record.sucursalNombre || venta?.sucursalNombre || ''} ${record.numeroDocumento || venta?.numeroDocumento || ''} ${record.facturaReferida || ''} ${record.metodoPagoNombre} ${record.cuentaBancoNombre} ${record.estado} ${record.observacion}`
+      searchText: `${label} ${record.sucursalNombre || venta?.sucursalNombre || ''} ${record.numeroDocumento || venta?.numeroDocumento || ''} ${record.facturaReferida || ''} ${record.metodoPagoNombre} ${record.cuentaBancoNombre} ${getBankAccountDisplayName(record.cuentaBancoId, record.cuentaBancoNombre)} ${record.estado} ${record.observacion}`
     };
   }
 
@@ -27136,7 +27604,7 @@ Notas importantes:
     const retentionSummary = record.retencionActiva
       ? `${record.retencionConcepto || 'Retención'}${record.retencionPorcentaje ? ` ${formatCobroRetencionPercentage(record.retencionPorcentaje)}` : ''} — ${formatMoney(record.retencionMonto)}`
       : '—';
-    const searchable = normalizeNameForCompare(`${record.clienteNombre} ${record.sucursalNombre} ${record.numeroDocumento} ${record.metodoPagoNombre} ${record.cuentaBancoNombre} ${record.retencionConcepto} ${record.facturaReferida}`);
+    const searchable = normalizeNameForCompare(`${record.clienteNombre} ${record.sucursalNombre} ${record.numeroDocumento} ${record.metodoPagoNombre} ${record.cuentaBancoNombre} ${getBankAccountDisplayName(record.cuentaBancoId, record.cuentaBancoNombre)} ${record.retencionConcepto} ${record.facturaReferida}`);
     return `
       <tr class="compact-record-row cobro-row ${record.activo ? 'is-active' : 'is-inactive'}" data-cobro-card data-search-text="${escapeHtml(searchable)}">
         <td data-label="Fecha"><span class="compact-primary">${escapeHtml(formatDate(record.fechaCobro))}</span></td>
@@ -27145,7 +27613,7 @@ Notas importantes:
         <td data-label="Retención"><span>${escapeHtml(retentionSummary)}</span></td>
         <td data-label="Aplicado" class="amount-cell"><span class="compact-primary">${escapeHtml(formatMoney(record.montoAplicadoOC))}</span></td>
         <td data-label="Método"><span>${escapeHtml(record.metodoPagoNombre || '—')}</span>${record.autoGenerado ? '<small>Automático · compra contado</small>' : ''}<small>${escapeHtml(formatOrigenFondos(record))}</small></td>
-        <td data-label="Banco"><span>${escapeHtml(record.cuentaBancoNombre || '—')}</span></td>
+        <td data-label="Banco"><span>${escapeHtml(getBankAccountDisplayName(record.cuentaBancoId, record.cuentaBancoNombre))}</span></td>
         <td data-label="Estado"><span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span></td>
         <td data-label="Acciones" class="actions-cell">
           <div class="record-actions compact-row-actions">
@@ -27257,7 +27725,7 @@ Notas importantes:
       metodoPagoNombre: metodo?.nombre || existingRecord?.metodoPagoNombre || '',
       cuentaBancoId: requiredBankType ? (cuenta?.id || '') : '',
       cuentaBancoNombre: requiredBankType ? (cuenta?.nombre || '') : '',
-      cuentaBancoTipo: requiredBankType ? normalizeBankType(cuenta?.tipo) : '',
+      cuentaBancoTipo: requiredBankType || '',
       facturaReferida,
       observacion: cleanText(formData.get('observacion')),
       activo: typeof existingRecord?.activo === 'boolean' ? existingRecord.activo : true,
@@ -27297,7 +27765,7 @@ Notas importantes:
       if (record.montoCobrado - saldoPermitido > COBRO_TOLERANCE) return `El cobro no puede superar el saldo permitido de ${formatMoney(saldoPermitido)}.`;
     }
     if (!record.metodoPagoId || !getCatalogRecords('metodosPago').some((item) => item.id === record.metodoPagoId && (item.activo || existingRecord?.metodoPagoId === item.id))) return 'Selecciona un método de pago válido.';
-    const bankError = validateBankForPaymentMethod(record, existingRecord);
+    const bankError = validateBankForPaymentMethod(record, existingRecord, true);
     if (bankError) return bankError;
     return '';
   }
@@ -28022,7 +28490,7 @@ Notas importantes:
 
   function renderCompraContadoPaymentBlock(source, selectedProveedorId, isContado) {
     const selectedMethodId = cleanText(source?.metodoPagoContadoId || source?.metodoPagoContado);
-    const metodosActivos = getSelectableCatalogRecords('metodosPago', selectedMethodId);
+    const metodosActivos = getOutgoingPaymentMethods(selectedMethodId);
     const selectedBankId = cleanText(source?.bancoPagoContadoId || source?.bancoPagoContado);
     const selectedObservation = cleanText(source?.observacionPagoContado || source?.notaPagoContado);
     const requiredBankType = getBankTypeForPaymentMethod(selectedMethodId);
@@ -28057,10 +28525,10 @@ Notas importantes:
             <select name="bancoPagoContadoId" data-contado-bank-select ${requiredBankType && hasMatchingBanks && isContado ? 'required' : ''} ${bankDisabled ? 'disabled' : ''}>
               <option value="">Seleccionar banco / cuenta</option>
               ${cuentas.map((banco) => {
-                const bankType = normalizeBankType(banco.tipo);
-                const matchesType = requiredBankType && bankType === requiredBankType;
+                const bankMethods = getBankEnabledMethods(banco);
+                const matchesType = requiredBankType && bankMatchesType(banco, requiredBankType);
                 const optionHidden = requiredBankType && !matchesType ? ' hidden disabled' : '';
-                return `<option value="${escapeHtml(banco.id)}" data-bank-type="${escapeHtml(bankType)}"${optionHidden} ${banco.id === selectedBankId ? 'selected' : ''}>${escapeHtml(banco.nombre || 'Banco sin nombre')} · ${escapeHtml(getBankTypeDisplay(banco))}${banco.activo ? '' : ' · inactivo'}</option>`;
+                return `<option value="${escapeHtml(banco.id)}" data-bank-methods="${escapeHtml(bankMethods.join('|'))}"${optionHidden} ${banco.id === selectedBankId ? 'selected' : ''}>${escapeHtml(banco.nombre || 'Banco sin nombre')}${banco.activo ? '' : ' · inactivo'}</option>`;
               }).join('')}
             </select>
             <small class="compact-note bank-empty-message${requiredBankType && !hasMatchingBanks ? '' : ' is-hidden'}" data-contado-bank-empty-message>${escapeHtml(getBankEmptyMessage(requiredBankType))}</small>
@@ -28246,7 +28714,7 @@ Notas importantes:
     const metodoPagoContadoId = cleanText(formData.get('metodoPagoContadoId') || existingRecord?.metodoPagoContadoId || '');
     const metodoPagoContado = metodoPagoContadoId ? getCatalogRecordById('metodosPago', metodoPagoContadoId) : null;
     const requiredBankType = isContado ? getBankTypeForPaymentMethod(metodoPagoContadoId || metodoPagoContado?.nombre) : '';
-    const bancoPagoContadoId = cleanText(formData.get('bancoPagoContadoId') || existingRecord?.bancoPagoContadoId || '');
+    const bancoPagoContadoId = cleanText(formData.get('bancoPagoContadoId') ?? '');
     const bancoPagoContado = requiredBankType ? getCatalogRecordById('cuentasBancos', bancoPagoContadoId) : null;
     const base = {
       ...(existingRecord || {}),
@@ -28267,7 +28735,7 @@ Notas importantes:
       metodoPagoContadoNombre: metodoPagoContado?.nombre || existingRecord?.metodoPagoContadoNombre || '',
       bancoPagoContadoId: requiredBankType ? bancoPagoContadoId : '',
       bancoPagoContadoNombre: requiredBankType ? (bancoPagoContado?.nombre || existingRecord?.bancoPagoContadoNombre || '') : '',
-      bancoPagoContadoTipo: requiredBankType ? normalizeBankType(bancoPagoContado?.tipo || existingRecord?.bancoPagoContadoTipo) : '',
+      bancoPagoContadoTipo: requiredBankType || '',
       observacionPagoContado: cleanText(formData.get('observacionPagoContado') || existingRecord?.observacionPagoContado || ''),
       observacion: cleanText(formData.get('observacion')),
       activo: typeof existingRecord?.activo === 'boolean' ? existingRecord.activo : true,
@@ -28297,7 +28765,8 @@ Notas importantes:
 
   function validateCompraContadoPayment(record, existingRecord = null) {
     if (record.condicionPagoSnapshot !== 'Contado') return '';
-    const selectableMethods = getSelectableCatalogRecords('metodosPago', existingRecord?.metodoPagoContadoId || record.metodoPagoContadoId);
+    const selectableMethods = getOutgoingPaymentMethods(existingRecord?.metodoPagoContadoId);
+    if (!outgoingPaymentMethodAllowed(record.metodoPagoContadoId, existingRecord ? { metodoPagoId: existingRecord.metodoPagoContadoId } : null)) return 'Depósito solo está disponible para cobros.';
     if (!selectableMethods.length) return 'Configura al menos un método de pago activo para compras de contado.';
     if (!record.metodoPagoContadoId) return 'Selecciona método de pago para la compra de contado.';
     const selectedMethod = selectableMethods.find((method) => method.id === record.metodoPagoContadoId);
@@ -29030,7 +29499,7 @@ Notas importantes:
 
     Array.from(bankSelect.options).forEach((option) => {
       if (!option.value) return;
-      const matchesType = requiresBank && option.dataset.bankType === requiredBankType;
+      const matchesType = requiresBank && bankOptionMatchesMethod(option, requiredBankType);
       option.hidden = !matchesType;
       option.disabled = !matchesType;
       if (matchesType) matchingBanks += 1;
@@ -29054,7 +29523,7 @@ Notas importantes:
 
   function renderPagosProveedores() {
     const comprasDisponibles = getComprasConSaldoPago();
-    const metodosActivos = getActiveCatalogRecords('metodosPago');
+    const metodosActivos = getOutgoingPaymentMethods();
     const cuentasActivas = getActiveBankRecords();
     const pagos = getPagosProveedoresOrdenados();
     const visiblePagos = pagosState.focusCompraId ? pagos.filter((pago) => pago.compraProveedorId === pagosState.focusCompraId) : pagos;
@@ -29069,7 +29538,7 @@ Notas importantes:
       pagosState.facturaReferida = '';
     }
     const editingRecord = pagosState.editingId ? getPagosProveedoresOrdenados().find((record) => record.id === pagosState.editingId) : null;
-    const modalMetodos = editingRecord ? getSelectableCatalogRecords('metodosPago', editingRecord.metodoPagoId) : metodosActivos;
+    const modalMetodos = editingRecord ? getOutgoingPaymentMethods(editingRecord.metodoPagoId) : metodosActivos;
     const modalCuentas = editingRecord ? getSelectableBankRecords(editingRecord.cuentaBancoId) : cuentasActivas;
     const missingCatalogs = !metodosActivos.length;
     const cannotCreate = !selectedCompra || missingCatalogs;
@@ -29147,7 +29616,7 @@ Notas importantes:
     return `
       <article class="catalog-warning" role="status">
         <strong>Faltan ${escapeHtml(missing.join(', '))}.</strong>
-        <p>Para guardar un pago necesitas una compra/deuda activa con saldo y métodos de pago activos. Banco se solicita cuando el método es Transferencia, Depósito o Tarjeta.</p>
+        <p>Para guardar un pago necesitas una compra/deuda activa con saldo y métodos de pago activos. Banco se solicita cuando el método es Transferencia o Tarjeta.</p>
         <div class="placeholder-tools">
           <button type="button" class="secondary-action compact" data-go="proveedores">Ir a Proveedores / Compras</button>
           <button type="button" class="secondary-action compact" data-go="catalogos">Ir a Catálogos</button>
@@ -29288,6 +29757,7 @@ Notas importantes:
   }
 
   function renderPagoProveedorForm(selectedCompra, comprasDisponibles, metodosActivos, cuentasActivas, cannotCreate) {
+    metodosActivos = getOutgoingPaymentMethods('');
     const proveedor = selectedCompra ? getCatalogRecordById('proveedores', selectedCompra.proveedorId) : null;
     const facturaReferida = selectedCompra ? cleanText(pagosState.facturaReferida) : '';
     const saldo = selectedCompra ? getPagoSaldoPermitido(selectedCompra, facturaReferida) : 0;
@@ -29341,6 +29811,7 @@ Notas importantes:
   }
 
   function renderPagoProveedorEditForm(record, metodosActivos, cuentasActivas) {
+    metodosActivos = getOutgoingPaymentMethods(record?.metodoPagoId);
     const compra = (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : []).map((item) => normalizeCompraProveedorRecord(item)).find((item) => item.id === record.compraProveedorId);
     const proveedor = compra ? getCatalogRecordById('proveedores', compra.proveedorId) : null;
     const saldoDisponible = compra ? Math.min(roundMoney(compra.saldoPorPagar + (record.activo ? record.montoPagado : 0)), Math.max(getPagoSaldoPermitido(compra, record.facturaReferida, record.id), record.montoPagado)) : record.montoPagado;
@@ -29467,7 +29938,7 @@ Notas importantes:
     const compra = (Array.isArray(appData.comprasProveedores) ? appData.comprasProveedores : []).map((item) => normalizeCompraProveedorRecord(item)).find((item) => item.id === record.compraProveedorId);
     const referenciaPago = compra ? getCompraProveedorReferenciaCompacta(compra) : (record.facturaReferencia || '—');
     const estadoClass = record.activo ? 'is-active' : 'is-inactive';
-    const searchable = normalizeNameForCompare(`${record.proveedorNombre} ${referenciaPago} ${record.facturaReferencia} ${record.facturaReferida || ''} ${record.metodoPagoNombre} ${record.cuentaBancoNombre}`);
+    const searchable = normalizeNameForCompare(`${record.proveedorNombre} ${referenciaPago} ${record.facturaReferencia} ${record.facturaReferida || ''} ${record.metodoPagoNombre} ${record.cuentaBancoNombre} ${getBankAccountDisplayName(record.cuentaBancoId, record.cuentaBancoNombre)}`);
     return `
       <tr class="compact-record-row pago-row ${record.activo ? 'is-active' : 'is-inactive'}" data-pago-card data-search-text="${escapeHtml(searchable)}">
         <td data-label="Fecha"><span class="compact-primary">${escapeHtml(formatDate(record.fechaPago))}</span></td>
@@ -29477,7 +29948,7 @@ Notas importantes:
           <span>${escapeHtml(record.metodoPagoNombre || '—')}</span>
           ${record.autoGenerado ? '<small>Automático · compra contado</small>' : ''}<small>${escapeHtml(formatOrigenFondos(record))}</small>
         </td>
-        <td data-label="Banco"><span>${escapeHtml(record.cuentaBancoNombre || '—')}</span></td>
+        <td data-label="Banco"><span>${escapeHtml(getBankAccountDisplayName(record.cuentaBancoId, record.cuentaBancoNombre))}</span></td>
         <td data-label="Estado"><span class="state-pill ${estadoClass}">${escapeHtml(record.estado)}</span></td>
         <td data-label="Acciones" class="actions-cell">
           <div class="record-actions compact-row-actions">
@@ -29561,7 +30032,7 @@ Notas importantes:
       metodoPagoNombre: metodo?.nombre || existingRecord?.metodoPagoNombre || '',
       cuentaBancoId: requiredBankType ? (cuenta?.id || '') : '',
       cuentaBancoNombre: requiredBankType ? (cuenta?.nombre || '') : '',
-      cuentaBancoTipo: requiredBankType ? normalizeBankType(cuenta?.tipo) : '',
+      cuentaBancoTipo: requiredBankType || '',
       observacion: cleanText(formData.get('observacion')),
       activo: typeof existingRecord?.activo === 'boolean' ? existingRecord.activo : true,
       estado: typeof existingRecord?.activo === 'boolean' && !existingRecord.activo ? 'Anulado' : 'Registrado',
@@ -29789,7 +30260,7 @@ Notas importantes:
 
   function renderGastos() {
     const tiposActivos = getActiveCatalogRecords('tiposGasto');
-    const metodosActivos = getActiveCatalogRecords('metodosPago');
+    const metodosActivos = getOutgoingPaymentMethods();
     const cuentasActivas = getActiveBankRecords();
     const gastos = getGastosOrdenados();
     const editingRecord = gastosState.editingId ? gastos.find((record) => record.id === gastosState.editingId) : null;
@@ -29826,7 +30297,7 @@ Notas importantes:
                 <h2>Registrar gasto</h2>
               </div>
             </div>
-            <details class="capture-help"><summary>Ayuda de gastos</summary><p>Las opciones provienen de Catálogos activos. Banco aparece para Transferencia, Depósito o Tarjeta.</p></details>
+            <details class="capture-help"><summary>Ayuda de gastos</summary><p>Las opciones provienen de Catálogos activos. Cuenta / tarjeta aparece para Transferencia o Tarjeta.</p></details>
             ${renderGastoForm(null, tiposActivos, metodosActivos, cuentasActivas, missingCatalogs)}
           </article>
 
@@ -29858,14 +30329,16 @@ Notas importantes:
     return `
       <article class="catalog-warning" role="status">
         <strong>Faltan ${escapeHtml(missing.join(', '))}.</strong>
-        <p>Para guardar un gasto necesitas tipos de gasto y métodos de pago activos. Banco se solicita cuando el método es Transferencia, Depósito o Tarjeta.</p>
+        <p>Para guardar un gasto necesitas tipos de gasto y métodos de pago activos. Banco se solicita cuando el método es Transferencia o Tarjeta.</p>
         <button type="button" class="secondary-action compact" data-go="catalogos">Ir a Catálogos</button>
       </article>
     `;
   }
 
   function renderGastoForm(record, tiposActivos, metodosActivos, cuentasActivas, missingCatalogs) {
-    const cannotCreate = Boolean(missingCatalogs);
+    metodosActivos = getOutgoingPaymentMethods(record?.metodoPagoId);
+    cuentasActivas = getSelectableBankRecords(record?.cuentaBancoId);
+    const cannotCreate = record ? (!tiposActivos.length || !metodosActivos.length) : Boolean(missingCatalogs);
     if (!record && !gastosState.newRecordDate) gastosState.newRecordDate = todayInputValue();
     const fecha = record?.fecha || gastosState.newRecordDate;
     return `
@@ -30113,7 +30586,7 @@ Notas importantes:
       metodoPagoNombre: metodo?.nombre || '',
       cuentaBancoId: requiredBankType ? (cuenta?.id || '') : '',
       cuentaBancoNombre: requiredBankType ? (cuenta?.nombre || '') : '',
-      cuentaBancoTipo: requiredBankType ? normalizeBankType(cuenta?.tipo) : '',
+      cuentaBancoTipo: requiredBankType || '',
       observacion: cleanText(formData.get('observacion')),
       estado: 'Registrado',
       anulado: false,
@@ -30127,7 +30600,7 @@ Notas importantes:
     if (!record.fecha) return 'La fecha del gasto es obligatoria.';
     if (!record.tipoGastoId || !getActiveCatalogRecords('tiposGasto').some((item) => item.id === record.tipoGastoId)) return 'Selecciona un tipo de gasto activo.';
     if (Number.isNaN(parseMoney(record.monto)) || record.monto <= 0) return 'El monto debe ser mayor que cero.';
-    if (!record.metodoPagoId || !getActiveCatalogRecords('metodosPago').some((item) => item.id === record.metodoPagoId)) return 'Selecciona un método de pago activo.';
+    if (!record.metodoPagoId || !getOutgoingPaymentMethods(existingRecord?.metodoPagoId).some((item) => item.id === record.metodoPagoId)) return 'Selecciona un método de pago activo.';
     const bankError = validateBankForPaymentMethod(record, existingRecord);
     if (bankError) return bankError;
     return '';
@@ -30237,7 +30710,7 @@ Notas importantes:
 
   function renderCasa() {
     const categoriasActivas = getActiveCatalogRecords('categoriasCasa');
-    const metodosActivos = getActiveCatalogRecords('metodosPago');
+    const metodosActivos = getOutgoingPaymentMethods();
     const cuentasActivas = getActiveBankRecords();
     const casaGastos = getCasaGastosFiltrados();
     const casaPendientes = getCasaCreditoPendientes();
@@ -30373,7 +30846,9 @@ Notas importantes:
   }
 
   function renderCasaForm(record, categoriasActivas, metodosActivos, cuentasActivas, missingCatalogs) {
-    const cannotCreate = Boolean(missingCatalogs);
+    metodosActivos = getOutgoingPaymentMethods(record?.metodoPagoId);
+    cuentasActivas = getSelectableBankRecords(record?.cuentaBancoId);
+    const cannotCreate = record ? (!categoriasActivas.length || !metodosActivos.length) : Boolean(missingCatalogs);
     if (!record && !casaState.newRecordDate) casaState.newRecordDate = todayInputValue();
     const fecha = record?.fecha || casaState.newRecordDate;
     const categorias = record?.categoriaCasaId ? getSelectableCatalogRecords('categoriasCasa', record.categoriaCasaId) : categoriasActivas;
@@ -30719,14 +31194,14 @@ Notas importantes:
       return {
         key: getCasaPendientesVirtualGroupKey(),
         label: 'Pendientes',
-        searchText: `Pendientes ${realCategoryLabel} ${record.descripcion} ${metodo?.nombre || record.metodoPagoNombre || ''} ${record.estadoCreditoCasa || ''} ${cuenta?.nombre || record.cuentaBancoNombre || ''} ${record.observacion} ${formatMoney(record.monto)}`
+        searchText: `Pendientes ${realCategoryLabel} ${record.descripcion} ${metodo?.nombre || record.metodoPagoNombre || ''} ${record.estadoCreditoCasa || ''} ${cuenta?.nombre || ''} ${record.cuentaBancoNombre || ''} ${record.observacion} ${formatMoney(record.monto)}`
       };
     }
     const label = cleanText(categoria?.nombre || record.categoriaCasaNombre) || 'Sin categoría';
     return {
       key: makeAccordionGroupKey('casa-categoria', record.categoriaCasaId, label),
       label,
-      searchText: `${label} ${record.descripcion} ${metodo?.nombre || record.metodoPagoNombre || ''} ${record.estadoCreditoCasa || ''} ${cuenta?.nombre || record.cuentaBancoNombre || ''} ${record.observacion} ${formatMoney(record.monto)}`
+      searchText: `${label} ${record.descripcion} ${metodo?.nombre || record.metodoPagoNombre || ''} ${record.estadoCreditoCasa || ''} ${cuenta?.nombre || ''} ${record.cuentaBancoNombre || ''} ${record.observacion} ${formatMoney(record.monto)}`
     };
   }
 
@@ -31000,7 +31475,7 @@ Notas importantes:
       estadoCreditoCasa,
       cuentaBancoId: requiredBankType ? (cuenta?.id || '') : '',
       cuentaBancoNombre: requiredBankType ? (cuenta?.nombre || '') : '',
-      cuentaBancoTipo: requiredBankType ? normalizeBankType(cuenta?.tipo) : '',
+      cuentaBancoTipo: requiredBankType || '',
       observacion: cleanText(formData.get('observacion')),
       estado: 'Registrado',
       activo: true,
@@ -31014,7 +31489,7 @@ Notas importantes:
     if (!record.categoriaCasaId || !getSelectableCatalogRecords('categoriasCasa', existingRecord?.categoriaCasaId).some((item) => item.id === record.categoriaCasaId)) return 'Selecciona una Categoría Casa válida.';
     if (!getActiveCatalogRecords('categoriasCasa').some((item) => item.id === record.categoriaCasaId) && record.categoriaCasaId !== existingRecord?.categoriaCasaId) return 'Selecciona una Categoría Casa activa.';
     if (Number.isNaN(parseMoney(record.monto)) || record.monto <= 0) return 'El monto debe ser mayor que cero.';
-    if (!record.metodoPagoId || !getActiveCatalogRecords('metodosPago').some((item) => item.id === record.metodoPagoId)) return 'Selecciona un método de pago activo.';
+    if (!record.metodoPagoId || !getOutgoingPaymentMethods(existingRecord?.metodoPagoId).some((item) => item.id === record.metodoPagoId)) return 'Selecciona un método de pago activo.';
     if (isCasaCreditPaymentMethod(record.metodoPagoId || record.metodoPagoNombre) && !['Pendiente', 'Pagado'].includes(record.estadoCreditoCasa)) return 'Selecciona un estado válido para el crédito Casa.';
     const bankError = validateBankForPaymentMethod(record, existingRecord);
     if (bankError) return bankError;
@@ -33529,6 +34004,7 @@ Notas importantes:
     if (Object.prototype.hasOwnProperty.call(rawRecordsSource, 'tiposCambioFinancieros')) errors.push(...validateTiposCambioFinancieros(data.tiposCambioFinancieros, data.cuentasBancos));
     if (Object.prototype.hasOwnProperty.call(rawRecordsSource, 'prestamosFinancieros')) errors.push(...validatePrestamosFinancieros(data.prestamosFinancieros, data));
     errors.push(...validateFinanciamientoSnapshot({ ...data, prestamosFinancieros: Array.isArray(data.prestamosFinancieros) ? data.prestamosFinancieros : appData.prestamosFinancieros }));
+    errors.push(...validateBankCatalogMethods(data.cuentasBancos));
     const transportesPresentInBackup = Array.isArray(rawCatalogsSource?.transportes)
       || Array.isArray(rawRecordsSource?.transportes)
       || Array.isArray(raw?.transportes);
@@ -33582,9 +34058,9 @@ Notas importantes:
     if (counts.total <= 0) warnings.push('El respaldo no contiene registros operativos; puede ser una base vacía.');
     if (schemaVersion && schemaVersion !== SCHEMA_VERSION) warnings.push(`Schema del archivo: ${schemaVersion}. Schema actual: ${SCHEMA_VERSION}. Se intentará normalizar.`);
     const banksWithoutType = Array.isArray(data.cuentasBancos)
-      ? data.cuentasBancos.filter((bank) => cleanText(bank?.nombre) && !normalizeBankType(bank?.tipo)).length
+      ? data.cuentasBancos.filter((bank) => cleanText(bank?.nombre) && !getBankEnabledMethods(bank).length).length
       : 0;
-    if (banksWithoutType > 0) warnings.push(`${banksWithoutType} banco${banksWithoutType === 1 ? '' : 's'} sin tipo detectado${banksWithoutType === 1 ? '' : 's'}; se conservarán y podrás completar el tipo desde Catálogos → Bancos.`);
+    if (banksWithoutType > 0) warnings.push(`${banksWithoutType} banco${banksWithoutType === 1 ? '' : 's'} sin métodos detectado${banksWithoutType === 1 ? '' : 's'}; se conservarán y podrás completar los métodos desde Catálogos → Bancos.`);
     const totalAjustesImportados = (counts.ajustesClientes || 0) + (counts.ajustesProveedores || 0);
     if (totalAjustesImportados > 0) warnings.push(`Se detectaron ${totalAjustesImportados} ajuste(s)/nota(s); se importarán ligados a su documento original y no como cobros/pagos.`);
 
@@ -33875,7 +34351,7 @@ Notas importantes:
 
     incoming.ventas.forEach((venta) => {
       const remapped = normalizeVentaRecord({
-        ...venta,
+        ...remapVentaBankReferences(venta, idMaps),
         clienteId: idMaps.clientes.get(venta.clienteId) || venta.clienteId,
         sucursalId: idMaps.sucursales.get(venta.sucursalId) || venta.sucursalId,
         updatedAt: venta.updatedAt || timestamp
@@ -33921,7 +34397,7 @@ Notas importantes:
 
     incoming.comprasProveedores.forEach((compra) => {
       const remapped = normalizeCompraProveedorRecord({
-        ...compra,
+        ...remapCompraBankReferences(compra, idMaps),
         ...(compra.financiamientoContado ? { financiamientoContado: remapFinanciamientoConversion(compra.financiamientoContado, idMaps.cuentasBancos) } : {}),
         proveedorId: idMaps.proveedores.get(compra.proveedorId) || compra.proveedorId,
         ventaIds: normalizeCompraVentaIds(compra.ventaIds).map((id) => ventaIdMap.get(id) || id),
@@ -34062,7 +34538,7 @@ Notas importantes:
     target.exportacionesExcel = reconciledImportedClosuresExcel.exportaciones;
 
     if (incomingNotas) {
-      const notesMerge = mergeNotasModuleData(cloneNotasModuleData(), incomingNotas);
+      const notesMerge = mergeNotasModuleData(cloneNotasModuleData(), remapNotasBankReferences(incomingNotas, idMaps));
       saveNotasModuleSnapshot(notesMerge.data);
       added.notasModulo = notesMerge.added;
       added.notas = notesMerge.added;
@@ -34112,6 +34588,42 @@ Notas importantes:
     return { loaded, added, skipped };
   }
 
+  function remapNotasBankReferences(snapshot, idMaps) {
+    if (!idMaps || !Array.isArray(snapshot?.pendientes)) return snapshot;
+    return { ...snapshot, pendientes: snapshot.pendientes.map((record) => ({
+      ...record,
+      metodoPagoId: idMaps.metodosPago.get(record.metodoPagoId) || record.metodoPagoId,
+      cuentaBancoId: idMaps.cuentasBancos.get(record.cuentaBancoId) || record.cuentaBancoId
+    })) };
+  }
+
+  function remapVentaBankReferences(venta, idMaps) {
+    if (!isPlainObject(venta?.logistica?.gasto)) return venta;
+    const gasto = venta.logistica.gasto;
+    return { ...venta, logistica: { ...venta.logistica, gasto: {
+      ...gasto,
+      metodoPagoId: idMaps.metodosPago.get(gasto.metodoPagoId) || gasto.metodoPagoId,
+      cuentaBancoId: idMaps.cuentasBancos.get(gasto.cuentaBancoId) || gasto.cuentaBancoId
+    } } };
+  }
+
+  function remapCompraBankReferences(compra, idMaps) {
+    return {
+      ...compra,
+      metodoPagoContadoId: idMaps.metodosPago.get(compra.metodoPagoContadoId) || compra.metodoPagoContadoId || '',
+      bancoPagoContadoId: idMaps.cuentasBancos.get(compra.bancoPagoContadoId) || compra.bancoPagoContadoId || ''
+    };
+  }
+
+  function finalizeBankMergeMaps(target, idMaps) {
+    target.cuentasBancos = (target.cuentasBancos || []).map((bank) => bank.consolidadoEnId ? {
+      ...bank, activo: false, consolidadoEnId: idMaps.cuentasBancos.get(bank.consolidadoEnId) || bank.consolidadoEnId
+    } : bank);
+    idMaps.cuentasBancos.forEach((id, incomingId) => {
+      idMaps.cuentasBancos.set(incomingId, getCanonicalBankId(id, target.cuentasBancos));
+    });
+  }
+
   function buildCatalogMergeMaps(target, incoming, timestamp) {
     const idMaps = { __added: {} };
     CATALOGS.forEach((catalog) => {
@@ -34130,6 +34642,7 @@ Notas importantes:
         idMaps.__added[catalog.id] += 1;
       });
     });
+    finalizeBankMergeMaps(target, idMaps);
     return idMaps;
   }
 
@@ -35716,7 +36229,7 @@ Exportado: ${exportDateLabel}
       if (catalog.id === 'clientes') headers.splice(1, 0, 'Código', 'Condición de pago', 'Días de crédito');
       if (catalog.id === 'sucursales') headers.splice(1, 0, 'Cliente asociado');
       if (catalog.id === 'proveedores') headers.splice(1, 0, 'Contacto', 'Condición de pago', 'Días de crédito');
-      if (catalog.id === 'cuentasBancos') headers.splice(1, 0, 'Tipo');
+      if (catalog.id === 'cuentasBancos') headers.splice(1, 0, 'Métodos habilitados');
       headers.push('Observación');
       rows.push(xlsxHeaderRow(headers));
       getCatalogRecords(catalog.id).forEach((record) => {
@@ -36307,6 +36820,26 @@ ${rowsXml}
   }
 
   function importCatalogosRows(sheet, payload, warnings) {
+    const sectionRows = Array.isArray(sheet?.rows) ? sheet.rows : [];
+    const hasSections = sectionRows.some((row, index) => row.filter((cell) => cleanText(cell)).length === 1
+      && CATALOGS.some((catalog) => normalizeExcelKey(catalog.label) === normalizeExcelKey(row[0]))
+      && normalizeExcelKey(sectionRows[index + 1]?.[0]) === 'nombre');
+    if (hasSections) {
+      let catalog = null;
+      let headers = null;
+      sectionRows.forEach((row) => {
+        if (!row.some((cell) => cleanText(cell))) { catalog = null; headers = null; return; }
+        const section = row.filter((cell) => cleanText(cell)).length === 1
+          ? CATALOGS.find((item) => normalizeExcelKey(item.label) === normalizeExcelKey(row[0])) : null;
+        if (section) { catalog = section; headers = null; return; }
+        if (!catalog || !payload[catalog.id]) return;
+        if (!headers) { headers = row.map(cleanText); return; }
+        const values = Object.fromEntries(headers.map((header, index) => [header, row[index] ?? '']));
+        addImportCatalog(payload, catalog.id, values.Nombre || row[0], values);
+      });
+      payload.__headersCatalogos = ['Nombre', 'Métodos habilitados'];
+      return;
+    }
     const parsed = rowsToObjects(sheet, warnings, 'Catálogos', []);
     payload.__headersCatalogos = parsed.headers;
     const directColumns = {
@@ -36342,15 +36875,38 @@ ${rowsXml}
     else if (tipoKey.includes('cuenta') || tipoKey.includes('banco')) addImportCatalog(payload, 'cuentasBancos', nombre, row);
   }
 
+  function getBankCatalogImportFields(row = {}) {
+    const exactCell = (aliases) => Object.entries(row).find(([key]) => aliases.some((alias) => normalizeExcelKey(key) === normalizeExcelKey(alias)))?.[1];
+    const rawMethods = exactCell(['Métodos habilitados', 'Metodos', 'Métodos admitidos']);
+    const rawType = exactCell(['Tipo banco', 'Tipo cuenta', 'Tipo']);
+    const state = normalizeKeyForCompare(exactCell(['Estado']));
+    const methods = rawMethods === undefined || !cleanText(rawMethods)
+      ? [normalizeBankType(rawType)].filter(Boolean)
+      : cleanText(rawMethods).split(/[,;|/\n]+/).map((value) => {
+        const method = normalizeBankType(value);
+        if (!method) throw new Error('El catálogo de cuentas / tarjetas contiene un método habilitado inválido.');
+        return method;
+      });
+    return {
+      tipo: normalizeBankType(rawType) || methods[0] || '',
+      metodosHabilitados: [...new Set(methods)],
+      referenciaCatalogo: cleanText(exactCell(['Referencia catálogo', 'Número / referencia (solo catálogo)', 'referenciaCatalogo'])),
+      ...(['activo', 'inactivo'].includes(state) ? { activo: state === 'activo' } : {})
+    };
+  }
+
   function addImportCatalog(payload, catalogId, nombre, row = {}) {
     const safeName = cleanText(nombre);
     if (!safeName || !payload[catalogId]) return '';
-    const rawType = cleanText(pickCell(row, ['Tipo banco', 'Tipo Banco', 'Tipo cuenta', 'Tipo']));
-    const bankType = catalogId === 'cuentasBancos' ? normalizeBankType(rawType) : '';
+    const bankFields = catalogId === 'cuentasBancos' ? getBankCatalogImportFields(row) : null;
+    if (bankFields && !bankFields.metodosHabilitados.length && !bankFields.referenciaCatalogo) {
+      const matches = payload[catalogId].filter((item) => normalizeNameForCompare(item.nombre) === normalizeNameForCompare(safeName));
+      if (matches.length === 1) return matches[0].id;
+    }
     const existing = payload[catalogId].find((item) => {
       const sameName = normalizeNameForCompare(item.nombre) === normalizeNameForCompare(safeName);
       if (!sameName) return false;
-      if (catalogId === 'cuentasBancos') return normalizeBankType(item.tipo) === bankType;
+      if (catalogId === 'cuentasBancos') return catalogRecordsMatchForMerge(catalogId, item, { nombre: safeName, ...bankFields });
       return true;
     });
     if (existing) return existing.id;
@@ -36361,7 +36917,8 @@ ${rowsXml}
       contacto: cleanText(pickCell(row, ['Contacto', 'Teléfono', 'Telefono', 'Correo'])),
       condicionPago: cleanText(pickCell(row, ['Condición de pago', 'Condicion de pago', 'Condición', 'Condicion', 'Forma de pago', 'Tipo pago'])),
       diasCredito: parsePositiveInteger(pickCell(row, ['Días de crédito', 'Dias de credito', 'Días crédito', 'Dias credito', 'Crédito', 'Credito'])),
-      tipo: catalogId === 'cuentasBancos' ? bankType : cleanText(pickCell(row, ['Tipo cuenta', 'Tipo'])),
+      tipo: cleanText(pickCell(row, ['Tipo cuenta', 'Tipo'])),
+      ...(bankFields || {}),
       observacion: cleanText(pickCell(row, ['Observación', 'Observacion', 'Notas']))
     }, CATALOGS.find((catalog) => catalog.id === catalogId));
     payload[catalogId].push(record);
@@ -36612,13 +37169,14 @@ ${rowsXml}
       });
     });
 
+    finalizeBankMergeMaps(target, idMaps);
     let skipped = 0;
     const ventaIdMap = new Map();
     const compraIdMap = new Map();
 
     payload.ventas.forEach((venta) => {
       const remapped = normalizeVentaRecord({
-        ...venta,
+        ...remapVentaBankReferences(venta, idMaps),
         id: generateId('venta'),
         clienteId: idMaps.clientes.get(venta.clienteId) || venta.clienteId,
         sucursalId: idMaps.sucursales.get(venta.sucursalId) || venta.sucursalId,
@@ -36637,7 +37195,7 @@ ${rowsXml}
 
     payload.comprasProveedores.forEach((compra) => {
       const remapped = normalizeCompraProveedorRecord({
-        ...compra,
+        ...remapCompraBankReferences(compra, idMaps),
         id: generateId('compraProveedor'),
         proveedorId: idMaps.proveedores.get(compra.proveedorId) || compra.proveedorId,
         createdAt: timestamp,
@@ -36747,6 +37305,7 @@ ${rowsXml}
   }
 
   function getCatalogRecordById(catalogId, recordId) {
+    if (catalogId === 'cuentasBancos') recordId = getCanonicalBankId(recordId, getCatalogRecords(catalogId));
     return getCatalogRecords(catalogId).find((record) => record.id === recordId);
   }
 
@@ -36909,7 +37468,7 @@ ${rowsXml}
       return [record.contacto ? `Contacto: ${record.contacto}` : '', formatPaymentTermsLabel(record)].filter(Boolean).join(' · ');
     }
     if (catalog.id === 'metodosPago') return 'Método simple';
-    if (catalog.id === 'cuentasBancos') return `Tipo: ${getBankTypeDisplay(record)}`;
+    if (catalog.id === 'cuentasBancos') return `Métodos: ${getBankTypeDisplay(record)}`;
     if (catalog.id === 'retenciones') return `Porcentaje: ${formatPercentageDisplay(record.porcentaje)}`;
     if (catalog.id === 'categoriasCasa') return 'Categoría propia de Casa';
     return '';
@@ -37004,6 +37563,10 @@ ${rowsXml}
     };
 
     catalog.fields.forEach((field) => {
+      if (field.type === 'checkbox-group') {
+        record[field.name] = [...new Set(formData.getAll(field.name).map(normalizeBankType).filter(Boolean))];
+        return;
+      }
       if (field.type === 'checkbox') {
         record[field.name] = formData.has(field.name);
         return;
@@ -37016,8 +37579,8 @@ ${rowsXml}
     }
 
     if (catalog.id === 'cuentasBancos') {
-      record.tipo = normalizeBankType(record.tipo);
-      if (record.tipo) delete record.tipoAnterior;
+      // Conservar el tipo anterior para los consumidores y respaldos heredados.
+      record.tipo = normalizeBankType(existingRecord?.tipo) || record.metodosHabilitados[0] || '';
     }
 
     if (isPaymentTermsCatalog(catalog.id)) {
@@ -37036,7 +37599,10 @@ ${rowsXml}
       const sameName = normalizeNameForCompare(item.nombre) === normalizeNameForCompare(record.nombre);
       if (!sameName) return false;
       if (catalog.id === 'cuentasBancos') {
-        return normalizeBankType(item.tipo) === normalizeBankType(record.tipo);
+        const methods = getBankEnabledMethods(record);
+        const itemMethods = getBankEnabledMethods(item);
+        return methods.some((method) => itemMethods.includes(method))
+          || (!methods.length && !itemMethods.length);
       }
       return true;
     }) || null;
@@ -37047,8 +37613,8 @@ ${rowsXml}
       return `El nombre del ${catalog.singular} es obligatorio.`;
     }
 
-    if (catalog.id === 'cuentasBancos' && !BANK_TYPE_OPTIONS.includes(record.tipo)) {
-      return 'Selecciona un tipo válido para el banco: Transferencia, Depósito o Tarjeta.';
+    if (catalog.id === 'cuentasBancos' && !getBankEnabledMethods(record).length) {
+      return 'Selecciona al menos un método habilitado para la cuenta o tarjeta.';
     }
 
     if (catalog.id === 'retenciones') {
@@ -37072,7 +37638,7 @@ ${rowsXml}
 
     if (duplicate) {
       if (catalog.id === 'cuentasBancos') {
-        return `Ya existe el banco “${record.nombre}” con tipo “${record.tipo}”.`;
+        return `Ya existe una cuenta o tarjeta “${record.nombre}” con métodos habilitados coincidentes.`;
       }
       return `Ya existe un registro activo con el nombre “${record.nombre}”.`;
     }
@@ -37090,6 +37656,7 @@ ${rowsXml}
     const existingId = cleanText(new FormData(form).get('id'));
     const records = getCatalogRecords(catalog.id);
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
+    if (existingRecord?.consolidadoEnId) { showFormValidationError(form, 'Este registro fue consolidado; edita el definitivo.', catalogState); return; }
     const newRecord = buildRecordFromForm(form, catalog, existingRecord);
     const validationError = validateCatalogRecord(catalog, newRecord, existingId);
 
@@ -37139,6 +37706,7 @@ ${rowsXml}
     const catalog = getActiveCatalog();
     const record = getCatalogRecords(catalog.id).find((item) => item.id === recordId);
     if (!record) return;
+    if (record.consolidadoEnId) { notifyAction(catalogState, 'Este registro fue consolidado; utiliza el definitivo.', 'error'); renderRoute({ preserveScroll: true }); return; }
     catalogState.editingId = recordId;
     catalogState.message = null;
     renderRoute();
@@ -37155,6 +37723,7 @@ ${rowsXml}
     const records = getCatalogRecords(catalog.id);
     const record = records.find((item) => item.id === recordId);
     if (!record) return;
+    if (record.consolidadoEnId) { notifyAction(catalogState, 'Este registro fue consolidado; utiliza el definitivo.', 'error'); renderRoute({ preserveScroll: true }); return; }
 
     if (catalog.id === 'categoriasCasa' && record.activo && !isCasaCategoriaInUse(record.id)) {
       appData[catalog.id] = records.filter((item) => item.id !== recordId);
@@ -37173,7 +37742,7 @@ ${rowsXml}
 
       if (duplicate) {
         catalogState.message = catalog.id === 'cuentasBancos'
-          ? `No se puede restaurar: ya existe activo el banco “${record.nombre}” con tipo “${getBankTypeDisplay(record)}”.`
+          ? `No se puede restaurar: ya existe activa una cuenta o tarjeta “${record.nombre}” con métodos habilitados coincidentes.`
           : `No se puede activar: ya existe un registro activo con el nombre “${record.nombre}”.`;
         catalogState.messageType = 'error';
         renderRoute();
@@ -37580,6 +38149,20 @@ ${rowsXml}
     viewRoot.querySelectorAll('[data-catalog-tab]').forEach((button) => {
       button.addEventListener('click', () => setCatalogTab(button.dataset.catalogTab));
     });
+
+    viewRoot.querySelector('[data-bank-consolidation-form]')?.addEventListener('submit', (event) => {
+      event.preventDefault(); previewBankConsolidation(event.currentTarget);
+    });
+    viewRoot.querySelector('[data-bank-consolidation-form]')?.addEventListener('change', () => {
+      bankConsolidationState.plan = null;
+      bankConsolidationState.backupKey = '';
+      const preview = viewRoot.querySelector('[data-bank-consolidation-preview]');
+      if (preview) preview.hidden = true;
+    });
+    viewRoot.querySelector('[data-bank-consolidation-backup]')?.addEventListener('click', prepareBankConsolidationBackup);
+    viewRoot.querySelector('[data-bank-consolidation-apply]')?.addEventListener('click', () => applyBankConsolidation());
+    viewRoot.querySelector('[data-bank-consolidation-resume]')?.addEventListener('click', () => applyBankConsolidation(true));
+    viewRoot.querySelector('[data-bank-consolidation-cancel]')?.addEventListener('click', cancelBlockedBankConsolidation);
 
     viewRoot.querySelectorAll('[data-catalog-form]').forEach((form) => {
       setupCatalogPaymentTermsForm(form);

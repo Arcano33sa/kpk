@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_179_financiero_fondos_combinados_e3';
+const CACHE_VERSION = 'v0_18_180_bancos_mejorados';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
