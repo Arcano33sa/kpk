@@ -60,6 +60,8 @@ const context = vm.createContext({
 const bankStart = source.indexOf("      id: 'cuentasBancos',");
 const bankEnd = source.indexOf('\n    },', bankStart);
 vm.runInContext(`
+const FIRESTORE_IMPORT_BATCH_LIMIT=420;
+${source.match(/^  const BANK_CONSOLIDATION_MAX_DOCS = .*$/m)[0]}
 const BANK_TYPE_OPTIONS=['Transferencia','Depósito','Tarjeta'];
 const CATALOGS=[{${source.slice(bankStart, bankEnd)}}];
 const APP_NAME='KSA PRÁCTIKA';const APP_VERSION='test';const SCHEMA_VERSION='1.0.0';
@@ -259,7 +261,27 @@ function fakeFirestore(plan, conflict = false) {
   assert.equal(transactionCalls,attempts);
   assert.equal(run('readBankConsolidationJournal()'),null);
   assert.equal(context.appData.gastos[0].monto,123);
-  context.appData=fixture();context.appData.gastos=Array.from({length:205},(_,index)=>({id:'expense-'+index,cuentaBancoId:'old-card',monto:1,metodoPagoId:'card'}));
-  assert(run("buildBankConsolidationPlan(appData,notes,'new',['old-card']).errors").some(error=>error.includes('200')));
+  context.appData=fixture();context.appData.gastos=Array.from({length:405},(_,index)=>({id:'expense-'+index,cuentaBancoId:'old-card',monto:1,metodoPagoId:'card'}));
+  assert(run("buildBankConsolidationPlan(appData,notes,'new',['old-card']).errors").some(error=>error.includes('400')));
+  // Volumen real observado: 270 documentos de datos y un recibo de control.
+  context.appData=fixture();
+  context.appData.gastos=Array.from({length:260},(_,index)=>({id:'volume-'+index,cuentaBancoId:'old-card',monto:1,metodoPagoId:'card'}));
+  run("var volumePlan=buildBankConsolidationPlan(appData,notes,'new',['old-card','old-transfer'])");
+  assert.deepEqual(json('volumePlan.errors'),[]);
+  assert.equal(run('volumePlan.entries.length+1'),271);
+  const volume=fakeFirestore(json('volumePlan'));
+  context.txContext={db:{},fs:volume.api,user:{email:''}};
+  const volumeBefore=writes;
+  await run('commitBankConsolidationTransaction(volumePlan,txContext)');
+  assert.equal(writes-volumeBefore,271);
+  assert.equal(volume.docs.get('workspaces/test/gastos/volume-259').cuentaBancoId,'new');
+  const volumeWrites=writes;
+  await run('commitBankConsolidationTransaction(volumePlan,txContext)');
+  assert.equal(writes,volumeWrites,'Reintentar el grupo de 271 no duplica escrituras');
+  const volumeConflict=fakeFirestore(json('volumePlan'));
+  volumeConflict.docs.get('workspaces/test/gastos/volume-259').monto=99;
+  context.txContext={db:{},fs:volumeConflict.api,user:{email:''}};
+  await assert.rejects(run('commitBankConsolidationTransaction(volumePlan,txContext)'),/otro dispositivo/);
+  assert.equal(writes,volumeWrites,'Un conflicto al final del grupo de 271 tampoco publica cambios');
   console.log('OK E4: vista previa pura, referencias anidadas, conflictos, retiro y aliases, transacción atómica simulada, reintentos idempotentes, respaldo inmutable, fallo local y recuperación, históricos y consecutivos intactos.');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

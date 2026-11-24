@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.180-bancos-mejorados';
+  const APP_VERSION = '0.18.181-bancos-consolidacion-volumen';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -1424,6 +1424,7 @@ Notas importantes:
     messageType: 'success'
   };
 
+  const BANK_CONSOLIDATION_MAX_DOCS = FIRESTORE_IMPORT_BATCH_LIMIT - 20;
   const BANK_CONSOLIDATION_JOURNAL_KEY = 'KSA_PRACTIKA_BANK_CONSOLIDATION_JOURNAL_v1';
   const BANK_CONSOLIDATION_BACKUP_PREFIX = 'KSA_PRACTIKA_BANK_CONSOLIDATION_BACKUP_v1:';
   const BANK_CONSOLIDATION_KEYS = ['ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'casaGastos', 'prestamosFinancieros', 'tiposCambioFinancieros'];
@@ -1561,7 +1562,7 @@ Notas importantes:
     const remoteCount = entries.filter((entry) => entry.key !== 'tiposCambioFinancieros').length + 1;
     if (new Set(entries.map((entry) => `${entry.key}/${entry.id}`)).size !== entries.length) errors.push('Hay IDs duplicados en los registros afectados; requiere revisión.');
     if (entries.some((entry) => !cleanText(entry.id))) errors.push('Hay referencias sin ID; requiere revisión antes de consolidar.');
-    if (remoteCount > 200) errors.push('Esta consolidación supera el límite de 200 documentos de la herramienta. Reduce el grupo de registros anteriores.');
+    if (remoteCount > BANK_CONSOLIDATION_MAX_DOCS) errors.push(`Esta consolidación supera el límite de ${BANK_CONSOLIDATION_MAX_DOCS} documentos de la herramienta. Reduce el grupo de registros anteriores.`);
     const signature = bankConsolidationSignature({ banks, records: BANK_CONSOLIDATION_KEYS.map((key) => data[key] || []), pendientes: notes?.pendientes || [] });
     return { id, timestamp, targetId: target.id, sourceIds: ids, signature, entries, counts, errors: [...new Set(errors)], audit, afterData, afterNotes };
   }
@@ -1662,7 +1663,7 @@ Notas importantes:
     const auditRef = fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'metadata', FIRESTORE_METADATA_SYSTEM_ID);
     const beforeBanks = JSON.parse(plan.signature).banks;
     const writes = plan.entries.filter((entry) => entry.key !== 'tiposCambioFinancieros');
-    if (writes.length + 1 > 200) throw new Error('Demasiados documentos para esta consolidación.');
+    if (writes.length + 1 > BANK_CONSOLIDATION_MAX_DOCS) throw new Error('Demasiados documentos para esta consolidación.');
     await fs.runTransaction(db, async (transaction) => {
       const auditSnap = await transaction.get(auditRef);
       const recorded = auditSnap.exists() ? auditSnap.data()?.bankConsolidationReceipts?.[plan.id] : null;
@@ -1670,10 +1671,11 @@ Notas importantes:
         if (recorded.firma !== simpleHashText(plan.signature)) throw Object.assign(new Error('El identificador de consolidación tiene otro contenido.'), { code: 'bank/consolidation-conflict' });
         return; // Reintento idempotente después de un fallo local o de confirmación.
       }
-      const checked = [];
-      for (const entry of writes) {
+      // Las lecturas son independientes; todas terminan antes de cualquier escritura.
+      const snapshots = await Promise.all(writes.map((entry) => transaction.get(pathFor(entry))));
+      const checked = writes.map((entry, index) => {
         const ref = pathFor(entry);
-        const snap = await transaction.get(ref);
+        const snap = snapshots[index];
         if (!snap.exists()) throw Object.assign(new Error('Faltan registros en nube. Actualiza los datos y prepara nuevamente la vista previa.'), { code: 'bank/consolidation-conflict' });
         const raw = snap.data();
         if (raw._deleted === true || raw._cloudDeleted === true || raw.eliminadoEnNube === true) throw Object.assign(new Error('Un registro fue retirado en otro dispositivo. Actualiza y revisa nuevamente.'), { code: 'bank/consolidation-conflict' });
@@ -1681,8 +1683,8 @@ Notas importantes:
         const actual = mapBankReferences(normalize(JSON.parse(bankConsolidationSignature({ id: entry.id, ...raw }))), (id) => getCanonicalBankId(id, beforeBanks));
         const expected = normalize(entry.before);
         if (bankConsolidationSignature(actual) !== bankConsolidationSignature(expected)) throw Object.assign(new Error('Hay cambios en otro dispositivo. No se consolidó ningún registro; actualiza y revisa nuevamente.'), { code: 'bank/consolidation-conflict' });
-        checked.push({ entry, ref, raw });
-      }
+        return { entry, ref, raw };
+      });
       const sourceSet = new Set(plan.sourceIds);
       checked.forEach(({ entry, ref, raw }) => {
         const mapped = mapBankReferences(raw, (id) => sourceSet.has(getCanonicalBankId(id, beforeBanks)) ? plan.targetId : id);
