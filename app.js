@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.184-bancos-referencia';
+  const APP_VERSION = '0.18.185-bancos-referencia-visual';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -24669,6 +24669,11 @@ Notas importantes:
     `;
   }
 
+  function formatBankCatalogReference(value) {
+    const text = String(value ?? '');
+    return /^[\d\s]*$/.test(text) ? text.replace(/\s/g, '').replace(/(.{4})(?=.)/g, '$1 ') : text;
+  }
+
   function setupBankReferenceForm(form) {
     if (form.dataset.catalogForm !== 'cuentasBancos') return;
     const input = form.elements.namedItem('referenciaCatalogo');
@@ -24683,7 +24688,7 @@ Notas importantes:
       const start = position(input.selectionStart ?? raw.length);
       const end = position(input.selectionEnd ?? raw.length);
       const direction = input.selectionDirection;
-      input.value = raw.replace(/\s/g, '').replace(/(.{4})(?=.)/g, '$1 ');
+      input.value = formatBankCatalogReference(raw);
       input.setSelectionRange(start, end, direction);
     };
     input.addEventListener('beforeinput', (event) => {
@@ -24715,7 +24720,9 @@ Notas importantes:
   }
 
   function renderCatalogField(field, record, disabled = false) {
-    const value = record?.[field.name] ?? '';
+    const value = field.name === 'referenciaCatalogo'
+      ? formatBankCatalogReference(record?.[field.name])
+      : (record?.[field.name] ?? '');
     const requiredLabel = field.required ? '<span class="required-dot" aria-label="obligatorio">*</span>' : '';
 
     if (field.type === 'checkbox-group') {
@@ -25036,7 +25043,7 @@ Notas importantes:
       return [
         `Métodos: ${getBankEnabledMethods(record).join(', ') || 'Sin configurar'}`,
         record.consolidadoEnId ? `Consolidado en: ${getBankAccountDisplayName(record.consolidadoEnId)}` : '',
-        record.referenciaCatalogo ? `Referencia: ${record.referenciaCatalogo}` : ''
+        record.referenciaCatalogo ? `Referencia: ${formatBankCatalogReference(record.referenciaCatalogo)}` : ''
       ].filter(Boolean).join(' · ');
     }
     return getRecordSecondaryText(catalog, record);
