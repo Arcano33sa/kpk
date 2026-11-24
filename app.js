@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.182-bancos-respaldo-indexeddb';
+  const APP_VERSION = '0.18.183-bancos-catalogo-limpio';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -24651,7 +24651,6 @@ Notas importantes:
             ${renderCatalogList(activeCatalog, records)}
           </article>
         </div>
-        ${activeCatalog.id === 'cuentasBancos' ? renderBankConsolidationTool() : ''}
         ${editingRecord ? renderEditModal(getCatalogModalId(), `Editar ${activeCatalog.singular}`, 'Modifica el registro sin usar el formulario de alta.', renderCatalogForm(activeCatalog, editingRecord, !canEditCatalogs)) : ''}
       </section>
     `;

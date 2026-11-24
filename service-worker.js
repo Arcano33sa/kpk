@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_182_bancos_respaldo_indexeddb';
+const CACHE_VERSION = 'v0_18_183_bancos_catalogo_limpio';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
