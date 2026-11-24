@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'v0_18_175_financiero_vista_e3';
+const CACHE_VERSION = 'v0_18_176_financiero_calendario_inicial_e1';
 const CACHE_NAME = `KSA_PRACTIKA_CACHE_${CACHE_VERSION}`;
 const APP_SHELL = [
   './',

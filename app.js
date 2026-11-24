@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.175-financiero-vista-e3';
+  const APP_VERSION = '0.18.176-financiero-calendario-inicial-e1';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -19490,15 +19490,14 @@ Notas importantes:
     </div>`;
   }
 
-  function renderBancoCalendarioForm(loan) {
-    const summary = bancoResumen(loan);
-    return `<form class="bank-form" data-bank-calendar-form data-loan-id="${escapeHtml(loan.id)}" data-book-token="${escapeHtml(bancoBookToken(loan))}">
-      <h4>${summary.calendario ? 'Nueva versión del calendario' : 'Registrar calendario bancario'} · ${escapeHtml(loan.moneda)}</h4>
-      <p class="compact-note">Ingresa las cuotas restantes que entregó el banco. El capital debe sumar ${escapeHtml(financieroMoney(summary.capitalPendiente, loan.moneda))}. Las versiones anteriores conservarán sus pagos e historial.</p>
+  function renderBancoCalendarioFields(loan = null) {
+    const summary = loan ? bancoResumen(loan) : null;
+    return `<div data-bank-calendar-editor>
+      <p class="compact-note">${loan ? `Ingresa las cuotas restantes que entregó el banco. El capital debe sumar ${escapeHtml(financieroMoney(summary.capitalPendiente, loan.moneda))}. Las versiones anteriores conservarán sus pagos e historial.` : 'Completa primero la moneda y el capital desembolsado del préstamo. Puedes cargar el PDF BAC o ingresar las cuotas manualmente. El capital de las cuotas debe coincidir con la deuda inicial.'}</p>
       <div class="financial-form-grid">
         <label class="form-field"><span>Fecha de vigencia del calendario</span><input type="date" name="fechaVigencia" value="${todayInputValue()}" max="${todayInputValue()}" required></label>
         <label class="form-field"><span>Referencia del documento bancario</span><input name="referenciaCalendario" maxlength="160" required></label>
-        <label class="form-field financial-form-wide"><span>Motivo / observación</span><input name="observacionCalendario" maxlength="2000" ${summary.calendario ? 'required' : ''}></label>
+        <label class="form-field financial-form-wide"><span>Motivo / observación del calendario</span><input name="observacionCalendario" maxlength="2000" ${summary?.calendario ? 'required' : ''}></label>
       </div>
       <div class="bank-form">
         <label class="form-field"><span>Cargar PDF BAC (hasta 10 MB)</span><input type="file" accept=".pdf,application/pdf" data-bank-calendar-pdf></label>
@@ -19507,9 +19506,43 @@ Notas importantes:
         <button type="button" class="secondary-action" data-bank-calendar-pdf-apply hidden>Usar cuotas del PDF y reemplazar filas</button>
       </div>
       <div data-bank-calendar-rows>${renderBancoCuotaRow()}</div>
-      <p class="compact-note" data-bank-calendar-total>Capital por distribuir: ${escapeHtml(financieroMoney(summary.capitalPendiente, loan.moneda))}</p>
-      <div class="form-actions"><button type="button" class="secondary-action" data-bank-add-row>Agregar cuota</button><button type="submit" class="card-action">Guardar calendario</button><button type="button" class="secondary-action" data-bank-close>Cancelar</button></div>
+      <p class="compact-note" data-bank-calendar-total>${loan ? `Capital por distribuir: ${escapeHtml(financieroMoney(summary.capitalPendiente, loan.moneda))}` : 'Capital distribuido: 0.00'}</p>
+      <button type="button" class="secondary-action" data-bank-add-row>Agregar cuota</button>
+    </div>`;
+  }
+
+  function renderBancoCalendarioForm(loan) {
+    const summary = bancoResumen(loan);
+    return `<form class="bank-form" data-bank-calendar-form data-loan-id="${escapeHtml(loan.id)}" data-book-token="${escapeHtml(bancoBookToken(loan))}">
+      <h4>${summary.calendario ? 'Nueva versión del calendario' : 'Registrar calendario bancario'} · ${escapeHtml(loan.moneda)}</h4>
+      ${renderBancoCalendarioFields(loan)}
+      <div class="form-actions"><button type="submit" class="card-action">Guardar calendario</button><button type="button" class="secondary-action" data-bank-close>Cancelar</button></div>
     </form>`;
+  }
+
+  function readBancoCalendarioCuotas(form) {
+    const rows = Array.from(form.querySelectorAll('[data-bank-quota-row]'));
+    if (!rows.length || rows.some((row) => Array.from(row.querySelectorAll('input')).some((input) => input.value === ''))) return null;
+    return rows.map((row) => ({ id: generateId('cuotaBanco'), numero: Number(row.querySelector('[name="cuotaNumero"]').value), fechaVencimiento: row.querySelector('[name="cuotaFecha"]').value, capital: Number(row.querySelector('[name="cuotaCapital"]').value), intereses: Number(row.querySelector('[name="cuotaIntereses"]').value), cargos: Number(row.querySelector('[name="cuotaCargos"]').value) }));
+  }
+
+  function bindBancoCalendarioEditor(form, loanProvider = null) {
+    const editor = form.querySelector('[data-bank-calendar-editor]');
+    const rows = editor.querySelector('[data-bank-calendar-rows]');
+    const preview = () => {
+      const loan = loanProvider ? loanProvider() : appData.prestamosFinancieros.find((item) => item.id === form.dataset.loanId);
+      const sum = Array.from(rows.querySelectorAll('[name="cuotaCapital"]')).reduce((total,input) => total + (Number(input.value) || 0), 0);
+      editor.querySelector('[data-bank-calendar-total]').textContent = `Capital distribuido: ${financieroMoney(roundMoney(sum), loan.moneda)}`;
+    };
+    bindBancoPdfCalendar(form, preview, loanProvider);
+    editor.querySelector('[data-bank-add-row]').addEventListener('click', () => {
+      const next = Math.max(0, ...Array.from(rows.querySelectorAll('[name="cuotaNumero"]')).map((input) => Number(input.value) || 0)) + 1;
+      rows.insertAdjacentHTML('beforeend', renderBancoCuotaRow(next));
+      preview();
+    });
+    rows.addEventListener('click', (event) => { const button = event.target.closest('[data-bank-remove-row]'); if (button) { button.closest('[data-bank-quota-row]').remove(); preview(); } });
+    rows.addEventListener('input', preview);
+    if (loanProvider) { form.elements.moneda.addEventListener('change', preview); form.elements.capitalDesembolsado.addEventListener('input', preview); }
   }
 
   function renderBancoAbonoForm(loan) {
@@ -19584,6 +19617,7 @@ Notas importantes:
     if (!persistFinancieroRecords(appData.prestamosFinancieros.map((loan) => loan.id === next.id ? next : loan))) return false;
     registerSessionChange({ module:'Financiero', operation:'editar', recordId:next.id, relatedId });
     registerActivity({ module:'Financiero', action, entityType:'Préstamo / banco', entityRef:next.referencia, amount, detail:`${action} · ${next.moneda} · ${relatedId}`, source:'local' });
+    if (bancoCalendarios(next).some((calendar) => calendar.id === relatedId)) financieroState.expandedLoanIds.delete(next.id);
     financieroState.calendarioLoanId=''; financieroState.abonoLoanId=''; financieroState.abonoCuotaId='';
     financieroState.message=`${action}. Usa Guardar datos para confirmar los cambios pendientes.`; financieroState.messageType='success';
     renderRoute({preserveScroll:true}); return true;
@@ -19598,9 +19632,9 @@ Notas importantes:
     if (!bancoFechaValida(fecha) || fecha>todayInputValue() || fecha<loan.fechaDesembolso || isWorkPeriodClosed(fecha.slice(0,7))) { financieroError('La vigencia del calendario debe ser una fecha real, abierta, desde el desembolso hasta hoy.'); return; }
     const latestDate=bancoAbonos(loan).filter(bancoActivo).map((item) => item.fechaPago).sort().pop();
     if (latestDate && fecha<latestDate) { financieroError('La nueva versión debe entrar en vigencia desde el último abono registrado o después.'); return; }
-    const rows=Array.from(form.querySelectorAll('[data-bank-quota-row]'));
-    const cuotas=rows.map((row) => ({id:generateId('cuotaBanco'),numero:Number(row.querySelector('[name="cuotaNumero"]').value),fechaVencimiento:row.querySelector('[name="cuotaFecha"]').value,capital:Number(row.querySelector('[name="cuotaCapital"]').value),intereses:Number(row.querySelector('[name="cuotaIntereses"]').value),cargos:Number(row.querySelector('[name="cuotaCargos"]').value)}));
-    if (rows.some((row) => Array.from(row.querySelectorAll('input')).some((input) => input.value===''))) { financieroError('Completa todos los campos de las cuotas.'); return; }
+    if (form.querySelector('[data-bank-calendar-pdf]')?.disabled) { financieroError('Espera a que termine la lectura del PDF.'); return; }
+    const cuotas = readBancoCalendarioCuotas(form);
+    if (!cuotas) { financieroError('Completa todos los campos de las cuotas.'); return; }
     const calendars=bancoCalendarios(loan), timestamp=nowIso();
     if (calendars.length && !cleanText(fields.get('observacionCalendario'))) { financieroError('Indica el motivo de la revisión del calendario.'); return; }
     const calendar={id:generateId('calendarioBanco'),version:(bancoActual(loan)?.version || 0)+1,fechaVigencia:fecha,referencia:cleanText(fields.get('referenciaCalendario')),observacion:cleanText(fields.get('observacionCalendario')),capitalBase:bancoResumen(loan).capitalPendiente,cuotas,createdAt:timestamp};
@@ -19660,7 +19694,9 @@ Notas importantes:
     return '';
   }
 
-  function bindBancoPdfCalendar(form, previewTotals) {
+  function bindBancoPdfCalendar(form, previewTotals, loanProvider = null) {
+    const currentLoan = () => loanProvider ? loanProvider() : appData.prestamosFinancieros.find((item) => item.id === form.dataset.loanId);
+    const currentToken = (loan) => loanProvider ? bancoBookToken(loan) : form.dataset.bookToken;
     const input = form.querySelector('[data-bank-calendar-pdf]');
     const target = form.querySelector('[data-bank-calendar-pdf-preview]');
     const apply = form.querySelector('[data-bank-calendar-pdf-apply]');
@@ -19683,8 +19719,8 @@ Notas importantes:
         const result = await window.KSABankPdf.read(file);
         if (!form.isConnected) return;
         if (!canCurrentRole('registerOperations')) throw new Error('Ya no tienes permiso para registrar operaciones.');
-        const loan = appData.prestamosFinancieros.find((item) => item.id === form.dataset.loanId);
-        const error = validateBancoPdfForLoan(loan, result, form.dataset.bookToken);
+        const loan = currentLoan();
+        const error = validateBancoPdfForLoan(loan, result, currentToken(loan));
         if (error) throw new Error(error);
         target.innerHTML = renderBancoPdfPreview(result);
         pending = result; apply.hidden = false;
@@ -19694,8 +19730,8 @@ Notas importantes:
     });
     apply.addEventListener('click', () => {
       if (!requireRolePermission('registerOperations', financieroState) || !pending) return;
-      const loan = appData.prestamosFinancieros.find((item) => item.id === form.dataset.loanId);
-      const error = validateBancoPdfForLoan(loan, pending, form.dataset.bookToken);
+      const loan = currentLoan();
+      const error = validateBancoPdfForLoan(loan, pending, currentToken(loan));
       if (error) { pending = null; apply.hidden = true; showMessage(error, true); return; }
       form.querySelector('[data-bank-calendar-rows]').innerHTML = pending.cuotas.map((cuota) => renderBancoCuotaRow(cuota.numero, cuota)).join('');
       form.elements.referenciaCalendario.value = pending.referencia;
@@ -19718,12 +19754,7 @@ Notas importantes:
     viewRoot.querySelectorAll('[data-bank-close]').forEach((button) => button.addEventListener('click',() => {financieroState.calendarioLoanId='';financieroState.abonoLoanId='';renderRoute({preserveScroll:true});}));
     viewRoot.querySelectorAll('[data-bank-annul-payment]').forEach((button) => button.addEventListener('click',() => annulBancoAbono(button.dataset.loanId,button.dataset.bankAnnulPayment)));
     viewRoot.querySelectorAll('[data-bank-calendar-form]').forEach((form) => {
-      const rows=form.querySelector('[data-bank-calendar-rows]');
-      const preview=() => {const sum=Array.from(rows.querySelectorAll('[name="cuotaCapital"]')).reduce((total,input) => total+(Number(input.value)||0),0);form.querySelector('[data-bank-calendar-total]').textContent=`Capital distribuido: ${financieroMoney(roundMoney(sum),appData.prestamosFinancieros.find(loan=>loan.id===form.dataset.loanId).moneda)}`;};
-      bindBancoPdfCalendar(form, preview);
-      form.querySelector('[data-bank-add-row]').addEventListener('click',() => {const next=Math.max(0,...Array.from(rows.querySelectorAll('[name="cuotaNumero"]')).map(input=>Number(input.value)||0))+1;rows.insertAdjacentHTML('beforeend',renderBancoCuotaRow(next));});
-      rows.addEventListener('click',(event) => {const button=event.target.closest('[data-bank-remove-row]');if(button){button.closest('[data-bank-quota-row]').remove();preview();}});
-      rows.addEventListener('input',preview);
+      bindBancoCalendarioEditor(form);
       form.addEventListener('submit',(event) => {event.preventDefault();saveBancoCalendario(form);});
     });
     viewRoot.querySelectorAll('[data-bank-payment-form]').forEach((form) => {
@@ -19956,7 +19987,12 @@ Notas importantes:
             <label class="form-field financial-form-wide"><span>Observación</span><textarea name="observacion" rows="2" maxlength="2000">${escapeHtml(value.observacion || '')}</textarea></label>
           </div>
           <p class="compact-note">El capital debe coincidir con el neto recibido más los cargos retenidos. Si no hubo cargos, capital y neto son iguales.</p>
-          <div class="form-actions"><button type="submit" class="card-action">${editing ? 'Guardar cambios' : 'Registrar préstamo'}</button>${editing ? '<button type="button" class="secondary-action" data-financiero-cancel>Cancelar edición</button>' : ''}</div>
+          ${!editing ? `<section class="bank-form financial-initial-calendar"><h3>Calendario inicial del préstamo</h3>
+            <label class="financial-initial-calendar-toggle"><input type="checkbox" name="incluirCalendario" value="1" checked data-initial-calendar-toggle> Incluir calendario en este mismo registro</label>
+            <p class="compact-note">Préstamo y calendario se guardan juntos. Si el banco aún no entrega el calendario, puedes desmarcar esta opción y agregarlo después.</p>
+            <fieldset data-initial-calendar-fields>${renderBancoCalendarioFields()}</fieldset>
+          </section>` : ''}
+          <div class="form-actions"><button type="submit" class="card-action">${editing ? 'Guardar cambios' : 'Guardar préstamo'}</button>${editing ? '<button type="button" class="secondary-action" data-financiero-cancel>Cancelar edición</button>' : ''}</div>
         </form>
       </article>` : renderRolePermissionNotice('registerOperations')}
       <article class="panel-card"><h2>Préstamos registrados</h2>
@@ -20021,6 +20057,14 @@ Notas importantes:
       ventaIds: [...(existing?.ventaIds || [])], numeroOcManual: cleanText(fields.get('numeroOcManual')), observacion: cleanText(fields.get('observacion')),
       activo: true, estado: 'Registrado', createdAt: existing?.createdAt || nowIso(), updatedAt: nowIso()
     };
+    if (!existing && fields.has('incluirCalendario')) {
+      if (form.querySelector('[data-bank-calendar-pdf]')?.disabled) { financieroError('Espera a que termine la lectura del PDF.'); return; }
+      const fecha = cleanText(fields.get('fechaVigencia'));
+      if (!bancoFechaValida(fecha) || fecha > todayInputValue() || fecha < raw.fechaDesembolso || isWorkPeriodClosed(fecha.slice(0,7))) { financieroError('La vigencia del calendario debe ser una fecha real, abierta, desde el desembolso hasta hoy.'); return; }
+      const cuotas = readBancoCalendarioCuotas(form);
+      if (!cuotas) { financieroError('Completa todas las cuotas del calendario inicial o deja el calendario pendiente.'); return; }
+      raw.calendarios = [{ id: generateId('calendarioBanco'), version: 1, fechaVigencia: fecha, referencia: cleanText(fields.get('referenciaCalendario')), observacion: cleanText(fields.get('observacionCalendario')), capitalBase: Number(raw.capitalDesembolsado), cuotas, createdAt: raw.createdAt }];
+    }
     const transitionError = validateBancoTransition(existing, normalizePrestamoFinancieroRecord(raw));
     if (transitionError) { financieroError(transitionError); return; }
     const errors = validatePrestamosFinancieros([raw], appData);
@@ -20040,7 +20084,7 @@ Notas importantes:
     registerSessionChange({ module: 'Financiero', operation: existing ? 'editar' : 'crear', recordId: record.id });
     registerActivity({ module: 'Financiero', action: existing ? 'Editado' : 'Creado', entityType: 'Préstamo', entityRef: record.referencia, amount: record.capitalDesembolsado, detail: `${record.acreedor} · ${record.moneda} · Neto recibido ${record.netoRecibido}`, source: 'local' });
     financieroState.editingId = '';
-    financieroState.message = 'Préstamo guardado en este dispositivo. Usa Guardar datos para confirmar los cambios pendientes.';
+    financieroState.message = `${!existing && bancoCalendarios(record).length ? 'Préstamo y calendario guardados' : 'Préstamo guardado'} en este dispositivo. Usa Guardar datos para confirmar los cambios pendientes.`;
     financieroState.messageType = 'success';
     renderRoute();
   }
@@ -20097,6 +20141,13 @@ Notas importantes:
       renderRoute();
     }));
     viewRoot.querySelector('[data-tipo-cambio-form]')?.addEventListener('submit', (event) => { event.preventDefault(); saveTipoCambioFinanciero(event.currentTarget); });
+    const loanForm = viewRoot.querySelector('[data-financiero-form]');
+    if (loanForm?.querySelector('[data-initial-calendar-toggle]')) {
+      const toggle = loanForm.querySelector('[data-initial-calendar-toggle]'), fields = loanForm.querySelector('[data-initial-calendar-fields]');
+      const sync = () => { fields.hidden = !toggle.checked; fields.disabled = !toggle.checked; };
+      toggle.addEventListener('change', sync); sync();
+      bindBancoCalendarioEditor(loanForm, () => ({ activo: true, moneda: loanForm.elements.moneda.value, capitalDesembolsado: Number(loanForm.elements.capitalDesembolsado.value), fechaDesembolso: loanForm.elements.fechaDesembolso.value, calendarios: [], abonos: [] }));
+    }
     viewRoot.querySelector('[data-financiero-form]')?.addEventListener('submit', (event) => { event.preventDefault(); savePrestamoFinanciero(event.currentTarget); });
     viewRoot.querySelector('[data-financiero-cancel]')?.addEventListener('click', () => { financieroState.editingId = ''; financieroState.message = ''; renderRoute(); });
     viewRoot.querySelectorAll('[data-financiero-edit]').forEach((button) => button.addEventListener('click', () => {

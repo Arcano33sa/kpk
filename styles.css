@@ -14657,3 +14657,10 @@ body .form-field > :is(input, select, textarea) {
 .financial-bank-table .financial-bank-amount { text-align: right; white-space: nowrap; }
 .financial-bank-debt { margin-top: 14px; }
 .financial-bank-debt summary { cursor: pointer; }
+
+/* Calendario inicial: forma parte del mismo formulario del préstamo. */
+.financial-initial-calendar { margin: 14px 0; min-width: 0; }
+.financial-initial-calendar-toggle { display: flex; align-items: center; gap: 8px; }
+.financial-initial-calendar-toggle input[type="checkbox"] { width: auto; flex: 0 0 auto; }
+.financial-initial-calendar fieldset { min-width: 0; border: 0; padding: 0; margin: 12px 0 0; }
+.financial-initial-calendar [hidden] { display: none !important; }
