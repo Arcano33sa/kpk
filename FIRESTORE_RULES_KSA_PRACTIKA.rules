@@ -45,9 +45,71 @@ service cloud.firestore {
         allow delete: if false;
       }
 
-      match /{document=**} {
+      // Otros ingresos: contrato y revisión independientes de préstamos.
+      function canWriteIncome() {
+        return isInitialAdmin() || (isWorkspaceUser(workspaceId)
+          && get(/databases/$(database)/documents/workspaces/$(workspaceId)/usuarios/$(request.auth.uid)).data.rol in ['Administrador', 'Usuario normal']);
+      }
+
+      function incomeMoney(value) {
+        let cents = int(value * 100 + 0.5);
+        return value is number && value >= 0 && value <= 90071992547409
+          && value * 100 - cents >= -0.00001 && value * 100 - cents <= 0.00001;
+      }
+
+      function validIncome(data, incomeId) {
+        return data.keys().hasAll(['id', 'concepto', 'fecha', 'cuentaBancoId', 'cuentaBancoNombre', 'moneda', 'ventaBruta', 'costo', 'observacion', 'activo', 'createdAt', 'updatedAt', 'revisionIngreso', 'ingresoMutationId'])
+          && data.keys().hasOnly(['id', 'concepto', 'fecha', 'cuentaBancoId', 'cuentaBancoNombre', 'moneda', 'ventaBruta', 'costo', 'observacion', 'activo', 'createdAt', 'updatedAt', 'revisionIngreso', 'ingresoMutationId', 'motivoAnulacion', 'anuladoAt', '_cloudSync', '_cloudImport', 'fondosAplicaciones', 'revisionFinanciamiento', 'fondosUtilizados'])
+          && data.id == incomeId
+          && data.concepto is string && data.concepto.size() > 0 && data.concepto.size() <= 160
+          && data.fecha is string && data.fecha.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && data.cuentaBancoId is string && data.cuentaBancoId.size() > 0
+          && getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/catalogos/cuentasBancos/items/$(data.cuentaBancoId)).data.id == data.cuentaBancoId
+          && data.cuentaBancoNombre is string
+          && data.moneda in ['NIO', 'USD']
+          && incomeMoney(data.ventaBruta) && data.ventaBruta > 0
+          && incomeMoney(data.costo) && data.costo <= data.ventaBruta
+          && incomeMoney(data.get('fondosUtilizados', 0))
+          && data.ventaBruta - data.costo + 0.00001 >= data.get('fondosUtilizados', 0)
+          && data.get('fondosAplicaciones', []) is list
+          && data.get('revisionFinanciamiento', 0) is int && data.get('revisionFinanciamiento', 0) >= 0
+          && data.observacion is string && data.observacion.size() <= 2000
+          && data.activo is bool
+          && data.createdAt is string && data.createdAt.size() > 0
+          && data.updatedAt is string && data.updatedAt.size() > 0
+          && data.revisionIngreso is int && data.revisionIngreso >= 1
+          && data.ingresoMutationId is string && data.ingresoMutationId.size() > 0 && data.ingresoMutationId.size() <= 200
+          && (data.activo == true || data.get('fondosUtilizados', 0) == 0)
+          && (data.activo == true || (data.motivoAnulacion is string && data.motivoAnulacion.size() > 0 && data.anuladoAt is string));
+      }
+
+      match /ingresosFinancieros/{incomeId} {
         allow read: if isInitialAdmin() || isWorkspaceUser(workspaceId);
-        allow create, update: if isInitialAdmin() || isWorkspaceUser(workspaceId);
+        allow create: if canWriteIncome() && validIncome(request.resource.data, incomeId)
+          && request.resource.data.revisionIngreso == 1
+          && (request.resource.data.get('fondosAplicaciones', []).size() == 0 || isInitialAdmin() || isWorkspaceAdmin(workspaceId))
+          && (request.resource.data.activo == true || isInitialAdmin() || isWorkspaceAdmin(workspaceId));
+        allow update: if canWriteIncome() && validIncome(request.resource.data, incomeId)
+          && (
+            // Consumir/liberar fondos no cambia el negocio ni su revisión de edición.
+            (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fondosAplicaciones', 'revisionFinanciamiento', 'fondosUtilizados'])
+              && request.resource.data.get('revisionFinanciamiento', 0) == resource.data.get('revisionFinanciamiento', 0) + 1)
+            || (resource.data.activo == true
+              && request.resource.data.createdAt == resource.data.createdAt
+              && request.resource.data.revisionIngreso == resource.data.revisionIngreso + 1
+              && request.resource.data.ingresoMutationId != resource.data.ingresoMutationId
+              && request.resource.data.get('fondosAplicaciones', []) == resource.data.get('fondosAplicaciones', [])
+              && request.resource.data.get('fondosUtilizados', 0) == resource.data.get('fondosUtilizados', 0)
+              && request.resource.data.get('revisionFinanciamiento', 0) == resource.data.get('revisionFinanciamiento', 0)
+              && (resource.data.get('fondosUtilizados', 0) == 0 || (request.resource.data.moneda == resource.data.moneda && request.resource.data.cuentaBancoId == resource.data.cuentaBancoId && request.resource.data.fecha == resource.data.fecha))
+              && (request.resource.data.activo == true || isInitialAdmin() || isWorkspaceAdmin(workspaceId)))
+          );
+        allow delete: if false;
+      }
+
+      match /{collection}/{document=**} {
+        allow read: if isInitialAdmin() || isWorkspaceUser(workspaceId);
+        allow create, update: if collection != 'ingresosFinancieros' && (isInitialAdmin() || isWorkspaceUser(workspaceId));
         allow delete: if false;
       }
     }

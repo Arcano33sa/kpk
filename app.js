@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_NAME = 'KSA PRÁCTIKA';
-  const APP_VERSION = '0.18.185-bancos-referencia-visual';
+  const APP_VERSION = '0.18.190-ingresos-e5';
   const SCHEMA_VERSION = '1.0.0';
   const STORAGE_KEY = 'KSA_PRACTIKA_DATA_v1';
   const DEVICE_IDENTITY_STORAGE_KEY = 'KSA_PRACTIKA_DEVICE_IDENTITY_v1';
@@ -183,6 +183,7 @@
     'comprasProveedores',
     'pagosProveedores',
     'prestamosFinancieros',
+    'ingresosFinancieros',
     'tiposCambioFinancieros',
     'gastos',
     'casaGastos',
@@ -1051,6 +1052,7 @@
     { key: 'ventas_cobros', label: 'Ventas y Cobros', status: 'Actualizando Ventas y Cobros…' },
     { key: 'compras_pagos', label: 'Compras y Pagos', status: 'Actualizando Compras y Pagos…' },
     { key: 'financiero', label: 'Financiero', status: 'Actualizando Financiero…' },
+    { key: 'ingresos_financieros', label: 'Otros ingresos', status: 'Actualizando Ingresos…' },
     { key: 'gastos_casa', label: 'Gastos y Casa', status: 'Actualizando Gastos y Casa…' },
     { key: 'facturas', label: 'Facturas', status: 'Actualizando Facturas…' },
     { key: 'notas_recordatorios', label: 'Notas, Recordatorios, Pendientes y Préstamos', status: 'Actualizando Notas, Pendientes y Préstamos…' },
@@ -1288,9 +1290,71 @@ service cloud.firestore {
         allow delete: if false;
       }
 
-      match /{document=**} {
+      // Otros ingresos: contrato y revisión independientes de préstamos.
+      function canWriteIncome() {
+        return isInitialAdmin() || (isWorkspaceUser(workspaceId)
+          && get(/databases/$(database)/documents/workspaces/$(workspaceId)/usuarios/$(request.auth.uid)).data.rol in ['Administrador', 'Usuario normal']);
+      }
+
+      function incomeMoney(value) {
+        let cents = int(value * 100 + 0.5);
+        return value is number && value >= 0 && value <= 90071992547409
+          && value * 100 - cents >= -0.00001 && value * 100 - cents <= 0.00001;
+      }
+
+      function validIncome(data, incomeId) {
+        return data.keys().hasAll(['id', 'concepto', 'fecha', 'cuentaBancoId', 'cuentaBancoNombre', 'moneda', 'ventaBruta', 'costo', 'observacion', 'activo', 'createdAt', 'updatedAt', 'revisionIngreso', 'ingresoMutationId'])
+          && data.keys().hasOnly(['id', 'concepto', 'fecha', 'cuentaBancoId', 'cuentaBancoNombre', 'moneda', 'ventaBruta', 'costo', 'observacion', 'activo', 'createdAt', 'updatedAt', 'revisionIngreso', 'ingresoMutationId', 'motivoAnulacion', 'anuladoAt', '_cloudSync', '_cloudImport', 'fondosAplicaciones', 'revisionFinanciamiento', 'fondosUtilizados'])
+          && data.id == incomeId
+          && data.concepto is string && data.concepto.size() > 0 && data.concepto.size() <= 160
+          && data.fecha is string && data.fecha.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && data.cuentaBancoId is string && data.cuentaBancoId.size() > 0
+          && getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/catalogos/cuentasBancos/items/$(data.cuentaBancoId)).data.id == data.cuentaBancoId
+          && data.cuentaBancoNombre is string
+          && data.moneda in ['NIO', 'USD']
+          && incomeMoney(data.ventaBruta) && data.ventaBruta > 0
+          && incomeMoney(data.costo) && data.costo <= data.ventaBruta
+          && incomeMoney(data.get('fondosUtilizados', 0))
+          && data.ventaBruta - data.costo + 0.00001 >= data.get('fondosUtilizados', 0)
+          && data.get('fondosAplicaciones', []) is list
+          && data.get('revisionFinanciamiento', 0) is int && data.get('revisionFinanciamiento', 0) >= 0
+          && data.observacion is string && data.observacion.size() <= 2000
+          && data.activo is bool
+          && data.createdAt is string && data.createdAt.size() > 0
+          && data.updatedAt is string && data.updatedAt.size() > 0
+          && data.revisionIngreso is int && data.revisionIngreso >= 1
+          && data.ingresoMutationId is string && data.ingresoMutationId.size() > 0 && data.ingresoMutationId.size() <= 200
+          && (data.activo == true || data.get('fondosUtilizados', 0) == 0)
+          && (data.activo == true || (data.motivoAnulacion is string && data.motivoAnulacion.size() > 0 && data.anuladoAt is string));
+      }
+
+      match /ingresosFinancieros/{incomeId} {
         allow read: if isInitialAdmin() || isWorkspaceUser(workspaceId);
-        allow create, update: if isInitialAdmin() || isWorkspaceUser(workspaceId);
+        allow create: if canWriteIncome() && validIncome(request.resource.data, incomeId)
+          && request.resource.data.revisionIngreso == 1
+          && (request.resource.data.get('fondosAplicaciones', []).size() == 0 || isInitialAdmin() || isWorkspaceAdmin(workspaceId))
+          && (request.resource.data.activo == true || isInitialAdmin() || isWorkspaceAdmin(workspaceId));
+        allow update: if canWriteIncome() && validIncome(request.resource.data, incomeId)
+          && (
+            // Consumir/liberar fondos no cambia el negocio ni su revisión de edición.
+            (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fondosAplicaciones', 'revisionFinanciamiento', 'fondosUtilizados'])
+              && request.resource.data.get('revisionFinanciamiento', 0) == resource.data.get('revisionFinanciamiento', 0) + 1)
+            || (resource.data.activo == true
+              && request.resource.data.createdAt == resource.data.createdAt
+              && request.resource.data.revisionIngreso == resource.data.revisionIngreso + 1
+              && request.resource.data.ingresoMutationId != resource.data.ingresoMutationId
+              && request.resource.data.get('fondosAplicaciones', []) == resource.data.get('fondosAplicaciones', [])
+              && request.resource.data.get('fondosUtilizados', 0) == resource.data.get('fondosUtilizados', 0)
+              && request.resource.data.get('revisionFinanciamiento', 0) == resource.data.get('revisionFinanciamiento', 0)
+              && (resource.data.get('fondosUtilizados', 0) == 0 || (request.resource.data.moneda == resource.data.moneda && request.resource.data.cuentaBancoId == resource.data.cuentaBancoId && request.resource.data.fecha == resource.data.fecha))
+              && (request.resource.data.activo == true || isInitialAdmin() || isWorkspaceAdmin(workspaceId)))
+          );
+        allow delete: if false;
+      }
+
+      match /{collection}/{document=**} {
+        allow read: if isInitialAdmin() || isWorkspaceUser(workspaceId);
+        allow create, update: if collection != 'ingresosFinancieros' && (isInitialAdmin() || isWorkspaceUser(workspaceId));
         allow delete: if false;
       }
     }
@@ -1338,6 +1402,7 @@ Notas importantes:
     { key: 'cobros', path: 'workspaces/{workspaceId}/cobros/{cobroId}', label: 'Cobros', source: 'cobros', idPolicy: 'Conservar cobro.id y su vínculo exclusivo ventaId o facturaModuloId.' },
     { key: 'comprasProveedores', path: 'workspaces/{workspaceId}/comprasProveedores/{compraProveedorId}', label: 'Compras proveedores', source: 'comprasProveedores', idPolicy: 'Conservar compra.id y proveedorId.' },
     { key: 'pagosProveedores', path: 'workspaces/{workspaceId}/pagosProveedores/{pagoProveedorId}', label: 'Pagos proveedores', source: 'pagosProveedores', idPolicy: 'Conservar pago.id y compraProveedorId.' },
+    { key: 'ingresosFinancieros', path: 'workspaces/{workspaceId}/ingresosFinancieros/{ingresoId}', label: 'Otros ingresos', source: 'ingresosFinancieros', idPolicy: 'Conservar ID, revisión y origen; anular sin borrar.' },
     { key: 'prestamosFinancieros', path: 'workspaces/{workspaceId}/prestamosFinancieros/{prestamoId}', label: 'Préstamos financieros', source: 'prestamosFinancieros', idPolicy: 'Conservar ID del préstamo y su desembolso real; anular sin borrar.' },
     { key: 'gastos', path: 'workspaces/{workspaceId}/gastos/{gastoId}', label: 'Gastos productivos', source: 'gastos', idPolicy: 'Conservar gasto.id, vínculos y anulaciones.' },
     { key: 'casaGastos', path: 'workspaces/{workspaceId}/casaGastos/{casaGastoId}', label: 'Casa gastos', source: 'casaGastos', idPolicy: 'Conservar casaGasto.id y categoriaCasaId.' },
@@ -1450,6 +1515,7 @@ Notas importantes:
     Object.entries(value).forEach(([key, item]) => {
       if (['snapshot', 'snapshots', 'historial', 'bitacora', 'cierresMensuales', 'exportacionesExcel', 'calendarios'].includes(key)) result[key] = item;
       else if (['cuentaBancoId', 'bancoPagoContadoId', 'bancoId'].includes(key) && typeof item === 'string') result[key] = resolveId(item);
+      else if (key === 'seleccion' && typeof item === 'string' && parseFondosSeleccion(item)?.tipo === 'cuenta') { const selected = parseFondosSeleccion(item); result[key] = fondosSeleccion('cuenta', resolveId(selected.id), selected.moneda); }
       else if (key === 'prestamoId' && typeof item === 'string' && item.startsWith('pool:')) {
         const pool = parseFinanciamientoPool(item);
         result[key] = pool ? 'pool:' + encodeURIComponent(JSON.stringify([resolveId(pool.cuentaBancoId), pool.moneda])) : item;
@@ -1465,6 +1531,7 @@ Notas importantes:
     BANK_CONSOLIDATION_KEYS.forEach((key) => {
       if (Array.isArray(data[key])) result[key] = mapBankReferences(data[key], (id) => getCanonicalBankId(id, banks));
     });
+    if (Array.isArray(data.ingresosFinancieros)) result.ingresosFinancieros = mapBankReferences(data.ingresosFinancieros, (id) => getCanonicalBankId(id, banks));
     return result;
   }
 
@@ -1966,7 +2033,8 @@ Notas importantes:
     messageType: 'success'
   };
 
-  const financieroState = { expandedLoanIds: new Set(), tab: 'prestamos', editingId: '', calendarioLoanId: '', abonoLoanId: '', abonoTipo: '', abonoCuotaId: '', message: '', messageType: 'success' };
+  const ingresosCloudSavingIds = new Set();
+  const financieroState = { expandedLoanIds: new Set(), tab: 'prestamos', ingresoEditingId: '', editingId: '', calendarioLoanId: '', abonoLoanId: '', abonoTipo: '', abonoCuotaId: '', message: '', messageType: 'success' };
 
   let moraState = {
     clientesOpen: false,
@@ -2968,6 +3036,7 @@ Notas importantes:
       pagosProveedores: Number.isNaN(pagos) ? 0 : pagos,
       pagos: Number.isNaN(pagos) ? 0 : pagos,
       prestamosFinancieros: safeNumber(raw.prestamosFinancieros),
+      ingresosFinancieros: safeNumber(raw.ingresosFinancieros),
       tiposCambioFinancieros: safeNumber(raw.tiposCambioFinancieros),
       gastos: safeNumber(raw.gastos),
       casaGastos: safeNumber(raw.casaGastos || raw.casa || raw.gastosCasa),
@@ -2994,6 +3063,7 @@ Notas importantes:
       + normalized.cobros
       + normalized.comprasProveedores
       + normalized.pagosProveedores
+      + normalized.ingresosFinancieros
       + normalized.tiposCambioFinancieros
       + normalized.prestamosFinancieros
       + normalized.gastos
@@ -3013,6 +3083,7 @@ Notas importantes:
   function formatBackupCountsSummary(counts) {
     const normalized = normalizeBackupCounts(counts);
     const parts = [
+      normalized.ingresosFinancieros ? `${normalized.ingresosFinancieros} ingreso(s) extra` : '',
       normalized.tiposCambioFinancieros ? `${normalized.tiposCambioFinancieros} tipo(s) de cambio` : '',
       normalized.prestamosFinancieros ? `${normalized.prestamosFinancieros} préstamo(s) financiero(s)` : '',
       `${normalized.ventas} OC`,
@@ -3341,6 +3412,7 @@ Notas importantes:
       comprasProveedores: [],
       pagosProveedores: [],
       prestamosFinancieros: [],
+      ingresosFinancieros: [],
       tiposCambioFinancieros: [],
       gastos: [],
       casaGastos: [],
@@ -3432,6 +3504,7 @@ Notas importantes:
     normalized.bdatosUpdatedAt = cleanText(source.bdatosUpdatedAt || source.bdatosLastUpdatedAt || source.bdatosMeta?.updatedAt || normalized.bdatosUpdatedAt);
 
     normalized.prestamosFinancieros = normalized.prestamosFinancieros.map(normalizePrestamoFinancieroRecord);
+    normalized.ingresosFinancieros = normalized.ingresosFinancieros.map(normalizeIngresoFinanciero);
     normalized.tiposCambioFinancieros = normalized.tiposCambioFinancieros.map(normalizeTipoCambioFinanciero);
     normalized.cobros = normalized.cobros.map((record) => normalizeCobroRecord(record));
     normalized.pagosProveedores = reconcileAutoPagosCompraContadoRecords(
@@ -4076,7 +4149,7 @@ Notas importantes:
     const confirmedIds = new Set((Array.isArray(changes) ? changes : []).map((item) => cleanText(item?.id)).filter(Boolean));
     if (!confirmedIds.size) return 0;
     const before = sessionChangeQueue.length;
-    sessionChangeQueue = sessionChangeQueue.filter((item) => !(item && item.estado === 'pendiente' && confirmedIds.has(cleanText(item.id)) && (cleanText(item.module).toLowerCase() !== 'bdatos' || changes.some((change) => change.id === item.id && change.operationSequence === item.operationSequence))));
+    sessionChangeQueue = sessionChangeQueue.filter((item) => !(item && item.estado === 'pendiente' && confirmedIds.has(cleanText(item.id)) && (!['bdatos', 'ingresos', 'pagos a proveedores', 'gastos', 'casa', 'proveedores / compras'].includes(cleanText(item.module).toLowerCase()) || changes.some((change) => change.id === item.id && change.operationSequence === item.operationSequence))));
     syncSessionChangeQueueGlobal();
     updateSessionChangeQueueDom();
     return before - sessionChangeQueue.length;
@@ -4225,6 +4298,8 @@ Notas importantes:
     if (button) button.disabled = true;
     ensureNotasStage3BaselineQueued();
     restoreBdatosCloudPending();
+    restoreIngresosCloudPending();
+    restoreFondosCloudPending();
     const pending = getPendingSessionChanges();
     if (!pending.length) {
       clearActionMessage(configState);
@@ -4267,7 +4342,7 @@ Notas importantes:
           ? SESSION_SAVE_MESSAGES.partialCleanupPending
           : (cleanupOnlyFailure
             ? SESSION_SAVE_MESSAGES.cleanupFailure
-            : (operationalFailure ? (result?.bdFailureMessage || SESSION_SAVE_MESSAGES.failure) : message)));
+            : (operationalFailure ? (result?.ingresosFailureMessage || result?.bdFailureMessage || SESSION_SAVE_MESSAGES.failure) : message)));
       const resultType = cleanupPendingAfterOperationalSuccess
         ? 'warning'
         : ((result?.ok && !operationalFailure && !unavailable) ? 'success' : 'error');
@@ -5570,6 +5645,7 @@ Notas importantes:
       ? fechaVencimientoRaw
       : (fechaVencimientoRaw || addDaysToDate(fechaCompra, safeDiasCredito) || fechaCompra);
     const base = {
+      ...fondosControlFields(raw),
       id: raw.id || generateId('compraProveedor'),
       ...(raw.financiamientoContado ? { financiamientoContado: normalizeFinanciamientoPago(raw.financiamientoContado) } : {}),
       ...(Number.isSafeInteger(raw.revisionFinanciamiento) ? { revisionFinanciamiento: raw.revisionFinanciamiento } : {}),
@@ -5621,6 +5697,7 @@ Notas importantes:
     const autoGenerado = raw.autoGenerado === true || raw.esAutomatico === true || raw.automatico === true || origen === 'compra_contado';
     const compraIdOrigen = cleanText(raw.compraIdOrigen || raw.compraProveedorIdOrigen || raw.compraOrigenId) || (autoGenerado ? compraProveedorId : '');
     return {
+      ...fondosControlFields(raw),
       id: raw.id || generateId('pagoProveedor'),
       compraProveedorId,
       ...(raw.financiamiento ? { financiamiento: normalizeFinanciamientoPago(raw.financiamiento) } : {}),
@@ -5661,6 +5738,8 @@ Notas importantes:
     const ventaIdOrigen = cleanText(raw.ventaIdOrigen || raw.gastoLogisticoVentaId || raw.ventaOrigenId || '') || (origen === 'venta_envio' ? origenId : '');
 
     return {
+      ...fondosControlFields(raw),
+      ...(raw.financiamiento ? { financiamiento: normalizeFinanciamientoPago(raw.financiamiento) } : {}),
       id: raw.id || generateId('gasto'),
       fecha: toDateInputValue(raw.fecha || raw.fechaGasto || '') || todayInputValue(),
       tipoGastoId: cleanText(raw.tipoGastoId || raw.tipoId || raw.categoriaId),
@@ -5696,6 +5775,8 @@ Notas importantes:
     const metodoPagoNombre = cleanText(raw.metodoPagoNombre || raw.metodoPago || raw.metodo);
     const isCredit = isCasaCreditPaymentMethod(metodoPagoId || metodoPagoNombre);
     return {
+      ...fondosControlFields(raw),
+      ...(raw.financiamiento ? { financiamiento: normalizeFinanciamientoPago(raw.financiamiento) } : {}),
       id: raw.id || generateId('casaGasto'),
       fecha: toDateInputValue(raw.fecha || raw.fechaGasto || '') || todayInputValue(),
       categoriaCasaId: cleanText(raw.categoriaCasaId || raw.categoriaId || raw.tipoCasaId),
@@ -6938,7 +7019,9 @@ Notas importantes:
 
     function normalizeFirestoreDoc(docSnap) {
       const raw = typeof docSnap?.data === 'function' ? docSnap.data() : {};
-      return normalizeFirestoreValue({ id: docSnap?.id, ...(isPlainObject(raw) ? raw : {}) });
+      const record = normalizeFirestoreValue({ id: docSnap?.id, ...(isPlainObject(raw) ? raw : {}) });
+      if (record.fondosControlado) { record._fondosPending = false; record._fondosSyncedSignature = fondosOperationSignature(record); }
+      return record;
     }
 
     async function readCollectionDocs(db, fs, ...pathSegments) {
@@ -7332,6 +7415,7 @@ Notas importantes:
         };
         let successfulDataBlocks = 0;
         let bdatosRead = { applied: false };
+        let ingresosRead = null;
 
         const blockTasks = [
           {
@@ -7400,11 +7484,16 @@ Notas importantes:
               ]);
               const loans = records.filter((record) => !isCloudDeletedRecord(record));
               const pagos = paymentRecords.filter((record) => !isCloudDeletedRecord(record));
-              const errors = [...validatePrestamosFinancieros(loans, null), ...validateFinanciamientoSnapshot({ prestamosFinancieros: loans, pagosProveedores: pagos })];
+              const errors = [...validatePrestamosFinancieros(loans, null), ...validateFinanciamientoSnapshot({ prestamosFinancieros: loans, pagosProveedores: pagos.filter((pago) => !isFondosCompartidos(pago.financiamiento)) })];
               if (errors.length) throw new Error(errors[0]);
               return { loans: loans.map(normalizePrestamoFinancieroRecord), pagos: pagos.map(normalizePagoProveedorRecord) };
             },
             apply: ({ loans, pagos }) => { snapshot.prestamosFinancieros = loans; snapshot.pagosProveedores = pagos; }
+          },
+          {
+            def: getCloudRefreshBlockDefinition('ingresos_financieros'),
+            run: () => readIngresosCloudBlock(db, fs, snapshot.cuentasBancos),
+            apply: (records) => { ingresosRead = records; snapshot.ingresosFinancieros = reconcileIngresosCloudRecords(records, appData.ingresosFinancieros || []); }
           },
           {
             def: getCloudRefreshBlockDefinition('gastos_casa'),
@@ -7593,6 +7682,7 @@ Notas importantes:
           message: isPartial ? partialMessage : completeMessage,
           snapshot: normalized,
           bdatosRead,
+          ingresosRead,
           notasModulo,
           facturasModulo,
           seguimiento,
@@ -7668,6 +7758,8 @@ Notas importantes:
         const stamp = getFirestoreTimestampValue(fs);
         const payload = snapshotInput && isPlainObject(snapshotInput) && snapshotInput.data ? snapshotInput : buildCloudSnapshotPayload(appData);
         const data = normalizeData(payload.data || appData);
+        if (getFondosOperaciones(data).some((item) => item.record.fondosControlado)) throw new Error('Usa Guardar datos para publicar operaciones con fondos compartidos.');
+        if (data.ingresosFinancieros.length) throw new Error('Usa Guardar datos para publicar Ingresos con control de revisión.');
         if (data.prestamosFinancieros.length) throw new Error('Usa Guardar datos para publicar Financiero con control atómico de fondos.');
         let batch = fs.writeBatch(db);
         let count = 0;
@@ -7878,6 +7970,7 @@ Notas importantes:
       const syncedAt = nowIso();
       return stripUndefinedForFirestore({
         ...normalized,
+        ...(normalized.fondosControlado ? { _fondosPending: undefined, _fondosSyncedSignature: undefined, _fondosLocalOnly: undefined } : {}),
         updatedAt: normalized.updatedAt || syncedAt,
         _deleted: false,
         _cloudDeleted: false,
@@ -7916,6 +8009,7 @@ Notas importantes:
 
       const data = appData || createInitialData();
       const moduleMap = {
+        ingresos: { collection: 'ingresosFinancieros', list: data.ingresosFinancieros, normalizer: (record) => ({ ...ingresoCloudRecord(record), ingresoMutationId: ingresoMutationToken(record) }), fallback: 'ingresoFinanciero' },
         financiero: { collection: 'prestamosFinancieros', list: data.prestamosFinancieros, normalizer: normalizePrestamoFinancieroRecord, fallback: 'prestamoFinanciero' },
         ventasoc: { collection: 'ventas', list: data.ventas, normalizer: normalizeVentaRecord, fallback: 'venta' },
         ventas: { collection: 'ventas', list: data.ventas, normalizer: normalizeVentaRecord, fallback: 'venta' },
@@ -8200,6 +8294,171 @@ Notas importantes:
       saveData(appData);
     }
 
+    async function readIngresosCloudBlock(db, fs, banks) {
+      const result = await fs.getDocs(fs.collection(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'ingresosFinancieros'));
+      const records = [];
+      result.forEach((document) => {
+        const record = normalizeFirestoreDoc(document);
+        if (record.id !== document.id) throw new Error('Un ingreso no coincide con su ID en nube. Se conserva la copia local.');
+        records.push(record);
+      });
+      const error = validateIngresosFinancieros(records, banks)[0];
+      if (error) throw new Error(error);
+      if (records.some((record) => !Number.isSafeInteger(record.revisionIngreso) || record.revisionIngreso < 1 || typeof record.ingresoMutationId !== 'string' || !cleanText(record.ingresoMutationId) || isCloudDeletedRecord(record))) throw new Error('El bloque de ingresos no tiene un control de revisión válido. Se conserva la copia local.');
+      if (records.some((record) => (record.fondosAplicaciones !== undefined && !Array.isArray(record.fondosAplicaciones)) || (record.fondosUtilizados !== undefined && (!Number.isFinite(record.fondosUtilizados) || record.fondosUtilizados < 0 || record.fondosUtilizados !== sumMoney(record.fondosAplicaciones || [], (item) => item.monto))))) throw new Error('El control de fondos de Ingresos es inconsistente. Se conserva la copia local.');
+      return records.map(normalizeIngresoFinanciero);
+    }
+
+    async function commitIngresoEntries(entries, context) {
+      const { db, fs, user } = context;
+      if (!canCurrentRole('registerOperations')) throw new Error('No tienes permiso para guardar ingresos.');
+      const ids = entries.map((entry) => entry.write.payload.id);
+      if (ids.some((id) => ingresosCloudSavingIds.has(id))) throw new Error('Ya hay un guardado de este ingreso en curso.');
+      ids.forEach((id) => ingresosCloudSavingIds.add(id));
+      try {
+        const results = await fs.runTransaction(db, async (transaction) => {
+          // Firestore exige completar todas las lecturas antes de escribir.
+          const snapshots = await Promise.all(entries.map((entry) => transaction.get(entry.write.ref)));
+          const checked = entries.map((entry, index) => {
+            const payload = ingresoCloudRecord(entry.write.payload), snap = snapshots[index];
+            const remote = snap.exists() ? normalizeFirestoreDoc(snap) : null;
+            // Un alias conserva la misma cuenta; no reescribir la referencia histórica del origen.
+            if (remote && getCanonicalBankId(remote.cuentaBancoId, appData.cuentasBancos || []) === getCanonicalBankId(payload.cuentaBancoId, appData.cuentasBancos || [])) payload.cuentaBancoId = remote.cuentaBancoId;
+            const recovered = remote && remote.ingresoMutationId === payload.ingresoMutationId && ingresoCloudSignature(remote) === ingresoCloudSignature(payload);
+            if (!recovered && ((remote?.revisionIngreso || 0) !== payload.revisionIngreso || (remote && payload.revisionIngreso === 0))) {
+              throw Object.assign(new Error('El ingreso cambió en otro equipo. Actualiza datos y revisa las dos versiones en Ingresos; tu copia local se conserva.'), { code: 'ingresos/conflict', ingresoId: payload.id, ingresoRemote: remote });
+            }
+            if (!recovered && !remote && payload.revisionIngreso > 0) throw Object.assign(new Error('El ingreso ya no existe en nube. Actualiza datos y revisa su copia local.'), { code: 'ingresos/conflict', ingresoId: payload.id, ingresoRemote: null });
+            if (!recovered && (isWorkPeriodClosed(payload.fecha.slice(0, 7)) || (remote && isWorkPeriodClosed(remote.fecha.slice(0, 7))))) throw new Error('El período del ingreso está cerrado.');
+            if (!recovered && remote?.activo === false) throw new Error('No se puede modificar un ingreso anulado en nube.');
+            if (!payload.activo && !canCurrentRole('annulMovements')) throw new Error('Solo Administrador puede anular ingresos.');
+            if (remote && remote.createdAt !== payload.createdAt) throw new Error('No se puede cambiar la fecha de creación del ingreso.');
+            const transition = validateFuenteFinancieraTransition('ingreso', remote, payload, sumMoney(remote?.fondosAplicaciones || [], (item) => item.monto));
+            if (transition) throw new Error(transition);
+            const error = validateIngresosFinancieros([payload], appData.cuentasBancos)[0];
+            if (error) throw new Error(error);
+            return { entry, payload, remote, recovered };
+          });
+          checked.forEach(({ entry, payload, remote, recovered }) => {
+            if (!recovered) transaction.set(entry.write.ref, { ...payload, ...(remote?.fondosAplicaciones ? { fondosAplicaciones: remote.fondosAplicaciones, revisionFinanciamiento: remote.revisionFinanciamiento || 0, fondosUtilizados: remote.fondosUtilizados || 0 } : {}), ...(remote?._cloudImport ? { _cloudImport: remote._cloudImport } : {}), revisionIngreso: (remote?.revisionIngreso || 0) + 1, _cloudSync: { source: 'session_partial_save', syncedAt: nowIso(), syncedBy: user.email || '' } });
+          });
+          const lastRecord = checked.filter((item) => !item.recovered).map((item) => item.entry.write.lastRecord).filter(Boolean).pop();
+          if (lastRecord) transaction.set(fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, 'metadata', FIRESTORE_METADATA_SYSTEM_ID), { lastCloudRecord: { ...lastRecord, savedAt: getFirestoreTimestampValue(fs) } }, { merge: true });
+          return checked.map(({ payload, remote, recovered }) => ({ id: payload.id, mutation: payload.ingresoMutationId, revision: recovered ? remote.revisionIngreso : (remote?.revisionIngreso || 0) + 1 }));
+        });
+        const records = appData.ingresosFinancieros.map((record) => {
+          const result = results.find((item) => item.id === record.id);
+          if (!result) return record;
+          const unchanged = ingresoMutationToken(record) === result.mutation;
+          const next = { ...record, revisionIngreso: result.revision, _ingresoPending: !unchanged, _ingresoLocalOnly: false };
+          if (unchanged) { next.ingresoMutationId = result.mutation; delete next._ingresoConflict; }
+          return next;
+        });
+        const next = { ...appData, ingresosFinancieros: records };
+        // Si falla el espejo, el reintento reconoce el mismo intento ya confirmado.
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        appData = next;
+      } finally { ids.forEach((id) => ingresosCloudSavingIds.delete(id)); }
+    }
+
+    async function commitFondosCompartidosEntries(entries, context) {
+      const { db, fs } = context;
+      if (!canCurrentRole('registerOperations')) throw new Error('No tienes permiso para registrar operaciones.');
+      if (entries.length > FIRESTORE_IMPORT_BATCH_LIMIT - 20) throw new Error('Guarda grupos más pequeños de operaciones con fondos.');
+      const pathFor = (collection, id) => fs.doc(db, 'workspaces', FIRESTORE_WORKSPACE_ID_PLACEHOLDER, collection, sanitizeFirestoreDocId(id, collection));
+      const results = await fs.runTransaction(db, async (transaction) => {
+        const snapshots = new Map();
+        const read = async (ref) => {
+          if (!snapshots.has(ref.path)) { const snapshot = await transaction.get(ref); snapshots.set(ref.path, snapshot.exists() ? snapshot.data() : null); }
+          return snapshots.get(ref.path);
+        };
+        const operations = [];
+        for (const entry of entries) {
+          const ref = entry.write.ref, payload = { ...entry.write.payload, fondosControlado: true }, previous = await read(ref);
+          const signature = fondosOperationSignature(payload), token = `fondos_${simpleHashText(signature)}`;
+          const recovered = previous?.fondosMutationId === token && fondosOperationSignature(previous) === signature;
+          if (!recovered && (previous?.revisionFinanciamiento || 0) !== (payload.revisionFinanciamiento || 0)) throw new Error('Esta operación cambió en otro equipo. Actualiza y revisa antes de guardar; se conserva la copia local.');
+          if (entry.write.change.operation === 'eliminar') throw new Error('Las operaciones con fondos se anulan sin borrar.');
+          const collection = ref.parent.id;
+          if (!recovered && previous?.activo === false && payload.activo !== false && ['gastos', 'casaGastos'].includes(collection)) throw new Error('No se puede reactivar una operación anulada.');
+          if (payload.activo === false && !canCurrentRole('annulMovements')) throw new Error('Solo Administrador puede anular operaciones con fondos.');
+          if (!recovered && (isWorkPeriodClosed((payload.fechaPago || payload.fechaCompra || payload.fecha || '').slice(0, 7)) || (previous && isWorkPeriodClosed((previous.fechaPago || previous.fechaCompra || previous.fecha || '').slice(0, 7))))) throw new Error('No se pueden modificar fondos de un período cerrado.');
+          operations.push({ entry, collection, previous, payload, token, recovered });
+        }
+        const sourceKeys = new Map();
+        for (const operation of operations.filter((item) => !item.recovered && item.collection !== 'comprasProveedores')) {
+          for (const part of [...getFondosPartes(operation.previous?.financiamiento), ...getFondosPartes(operation.payload.financiamiento)]) sourceKeys.set(`${part.tipo}:${part.id}`, part);
+        }
+        if (entries.length + sourceKeys.size > FIRESTORE_IMPORT_BATCH_LIMIT - 2) throw new Error('El grupo supera el límite de guardado atómico de fondos.');
+        const sources = new Map();
+        for (const [key, part] of sourceKeys) {
+          const collection = part.tipo === 'ingreso' ? 'ingresosFinancieros' : 'prestamosFinancieros', ref = pathFor(collection, part.id), record = await read(ref);
+          if (!record) throw new Error('Una fuente de fondos todavía no existe en nube. Guarda primero sus registros pendientes.');
+          const applications = new Map();
+          for (const reservation of record.fondosAplicaciones || []) {
+            if (!reservation.pagoId || applications.has(reservation.pagoId) || !Number.isFinite(reservation.monto) || reservation.monto <= 0 || roundMoney(reservation.monto) !== reservation.monto) throw new Error('El control de fondos requiere revisión; no se guardaron cambios.');
+            applications.set(reservation.pagoId, { ...reservation });
+          }
+          sources.set(key, { tipo: part.tipo, collection, ref, record, applications });
+        }
+        const validationData = { ...appData,
+          prestamosFinancieros: Array.from(sources.values()).filter((item) => item.tipo === 'prestamo').map((item) => item.record),
+          ingresosFinancieros: Array.from(sources.values()).filter((item) => item.tipo === 'ingreso').map((item) => item.record)
+        };
+        for (const operation of operations.filter((item) => !item.recovered && item.collection !== 'comprasProveedores')) {
+          const { collection, payload, previous } = operation, key = fondosOperacionKey(collection, payload.id);
+          const reservationId = collection === 'pagosProveedores' ? payload.id : key;
+          const oldActive = previous && previous.activo !== false && !['Anulado', 'Eliminado'].includes(previous.estado) && !(collection === 'casaGastos' && previous.estadoCreditoCasa === 'Pendiente');
+          for (const part of getFondosPartes(previous?.financiamiento)) {
+            const source = sources.get(`${part.tipo}:${part.id}`), reserved = source.applications.get(reservationId);
+            if (oldActive && (!reserved || reserved.monto !== part.monto)) throw new Error('La operación no coincide con la reserva del origen. Actualiza datos antes de reintentar.');
+            source.applications.delete(reservationId);
+          }
+          const error = isFondosCompartidos(payload.financiamiento) ? validateFondosCompartidos(payload, collection, validationData, { skipAvailability: true }) : collection === 'pagosProveedores' ? validateFinanciamientoPago(payload, previous, validationData, { skipAvailability: true }) : '';
+          if (error) throw new Error(error);
+          const active = payload.activo !== false && !['Anulado', 'Eliminado'].includes(payload.estado) && !(collection === 'casaGastos' && payload.estadoCreditoCasa === 'Pendiente');
+          if (active) for (const part of getFondosPartes(payload.financiamiento)) sources.get(`${part.tipo}:${part.id}`).applications.set(reservationId, { pagoId: reservationId, coleccion: collection, registroId: payload.id, monto: part.monto, fechaPago: payload.fechaPago || payload.fecha });
+        }
+        // Las compras de contado comparten una sola reserva con su pago automático.
+        for (const operation of operations.filter((item) => item.collection === 'comprasProveedores')) {
+          const compra = operation.payload;
+          if (compra.activo === false || compra.condicionPagoSnapshot !== 'Contado') continue;
+          let payment = operations.find((item) => item.collection === 'pagosProveedores' && item.payload.autoGenerado && item.payload.compraProveedorId === compra.id)?.payload;
+          if (!payment) { const auto = findAutoPagoCompraContado(compra.id, appData.pagosProveedores, true); if (auto) payment = await read(pathFor('pagosProveedores', auto.id)); }
+          if (!payment || payment.activo === false || JSON.stringify(normalizeFinanciamientoPago(payment.financiamiento)) !== JSON.stringify(normalizeFinanciamientoPago(compra.financiamientoContado))) throw new Error('Guarda juntos la compra de contado y su pago automático.');
+        }
+        for (const source of sources.values()) {
+          const used = sumMoney(Array.from(source.applications.values()), (item) => item.monto);
+          const error = validateFuenteFinancieraTransition(source.tipo, source.record, source.record, used);
+          if (error) throw new Error(error);
+          if (Array.from(source.applications.values()).some((item) => item.fechaPago < (source.tipo === 'ingreso' ? source.record.fecha : source.record.fechaDesembolso))) throw new Error('Una operación es anterior a su fuente de fondos.');
+        }
+        const committed = [];
+        for (const operation of operations) {
+          const revision = operation.recovered ? operation.previous.revisionFinanciamiento : (operation.previous?.revisionFinanciamiento || 0) + 1;
+          if (!operation.recovered) transaction.set(operation.entry.write.ref, stripUndefinedForFirestore({ ...operation.payload, fondosControlado: true, revisionFinanciamiento: revision, fondosMutationId: operation.token }), { merge: true });
+          committed.push({ collection: operation.collection, id: operation.payload.id, revision, token: operation.token, signature: fondosOperationSignature(operation.payload) });
+        }
+        for (const source of sources.values()) {
+          const revision = (source.record.revisionFinanciamiento || 0) + 1, applications = Array.from(source.applications.values());
+          transaction.set(source.ref, { fondosAplicaciones: applications, revisionFinanciamiento: revision, ...(source.tipo === 'ingreso' ? { fondosUtilizados: sumMoney(applications, (item) => item.monto) } : {}) }, { merge: true });
+          committed.push({ collection: source.collection, id: source.record.id, revision, applications });
+        }
+        const lastRecord = operations.filter((item) => !item.recovered).map((item) => item.entry.write.lastRecord).filter(Boolean).pop();
+        if (lastRecord) transaction.set(pathFor('metadata', FIRESTORE_METADATA_SYSTEM_ID), { lastCloudRecord: { ...lastRecord, savedAt: getFirestoreTimestampValue(fs) } }, { merge: true });
+        return committed;
+      });
+      const next = { ...appData };
+      for (const result of results) next[result.collection] = (next[result.collection] || []).map((record) => {
+        if (record.id !== result.id) return record;
+        if (result.applications) return { ...record, revisionFinanciamiento: result.revision, fondosAplicaciones: result.applications, ...(result.collection === 'ingresosFinancieros' ? { fondosUtilizados: sumMoney(result.applications, (item) => item.monto) } : {}) };
+        const unchanged = fondosOperationSignature({ ...record, fondosControlado: true }) === result.signature;
+        return { ...record, fondosControlado: true, revisionFinanciamiento: result.revision, fondosMutationId: result.token, _fondosPending: !unchanged, ...(unchanged ? { _fondosSyncedSignature: result.signature } : {}) };
+      });
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      appData = next;
+    }
+
     async function processSessionChangeGroup(changes, context = {}) {
       const groupChanges = uniqueSessionChangesById(changes);
       const label = cleanText(context.label || 'Cambios de sesión');
@@ -8228,9 +8487,9 @@ Notas importantes:
         const current = writesByKey.get(write.key);
         if (current) {
           current.write = write;
-          current.changes.push(change);
+          current.changes.push({ ...change });
         } else {
-          writesByKey.set(write.key, { write, changes: [change] });
+          writesByKey.set(write.key, { write, changes: [{ ...change }] });
         }
       });
 
@@ -8264,6 +8523,27 @@ Notas importantes:
           };
         }
       }
+      const incomeEntries = writeEntries.filter((entry) => entry.write.ref.parent.id === 'ingresosFinancieros');
+      // Un conflicto en un ingreso no bloquea los demás registros pendientes.
+      for (const entry of incomeEntries) {
+        try {
+          await commitIngresoEntries([entry], context);
+          entry.changes.forEach((change) => confirmedChanges.push({ ...change }));
+        } catch (error) {
+          failedChanges.push(...entry.changes);
+          errors.push(buildSessionCloudDiagnostic('Ingresos', error));
+          if (error.code === 'ingresos/conflict') {
+            const next = { ...appData, ingresosFinancieros: appData.ingresosFinancieros.map((record) => record.id === error.ingresoId ? { ...record, _ingresoConflict: { remote: error.ingresoRemote ? ingresoCloudRecord(error.ingresoRemote) : null } } : record) };
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); appData = next; } catch (_) {}
+          }
+        }
+      }
+      writeEntries = writeEntries.filter((entry) => !incomeEntries.includes(entry));
+      const sharedEntries = writeEntries.filter((entry) => entry.write.payload.fondosControlado || isFondosCompartidos(entry.write.payload.financiamiento || entry.write.payload.financiamientoContado));
+      const sharedPurchaseIds = new Set(sharedEntries.filter((entry) => entry.write.ref.parent.id === 'pagosProveedores').map((entry) => entry.write.payload.compraProveedorId));
+      const sharedCashIds = new Set(sharedEntries.filter((entry) => entry.write.ref.parent.id === 'comprasProveedores').map((entry) => entry.write.payload.id));
+      writeEntries.filter((entry) => (entry.write.ref.parent.id === 'comprasProveedores' && sharedPurchaseIds.has(entry.write.payload.id)) || (entry.write.ref.parent.id === 'pagosProveedores' && sharedCashIds.has(entry.write.payload.compraProveedorId))).forEach((entry) => { if (!sharedEntries.includes(entry)) sharedEntries.push(entry); });
+      writeEntries = writeEntries.filter((entry) => !sharedEntries.includes(entry));
       const financialEntries = writeEntries.filter((entry) => ['prestamosFinancieros', 'pagosProveedores', 'comprasProveedores'].includes(entry.write.ref.parent.id));
       if (financialEntries.length && ((appData.prestamosFinancieros || []).length || financialEntries.some((entry) => entry.write.payload.financiamiento?.prestamoId))) {
         try {
@@ -8274,6 +8554,15 @@ Notas importantes:
           errors.push(buildSessionCloudDiagnostic('Fondos de préstamos', error));
         }
         writeEntries = writeEntries.filter((entry) => !financialEntries.includes(entry));
+      }
+      if (sharedEntries.length) {
+        try {
+          await commitFondosCompartidosEntries(sharedEntries, context);
+          sharedEntries.forEach((entry) => confirmedChanges.push(...entry.changes));
+        } catch (error) {
+          sharedEntries.forEach((entry) => failedChanges.push(...entry.changes));
+          errors.push(buildSessionCloudDiagnostic('Fondos compartidos', error));
+        }
       }
       const batchLimit = Math.max(1, FIRESTORE_IMPORT_BATCH_LIMIT - 2);
       for (let offset = 0; offset < writeEntries.length; offset += batchLimit) {
@@ -8500,6 +8789,7 @@ Notas importantes:
         operationalResult.failedChanges.push(...bdResult.failedChanges);
         operationalResult.errors.push(...bdResult.errors);
         operationalResult.bdFailureMessage = bdResult.errors.join(" | ");
+        operationalResult.ingresosFailureMessage = operationalResult.errors.filter((message) => message.includes(' · Ingresos · ')).join(" | ");
         operationalResult.writtenCount += bdResult.writtenCount;
         const cleanupResult = await processSessionChangeGroup(cleanupChanges, {
           ...sharedContext,
@@ -8571,7 +8861,7 @@ Notas importantes:
         if (operationalFailed) {
           ok = false;
           code = 'cloud/session-operational-failed';
-          message = operationalResult.bdFailureMessage || SESSION_SAVE_MESSAGES.failure;
+          message = operationalResult.ingresosFailureMessage || operationalResult.bdFailureMessage || SESSION_SAVE_MESSAGES.failure;
         } else if (cleanupFailed && operationalSaved) {
           ok = true;
           code = 'cloud/session-write-ok-cleanup-pending';
@@ -8619,6 +8909,7 @@ Notas importantes:
           cleanupPending: cleanupFailed,
           cleanupPendingCount: cleanupResult.failedChanges.length,
           bdFailureMessage: operationalResult.bdFailureMessage,
+          ingresosFailureMessage: operationalResult.ingresosFailureMessage,
           operationalResult,
           cleanupResult,
           lastSyncAt: state.lastSyncAt,
@@ -9879,7 +10170,7 @@ Notas importantes:
       corteOficialAt: ''
     });
     return normalizeExcelConsultaSnapshotRecord({
-      version: snapshotSummary.financiamiento ? '2.0' : '1.0',
+      version: snapshotSummary.financiamiento?.version === '3.0' ? '3.0' : snapshotSummary.financiamiento ? '2.0' : '1.0',
       tipo: 'consulta',
       periodo: getPeriodKey(month, year),
       month,
@@ -9898,7 +10189,7 @@ Notas importantes:
       corteOficialAt: cutoffAt
     });
     return normalizeExcelCierreSnapshotRecord({
-      version: snapshotSummary.financiamiento ? '2.0' : '1.0',
+      version: snapshotSummary.financiamiento?.version === '3.0' ? '3.0' : snapshotSummary.financiamiento ? '2.0' : '1.0',
       tipo: 'cierre_oficial',
       periodo: getPeriodKey(month, year),
       month,
@@ -10193,6 +10484,7 @@ Notas importantes:
       facturaReferencia: compra.facturaReferencia,
       fechaPago: compra.fechaCompra || todayInputValue(),
       montoPagado: montoAuto,
+      ...fondosControlFields({ ...existingPago, fondosControlado: compra.fondosControlado || existingPago?.fondosControlado }, compra.financiamientoContado),
       ...((compra.financiamientoContado || existingPago?.financiamiento) ? { financiamiento: normalizeFinanciamientoPago(compra.financiamientoContado || existingPago.financiamiento) } : {}),
       metodoPagoId: metodo?.id || compra.metodoPagoContadoId || existingPago?.metodoPagoId || '',
       metodoPagoNombre: metodo?.nombre || compra.metodoPagoContadoNombre || existingPago?.metodoPagoNombre || '',
@@ -10460,6 +10752,7 @@ Notas importantes:
 
   function saveData(data) {
     try {
+      if (!isLocalOnlyBackupApplicationActive()) markFondosPending(data);
       data.configuracion = normalizeConfiguracion(data.configuracion);
       data.metadata = {
         ...(isPlainObject(data.metadata) ? data.metadata : {}),
@@ -10597,7 +10890,13 @@ Notas importantes:
       const localClosures = Array.isArray(appData?.cierresMensuales) ? appData.cierresMensuales : [];
       const localExports = Array.isArray(appData?.exportacionesExcel) ? appData.exportacionesExcel : [];
       const cloudSnapshot = normalizeData(result.snapshot);
-      // E1: las tasas son locales; una lectura de nube no debe reemplazarlas.
+      cloudSnapshot.ingresosFinancieros = Array.isArray(result.ingresosRead) ? reconcileIngresosCloudRecords(result.ingresosRead, appData.ingresosFinancieros || []) : (appData.ingresosFinancieros || []).map(normalizeIngresoFinanciero);
+      // Las tasas siguen siendo locales; una lectura de nube no debe reemplazarlas.
+      ['pagosProveedores', 'comprasProveedores', 'gastos', 'casaGastos'].forEach((collection) => {
+        const pending = (appData[collection] || []).filter((record) => record._fondosPending && !record._fondosLocalOnly);
+        const ids = new Set(pending.map((record) => record.id));
+        cloudSnapshot[collection] = [...pending, ...(cloudSnapshot[collection] || []).filter((record) => !ids.has(record.id))];
+      });
       cloudSnapshot.tiposCambioFinancieros = (appData.tiposCambioFinancieros || []).map(normalizeTipoCambioFinanciero);
       reconcileBdatosCloudReadAtApply(cloudSnapshot, result);
       const reconciledClosuresExcel = reconcileClosureExcelReferences(
@@ -12046,6 +12345,7 @@ Notas importantes:
     snapshot.cobros = getRawArrayFromCloudImportData(data, 'cobros').map((record) => normalizeCobroRecord(record));
     snapshot.comprasProveedores = getRawArrayFromCloudImportData(data, 'comprasProveedores').map((record) => normalizeCompraProveedorRecord(record));
     snapshot.pagosProveedores = getRawArrayFromCloudImportData(data, 'pagosProveedores').map((record) => normalizePagoProveedorRecord(record));
+    snapshot.ingresosFinancieros = getRawArrayFromCloudImportData(data, 'ingresosFinancieros').map(normalizeIngresoFinanciero);
     snapshot.prestamosFinancieros = getRawArrayFromCloudImportData(data, 'prestamosFinancieros').map(normalizePrestamoFinancieroRecord);
     snapshot.gastos = getRawArrayFromCloudImportData(data, 'gastos').map((record) => normalizeGastoRecord(record));
     snapshot.casaGastos = getRawArrayFromCloudImportData(data, 'casaGastos').map((record) => normalizeCasaGastoRecord(record));
@@ -12070,6 +12370,7 @@ Notas importantes:
       cobros: Array.isArray(safe.cobros) ? safe.cobros.length : 0,
       comprasProveedores: Array.isArray(safe.comprasProveedores) ? safe.comprasProveedores.length : 0,
       pagosProveedores: Array.isArray(safe.pagosProveedores) ? safe.pagosProveedores.length : 0,
+      ingresosFinancieros: Array.isArray(safe.ingresosFinancieros) ? safe.ingresosFinancieros.length : 0,
       prestamosFinancieros: Array.isArray(safe.prestamosFinancieros) ? safe.prestamosFinancieros.length : 0,
       gastos: Array.isArray(safe.gastos) ? safe.gastos.length : 0,
       casaGastos: Array.isArray(safe.casaGastos) ? safe.casaGastos.length : 0,
@@ -12149,6 +12450,7 @@ Notas importantes:
   }
 
   function addCloudImportRecord(records, duplicates, collectionKey, label, pathSegments, data, stableId, options = {}) {
+    if (data?.fondosControlado) { data = { ...data }; delete data._fondosPending; delete data._fondosSyncedSignature; delete data._fondosLocalOnly; }
     const documentId = sanitizeFirestoreDocId(pathSegments[pathSegments.length - 1] || stableId, `${collectionKey}_${records.length + 1}`);
     const finalSegments = [...pathSegments.slice(0, -1), documentId];
     const pathKey = finalSegments.join('/');
@@ -12199,9 +12501,10 @@ Notas importantes:
 
     addStandardList('ventas', 'Ventas', snapshot.ventas);
     addStandardList('cobros', 'Cobros', snapshot.cobros);
+    addStandardList('ingresosFinancieros', 'Otros ingresos', (snapshot.ingresosFinancieros || []).map((record) => ({ ...ingresoCloudRecord(record), revisionIngreso: 1, ingresoMutationId: ingresoMutationToken(record), fondosAplicaciones: getFondosAplicacionesSnapshot('ingreso', record.id, snapshot), fondosUtilizados: sumMoney(getFondosAplicacionesSnapshot('ingreso', record.id, snapshot), (item) => item.monto), revisionFinanciamiento: 0 })));
     addStandardList('prestamosFinancieros', 'Préstamos financieros', (snapshot.prestamosFinancieros || []).map((loan) => ({
       ...loan,
-      fondosAplicaciones: (snapshot.pagosProveedores || []).filter((pago) => pago.activo && (pago.financiamiento?.prestamoId === loan.id || pago.financiamiento?.aplicaciones?.some((item) => item.prestamoId === loan.id))).map((pago) => ({ pagoId: pago.id, monto: getFinanciamientoMontoMoneda(pago.financiamiento, loan.id), fechaPago: pago.fechaPago }))
+      fondosAplicaciones: getFondosAplicacionesSnapshot('prestamo', loan.id, snapshot)
     })));
     addStandardList('comprasProveedores', 'Compras/Proveedores', snapshot.comprasProveedores);
     addStandardList('pagosProveedores', 'Pagos proveedores', snapshot.pagosProveedores);
@@ -12306,6 +12609,7 @@ Notas importantes:
     CATALOGS.forEach((catalog) => inspectList(catalog.label, data[catalog.id]));
     inspectList('Ventas', data.ventas);
     inspectList('Cobros', data.cobros);
+    inspectList('Otros ingresos', data.ingresosFinancieros);
     inspectList('Préstamos financieros', data.prestamosFinancieros);
     inspectList('Compras/Proveedores', data.comprasProveedores);
     inspectList('Pagos proveedores', data.pagosProveedores);
@@ -12347,7 +12651,8 @@ Notas importantes:
     const data = extracted.data;
     const activityLog = extractActivityLogFromJsonBackup(raw);
     validateCompraOcBackupRelations(data, errors, warnings);
-    const recognizedCollections = ['ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'casaGastos', 'cierresMensuales', 'exportacionesExcel', 'bdatos'];
+    if (data?.ingresosFinancieros !== undefined) errors.push(...validateIngresosFinancieros(data.ingresosFinancieros, data.cuentasBancos || []));
+    const recognizedCollections = ['ingresosFinancieros', 'ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'casaGastos', 'cierresMensuales', 'exportacionesExcel', 'bdatos'];
     const hasRecognizedData = Boolean(data) && (
       CATALOGS.some((catalog) => Array.isArray(data[catalog.id]))
       || recognizedCollections.some((key) => Array.isArray(data[key]))
@@ -12373,6 +12678,7 @@ Notas importantes:
     missingCollections.forEach((key) => warnings.push(`${key}: no encontrada; se mostrará/importará como 0 registros.`));
 
     const snapshot = hasRecognizedData ? buildCloudImportSnapshot(data || {}, raw, activityLog) : {};
+    if (hasRecognizedData && getFondosOperaciones(snapshot).some((operation) => isFondosCompartidos(operation.record.financiamiento))) errors.push(...validateFinanciamientoSnapshot(snapshot));
     const idWarnings = hasRecognizedData ? collectCloudImportIdWarnings(data || {}, snapshot) : [];
     if (idWarnings.length) warnings.push(...idWarnings);
     const relationWarnings = hasRecognizedData ? validateCloudImportRelations(snapshot) : [];
@@ -19620,8 +19926,177 @@ Notas importantes:
     renderRoute();
   }
 
+  function isFondosCompartidos(funding) { return funding?.version === 4; }
+
+  function fondosOperacionKey(collection, id) { return `${collection}:${id}`; }
+
+  function getFondosOperaciones(data = appData) {
+    return ['pagosProveedores', 'gastos', 'casaGastos'].flatMap((collection) => (data[collection] || []).map((record) => ({
+      collection, record, key: fondosOperacionKey(collection, record.id),
+      activo: record.activo !== false && !['Anulado', 'Eliminado'].includes(record.estado) && !isCloudDeletedRecord(record)
+        && !(collection === 'casaGastos' && record.estadoCreditoCasa === 'Pendiente'),
+      fecha: record.fechaPago || record.fecha, monto: record.montoPagado ?? record.monto
+    })));
+  }
+
+  function getFondosPartes(funding) {
+    if (isFondosCompartidos(funding)) return (funding.fuentes || []).map((part) => ({ ...part }));
+    if (!funding?.prestamoId) return [];
+    return (funding.aplicaciones || [{ prestamoId: funding.prestamoId, monto: getFinanciamientoMontoMoneda(funding) }]).map((part) => ({ tipo: 'prestamo', id: part.prestamoId, monto: part.monto }));
+  }
+
+  function getFondosAplicacionesSnapshot(tipo, id, data) {
+    return getFondosOperaciones(data).filter((operation) => operation.activo).flatMap((operation) => getFondosPartes(operation.record.financiamiento).filter((part) => part.tipo === tipo && part.id === id).map((part) => ({
+      pagoId: operation.collection === 'pagosProveedores' ? operation.record.id : operation.key,
+      coleccion: operation.collection, registroId: operation.record.id, monto: part.monto, fechaPago: operation.fecha
+    })));
+  }
+
+  function getFuenteFinanciera(tipo, id, data = appData) {
+    return (data[tipo === 'ingreso' ? 'ingresosFinancieros' : 'prestamosFinancieros'] || []).find((record) => record.id === id);
+  }
+
+  function fondosReservaKey(reserva) {
+    if (reserva.coleccion && reserva.registroId) return fondosOperacionKey(reserva.coleccion, reserva.registroId);
+    return fondosOperacionKey('pagosProveedores', reserva.pagoId);
+  }
+
+  function getFuenteFinancieraFondos(tipo, id, data = appData, excludeKey = '') {
+    const source = getFuenteFinanciera(tipo, id, data), operations = getFondosOperaciones(data);
+    const known = new Set(operations.map((operation) => operation.key));
+    if (source?.fondosAplicaciones !== undefined && !Array.isArray(source.fondosAplicaciones)) return { utilizados: 0, disponibles: 0, error: 'El control de fondos del origen requiere revisión.' };
+    const uses = operations.filter((operation) => operation.activo && operation.key !== excludeKey).flatMap((operation) => getFondosPartes(operation.record.financiamiento).filter((part) => part.tipo === tipo && part.id === id));
+    // Una actualización parcial no debe liberar reservas de operaciones aún no descargadas.
+    for (const reserva of source?.fondosAplicaciones || []) {
+      const key = fondosReservaKey(reserva);
+      if (!known.has(key) && key !== excludeKey) uses.push({ monto: reserva.monto });
+    }
+    const utilizados = sumMoney(uses, (part) => part.monto);
+    const neto = source ? (tipo === 'ingreso' ? ingresoFinancieroNeto(source) : source.netoRecibido) : 0;
+    return { utilizados, disponibles: roundMoney(neto - utilizados) };
+  }
+
+  function validateFuenteFinancieraTransition(tipo, previous, next, utilizados) {
+    if (!utilizados) return '';
+    const fecha = (record) => tipo === 'ingreso' ? record.fecha : record.fechaDesembolso;
+    const neto = tipo === 'ingreso' ? ingresoFinancieroNeto(next) : next.netoRecibido;
+    if (!next.activo || next.estado === 'Anulado' || isCloudDeletedRecord(next)) return 'No puedes anular una fuente con fondos utilizados. Anula primero las operaciones que los consumen.';
+    if (utilizados > neto) return 'El neto no puede quedar por debajo de los fondos utilizados.';
+    if (previous && (previous.moneda !== next.moneda || getCanonicalBankId(previous.cuentaBancoId, appData.cuentasBancos || []) !== getCanonicalBankId(next.cuentaBancoId, appData.cuentasBancos || []) || fecha(previous) !== fecha(next))) return 'No puedes cambiar cuenta, moneda o fecha de una fuente con fondos utilizados.';
+    return '';
+  }
+
+  function parseFondosSeleccion(value) {
+    if (!String(value).startsWith('fondos:')) return null;
+    try {
+      const parts = JSON.parse(decodeURIComponent(value.slice(7)));
+      if (Array.isArray(parts) && parts.length === 3 && ['cuenta', 'ingreso'].includes(parts[0]) && typeof parts[1] === 'string' && parts[1] && ['NIO', 'USD'].includes(parts[2])) return { tipo: parts[0], id: parts[1], moneda: parts[2] };
+    } catch (_) {}
+    return null;
+  }
+
+  function fondosSeleccion(tipo, id, moneda) { return `fondos:${encodeURIComponent(JSON.stringify([tipo, id, moneda]))}`; }
+
+  function buildFondosCompartidos(origen, seleccion, monto, fecha, excludeKey = '', original = null, data = appData) {
+    const selected = parseFondosSeleccion(seleccion), amount = Number(monto);
+    const base = { version: 4, origen, seleccion, montoFinanciero: amount, moneda: 'NIO', fuentes: [] };
+    if (!selected || !bancoFechaValida(fecha)) return { ...base, error: 'Selecciona una cuenta/origen y una fecha real.' };
+    const all = [...(data.prestamosFinancieros || []).map((record) => ({ tipo: 'prestamo', record })), ...(data.ingresosFinancieros || []).map((record) => ({ tipo: 'ingreso', record }))];
+    const candidates = all.filter(({ tipo, record }) => record.activo && record.estado !== 'Anulado' && !isCloudDeletedRecord(record)
+      && record.moneda === selected.moneda && (tipo === 'ingreso' ? record.fecha : record.fechaDesembolso) <= fecha
+      && (selected.tipo === 'ingreso' ? tipo === 'ingreso' && record.id === selected.id : record.cuentaBancoId === selected.id))
+      .sort((a, b) => String(a.tipo === 'ingreso' ? a.record.fecha : a.record.fechaDesembolso).localeCompare(String(b.tipo === 'ingreso' ? b.record.fecha : b.record.fechaDesembolso)) || a.tipo.localeCompare(b.tipo) || a.record.id.localeCompare(b.record.id));
+    if (!candidates.length) return { ...base, error: 'No hay fondos activos de este origen para esa fecha.' };
+    const bankId = candidates[0].record.cuentaBancoId;
+    base.bancoId = bankId; base.monedaOrigen = selected.moneda;
+    if (!Number.isFinite(amount) || amount <= 0 || !Number.isSafeInteger(Math.round(amount * 100)) || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.00001) return { ...base, error: 'Indica el importe a financiar en C$ con hasta dos decimales.' };
+    let required = amount;
+    if (selected.moneda === 'USD') {
+      const saved = isFondosCompartidos(original) && original.seleccion === seleccion && original.conversion?.fechaOperacion === fecha ? original.conversion : null;
+      const rate = saved ? null : (data.tiposCambioFinancieros || []).filter((item) => item.bancoId === bankId && item.fecha <= fecha).sort((a, b) => b.fecha.localeCompare(a.fecha) || b.version - a.version)[0];
+      if (!saved && !rate) return { ...base, error: 'Registra el tipo de cambio de compra de esta cuenta para la fecha de la operación.' };
+      const conversion = saved ? { ...saved } : { monedaOrigen: 'USD', monedaDestino: 'NIO', tipo: 'compra', tasa: rate.compra, tipoCambioId: rate.id, bancoId: rate.bancoId, bancoNombre: rate.bancoNombre, fechaTipoCambio: rate.fecha, version: rate.version, fechaOperacion: fecha };
+      required = roundMoney(amount / conversion.tasa);
+      base.conversion = { ...conversion, montoOrigen: required };
+    }
+    if (!Number.isFinite(required) || required < 0.01) return { ...base, error: 'El consumo en la moneda de origen debe ser al menos 0.01.' };
+    let pending = Math.round(required * 100);
+    for (const { tipo, record } of candidates) {
+      const balance = getFuenteFinancieraFondos(tipo, record.id, data, excludeKey);
+      if (balance.error) return { ...base, error: balance.error };
+      const available = balance.disponibles;
+      if (available < 0) return { ...base, error: 'Una fuente tiene disponible negativo. Revisa sus aplicaciones.' };
+      const used = Math.min(pending, Math.round(available * 100));
+      if (used > 0) base.fuentes.push({ tipo, id: record.id, monto: used / 100 });
+      pending -= used;
+      if (!pending) break;
+    }
+    return pending ? { ...base, error: `Fondos insuficientes. Faltan ${financieroMoney(pending / 100, selected.moneda)} en el origen.` } : base;
+  }
+
+  function validateFondosCompartidos(operation, collection, data = appData, options = {}) {
+    const funding = operation.financiamiento;
+    if (!isFondosCompartidos(funding)) return '';
+    if (funding.error) return cleanText(funding.error);
+    const fecha = operation.fechaPago || operation.fecha, monto = Number(operation.montoPagado ?? operation.monto);
+    const active = operation.activo !== false && !['Anulado', 'Eliminado'].includes(operation.estado);
+    if (operation.revisionFinanciamiento !== undefined && (!Number.isSafeInteger(operation.revisionFinanciamiento) || operation.revisionFinanciamiento < 0)) return 'Revisión de fondos inválida.';
+    if (!options.allowHistorical && isWorkPeriodClosed(fecha?.slice(0, 7))) return 'No se pueden modificar fondos de un período cerrado.';
+    const validMoney = (value) => typeof value === 'number' && Number.isFinite(value) && value > 0 && Number.isSafeInteger(Math.round(value * 100)) && Math.abs(value * 100 - Math.round(value * 100)) < 0.00001;
+    if (!['financiero', 'financiero_mixto'].includes(funding.origen) || funding.moneda !== 'NIO' || !['NIO', 'USD'].includes(funding.monedaOrigen) || !parseFondosSeleccion(funding.seleccion) || !bancoFechaValida(fecha)) return 'Origen de fondos o fecha inválidos.';
+    if (!validMoney(funding.montoFinanciero) || funding.montoFinanciero > monto || (funding.origen === 'financiero' && funding.montoFinanciero !== monto) || (funding.origen === 'financiero_mixto' && funding.montoFinanciero >= monto)) return 'Revisa la parte financiada y la parte de recursos propios.';
+    if (collection === 'casaGastos' && operation.estadoCreditoCasa === 'Pendiente') return 'Un gasto Casa a crédito pendiente todavía no utiliza fondos. Selecciona recursos propios hasta registrar el pago.';
+    if (operation.cuentaBancoId && operation.cuentaBancoId !== funding.bancoId) return 'La cuenta de pago debe coincidir con la cuenta de origen de los fondos.';
+    const fx = funding.conversion;
+    if (funding.monedaOrigen === 'USD') {
+      if (!fx || fx.monedaOrigen !== 'USD' || fx.monedaDestino !== 'NIO' || fx.tipo !== 'compra' || fx.bancoId !== funding.bancoId || !cleanText(fx.bancoNombre) || !cleanText(fx.tipoCambioId) || !Number.isSafeInteger(fx.version) || fx.version < 1 || !bancoFechaValida(fx.fechaTipoCambio) || fx.fechaTipoCambio > fecha || fx.fechaOperacion !== fecha || typeof fx.tasa !== 'number' || !Number.isFinite(fx.tasa) || fx.tasa <= 0 || !Number.isSafeInteger(Math.round(fx.tasa * 1000000)) || Math.abs(fx.tasa * 1000000 - Math.round(fx.tasa * 1000000)) > 0.00001 || !validMoney(fx.montoOrigen) || fx.montoOrigen !== roundMoney(funding.montoFinanciero / fx.tasa)) return 'La conversión no corresponde a la cuenta, fecha o importe. Conserva el cambio original de la operación.';
+    } else if (fx) return 'Los fondos en C$ no llevan conversión de USD.';
+    if (!Array.isArray(funding.fuentes) || !funding.fuentes.length) return 'Falta el reparto de fondos por origen.';
+    const seen = new Set(), selected = parseFondosSeleccion(funding.seleccion);
+    for (const part of funding.fuentes) {
+      const key = `${part.tipo}:${part.id}`, source = getFuenteFinanciera(part.tipo, part.id, data);
+      if (!['prestamo', 'ingreso'].includes(part.tipo) || !source || seen.has(key) || !validMoney(part.monto) || source.moneda !== funding.monedaOrigen || getCanonicalBankId(source.cuentaBancoId, data.cuentasBancos || []) !== getCanonicalBankId(funding.bancoId, data.cuentasBancos || []) || (selected.tipo === 'cuenta' ? selected.id !== funding.bancoId : part.tipo !== 'ingreso' || part.id !== selected.id) || selected.moneda !== funding.monedaOrigen) return 'Revisa los orígenes del reparto; deben pertenecer a la misma cuenta y moneda.';
+      seen.add(key);
+      if (active && (!source.activo || source.estado === 'Anulado' || isCloudDeletedRecord(source) || fecha < (part.tipo === 'ingreso' ? source.fecha : source.fechaDesembolso))) return 'El reparto incluye una fuente anulada o posterior a la operación.';
+      if (active && !options.allowHistorical && part.tipo === 'ingreso' && (source._ingresoConflict || source._ingresoLocalOnly)) return 'Resuelve el conflicto o confirma el ingreso antes de utilizar sus fondos.';
+      if (active && !options.skipAvailability && part.monto > getFuenteFinancieraFondos(part.tipo, part.id, data, fondosOperacionKey(collection, operation.id)).disponibles) return 'Fondos insuficientes en uno de los orígenes.';
+    }
+    if (sumMoney(funding.fuentes, (part) => part.monto) !== (fx ? fx.montoOrigen : funding.montoFinanciero)) return 'El reparto debe cubrir exactamente el consumo de la moneda de origen.';
+    return '';
+  }
+
+  function fondosControlFields(raw, funding = raw.financiamiento || raw.financiamientoContado) {
+    if (!raw.fondosControlado && !isFondosCompartidos(funding)) return {};
+    return { fondosControlado: true, ...(raw._fondosLocalOnly ? { _fondosLocalOnly: true } : {}), _fondosPending: raw._fondosPending === true, ...(raw._fondosSyncedSignature ? { _fondosSyncedSignature: raw._fondosSyncedSignature } : {}), ...(raw.fondosMutationId ? { fondosMutationId: raw.fondosMutationId } : {}), revisionFinanciamiento: raw.revisionFinanciamiento || 0 };
+  }
+
+  function fondosOperationSignature(record) {
+    const value = { ...record };
+    ['revisionFinanciamiento', 'fondosMutationId', '_fondosPending', '_fondosSyncedSignature', '_fondosLocalOnly', '_cloudSync', '_cloudImport', '_deleted', '_cloudDeleted', 'eliminadoEnNube'].forEach((key) => delete value[key]);
+    return bankConsolidationSignature(value);
+  }
+
+  function markFondosPending(data) {
+    ['pagosProveedores', 'comprasProveedores', 'gastos', 'casaGastos'].forEach((collection) => {
+      (data[collection] || []).forEach((record) => {
+        if (!record._fondosLocalOnly && (record.fondosControlado || isFondosCompartidos(record.financiamiento || record.financiamientoContado))) {
+          record.fondosControlado = true;
+          record._fondosPending = record._fondosSyncedSignature !== fondosOperationSignature(record);
+        }
+      });
+    });
+  }
+
+  function restoreFondosCloudPending() {
+    const modules = { pagosProveedores: 'Pagos a proveedores', comprasProveedores: 'Proveedores / Compras', gastos: 'Gastos', casaGastos: 'Casa' };
+    for (const [collection, module] of Object.entries(modules)) {
+      for (const record of appData[collection] || []) if (!record._fondosLocalOnly && record._fondosPending && !getPendingSessionChanges().some((change) => change.module === module && change.recordId === record.id)) registerSessionChange({ module, recordId: record.id, operation: record.activo === false ? 'anular' : 'editar' });
+    }
+  }
+
   function normalizeFinanciamientoPago(raw) {
     const source = isPlainObject(raw) ? raw : {};
+    if (isFondosCompartidos(source)) return { ...source, fuentes: Array.isArray(source.fuentes) ? source.fuentes.map((part) => ({ ...part })) : source.fuentes, ...(source.conversion ? { conversion: { ...source.conversion } } : {}) };
     return {
       origen: cleanText(source.origen || 'sin_clasificar'),
       prestamoId: cleanText(source.prestamoId),
@@ -19679,22 +20154,25 @@ Notas importantes:
     const fields = new FormData(form);
     if (!fields.has('fondosOrigen')) return existing;
     const origen = cleanText(fields.get('fondosOrigen'));
-    const fecha = cleanText(fields.get('fechaPago') || fields.get('fechaCompra'));
+    const fecha = cleanText(fields.get('fechaPago') || fields.get('fechaCompra') || fields.get('fecha'));
     if (!existing) {
       try { existing = JSON.parse(form.querySelector('[data-funding-fields]')?.dataset.fundingOriginal || 'null'); } catch (_) {}
     }
     if (existing) existing = { ...existing, pagoId: form.querySelector('[data-funding-fields]')?.dataset.fundingPaymentId || '' };
+    if (['financiero', 'financiero_mixto'].includes(origen)) {
+      const block = form.querySelector('[data-funding-fields]');
+      return buildFondosCompartidos(origen, cleanText(fields.get('fondosPrestamoId')), origen === 'financiero' ? monto : Number(fields.get('fondosMontoPrestamo')), fecha, block?.dataset.fundingOperationKey || fondosOperacionKey('pagosProveedores', existing?.pagoId || ''), existing);
+    }
     return buildFinanciamientoPago(origen, cleanText(fields.get('fondosPrestamoId')), origen === 'prestamo' ? monto : fields.get('fondosMontoPrestamo'), fecha, cleanText(fields.get('fondosTipoCambioId')), existing);
   }
 
   function getPrestamoFondos(prestamoId, pagos = appData.pagosProveedores, excludePagoId = '', loans = appData.prestamosFinancieros) {
-    const loan = (loans || []).find((record) => record.id === prestamoId);
-    const utilizados = sumMoney((pagos || []).filter((pago) => pago.activo !== false && pago.estado !== 'Anulado' && pago.id !== excludePagoId && (pago.financiamiento?.prestamoId === prestamoId || pago.financiamiento?.aplicaciones?.some((item) => item.prestamoId === prestamoId))), (pago) => getFinanciamientoMontoMoneda(pago.financiamiento, prestamoId));
-    return { utilizados, disponibles: roundMoney((loan?.netoRecibido || 0) - utilizados) };
+    return getFuenteFinancieraFondos('prestamo', prestamoId, { ...appData, prestamosFinancieros: loans, pagosProveedores: pagos }, excludePagoId ? fondosOperacionKey('pagosProveedores', excludePagoId) : '');
   }
 
   function validateFinanciamientoPago(pago, existing = null, data = appData, options = {}) {
     const raw = pago.financiamiento;
+    if (isFondosCompartidos(raw)) return validateFondosCompartidos(pago, 'pagosProveedores', data, { ...options, allowHistorical: options.allowHistorical || existing === pago });
     if (!raw) return '';
     if (raw.aplicaciones !== undefined && !Array.isArray(raw.aplicaciones)) return 'El reparto de préstamos debe ser una lista.';
     const funding = normalizeFinanciamientoPago(raw);
@@ -19719,7 +20197,7 @@ Notas importantes:
         seen.add(item.prestamoId);
         if (pago.activo !== false && pago.estado !== 'Anulado') {
           if (!member.activo || member.estado === 'Anulado' || pago.fechaPago < member.fechaDesembolso) return 'El reparto incluye un préstamo anulado o aún no desembolsado.';
-          if (!options.skipAvailability && item.monto > getPrestamoFondos(member.id, data.pagosProveedores, existing?.id || pago.id, data.prestamosFinancieros).disponibles) return 'Fondos insuficientes en uno de los préstamos del reparto.';
+          if (!options.skipAvailability && item.monto > getFuenteFinancieraFondos('prestamo', member.id, data, fondosOperacionKey('pagosProveedores', existing?.id || pago.id)).disponibles) return 'Fondos insuficientes en uno de los préstamos del reparto.';
         }
       }
       if (sumMoney(funding.aplicaciones, (item) => item.monto) !== getFinanciamientoMontoMoneda(funding)) return 'El reparto no cubre exactamente el importe financiado.';
@@ -19737,7 +20215,7 @@ Notas importantes:
     if (!loan.activo || loan.estado === 'Anulado') return 'El préstamo seleccionado está anulado.';
     if (pago.fechaPago < loan.fechaDesembolso) return 'La fecha de pago no puede ser anterior al desembolso del préstamo.';
     if (!pool && !options.skipAvailability) {
-      const available = getPrestamoFondos(loan.id, data.pagosProveedores, existing?.id || pago.id, data.prestamosFinancieros).disponibles;
+      const available = getFuenteFinancieraFondos('prestamo', loan.id, data, fondosOperacionKey('pagosProveedores', existing?.id || pago.id)).disponibles;
       if (getFinanciamientoMontoMoneda(funding) > available) return `Fondos insuficientes del préstamo. Disponible para este pago: ${financieroMoney(available, loan.moneda)}.`;
     }
     return '';
@@ -19754,6 +20232,10 @@ Notas importantes:
       const pagos = (data.pagosProveedores || []).filter((pago) => pago.activo !== false && pago.autoGenerado && pago.compraProveedorId === compra.id);
       if (pagos.length !== 1 || JSON.stringify(normalizeFinanciamientoPago(pagos[0].financiamiento)) !== JSON.stringify(normalizeFinanciamientoPago(compra.financiamientoContado))) errors.push(`Compra ${compra.facturaReferencia || compra.id}: el origen de fondos no coincide con su pago automático.`);
     });
+    ['gastos', 'casaGastos'].forEach((collection) => (data[collection] || []).forEach((record) => {
+      const error = validateFondosCompartidos(record, collection, data, { allowHistorical: true });
+      if (error) errors.push(`${collection} ${record.id}: ${error}`);
+    }));
     return errors;
   }
 
@@ -19798,20 +20280,42 @@ Notas importantes:
       <p class="compact-note">Al guardar se registrará este reparto en un único pago al proveedor.</p>`;
   }
 
-  function renderOrigenFondos(source = null, pagoId = '', disabled = false) {
+  function formatFondosCompartidos(funding) {
+    const sources = getFondosPartes(funding).map((part) => {
+      const record = getFuenteFinanciera(part.tipo, part.id);
+      return `${part.tipo === 'ingreso' ? 'Ingreso' : 'Préstamo'} ${record?.concepto || record?.referencia || part.id}: ${financieroMoney(part.monto, funding.monedaOrigen)}`;
+    }).join(' + ');
+    return `${funding.origen === 'financiero_mixto' ? 'Mixto · ' : ''}${sources} · ${financieroMoney(funding.montoFinanciero, 'NIO')}${funding.conversion ? ` · compra C$ ${funding.conversion.tasa}/USD · ${funding.conversion.bancoNombre} · ${formatDate(funding.conversion.fechaTipoCambio)} · v${funding.conversion.version}` : ''}`;
+  }
+
+  function renderFondosCompartidosPreview(funding) {
+    if (funding.error) return `<p class="notice">${escapeHtml(funding.error)}</p>`;
+    return `<p class="notice">${escapeHtml(formatFondosCompartidos(funding))}. Se conserva este reparto y el cambio aplicado.</p>`;
+  }
+
+  function getFondosFormMonto(form, fields = new FormData(form)) {
+    if (!form.matches('[data-compra-form]')) return parseMoney(fields.get('montoPagado') || fields.get('monto') || 0);
+    const existing = (appData.comprasProveedores || []).find((item) => item.id === cleanText(fields.get('id')));
+    const calculated = getCompraProveedorCalculations({ ...(existing || {}), totalCompra: parseMoney(fields.get('totalCompra')), ajustes: existing?.ajustes || [] });
+    return roundMoney(Math.max(calculated.totalAjustado - (existing ? calculateManualPagadoForCompra(existing.id, appData.pagosProveedores) : 0), 0));
+  }
+
+  function renderOrigenFondos(source = null, pagoId = '', disabled = false, collection = 'pagosProveedores') {
     const funding = source ? normalizeFinanciamientoPago(source) : { origen: 'propios', prestamoId: '', montoPrestamo: 0 };
     const loans = (appData.prestamosFinancieros || []).filter((loan) => (loan.activo && ['NIO','USD'].includes(loan.moneda)) || loan.id === funding.prestamoId);
-    return `<fieldset class="funding-fields" data-funding-fields data-funding-original="${escapeHtml(JSON.stringify(source || null))}" data-funding-payment-id="${escapeHtml(pagoId)}" ${disabled ? 'disabled' : ''}>
+    return `<fieldset class="funding-fields" data-funding-fields data-funding-original="${escapeHtml(JSON.stringify(source || null))}" data-funding-payment-id="${escapeHtml(pagoId)}" data-funding-operation-key="${escapeHtml(fondosOperacionKey(collection, pagoId))}" ${disabled ? 'disabled' : ''}>
       <legend>Origen de fondos</legend>
       <div class="form-grid">
         <label class="form-field"><span>Financiar este pago con</span><select name="fondosOrigen" data-funding-origin>
           <option value="sin_clasificar" ${funding.origen === 'sin_clasificar' ? 'selected' : ''}>Sin clasificar</option>
           <option value="propios" ${funding.origen === 'propios' ? 'selected' : ''}>Recursos propios</option>
-          <option value="prestamo" ${funding.origen === 'prestamo' ? 'selected' : ''}>Préstamo</option>
-          <option value="mixto" ${funding.origen === 'mixto' ? 'selected' : ''}>Mixto: propios y préstamo</option>
+          <option value="financiero" ${funding.origen === 'financiero' ? 'selected' : ''}>Préstamos e Ingresos</option>
+          <option value="financiero_mixto" ${funding.origen === 'financiero_mixto' ? 'selected' : ''}>Mixto: propios y fondos de Financiero</option>
+          ${collection === 'pagosProveedores' ? `<option value="prestamo" ${funding.origen === 'prestamo' ? 'selected' : ''}>Préstamo</option>
+          <option value="mixto" ${funding.origen === 'mixto' ? 'selected' : ''}>Mixto: propios y préstamo</option>` : ''}
         </select></label>
-        <label class="form-field" data-funding-loan-field><span>Préstamo en C$ o USD</span><select name="fondosPrestamoId" data-funding-loan><option value="">Seleccionar préstamo o cuenta</option>${buildFinancieroCuentaGroups().filter((group) => group.prestamos > 1).map((group) => `<option value="${escapeHtml('pool:' + encodeURIComponent(JSON.stringify([group.cuentaBancoId, group.moneda])))}" ${funding.prestamoId === 'pool:' + encodeURIComponent(JSON.stringify([group.cuentaBancoId, group.moneda])) ? 'selected' : ''}>Cuenta combinada · ${escapeHtml(group.cuentaNombre)} · ${group.prestamos} préstamos · disponible ${escapeHtml(financieroMoney(group.disponible,group.moneda))}</option>`).join('')}${loans.map((loan) => `<option value="${escapeHtml(loan.id)}" ${loan.id === funding.prestamoId ? 'selected' : ''}>${escapeHtml(loan.acreedor)} · ${escapeHtml(loan.referencia)} · disponible ${escapeHtml(financieroMoney(getPrestamoFondos(loan.id, appData.pagosProveedores, pagoId).disponibles, loan.moneda))}${loan.activo ? '' : ' · anulado'}</option>`).join('')}</select></label>
-        <label class="form-field" data-funding-amount-field><span>Parte pagada con préstamo C$</span><input type="number" min="0.01" step="0.01" name="fondosMontoPrestamo" value="${Number.isFinite(funding.montoPrestamo) && funding.montoPrestamo > 0 ? funding.montoPrestamo : ''}"></label>
+        <label class="form-field" data-funding-loan-field><span>Cuenta u origen en C$ o US$</span><select name="fondosPrestamoId" data-funding-loan><option value="">Seleccionar préstamo o cuenta</option>${buildFinancieroDisponibleCuentaGroups().map((group) => { const value = fondosSeleccion('cuenta', group.cuentaBancoId, group.moneda); return `<option value="${escapeHtml(value)}" ${funding.seleccion === value ? 'selected' : ''}>Préstamos + Ingresos · ${escapeHtml(group.cuentaNombre)} · ${escapeHtml(financieroMoney(group.disponible, group.moneda))}</option>`; }).join('')}${(appData.ingresosFinancieros || []).filter((record) => record.activo || getFondosPartes(funding).some((part) => part.tipo === 'ingreso' && part.id === record.id)).map((record) => { const value = fondosSeleccion('ingreso', record.id, record.moneda); return `<option value="${escapeHtml(value)}" ${funding.seleccion === value ? 'selected' : ''}>Ingreso · ${escapeHtml(record.concepto)} · ${escapeHtml(getBankAccountDisplayName(record.cuentaBancoId, record.cuentaBancoNombre))} · ${escapeHtml(financieroMoney(getFuenteFinancieraFondos('ingreso', record.id, appData, fondosOperacionKey(collection, pagoId)).disponibles, record.moneda))}</option>`; }).join('')}${buildFinancieroCuentaGroups().filter((group) => group.prestamos > 1).map((group) => `<option value="${escapeHtml('pool:' + encodeURIComponent(JSON.stringify([group.cuentaBancoId, group.moneda])))}" ${funding.prestamoId === 'pool:' + encodeURIComponent(JSON.stringify([group.cuentaBancoId, group.moneda])) ? 'selected' : ''}>Cuenta combinada · ${escapeHtml(group.cuentaNombre)} · ${group.prestamos} préstamos · disponible ${escapeHtml(financieroMoney(group.disponible,group.moneda))}</option>`).join('')}${loans.map((loan) => `<option value="${escapeHtml(loan.id)}" ${loan.id === funding.prestamoId ? 'selected' : ''}>${escapeHtml(loan.acreedor)} · ${escapeHtml(loan.referencia)} · disponible ${escapeHtml(financieroMoney(getPrestamoFondos(loan.id, appData.pagosProveedores, pagoId).disponibles, loan.moneda))}${loan.activo ? '' : ' · anulado'}</option>`).join('')}</select></label>
+        <label class="form-field" data-funding-amount-field><span>Parte pagada con fondos de Financiero C$</span><input type="number" min="0.01" step="0.01" name="fondosMontoPrestamo" value="${isFondosCompartidos(funding) ? funding.montoFinanciero : Number.isFinite(funding.montoPrestamo) && funding.montoPrestamo > 0 ? funding.montoPrestamo : ''}"></label>
       </div>
       <input type="hidden" name="fondosTipoCambioId" value="">
       <p class="notice" data-funding-conversion aria-live="polite" hidden></p>
@@ -19826,14 +20330,25 @@ Notas importantes:
       let original = null;
       try { original = JSON.parse(block.dataset.fundingOriginal || 'null'); } catch (_) {}
       const sync = () => {
-        const financed = ['prestamo', 'mixto'].includes(origin.value);
+        const shared = ['financiero', 'financiero_mixto'].includes(origin.value);
+        Array.from(loanSelect.options).forEach((option) => { if (option.value) { option.hidden = shared !== option.value.startsWith('fondos:'); option.disabled = option.hidden; } });
+        if (loanSelect.selectedOptions[0]?.disabled) loanSelect.value = '';
+        const mixed = ['mixto', 'financiero_mixto'].includes(origin.value);
+        const financed = shared || ['prestamo', 'mixto'].includes(origin.value);
         block.querySelector('[data-funding-loan-field]').hidden = !financed;
-        block.querySelector('[data-funding-amount-field]').hidden = origin.value !== 'mixto';
+        block.querySelector('[data-funding-amount-field]').hidden = !mixed;
         loanSelect.disabled = !financed; loanSelect.required = financed;
-        amount.disabled = origin.value !== 'mixto'; amount.required = origin.value === 'mixto';
+        amount.disabled = !mixed; amount.required = mixed;
         rateInput.value = ''; notice.hidden = true; notice.textContent = '';
         const poolPreview = block.querySelector('[data-funding-pool-preview]');
         if (poolPreview) { poolPreview.hidden = true; poolPreview.replaceChildren(); }
+        if (shared && poolPreview) {
+          const fields = new FormData(form), fecha = cleanText(fields.get('fechaPago') || fields.get('fechaCompra') || fields.get('fecha'));
+          const total = getFondosFormMonto(form, fields);
+          const funding = buildFondosCompartidos(origin.value, loanSelect.value, mixed ? parseMoney(amount.value) : total, fecha, block.dataset.fundingOperationKey || '', original);
+          poolPreview.hidden = false; poolPreview.innerHTML = renderFondosCompartidosPreview(funding) + (mixed && !funding.error ? `<p class="compact-note">Recursos propios: ${escapeHtml(financieroMoney(roundMoney(total - funding.montoFinanciero), 'NIO'))}.</p>` : '');
+          return;
+        }
         const pool = parseFinanciamientoPool(loanSelect.value);
         if (financed && pool && poolPreview) {
           const fields = new FormData(form), fecha = cleanText(fields.get('fechaPago') || fields.get('fechaCompra'));
@@ -19874,6 +20389,7 @@ Notas importantes:
   }
 
   function formatOrigenFondos(pago) {
+    if (isFondosCompartidos(pago.financiamiento)) return formatFondosCompartidos(pago.financiamiento);
     if (!pago.financiamiento || pago.financiamiento.origen === 'sin_clasificar') return 'Fondos sin clasificar';
     const funding = pago.financiamiento;
     if (funding.origen === 'propios') return 'Recursos propios';
@@ -19882,6 +20398,18 @@ Notas importantes:
   }
 
   function validateFundingReplacement(incoming) {
+    for (const operation of getFondosOperaciones(appData).filter((item) => item.activo && isFondosCompartidos(item.record.financiamiento))) {
+      const replacement = (incoming[operation.collection] || []).find((item) => item.id === operation.record.id);
+      if (!replacement || replacement.activo === false || JSON.stringify(normalizeFinanciamientoPago(replacement.financiamiento)) !== JSON.stringify(normalizeFinanciamientoPago(operation.record.financiamiento))) return 'El respaldo omite o cambia una operación con fondos aplicados. Usa fusión y conserva sus orígenes.';
+    }
+    for (const source of appData.ingresosFinancieros || []) {
+      const used = getFuenteFinancieraFondos('ingreso', source.id).utilizados;
+      if (!used) continue;
+      const replacement = (incoming.ingresosFinancieros || []).find((item) => item.id === source.id);
+      if (!replacement) return 'El respaldo omite un ingreso con fondos utilizados.';
+      const error = validateFuenteFinancieraTransition('ingreso', source, replacement, used);
+      if (error) return error;
+    }
     for (const pago of appData.pagosProveedores || []) {
       if (!pago.financiamiento?.prestamoId) continue;
       const replacement = (incoming.pagosProveedores || []).find((record) => record.id === pago.id);
@@ -19900,7 +20428,7 @@ Notas importantes:
   }
 
   function persistFundingOperation(before, targetState) {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(appData)); return true; }
+    try { markFondosPending(appData); localStorage.setItem(STORAGE_KEY, JSON.stringify(appData)); return true; }
     catch (_) {
       appData = before;
       notifyAction(targetState, 'No se pudo guardar la distribución de fondos. No se aplicaron cambios.', 'error');
@@ -19911,7 +20439,7 @@ Notas importantes:
   function getConversionesProveedores(pagos = appData.pagosProveedores) {
     return (pagos || []).filter((pago) => pago.financiamiento?.conversion?.monedaOrigen === 'USD').map((pago) => {
       const funding = pago.financiamiento, fx = funding.conversion;
-      return { pagoId: pago.id, fecha: pago.fechaPago, proveedor: pago.proveedorNombre || '', referencia: pago.facturaReferencia || '', prestamoId: funding.prestamoId, montoNio: funding.montoPrestamo, montoUsd: fx.montoOrigen, tasa: fx.tasa, banco: fx.bancoNombre, fechaTipoCambio: fx.fechaTipoCambio, tipoCambioId: fx.tipoCambioId, version: fx.version, activo: pago.activo !== false && pago.estado !== 'Anulado' };
+      return { pagoId: pago.id, fecha: pago.fechaPago, proveedor: pago.proveedorNombre || '', referencia: pago.facturaReferencia || '', prestamoId: funding.prestamoId, montoNio: isFondosCompartidos(funding) ? funding.montoFinanciero : funding.montoPrestamo, montoUsd: fx.montoOrigen, tasa: fx.tasa, banco: fx.bancoNombre, fechaTipoCambio: fx.fechaTipoCambio, tipoCambioId: fx.tipoCambioId, version: fx.version, activo: pago.activo !== false && pago.estado !== 'Anulado' };
     });
   }
 
@@ -19923,20 +20451,36 @@ Notas importantes:
   function remapFinanciamientoConversion(funding, bankMap) {
     if (!funding) return funding;
     const result = normalizeFinanciamientoPago(funding);
+    if (isFondosCompartidos(result)) {
+      const selected = parseFondosSeleccion(result.seleccion);
+      result.bancoId = bankMap.get(result.bancoId) || result.bancoId;
+      if (selected?.tipo === 'cuenta') result.seleccion = fondosSeleccion('cuenta', bankMap.get(selected.id) || selected.id, selected.moneda);
+      if (result.conversion) result.conversion = { ...result.conversion, bancoId: bankMap.get(result.conversion.bancoId) || result.conversion.bancoId };
+      return result;
+    }
     const pool = parseFinanciamientoPool(result.prestamoId);
     if (pool) result.prestamoId = 'pool:' + encodeURIComponent(JSON.stringify([bankMap.get(pool.cuentaBancoId) || pool.cuentaBancoId, pool.moneda]));
     if (result.conversion) result.conversion.bancoId = bankMap.get(result.conversion.bancoId) || result.conversion.bancoId;
     return result;
   }
 
+  function renderFuenteFinancieraAplicaciones(tipo, id) {
+    const source = getFuenteFinanciera(tipo, id), operations = getFondosOperaciones();
+    const records = operations.flatMap((operation) => getFondosPartes(operation.record.financiamiento).filter((part) => part.tipo === tipo && part.id === id).map((part) => ({ ...operation, montoOrigen: part.monto })));
+    const loaded = new Set(operations.map((operation) => operation.key));
+    const pending = (Array.isArray(source?.fondosAplicaciones) ? source.fondosAplicaciones : []).filter((reservation) => !loaded.has(fondosReservaKey(reservation)));
+    if (!records.length && !pending.length) return '<p class="compact-note">Sin aplicaciones de fondos.</p>';
+    const labels = { pagosProveedores: 'Pago a proveedor', gastos: 'Gasto del negocio', casaGastos: 'Casa' };
+    return `<details><summary>Aplicaciones de fondos (${records.length + pending.length})</summary><ul class="funding-applications">${records.map((operation) => {
+      const record = operation.record, fx = record.financiamiento?.conversion;
+      const compra = operation.collection === 'pagosProveedores' ? (appData.comprasProveedores || []).find((item) => item.id === record.compraProveedorId) : null;
+      return `<li>${escapeHtml(labels[operation.collection])} · ${escapeHtml(formatDate(operation.fecha))} · ${escapeHtml([record.proveedorNombre, record.facturaReferencia || record.tipoGastoNombre || record.descripcion || record.id].filter(Boolean).join(' · '))} · ${escapeHtml(financieroMoney(operation.montoOrigen, source.moneda))}${compra?.ventaIds?.length ? ` · OC ${escapeHtml(compra.ventaIds.map(getCompraOcLabel).join(', '))}` : ''}${fx ? ` · compra C$ ${escapeHtml(fx.tasa)}/USD · ${escapeHtml(fx.bancoNombre)} · ${escapeHtml(formatDate(fx.fechaTipoCambio))} · v${fx.version}` : ''} · ${operation.activo ? 'Aplicado' : 'Anulado; fondos liberados'}</li>`;
+    }).join('')}${pending.map((reservation) => `<li>${escapeHtml(reservation.pagoId)} · ${escapeHtml(financieroMoney(reservation.monto, source.moneda))} · Operación aún no descargada; fondos reservados.</li>`).join('')}</ul></details>`;
+  }
+
   function renderPrestamoAplicaciones(loan) {
-    const pagos = (appData.pagosProveedores || []).filter((pago) => (pago.financiamiento?.prestamoId === loan.id || pago.financiamiento?.aplicaciones?.some((item) => item.prestamoId === loan.id)));
     const fondos = getPrestamoFondos(loan.id);
-    return `<div class="financial-loan-values"><p><strong>Utilizado en compras:</strong> ${escapeHtml(financieroMoney(fondos.utilizados, loan.moneda))}</p><p><strong>Disponible del desembolso:</strong> ${escapeHtml(financieroMoney(fondos.disponibles, loan.moneda))}</p></div>
-      ${pagos.length ? `<details><summary>Aplicaciones a proveedores (${pagos.length})</summary><ul class="funding-applications">${pagos.map((pago) => {
-        const compra = appData.comprasProveedores.find((record) => record.id === pago.compraProveedorId);
-        return `<li>${escapeHtml(formatDate(pago.fechaPago))} · ${escapeHtml(pago.proveedorNombre)} · ${escapeHtml(pago.facturaReferencia)} · ${escapeHtml(financieroMoney(getFinanciamientoMontoMoneda(pago.financiamiento, loan.id), loan.moneda))}${pago.financiamiento.conversion ? ` · compra C$ ${escapeHtml(pago.financiamiento.conversion.tasa)}/USD · ${escapeHtml(getBankAccountDisplayName(pago.financiamiento.conversion.bancoId, pago.financiamiento.conversion.bancoNombre))} · ${escapeHtml(formatDate(pago.financiamiento.conversion.fechaTipoCambio))} · v${pago.financiamiento.conversion.version}` : ''} · ${pago.activo ? 'Aplicado' : 'Anulado; fondos liberados'}${compra?.ventaIds?.length ? ` · OC ${escapeHtml(compra.ventaIds.map(getCompraOcLabel).join(', '))}` : ''}</li>`;
-      }).join('')}</ul></details>` : '<p class="compact-note">Sin aplicaciones a proveedores.</p>'}`;
+    return `<div class="financial-loan-values"><p><strong>Fondos utilizados:</strong> ${escapeHtml(financieroMoney(fondos.utilizados, loan.moneda))}</p><p><strong>Disponible del desembolso:</strong> ${escapeHtml(financieroMoney(fondos.disponibles, loan.moneda))}</p></div>${renderFuenteFinancieraAplicaciones('prestamo', loan.id)}`;
   }
 
   function bancoCentavos(value) {
@@ -20489,8 +21033,218 @@ Notas importantes:
     return result;
   }
 
+  // E1: ingresos locales; no generan ventas, pagos ni escrituras remotas.
+  function normalizeIngresoFinanciero(raw) {
+    const record = isPlainObject(raw) ? raw : {};
+    return { ...record, id: cleanText(record.id), concepto: cleanText(record.concepto), fecha: cleanText(record.fecha), cuentaBancoId: cleanText(record.cuentaBancoId), cuentaBancoNombre: cleanText(record.cuentaBancoNombre), moneda: cleanText(record.moneda), ventaBruta: Number(record.ventaBruta), costo: Number(record.costo), observacion: cleanText(record.observacion), activo: record.activo !== false, createdAt: cleanText(record.createdAt), updatedAt: cleanText(record.updatedAt), revisionIngreso: record.revisionIngreso ?? 0 };
+  }
+
+  function ingresoCloudRecord(record) {
+    // Solo el contrato compartido: nunca publicar pendientes o conflictos locales.
+    const result = {};
+    ['id', 'concepto', 'fecha', 'cuentaBancoId', 'cuentaBancoNombre', 'moneda', 'ventaBruta', 'costo', 'observacion', 'activo', 'createdAt', 'updatedAt', 'motivoAnulacion', 'anuladoAt', 'revisionIngreso', 'ingresoMutationId', 'fondosAplicaciones', 'revisionFinanciamiento', 'fondosUtilizados', '_cloudImport'].forEach((key) => {
+      if (record[key] !== undefined) result[key] = record[key];
+    });
+    return result;
+  }
+
+  function ingresoCloudSignature(record) {
+    const comparable = ingresoCloudRecord(record);
+    comparable.cuentaBancoId = getCanonicalBankId(comparable.cuentaBancoId, appData.cuentasBancos || []);
+    delete comparable.revisionIngreso;
+    delete comparable.ingresoMutationId;
+    delete comparable._cloudImport;
+    delete comparable.fondosAplicaciones;
+    delete comparable.revisionFinanciamiento;
+    delete comparable.fondosUtilizados;
+    return JSON.stringify(Object.keys(comparable).sort().map((key) => [key, comparable[key]]));
+  }
+
+  function isIngresoCloudPending(record) {
+    return record._ingresoLocalOnly !== true && (record._ingresoPending === true || !record.revisionIngreso);
+  }
+
+  function restoreIngresosCloudPending() {
+    (appData.ingresosFinancieros || []).filter(isIngresoCloudPending).forEach((record) => {
+      if (!getPendingSessionChanges().some((change) => change.module === 'Ingresos' && change.recordId === record.id)) registerSessionChange({ module: 'Ingresos', operation: record.activo ? (record.revisionIngreso ? 'editar' : 'crear') : 'anular', recordId: record.id });
+    });
+  }
+
+  function reconcileIngresosCloudRecords(remoteRecords, localRecords) {
+    const result = remoteRecords.map((record) => ({ ...normalizeIngresoFinanciero(record), _ingresoPending: false, _ingresoLocalOnly: false }));
+    for (const local of localRecords) {
+      const index = result.findIndex((record) => record.id === local.id), remote = index < 0 ? null : result[index];
+      const pending = isIngresoCloudPending(local);
+      // El mismo intento ya confirmado puede recuperarse tras pérdida de conexión o recarga.
+      if (remote && remote.ingresoMutationId === ingresoMutationToken(local) && ingresoCloudSignature(remote) === ingresoCloudSignature(local)) continue;
+      if (pending || !remote) {
+        const copy = { ...local };
+        if ((remote && pending && (remote.revisionIngreso !== local.revisionIngreso || !local.revisionIngreso)) || (!remote && local.revisionIngreso > 0)) {
+          copy._ingresoConflict = { remote: remote ? ingresoCloudRecord(remote) : null };
+        } else delete copy._ingresoConflict;
+        if (index < 0) result.push(copy); else result[index] = copy;
+      }
+    }
+    return result;
+  }
+
+  function resolveIngresoCloudConflict(id, choice) {
+    const record = (appData.ingresosFinancieros || []).find((item) => item.id === id);
+    if (!record?._ingresoConflict) return;
+    if (ingresosCloudSavingIds.has(id)) { financieroError('Espera a que termine el guardado de este ingreso.'); return; }
+    if (!requireRolePermission('registerOperations', financieroState)) return;
+    const remote = record._ingresoConflict.remote;
+    if (choice === 'local' && (!record.activo || remote?.activo === false) && !requireRolePermission('annulMovements', financieroState)) return;
+    if (choice === 'local' && (isWorkPeriodClosed(record.fecha.slice(0, 7)) || (remote && isWorkPeriodClosed(remote.fecha.slice(0, 7))))) { financieroError('El período del ingreso está cerrado.'); return; }
+    if (!window.confirm(choice === 'nube' ? '¿Usar la versión de nube mostrada y descartar los cambios locales de este ingreso?' : '¿Conservar la versión local mostrada para el próximo Guardar datos? Si la nube cambia otra vez, se volverá a detectar el conflicto.')) return;
+    let replacement;
+    if (choice === 'nube' && remote) replacement = { ...normalizeIngresoFinanciero(remote), _ingresoPending: false };
+    else if (choice === 'local') {
+      if (remote?.activo === false && record.activo) { financieroError('No se puede reactivar un ingreso anulado en nube.'); return; }
+      replacement = { ...record, revisionIngreso: remote?.revisionIngreso || 0, ingresoMutationId: generateId('ingresoCambio'), _ingresoPending: true, _ingresoLocalOnly: false, updatedAt: nowIso() };
+      if (remote) replacement.createdAt = remote.createdAt;
+      delete replacement._ingresoConflict;
+    } else { financieroError('El ingreso no existe en nube. Conserva la copia local para revisar su publicación.'); return; }
+    const transition = validateFuenteFinancieraTransition('ingreso', record, replacement, getFuenteFinancieraFondos('ingreso', id).utilizados);
+    if (transition) { financieroError(transition); return; }
+    const next = { ...appData, ingresosFinancieros: appData.ingresosFinancieros.map((item) => item.id === id ? replacement : item) };
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); }
+    catch (_) { financieroError('No se pudo guardar la decisión. No se aplicaron cambios.'); return; }
+    appData = next;
+    // Invalidar también una confirmación antigua que pudiera estar aún en vuelo.
+    registerSessionChange({ module: 'Ingresos', operation: replacement.activo ? 'editar' : 'anular', recordId: id });
+    if (choice === 'nube') {
+      sessionChangeQueue = sessionChangeQueue.filter((change) => !(change.module === 'Ingresos' && change.recordId === id));
+      syncSessionChangeQueueGlobal(); updateSessionChangeQueueDom();
+    }
+    financieroState.message = choice === 'nube' ? 'Se conservó la versión de nube mostrada.' : 'Versión local pendiente de Guardar datos.';
+    financieroState.messageType = 'success';
+    renderRoute();
+  }
+
+  function renderIngresoCloudConflict(record) {
+    if (!record._ingresoConflict) return '';
+    const remote = record._ingresoConflict.remote;
+    const detail = remote ? `${remote.concepto} · ${formatDate(remote.fecha)} · ${getBankAccountDisplayName(remote.cuentaBancoId, remote.cuentaBancoNombre)} · Venta ${financieroMoney(remote.ventaBruta, remote.moneda)} · Costo ${financieroMoney(remote.costo, remote.moneda)} · ${remote.activo ? 'Registrado' : 'Anulado'}${remote.motivoAnulacion ? ` · ${remote.motivoAnulacion}` : ''} · ${remote.observacion || ''}` : 'El ingreso no existe en nube.';
+    return `<details><summary>Conflicto: revisar versión de nube</summary><p>${escapeHtml(detail)}</p><p>La fila conserva tu versión local.</p>${canCurrentRole('registerOperations') ? `<div class="financial-loan-actions">${remote ? `<button type="button" class="secondary-action compact" data-ingreso-resolve="${escapeHtml(record.id)}" data-choice="nube">Usar versión de nube</button>` : ''}${remote?.activo !== false && (record.activo || canCurrentRole('annulMovements')) ? `<button type="button" class="secondary-action compact" data-ingreso-resolve="${escapeHtml(record.id)}" data-choice="local">Conservar versión local</button>` : ''}</div>` : ''}</details>`;
+  }
+
+  function ingresoMutationToken(record) {
+    return cleanText(record.ingresoMutationId) || `ingreso_base_${simpleHashText(ingresoCloudSignature(record))}`;
+  }
+
+  function ingresoFinancieroNeto(record) {
+    return (Math.round(record.ventaBruta * 100) - Math.round(record.costo * 100)) / 100;
+  }
+
+  function validateIngresosFinancieros(records, banks = null) {
+    if (!Array.isArray(records)) return ['Ingresos: se esperaba una lista.'];
+    const errors = [], ids = new Set();
+    records.forEach((record, index) => {
+      const label = `Ingreso ${index + 1}`;
+      if (!isPlainObject(record)) { errors.push(`${label}: registro inválido.`); return; }
+      if (typeof record.id !== 'string' || !cleanText(record.id) || sanitizeFirestoreDocId(record.id) !== record.id || ids.has(record.id)) errors.push(`${label}: ID inválido o duplicado.`);
+      ids.add(record.id);
+      if (typeof record.concepto !== 'string' || !cleanText(record.concepto) || record.concepto.length > 160) errors.push(`${label}: indica un concepto de hasta 160 caracteres.`);
+      if (!bancoFechaValida(record.fecha) || record.fecha > todayInputValue()) errors.push(`${label}: fecha inválida o futura.`);
+      if (!['NIO', 'USD'].includes(record.moneda)) errors.push(`${label}: moneda inválida.`);
+      if (record.ingresoMutationId !== undefined && (typeof record.ingresoMutationId !== 'string' || !cleanText(record.ingresoMutationId) || record.ingresoMutationId.length > 200)) errors.push(`${label}: identificador de cambio inválido.`);
+      if (record.revisionIngreso !== undefined && (!Number.isSafeInteger(record.revisionIngreso) || record.revisionIngreso < 0)) errors.push(`${label}: revisión inválida.`);
+      const money = (value) => typeof value === 'number' && Number.isFinite(value) && Number.isSafeInteger(Math.round(value * 100)) && Math.abs(value * 100 - Math.round(value * 100)) < 0.00001;
+      if (!money(record.ventaBruta) || record.ventaBruta <= 0 || !money(record.costo) || record.costo < 0 || record.costo > record.ventaBruta) errors.push(`${label}: venta positiva y costo entre cero y la venta, con hasta dos decimales.`);
+      if (!cleanText(record.cuentaBancoId) || (banks && !banks.some((bank) => bank.id === record.cuentaBancoId))) errors.push(`${label}: cuenta receptora inexistente.`);
+      if (typeof record.activo !== 'boolean' || !Number.isFinite(Date.parse(record.createdAt)) || !Number.isFinite(Date.parse(record.updatedAt))) errors.push(`${label}: estado o fechas de registro inválidos.`);
+      if (record.observacion !== undefined && (typeof record.observacion !== 'string' || record.observacion.length > 2000)) errors.push(`${label}: observación inválida.`);
+      if (record.activo === false && !cleanText(record.motivoAnulacion)) errors.push(`${label}: falta el motivo de anulación.`);
+    });
+    return errors;
+  }
+
+  function mergeIngresosFinancieros(current, incoming) {
+    // Un respaldo no elimina registros locales ni sobrescribe silenciosamente un ID.
+    const result = current.map((record) => ({ ...record }));
+    for (const record of incoming) {
+      const previous = result.find((item) => item.id === record.id);
+      if (previous) {
+        if (ingresoCloudSignature(previous) !== ingresoCloudSignature(record) || (previous.revisionIngreso || 0) !== (record.revisionIngreso || 0) || cleanText(previous.ingresoMutationId) !== cleanText(record.ingresoMutationId)) throw new Error(`El ingreso ${record.id} tiene otra versión local. Revisa el conflicto antes de importar.`);
+      } else result.push({ ...record });
+    }
+    return result;
+  }
+
+  function persistIngresosFinancieros(records, record, action) {
+    const previous = (appData.ingresosFinancieros || []).find((item) => item.id === record.id);
+    const transitionError = validateFuenteFinancieraTransition('ingreso', previous, record, getFuenteFinancieraFondos('ingreso', record.id).utilizados);
+    if (transitionError) { financieroError(transitionError); return false; }
+    const error = validateIngresosFinancieros(records, appData.cuentasBancos)[0];
+    if (error) { financieroError(error); return false; }
+    records = records.map((item) => item.id === record.id ? { ...item, _ingresoPending: true, _ingresoLocalOnly: false, ingresoMutationId: generateId('ingresoCambio') } : item);
+    const next = { ...appData, ingresosFinancieros: records, metadata: { ...appData.metadata, updatedAt: nowIso() } };
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); }
+    catch (_) { financieroError('No se pudo guardar el ingreso. No se aplicaron cambios.'); return false; }
+    appData = next;
+    registerSessionChange({ module: 'Ingresos', operation: action === 'Anulado' ? 'anular' : action === 'Creado' ? 'crear' : 'editar', recordId: record.id });
+    registerActivity({ module: 'Ingresos', action, entityType: 'Otro ingreso', entityRef: record.id, amount: ingresoFinancieroNeto(record), detail: `${record.concepto} · ${record.moneda} · Venta ${record.ventaBruta} · Costo pagado ${record.costo}`, source: 'local' });
+    financieroState.ingresoEditingId = '';
+    financieroState.message = 'Ingreso guardado en este dispositivo. Usa Guardar datos para confirmar los cambios pendientes en nube.';
+    financieroState.messageType = 'success';
+    renderRoute();
+    return true;
+  }
+
+  function saveIngresoFinanciero(form) {
+    if (!requireRolePermission('registerOperations', financieroState)) return;
+    const fields = new FormData(form), id = cleanText(fields.get('id'));
+    const records = appData.ingresosFinancieros || [], previous = records.find((item) => item.id === id);
+    if (ingresosCloudSavingIds.has(id)) { financieroError('Espera a que termine el guardado de este ingreso.'); return; }
+    if (id && !previous?.activo) { financieroError('El ingreso ya no está disponible para editar.'); return; }
+    const bank = getCatalogRecordById('cuentasBancos', cleanText(fields.get('cuentaBancoId')));
+    if (!bank || (!bank.activo && bank.id !== previous?.cuentaBancoId)) { financieroError('Selecciona una cuenta receptora activa.'); return; }
+    const timestamp = nowIso();
+    const record = normalizeIngresoFinanciero({ ...previous, id: previous?.id || generateId('ingresoFinanciero'), concepto: fields.get('concepto'), fecha: fields.get('fecha'), moneda: fields.get('moneda'), cuentaBancoId: bank.id, cuentaBancoNombre: bank.nombre, ventaBruta: fields.get('ventaBruta'), costo: fields.get('costo'), observacion: fields.get('observacion'), activo: true, createdAt: previous?.createdAt || timestamp, updatedAt: timestamp });
+    if (isWorkPeriodClosed(record.fecha.slice(0, 7)) || (previous && isWorkPeriodClosed(previous.fecha.slice(0, 7)))) { financieroError('El período del ingreso está cerrado.'); return; }
+    persistIngresosFinancieros(previous ? records.map((item) => item.id === id ? record : item) : [record, ...records], record, previous ? 'Editado' : 'Creado');
+  }
+
+  function annulIngresoFinanciero(id) {
+    if (!requireRolePermission('annulMovements', financieroState)) return;
+    const records = appData.ingresosFinancieros || [], record = records.find((item) => item.id === id);
+    if (ingresosCloudSavingIds.has(id)) { financieroError('Espera a que termine el guardado de este ingreso.'); return; }
+    if (!record?.activo) return;
+    if (isWorkPeriodClosed(record.fecha.slice(0, 7))) { financieroError('El período del ingreso está cerrado.'); return; }
+    const reason = window.prompt(`Motivo de anulación de ${record.concepto}. El registro se conservará.`);
+    if (reason === null) return;
+    if (!cleanText(reason)) { financieroError('Indica el motivo de anulación.'); return; }
+    const annulled = { ...record, activo: false, motivoAnulacion: cleanText(reason), anuladoAt: nowIso(), updatedAt: nowIso() };
+    persistIngresosFinancieros(records.map((item) => item.id === id ? annulled : item), annulled, 'Anulado');
+  }
+
+  function renderIngresosFinancieros() {
+    const records = appData.ingresosFinancieros || [];
+    const editing = records.find((item) => item.id === financieroState.ingresoEditingId && item.activo), value = editing || {};
+    const banks = getCatalogRecords('cuentasBancos').filter((bank) => bank.activo || bank.id === value.cuentaBancoId);
+    const editable = canCurrentRole('registerOperations');
+    return `<section class="financiero-shell"><section class="hero"><div><span class="eyebrow">Financiero</span><h1>Ingresos</h1><p class="lead">Otras ventas ya cobradas, con sus costos ya pagados.</p></div></section>${renderFinancieroTabs()}
+      ${renderFinancieroCuentaSummary()}
+      <p class="notice">Los fondos pueden aplicarse a compras, pagos, gastos y Casa mediante Origen de fondos. Se conserva el reparto y el tipo de cambio de cada operación. Resumen y Excel muestran venta bruta, costo y utilidad por moneda, conservando los cierres históricos.</p>
+      <p class="compact-note">Usa Guardar datos para compartir los ingresos por nube y Actualizar datos para recibir cambios de otros equipos.</p>
+      <p class="form-message ${financieroState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status" data-financiero-message ${financieroState.message ? '' : 'hidden'}>${escapeHtml(financieroState.message)}</p>
+      ${editable ? `<article class="panel-card"><h2>${editing ? 'Editar ingreso' : 'Registrar otro ingreso'}</h2><form data-ingreso-form><input type="hidden" name="id" value="${escapeHtml(value.id || '')}"><div class="financial-form-grid">
+      <label class="form-field"><span>Fecha de ingreso</span><input type="date" name="fecha" required max="${todayInputValue()}" value="${escapeHtml(value.fecha || todayInputValue())}"></label>
+      <label class="form-field"><span>Concepto / origen</span><input name="concepto" required maxlength="160" value="${escapeHtml(value.concepto || '')}"></label>
+      <label class="form-field"><span>Moneda de venta y costo</span><select name="moneda"><option value="NIO" ${value.moneda !== 'USD' ? 'selected' : ''}>C$ · NIO</option><option value="USD" ${value.moneda === 'USD' ? 'selected' : ''}>US$ · USD</option></select></label>
+      <label class="form-field"><span>Cuenta receptora del neto</span><select name="cuentaBancoId" required><option value="">Seleccionar cuenta</option>${banks.map((bank) => `<option value="${escapeHtml(bank.id)}" ${bank.id === value.cuentaBancoId ? 'selected' : ''}>${escapeHtml(bank.nombre)}</option>`).join('')}</select></label>
+      <label class="form-field"><span>Venta bruta cobrada</span><input type="number" name="ventaBruta" min="0.01" step="0.01" required value="${value.ventaBruta ?? ''}"></label>
+      <label class="form-field"><span>Costo ya pagado</span><input type="number" name="costo" min="0" step="0.01" required value="${value.costo ?? 0}"></label>
+      <label class="form-field financial-form-wide"><span>Observaciones</span><textarea name="observacion" maxlength="2000" rows="2">${escapeHtml(value.observacion || '')}</textarea></label></div>
+      <p class="compact-note">Utilidad y disponible neto: <output data-ingreso-neto>${escapeHtml(financieroMoney(editing ? ingresoFinancieroNeto(editing) : 0, value.moneda || 'NIO'))}</output>. El costo no genera otro gasto o pago.</p>
+      <div class="form-actions"><button class="card-action" type="submit">${editing ? 'Guardar cambios' : 'Guardar ingreso'}</button>${editing ? '<button type="button" class="secondary-action" data-ingreso-cancel>Cancelar edición</button>' : ''}</div></form></article>` : renderRolePermissionNotice('registerOperations')}
+      <article class="panel-card"><h2>Ingresos registrados</h2>${['NIO', 'USD'].map((currency) => { const active = records.filter((item) => item.activo && item.moneda === currency); return `<p>${escapeHtml(currency)} · Venta bruta: ${escapeHtml(financieroMoney(sumMoney(active, (item) => item.ventaBruta), currency))} · Costo pagado: ${escapeHtml(financieroMoney(sumMoney(active, (item) => item.costo), currency))} · Utilidad / neto: ${escapeHtml(financieroMoney(sumMoney(active, ingresoFinancieroNeto), currency))}</p>`; }).join('')}
+      ${records.length ? `<div class="financial-loans-scroll"><table class="financial-bank-table"><thead><tr><th>Fecha / concepto</th><th>Cuenta / moneda</th><th>Venta bruta</th><th>Costo pagado</th><th>Utilidad / neto</th><th>Disponible</th><th>Estado / acciones</th></tr></thead><tbody>${records.map((record) => `<tr class="${record.activo ? '' : 'is-annulled'}"><td>${escapeHtml(formatDate(record.fecha))}<br>${escapeHtml(record.concepto)}${record.observacion ? `<br>${escapeHtml(record.observacion)}` : ''}</td><td>${escapeHtml(getBankAccountDisplayName(record.cuentaBancoId, record.cuentaBancoNombre))}<br>${escapeHtml(record.moneda)}</td><td>${escapeHtml(financieroMoney(record.ventaBruta, record.moneda))}</td><td>${escapeHtml(financieroMoney(record.costo, record.moneda))}</td><td>${escapeHtml(financieroMoney(ingresoFinancieroNeto(record), record.moneda))}</td><td>${escapeHtml(financieroMoney(record.activo ? getFuenteFinancieraFondos('ingreso', record.id).disponibles : 0, record.moneda))}${renderFuenteFinancieraAplicaciones('ingreso', record.id)}</td><td>${record.activo ? 'Registrado' : `Anulado: ${escapeHtml(record.motivoAnulacion || '')}`} · ${isIngresoCloudPending(record) ? 'Pendiente de Guardar datos' : record._ingresoLocalOnly ? 'Respaldo local' : 'Compartido'}${renderIngresoCloudConflict(record)}${isWorkPeriodClosed(record.fecha.slice(0, 7)) ? ' · Período cerrado' : record.activo ? `<div class="financial-loan-actions">${editable ? `<button type="button" class="secondary-action compact" data-ingreso-edit="${escapeHtml(record.id)}">Editar</button>` : ''}${canCurrentRole('annulMovements') ? `<button type="button" class="danger-action compact" data-ingreso-annul="${escapeHtml(record.id)}">Anular</button>` : ''}</div>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p>Sin ingresos registrados.</p>'}</article></section>`;
+  }
+
   function renderFinancieroTabs() {
-    return `<nav class="form-actions" aria-label="Secciones de Financiero"><button type="button" class="${financieroState.tab === 'monedas' ? 'secondary-action' : 'card-action'}" data-financiero-tab="prestamos" aria-pressed="${financieroState.tab !== 'monedas'}">Préstamos</button><button type="button" class="${financieroState.tab === 'monedas' ? 'card-action' : 'secondary-action'}" data-financiero-tab="monedas" aria-pressed="${financieroState.tab === 'monedas'}">Monedas y tipo de cambio</button></nav>`;
+    return `<nav class="form-actions" aria-label="Secciones de Financiero">${[['prestamos', 'Préstamos'], ['ingresos', 'Ingresos'], ['monedas', 'Monedas']].map(([tab, label]) => `<button type="button" class="${financieroState.tab === tab ? 'card-action' : 'secondary-action'}" data-financiero-tab="${tab}" aria-pressed="${financieroState.tab === tab}">${label}</button>`).join('')}</nav>`;
   }
 
   function renderTiposCambioFinancieros() {
@@ -20549,21 +21303,68 @@ Notas importantes:
     })).sort((a,b) => a.cuentaNombre.localeCompare(b.cuentaNombre, 'es') || String(a.cuentaBancoId).localeCompare(String(b.cuentaBancoId)) || a.moneda.localeCompare(b.moneda));
   }
 
-  function renderFinancieroCuentaSummary(loans) {
-    const groups = buildFinancieroCuentaGroups(loans);
-    if (!groups.length) return '<article class="panel-card financial-bank-summary"><h2>Disponible por banco y cuenta</h2><p>Sin préstamos activos para agrupar.</p></article>';
-    const currencies = [...new Set(groups.map((group) => group.moneda))];
+  function buildFinancieroDisponibleCuentaGroups(loans = appData.prestamosFinancieros, ingresos = appData.ingresosFinancieros, pagos = appData.pagosProveedores) {
+    const groups = new Map();
+    const add = (record, source) => {
+      const cuentaBancoId = getCanonicalBankId(record.cuentaBancoId, appData.cuentasBancos || []);
+      // No juntar registros históricos sin cuenta por coincidencia de nombre.
+      const key = JSON.stringify([cuentaBancoId || `sin-cuenta:${source.tipo}:${source.id}`, record.moneda]);
+      if (!groups.has(key)) groups.set(key, {
+        cuentaBancoId, cuentaNombre: getBankAccountDisplayName(cuentaBancoId, record.cuentaBancoNombre, 'Sin cuenta'),
+        moneda: record.moneda, origenes: []
+      });
+      groups.get(key).origenes.push(source);
+    };
+    for (const loan of loans || []) {
+      if (!loan.activo || loan.estado === 'Anulado' || isCloudDeletedRecord(loan) || !['NIO', 'USD'].includes(loan.moneda)) continue;
+      const fondos = getPrestamoFondos(loan.id, pagos, '', loans);
+      add(loan, {
+        tipo: 'prestamo', id: loan.id, fecha: loan.fechaDesembolso,
+        concepto: [loan.acreedor, loan.referencia].filter(Boolean).join(' · '),
+        neto: loan.netoRecibido, utilizado: fondos.utilizados, disponible: fondos.disponibles
+      });
+    }
+    for (const ingreso of ingresos || []) {
+      if (!ingreso.activo || ingreso.estado === 'Anulado' || isCloudDeletedRecord(ingreso) || !['NIO', 'USD'].includes(ingreso.moneda)) continue;
+      const neto = ingresoFinancieroNeto(ingreso);
+      add(ingreso, {
+        tipo: 'ingreso', id: ingreso.id, fecha: ingreso.fecha, concepto: ingreso.concepto,
+        ventaBruta: ingreso.ventaBruta, costo: ingreso.costo, neto,
+        utilizado: getFuenteFinancieraFondos('ingreso', ingreso.id).utilizados, disponible: getFuenteFinancieraFondos('ingreso', ingreso.id).disponibles,
+        estadoLocal: ingreso._ingresoConflict ? 'Conflicto pendiente' : isIngresoCloudPending(ingreso) ? 'Pendiente de Guardar datos' : ingreso._ingresoLocalOnly ? 'Respaldo local' : ''
+      });
+    }
+    return Array.from(groups.values()).map((group) => {
+      const prestamos = group.origenes.filter((source) => source.tipo === 'prestamo');
+      const ingresos = group.origenes.filter((source) => source.tipo === 'ingreso');
+      return {
+        ...group, prestamos: prestamos.length, ingresos: ingresos.length,
+        disponiblePrestamos: sumMoney(prestamos, (source) => source.disponible),
+        disponibleIngresos: sumMoney(ingresos, (source) => source.disponible),
+        disponible: sumMoney(group.origenes, (source) => source.disponible)
+      };
+    }).sort((a, b) => a.cuentaNombre.localeCompare(b.cuentaNombre, 'es') || String(a.cuentaBancoId).localeCompare(String(b.cuentaBancoId)) || a.moneda.localeCompare(b.moneda));
+  }
+
+  function renderFinancieroCuentaSummary(loans = appData.prestamosFinancieros) {
+    const groups = buildFinancieroDisponibleCuentaGroups(loans);
+    if (!groups.length) return '<article class="panel-card financial-bank-summary"><h2>Disponible por banco y cuenta</h2><p>Sin préstamos ni ingresos activos para agrupar.</p></article>';
+    const loanGroups = buildFinancieroCuentaGroups(loans);
+    const currencies = [...new Set(loanGroups.map((group) => group.moneda))];
     return `<article class="panel-card financial-bank-summary"><h2>Disponible por banco y cuenta</h2>
-      <p class="compact-note">Préstamos activos de cada cuenta. Total recibido: desembolso neto; utilizado y disponible: fondos para compras. C$ y USD se conservan separados.</p>
+      <p class="compact-note">Disponible conjunto = fondos netos de préstamos e ingresos menos sus aplicaciones. Se agrupa por cuenta y moneda; C$ y US$ se mantienen separados, sin convertir.</p>
+      <p class="compact-note">Este total reúne los fondos registrados en Financiero; no equivale a una conciliación del saldo bancario. Se calcula con la copia actual; los ingresos pendientes o en conflicto se identifican en el detalle.</p>
       <p class="financial-loans-mobile-help compact-note">Desliza la tabla horizontalmente para ver todos los importes.</p>
-      <div class="financial-loans-scroll"><table class="financial-bank-table"><caption class="sr-only">Fondos de préstamos activos agrupados por cuenta y moneda</caption><thead><tr><th scope="col">Banco / cuenta</th><th scope="col">Moneda</th><th scope="col">Préstamos</th><th scope="col">Total recibido</th><th scope="col">Utilizado</th><th scope="col">Disponible</th></tr></thead><tbody>${groups.map((group) => `<tr><td>${escapeHtml(group.cuentaNombre)}</td><td>${escapeHtml(group.moneda)}</td><td class="financial-bank-amount">${group.prestamos}</td><td class="financial-bank-amount">${escapeHtml(financieroMoney(group.recibido, group.moneda))}</td><td class="financial-bank-amount">${escapeHtml(financieroMoney(group.utilizado, group.moneda))}</td><td class="financial-bank-amount">${escapeHtml(financieroMoney(group.disponible, group.moneda))}</td></tr>`).join('')}</tbody></table></div>
-      <details class="financial-bank-debt"><summary>Deuda y capital abonado al banco por moneda</summary><div class="financial-loans-scroll"><table class="financial-bank-table"><thead><tr><th scope="col">Moneda</th><th scope="col">Capital desembolsado</th><th scope="col">Capital abonado</th><th scope="col">Capital pendiente</th></tr></thead><tbody>${currencies.map((currency) => {
-        const records = groups.filter((group) => group.moneda === currency);
+      <div class="financial-loans-scroll"><table class="financial-bank-table"><caption class="sr-only">Disponible de préstamos y otros ingresos por cuenta y moneda</caption><thead><tr><th scope="col">Banco / cuenta</th><th scope="col">Moneda</th><th scope="col">Disponible de préstamos</th><th scope="col">Disponible de otros ingresos</th><th scope="col">Disponible conjunto</th></tr></thead><tbody>${groups.map((group) => `<tr><td>${escapeHtml(group.cuentaNombre)}</td><td>${escapeHtml(group.moneda)}</td><td class="financial-bank-amount">${escapeHtml(financieroMoney(group.disponiblePrestamos, group.moneda))}<br><small>${group.prestamos} préstamo(s)</small></td><td class="financial-bank-amount">${escapeHtml(financieroMoney(group.disponibleIngresos, group.moneda))}<br><small>${group.ingresos} ingreso(s)</small></td><td class="financial-bank-amount"><strong>${escapeHtml(financieroMoney(group.disponible, group.moneda))}</strong></td></tr>`).join('')}</tbody></table></div>
+      <details class="financial-bank-debt"><summary>Ver origen de los fondos</summary>${groups.map((group) => `<section><h3>${escapeHtml(group.cuentaNombre)} · ${escapeHtml(group.moneda)}</h3><div class="financial-loans-scroll"><table class="financial-bank-table"><caption class="sr-only">Origen de los fondos de ${escapeHtml(group.cuentaNombre)} en ${escapeHtml(group.moneda)}</caption><thead><tr><th scope="col">Origen</th><th scope="col">Fecha / referencia</th><th scope="col">Neto recibido</th><th scope="col">Utilizado</th><th scope="col">Disponible</th></tr></thead><tbody>${group.origenes.map((source) => `<tr data-fondos-origen="${source.tipo}" data-fondos-id="${escapeHtml(source.id)}"><td>${source.tipo === 'prestamo' ? 'Préstamo' : 'Otro ingreso'}${source.estadoLocal ? `<br><small>${escapeHtml(source.estadoLocal)}</small>` : ''}</td><td>${escapeHtml(formatDate(source.fecha))}<br>${escapeHtml(source.concepto)}${source.tipo === 'ingreso' ? `<br><small>Venta: ${escapeHtml(financieroMoney(source.ventaBruta, group.moneda))} · Costo pagado: ${escapeHtml(financieroMoney(source.costo, group.moneda))}</small>` : ''}</td><td class="financial-bank-amount">${escapeHtml(financieroMoney(source.neto, group.moneda))}</td><td class="financial-bank-amount">${escapeHtml(financieroMoney(source.utilizado, group.moneda))}</td><td class="financial-bank-amount">${escapeHtml(financieroMoney(source.disponible, group.moneda))}</td></tr>`).join('')}</tbody></table></div></section>`).join('')}</details>
+      ${loanGroups.length ? `<details class="financial-bank-debt"><summary>Deuda y capital abonado al banco por moneda</summary><div class="financial-loans-scroll"><table class="financial-bank-table"><thead><tr><th scope="col">Moneda</th><th scope="col">Capital desembolsado</th><th scope="col">Capital abonado</th><th scope="col">Capital pendiente</th></tr></thead><tbody>${currencies.map((currency) => {
+        const records = loanGroups.filter((group) => group.moneda === currency);
         return `<tr><td>${escapeHtml(currency)}</td><td class="financial-bank-amount">${escapeHtml(financieroMoney(sumMoney(records, (item) => item.capitalDesembolsado), currency))}</td><td class="financial-bank-amount">${escapeHtml(financieroMoney(sumMoney(records, (item) => item.capitalAbonado), currency))}</td><td class="financial-bank-amount">${escapeHtml(financieroMoney(sumMoney(records, (item) => item.capitalPendiente), currency))}</td></tr>`;
-      }).join('')}</tbody></table></div></details></article>`;
+      }).join('')}</tbody></table></div></details>` : ''}</article>`;
   }
 
   function renderFinanciero() {
+    if (financieroState.tab === 'ingresos') return renderIngresosFinancieros();
     if (financieroState.tab === 'monedas') return renderTiposCambioFinancieros();
     const loans = appData.prestamosFinancieros || [];
     const editing = loans.find((record) => record.id === financieroState.editingId && record.activo);
@@ -20576,7 +21377,7 @@ Notas importantes:
       <section class="hero"><div><span class="eyebrow">Financiamiento de la operación</span><h1>Financiero</h1><p class="lead">Préstamos efectivamente desembolsados, cuentas receptoras y OC relacionadas.</p></div></section>
       ${renderFinancieroTabs()}
       ${renderFinancieroCuentaSummary(loans)}
-      <p class="notice">El disponible para compras corresponde al desembolso menos sus aplicaciones a proveedores. Los abonos al banco reducen la deuda y conservan por separado capital, intereses y cargos.</p>
+      <p class="notice">El disponible descuenta las aplicaciones a compras, gastos y Casa. Las compras de contado consumen fondos una sola vez, mediante su pago automático. Los abonos al banco conservan por separado capital, intereses y cargos.</p>
       <p class="compact-note muted-text">Se muestran todos los préstamos. La fecha del desembolso se conserva independientemente del período seleccionado.</p>
       <p class="form-message ${financieroState.messageType === 'error' ? 'is-error' : 'is-success'}" role="status" data-financiero-message ${financieroState.message ? '' : 'hidden'}>${escapeHtml(financieroState.message)}</p>
       ${editable ? `<article class="panel-card"><h2>${editing ? 'Editar préstamo' : 'Registrar préstamo desembolsado'}</h2>
@@ -20750,6 +21551,19 @@ Notas importantes:
       renderRoute();
     }));
     viewRoot.querySelector('[data-tipo-cambio-form]')?.addEventListener('submit', (event) => { event.preventDefault(); saveTipoCambioFinanciero(event.currentTarget); });
+    const ingresoForm = viewRoot.querySelector('[data-ingreso-form]');
+    ingresoForm?.addEventListener('submit', (event) => { event.preventDefault(); saveIngresoFinanciero(event.currentTarget); });
+    ingresoForm?.addEventListener('input', () => {
+      const neto = ingresoFinancieroNeto({ ventaBruta: Number(ingresoForm.elements.ventaBruta.value), costo: Number(ingresoForm.elements.costo.value) });
+      ingresoForm.querySelector('[data-ingreso-neto]').textContent = financieroMoney(neto, ingresoForm.elements.moneda.value);
+    });
+    viewRoot.querySelector('[data-ingreso-cancel]')?.addEventListener('click', () => { financieroState.ingresoEditingId = ''; financieroState.message = ''; renderRoute(); });
+    viewRoot.querySelectorAll('[data-ingreso-edit]').forEach((button) => button.addEventListener('click', () => {
+      if (!requireRolePermission('registerOperations', financieroState)) return;
+      financieroState.ingresoEditingId = button.dataset.ingresoEdit; financieroState.message = ''; renderRoute();
+    }));
+    viewRoot.querySelectorAll('[data-ingreso-resolve]').forEach((button) => button.addEventListener('click', () => resolveIngresoCloudConflict(button.dataset.ingresoResolve, button.dataset.choice)));
+    viewRoot.querySelectorAll('[data-ingreso-annul]').forEach((button) => button.addEventListener('click', () => annulIngresoFinanciero(button.dataset.ingresoAnnul)));
     const loanForm = viewRoot.querySelector('[data-financiero-form]');
     if (loanForm?.querySelector('[data-initial-calendar-toggle]')) {
       const toggle = loanForm.querySelector('[data-initial-calendar-toggle]'), fields = loanForm.querySelector('[data-initial-calendar-fields]');
@@ -21017,7 +21831,97 @@ Notas importantes:
     `;
   }
 
-  function buildResumenFinanciamiento({ filters, range, cobros, pagos, gastos, utilidadMetrics, fechaSaldos = todayInputValue() }) {
+  function buildOtrosIngresosResumen(filters, range) {
+    const accumulatedRange = getResumenAccumulatedRange(filters, range);
+    const records = (appData.ingresosFinancieros || []).filter((record) => record.activo && !isCloudDeletedRecord(record));
+    const metrics = (items) => ({ cantidad: items.length, ventaBruta: sumMoney(items, (record) => record.ventaBruta), costo: sumMoney(items, (record) => record.costo), utilidad: sumMoney(items, ingresoFinancieroNeto) });
+    return ['NIO', 'USD'].map((moneda) => {
+      const currencyRecords = records.filter((record) => record.moneda === moneda);
+      const periodRecords = currencyRecords.filter((record) => isDateInResumenRange(record.fecha, range));
+      return { moneda, periodo: metrics(periodRecords), acumulado: metrics(currencyRecords.filter((record) => isDateInResumenRange(record.fecha, accumulatedRange))),
+        registros: periodRecords.map((record) => ({ ...ingresoCloudRecord(record), cuentaBancoNombre: record.cuentaBancoNombre || getBankAccountDisplayName(record.cuentaBancoId) })),
+        actual: { cantidad: currencyRecords.length, neto: sumMoney(currencyRecords, ingresoFinancieroNeto), utilizado: sumMoney(currencyRecords, (record) => getFuenteFinancieraFondos('ingreso', record.id).utilizados), disponible: sumMoney(currencyRecords, (record) => getFuenteFinancieraFondos('ingreso', record.id).disponibles) }
+      };
+    });
+  }
+
+  function getFondosAuditParts(funding) {
+    const parts = getFondosPartes(funding), total = sumMoney(parts, (part) => part.monto);
+    const amount = isFondosCompartidos(funding) ? funding.montoFinanciero : funding?.montoPrestamo || 0;
+    let cumulative = 0, assigned = 0;
+    return parts.map((part, index) => {
+      cumulative += Math.round(part.monto * 100);
+      const next = index === parts.length - 1 ? Math.round(amount * 100) : Math.round(Math.round(amount * 100) * cumulative / Math.round(total * 100));
+      const montoNio = (next - assigned) / 100; assigned = next;
+      return { ...part, montoNio, moneda: isFondosCompartidos(funding) ? funding.monedaOrigen : funding?.conversion?.monedaOrigen || 'NIO' };
+    });
+  }
+
+  function getConversionesFondos(data = appData) {
+    return getFondosOperaciones(data).filter((operation) => operation.record.financiamiento?.conversion?.monedaOrigen === 'USD').map((operation) => {
+      const funding = operation.record.financiamiento, fx = funding.conversion;
+      return { id: operation.record.id, collection: operation.collection, fecha: operation.fecha, activo: operation.activo,
+        referencia: operation.record.facturaReferencia || operation.record.tipoGastoNombre || operation.record.descripcion || operation.record.id,
+        montoNio: isFondosCompartidos(funding) ? funding.montoFinanciero : funding.montoPrestamo,
+        montoUsd: fx.montoOrigen, conversion: { ...fx }, fuentes: getFondosAuditParts(funding)
+      };
+    });
+  }
+
+  function buildResumenFinanciamiento(options) {
+    const { filters, range } = options;
+    const finance = buildResumenFinanciamientoHistorico(options);
+    const otrosIngresos = buildOtrosIngresosResumen(filters, range), nio = otrosIngresos.find((item) => item.moneda === 'NIO');
+    const conversionesFondos = getConversionesFondos().filter((operation) => isDateInResumenRange(operation.fecha, range));
+    const conversionOperativa = sumMoney(conversionesFondos.filter((item) => item.activo && item.collection !== 'casaGastos'), (item) => item.montoNio);
+    const conversionCasa = sumMoney(conversionesFondos.filter((item) => item.activo && item.collection === 'casaGastos'), (item) => item.montoNio);
+    const gastosCasa = sumMoney(getFondosOperaciones().filter((item) => item.collection === 'casaGastos' && item.activo && isDateInResumenRange(item.fecha, range)), (item) => item.monto);
+    const totals = finance.globalNio;
+    const utilidadTotal = roundMoney(totals.utilidadOperativa + nio.periodo.utilidad);
+    const utilidadTotalAcumulada = roundMoney(totals.utilidadOperativaAcumulada + nio.acumulado.utilidad);
+    const flujoTotal = roundMoney(totals.flujoOperativo + finance.currencies.find((item) => item.moneda === 'NIO').periodo.flujoFinanciamiento + nio.periodo.utilidad + conversionOperativa);
+    return { ...finance, version: '3.0', otrosIngresos, conversionesFondos,
+      globalNio: { ...totals, otrosIngresosBrutos: nio.periodo.ventaBruta, otrosIngresosCostos: nio.periodo.costo, otrosIngresosNetos: nio.periodo.utilidad,
+        utilidadTotal, utilidadTotalAcumulada, entradasConversionUSD: conversionOperativa, entradasConversionCasaUSD: conversionCasa,
+        flujoTotal, gastosCasa, flujoDespuesCasa: roundMoney(flujoTotal - gastosCasa + conversionCasa),
+        resultadoDespuesCostos: roundMoney(utilidadTotal - finance.currencies.find((item) => item.moneda === 'NIO').periodo.costosFinancieros),
+        resultadoAcumuladoDespuesCostos: roundMoney(utilidadTotalAcumulada - finance.currencies.find((item) => item.moneda === 'NIO').acumulado.costosFinancieros)
+      }
+    };
+  }
+
+  function renderResumenConversionesFondos(records) {
+    if (!records.length) return '';
+    const labels = { pagosProveedores: 'Pago proveedor', gastos: 'Gasto del negocio', casaGastos: 'Casa' };
+    return `<details><summary>Conversiones de fondos USD del período (${records.length})</summary><div class="financial-loans-scroll"><table class="financial-bank-table"><thead><tr><th>Fecha</th><th>Destino / referencia</th><th>C$ obtenidos</th><th>US$ consumidos</th><th>Compra C$/USD</th><th>Banco / vigencia / versión</th><th>Estado</th></tr></thead><tbody>${records.map((record) => `<tr><td>${escapeHtml(formatDate(record.fecha))}</td><td>${escapeHtml(labels[record.collection])} · ${escapeHtml(record.referencia)}</td><td>${escapeHtml(financieroMoney(record.montoNio, 'NIO'))}</td><td>${escapeHtml(financieroMoney(record.montoUsd, 'USD'))}</td><td>${escapeHtml(record.conversion.tasa)}</td><td>${escapeHtml(record.conversion.bancoNombre)} · ${escapeHtml(record.conversion.fechaTipoCambio)} · v${record.conversion.version} · ${escapeHtml(record.conversion.tipoCambioId)}</td><td>${record.activo ? 'Aplicado' : 'Anulado; fondos liberados'}</td></tr>`).join('')}</tbody></table></div></details>`;
+  }
+
+  function renderResumenFinanciamiento(summary) {
+    const finance = summary.financiamiento;
+    if (finance.version !== '3.0') return renderResumenFinanciamientoHistorico(summary);
+    const money = (label, value, currency, help = '') => `<article class="metric-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(financieroMoney(value, currency))}</strong>${help ? `<small>${escapeHtml(help)}</small>` : ''}</article>`;
+    const global = finance.globalNio;
+    return `<section class="panel-card resumen-finance-panel"><div class="section-title-row"><h2>Financiero · ingresos, fondos y utilidad</h2><button type="button" class="secondary-action compact" data-go="financiero">Ver Financiero</button></div>
+      <p class="filter-help">Totales globales por fecha: ${escapeHtml(summary.periodLabel)}. Cliente, proveedor, sucursal, estado, mora y método no filtran este bloque. C$ y US$ se mantienen separados; convertir o utilizar fondos no genera otra utilidad.</p>
+      ${finance.otrosIngresos.map((other) => {
+        const loan = finance.currencies.find((item) => item.moneda === other.moneda), p = loan.periodo, a = loan.actual;
+        const show = other.moneda === 'NIO' || other.actual.cantidad || loan.prestamos;
+        if (!show) return '';
+        return `<section class="resumen-finance-currency"><h3>Otros ingresos · ${escapeHtml(other.moneda)}</h3><div class="metric-grid resumen-finance-metrics">
+          ${money('Venta bruta de otros ingresos', other.periodo.ventaBruta, other.moneda)}${money('Costo ya pagado', other.periodo.costo, other.moneda)}${money('Utilidad de otros ingresos', other.periodo.utilidad, other.moneda, 'Venta bruta − costo; se reconoce una sola vez')}${money('Utilidad acumulada de otros ingresos', other.acumulado.utilidad, other.moneda)}${other.moneda === 'USD' ? money('Resultado USD después de costos financieros', roundMoney(other.periodo.utilidad - p.costosFinancieros), 'USD', 'Utilidad de otros ingresos USD − costos financieros USD') : ''}
+        </div><details><summary>Detalle de otros ingresos del período (${other.registros.length})</summary><div class="financial-loans-scroll"><table class="financial-bank-table"><thead><tr><th>Fecha</th><th>Concepto</th><th>Cuenta</th><th>Venta bruta</th><th>Costo</th><th>Utilidad</th></tr></thead><tbody>${other.registros.map((record) => `<tr><td>${escapeHtml(formatDate(record.fecha))}</td><td>${escapeHtml(record.concepto)}</td><td>${escapeHtml(record.cuentaBancoNombre)}</td><td>${escapeHtml(financieroMoney(record.ventaBruta, other.moneda))}</td><td>${escapeHtml(financieroMoney(record.costo, other.moneda))}</td><td>${escapeHtml(financieroMoney(ingresoFinancieroNeto(record), other.moneda))}</td></tr>`).join('')}</tbody></table></div></details>
+        <h3>Préstamos del período · ${escapeHtml(other.moneda)}</h3><div class="metric-grid resumen-finance-metrics">${money('Desembolsos netos', p.netoRecibido, other.moneda)}${money('Capital abonado al banco', p.capitalPagado, other.moneda, 'Reduce deuda; no es gasto')}${money('Intereses pagados', p.interesesPagados, other.moneda)}${money('Cargos pagados', p.cargosPagados, other.moneda)}${money('Cargos retenidos', p.cargosRetenidos, other.moneda, 'Ya descontados del desembolso')}${money('Costos financieros', p.costosFinancieros, other.moneda)}${money('Flujo de préstamos', p.flujoFinanciamiento, other.moneda)}</div>
+        <details><summary>Movimientos de préstamos (${loan.movimientos.length})</summary><div class="financial-loans-scroll"><table class="financial-bank-table"><thead><tr><th>Fecha</th><th>Préstamo / comprobante</th><th>Movimiento</th><th>Neto</th><th>Capital abonado</th><th>Intereses</th><th>Cargos</th><th>Retenidos</th></tr></thead><tbody>${loan.movimientos.map((record) => `<tr><td>${escapeHtml(formatDate(record.fecha))}</td><td>${escapeHtml([record.acreedor, record.prestamoReferencia, record.referencia].filter(Boolean).join(' · '))}</td><td>${escapeHtml(record.tipo)}</td><td>${escapeHtml(financieroMoney(record.neto, other.moneda))}</td><td>${escapeHtml(financieroMoney(record.capital, other.moneda))}</td><td>${escapeHtml(financieroMoney(record.intereses, other.moneda))}</td><td>${escapeHtml(financieroMoney(record.cargos, other.moneda))}</td><td>${escapeHtml(financieroMoney(record.retenidos, other.moneda))}</td></tr>`).join('')}</tbody></table></div></details>
+        <h3>Fondos y deuda actuales · ${escapeHtml(other.moneda)}</h3><p class="compact-note">Saldos de todos los registros activos, independientemente del período. No equivalen a una conciliación bancaria.</p><div class="metric-grid resumen-finance-metrics">${money('Desembolsos netos registrados', a.netoRecibido, other.moneda)}${money('Fondos de préstamos utilizados', a.utilizadoProveedores, other.moneda)}${money('Disponible de préstamos', a.disponibleCompras, other.moneda)}${money('Otros ingresos utilizados', other.actual.utilizado, other.moneda)}${money('Disponible de otros ingresos', other.actual.disponible, other.moneda)}${money('Disponible conjunto', roundMoney(a.disponibleCompras + other.actual.disponible), other.moneda)}${money('Capital pendiente bancario', a.capitalPendiente, other.moneda)}${money('Cuotas vencidas', a.totalVencido, other.moneda)}${money('Cuotas de hoy a 7 días', a.totalProximo, other.moneda)}</div>
+        ${a.sinCalendario || a.calendariosPorRevisar ? `<p class="notice">Préstamos sin calendario: ${a.sinCalendario}. Calendarios por revisar: ${a.calendariosPorRevisar}.</p>` : ''}${renderResumenVencimientosBanco(a.vencidas, other.moneda, 'Cuotas vencidas')}${renderResumenVencimientosBanco(a.proximas, other.moneda, 'Cuotas próximas')}</section>`;
+      }).join('')}
+      <section class="resumen-finance-currency"><h3>Resultado global · C$</h3><div class="metric-grid resumen-finance-metrics">${money('Utilidad operativa', global.utilidadOperativa, 'NIO', 'Ventas − compras − gastos del negocio')}${money('Utilidad total C$', global.utilidadTotal, 'NIO', 'Utilidad operativa + otros ingresos netos C$; US$ separado')}${money('Resultado después de costos financieros', global.resultadoDespuesCostos, 'NIO')}${money('Resultado acumulado después de costos', global.resultadoAcumuladoDespuesCostos, 'NIO')}${money('Flujo operativo', global.flujoOperativo, 'NIO')}${money('C$ obtenidos de fondos USD para el negocio', global.entradasConversionUSD, 'NIO', 'Entrada de fondos; no es otra venta o utilidad')}${money('Flujo total antes de Casa', global.flujoTotal, 'NIO', 'Operación + préstamos C$ + otros ingresos netos C$ + conversiones para el negocio')}</div></section>
+      ${renderResumenConversionesFondos(finance.conversionesFondos)}
+      <details><summary>Casa y flujo de fondos</summary><div class="metric-grid resumen-finance-metrics">${money('Gastos pagados de Casa', global.gastosCasa, 'NIO')}${money('C$ obtenidos de fondos USD para Casa', global.entradasConversionCasaUSD, 'NIO')}${money('Flujo después de Casa', global.flujoDespuesCasa, 'NIO')}</div><p class="compact-note">Casa conserva su clasificación y no reduce la utilidad productiva. Las conversiones no vuelven a sumar utilidad.</p></details>
+    </section>`;
+  }
+
+  function buildResumenFinanciamientoHistorico({ filters, range, cobros, pagos, gastos, utilidadMetrics, fechaSaldos = todayInputValue() }) {
     // Financing belongs to the whole operation: OC links do not prorate debt or costs.
     const operationalFilters = ['clienteId', 'proveedorId', 'sucursalId', 'estado', 'mora', 'metodoPagoId'].some((key) => Boolean(filters[key]));
     const loans = (appData.prestamosFinancieros || []).filter((loan) => loan.activo && loan.estado !== 'Anulado');
@@ -21087,7 +21991,7 @@ Notas importantes:
     };
   }
 
-  function renderResumenFinanciamiento(summary) {
+  function renderResumenFinanciamientoHistorico(summary) {
     const financing = summary.financiamiento, global = financing.globalNio;
     const card = (label, value, currency, help = '') => `<article class="metric-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(financieroMoney(value, currency))}</strong>${help ? `<small>${escapeHtml(help)}</small>` : ''}</article>`;
     return `<section class="panel-card resumen-finance-panel" aria-labelledby="resumenFinanceTitle">
@@ -21387,9 +22291,135 @@ Notas importantes:
     }));
   }
 
-  function buildExcelFinanceSummary({ filters, range, cobros, pagos, gastos, utilidadMetrics }) {
+  function getExcelIngresosAtCutoff(cutoffAt) {
+    const date = formatDateInput(new Date(cutoffAt));
+    return (appData.ingresosFinancieros || []).filter((record) => isExcelFinanceRecordAtCutoff(record, cutoffAt) && record.fecha <= date).map((record) => {
+      const restored = { ...record };
+      if (!record.activo && record.anuladoAt && Date.parse(record.anuladoAt) > Date.parse(cutoffAt)) { restored.activo = true; delete restored.anuladoAt; delete restored.motivoAnulacion; }
+      return restored;
+    });
+  }
+
+  function getExcelFondosCutoffData(data, cutoffAt) {
+    const date = formatDateInput(new Date(cutoffAt)), result = { ...data };
+    for (const collection of ['pagosProveedores', 'gastos', 'casaGastos']) {
+      const auditKey = collection === 'pagosProveedores' ? 'excelFinancePaymentsAudit' : collection === 'gastos' ? 'excelFinanceGastosAudit' : 'excelFinanceCasaAudit';
+      const records = data[auditKey] || data[collection] || [];
+      result[collection] = records.filter((record) => isExcelFinanceRecordAtCutoff(record, cutoffAt) && (record.fechaPago || record.fecha) <= date).map((record) => ({ ...record }));
+      result[auditKey] = result[collection];
+    }
+    for (const [tipo, collection] of [['prestamo', 'prestamosFinancieros'], ['ingreso', 'ingresosFinancieros']]) {
+      result[collection] = (data[collection] || []).map((record) => {
+        const applications = getFondosAplicacionesSnapshot(tipo, record.id, result);
+        return { ...record, fondosAplicaciones: applications, ...(tipo === 'ingreso' ? { fondosUtilizados: sumMoney(applications, (item) => item.monto) } : {}) };
+      });
+    }
+    return result;
+  }
+
+  function buildExcelFinanceSummary(options) {
+    if (appData.excelFinanceLegacy) return buildExcelFinanceSummaryHistorico(options);
+    const build = () => {
+      const effective = appData.excelFinanceCutoffAt ? { ...options, pagos: appData.pagosProveedores, gastos: appData.gastos, cobros: options.cobros.filter((record) => record.fechaCobro <= formatDateInput(new Date(appData.excelFinanceCutoffAt))) } : options;
+      const finance = buildExcelFinanceSummaryHistorico(effective);
+      const registrosIngresos = (appData.ingresosFinancieros || []).map((record) => ({ ...ingresoCloudRecord(record), cuentaBancoNombre: record.cuentaBancoNombre || getBankAccountDisplayName(record.cuentaBancoId), fondosExport: getFuenteFinancieraFondos('ingreso', record.id) }));
+      const auditData = { ...appData, pagosProveedores: appData.excelFinancePaymentsAudit || appData.pagosProveedores,
+        gastos: appData.excelFinanceGastosAudit || appData.gastos, casaGastos: appData.excelFinanceCasaAudit || appData.casaGastos };
+      const aplicacionesFondos = getFondosOperaciones(auditData).flatMap((operation) => getFondosAuditParts(operation.record.financiamiento).map((part, index) => {
+        const origin = part.tipo === 'ingreso' ? registrosIngresos.find((record) => record.id === part.id) : finance.registrosPrestamos.find((record) => record.id === part.id);
+        return { collection: operation.collection, id: operation.record.id, fecha: operation.fecha, fuenteTipo: part.tipo, fuenteId: part.id,
+          fuenteReferencia: origin?.concepto || origin?.referencia || part.id, cuenta: origin?.cuentaBancoNombre || '', moneda: part.moneda,
+          importeOperacion: index === 0 ? operation.monto : 0, importeFinanciado: part.montoNio, consumoOrigen: part.monto,
+          referencia: operation.record.facturaReferencia || operation.record.tipoGastoNombre || operation.record.descripcion || operation.record.id,
+          conversion: operation.record.financiamiento.conversion ? { ...operation.record.financiamiento.conversion } : null,
+          estado: operation.activo ? 'Aplicado' : 'Anulado', enPeriodo: isDateInResumenRange(operation.fecha, options.range), automatico: operation.record.autoGenerado === true };
+      }));
+      return clonePlainObject({ ...finance, version: '3.0', registrosIngresos, aplicacionesFondos }, {});
+    };
+    if (!appData.excelFinanceCutoffAt) return build();
+    const data = getExcelFondosCutoffData(appData, appData.excelFinanceCutoffAt);
+    return withTemporaryAppData(data, build);
+  }
+
+  function fondosExcelCells(record, finance) {
+    const funding = record.financiamiento, shared = isFondosCompartidos(funding), parts = getFondosAuditParts(funding);
+    const amount = shared ? funding.montoFinanciero : funding?.montoPrestamo || 0, total = record.montoPagado ?? record.monto;
+    const names = parts.map((part) => {
+      const origin = part.tipo === 'ingreso' ? finance.registrosIngresos.find((item) => item.id === part.id) : finance.registrosPrestamos.find((item) => item.id === part.id);
+      return `${part.tipo === 'ingreso' ? 'Ingreso' : 'Préstamo'} ${origin?.concepto || origin?.referencia || part.id}: ${financieroMoney(part.monto, part.moneda)}`;
+    }).join(' + ');
+    const fx = funding?.conversion, currency = parts[0]?.moneda;
+    return [xlsxText({ propios: 'Recursos propios', sin_clasificar: 'Sin clasificar', prestamo: 'Préstamo', mixto: 'Mixto', financiero: 'Préstamos e Ingresos', financiero_mixto: 'Mixto: propios y Financiero' }[funding?.origen] || 'Sin clasificar'),
+      xlsxText(names), xlsxMoney(amount), funding && funding.origen !== 'sin_clasificar' ? xlsxMoney(roundMoney(total - amount)) : xlsxText(''),
+      xlsxText(currency || ''), parts.length ? xlsxCurrency(sumMoney(parts, (part) => part.monto), currency) : xlsxText(''),
+      fx ? xlsxNumber(fx.tasa) : xlsxText(''), xlsxText(fx?.bancoNombre || ''), fx ? xlsxDate(fx.fechaTipoCambio) : xlsxText(''), fx ? xlsxNumber(fx.version) : xlsxText(''), xlsxText(fx?.tipoCambioId || '')];
+  }
+
+  function appendFondosExcelColumns(sheet, records, finance) {
+    const headers = ['Origen de fondos', 'Fuentes y moneda', 'Parte financiada C$', 'Parte propia C$', 'Moneda origen', 'Consumo en moneda origen', 'Compra C$/USD', 'Banco cambio', 'Vigencia cambio', 'Versión cambio', 'ID cambio'];
+    const header = sheet.rows.findIndex((row) => row.some((cell) => cell.style === 'header'));
+    if (header < 0) return sheet;
+    sheet.rows[header].push(...xlsxHeaderRow(headers));
+    records.forEach((record, index) => { sheet.rows[header + index + 1].push(...fondosExcelCells(record, finance)); });
+    sheet.cols.push(26, 62, 20, 20, 18, 24, 20, 26, 20, 18, 28);
+    sheet.rowHeights = { ...(sheet.rowHeights || {}) };
+    sheet.rows.forEach((row, index) => { const lines = Math.max(1, ...row.map((cell, col) => cell.type === 'string' ? Math.ceil(String(cell.value || '').length / Math.max(10, Math.min(42, sheet.cols[col] || 18))) : 1)); sheet.rowHeights[index + 1] = index === 0 ? 28 : row.some((cell) => cell.style === 'header') ? 42 : Math.max(22, Math.min(120, lines * 15 + 6)); });
+    return sheet;
+  }
+
+  function buildPagosSheet(summary) {
+    if (summary.financiamiento?.version !== '3.0') return buildPagosSheetHistorico(summary);
+    return appendFondosExcelColumns(buildPagosSheetHistorico({ ...summary, financiamiento: null }), summary.pagosPeriodo || [], summary.financiamiento);
+  }
+
+  function buildGastosSheet(summary) {
+    if (summary.financiamiento?.version !== '3.0') return buildGastosSheetHistorico(summary);
+    const records = Array.isArray(summary.gastosExport) ? summary.gastosExport : getGastosForExport(summary.range, summary.filters);
+    return appendFondosExcelColumns(buildGastosSheetHistorico(summary), records, summary.financiamiento);
+  }
+
+  function buildFinanceResumenRows(finance) {
+    if (finance.version !== '3.0') return buildFinanceResumenRowsHistorico(finance);
+    const g = finance.globalNio, nio = finance.currencies.find((item) => item.moneda === 'NIO');
+    const rows = [[], [xlsxSubtitle('Financiero y utilidad total (C$)')], xlsxHeaderRow(['Indicador', 'Monto']),
+      [xlsxText('Utilidad operativa'), xlsxMoney(g.utilidadOperativa)],
+      [xlsxText('Otros ingresos: venta bruta C$'), xlsxMoney(g.otrosIngresosBrutos)], [xlsxText('Otros ingresos: costo ya pagado C$'), xlsxMoney(-g.otrosIngresosCostos)],
+      [xlsxText('Otros ingresos: utilidad neta C$'), xlsxMoney(g.otrosIngresosNetos)], [xlsxTotalText('Utilidad total C$'), xlsxTotalMoney(g.utilidadTotal)],
+      [xlsxText('Costos financieros C$'), xlsxMoney(nio.periodo.costosFinancieros)], [xlsxTotalText('Resultado después de costos financieros C$'), xlsxTotalMoney(g.resultadoDespuesCostos)],
+      [xlsxTotalText('Resultado acumulado después de costos C$'), xlsxTotalMoney(g.resultadoAcumuladoDespuesCostos)],
+      [xlsxText('Flujo operativo'), xlsxMoney(g.flujoOperativo)], [xlsxText('Flujo de préstamos C$'), xlsxMoney(nio.periodo.flujoFinanciamiento)],
+      [xlsxText('C$ obtenidos de fondos USD para el negocio'), xlsxMoney(g.entradasConversionUSD)], [xlsxTotalText('Flujo total antes de Casa'), xlsxTotalMoney(g.flujoTotal)],
+      [xlsxText('Casa: gastos pagados C$'), xlsxMoney(g.gastosCasa)], [xlsxText('Casa: C$ obtenidos de fondos USD'), xlsxMoney(g.entradasConversionCasaUSD)], [xlsxTotalText('Flujo después de Casa'), xlsxTotalMoney(g.flujoDespuesCasa)]];
+    for (const other of finance.otrosIngresos) rows.push([], [xlsxSubtitle(`Otros ingresos (${other.moneda})`)], [xlsxText('Venta bruta'), xlsxCurrency(other.periodo.ventaBruta, other.moneda)], [xlsxText('Costo ya pagado'), xlsxCurrency(other.periodo.costo, other.moneda)], [xlsxText('Utilidad del período'), xlsxCurrency(other.periodo.utilidad, other.moneda, true)], [xlsxText('Utilidad acumulada'), xlsxCurrency(other.acumulado.utilidad, other.moneda)], [xlsxText('Disponible conjunto'), xlsxCurrency(roundMoney(other.actual.disponible + finance.currencies.find((item) => item.moneda === other.moneda).actual.disponibleCompras), other.moneda)]);
+    const usd = finance.otrosIngresos.find((item) => item.moneda === 'USD'), usdLoan = finance.currencies.find((item) => item.moneda === 'USD');
+    rows.push([xlsxText('Resultado USD después de costos financieros'), xlsxCurrency(roundMoney(usd.periodo.utilidad - usdLoan.periodo.costosFinancieros), 'USD', true)], [xlsxText('Resultado acumulado USD después de costos'), xlsxCurrency(roundMoney(usd.acumulado.utilidad - usdLoan.acumulado.costosFinancieros), 'USD', true)]);
+    rows.push([xlsxText('Criterio'), xlsxText('C$ y US$ separados. El costo de Otros ingresos ya está pagado; usar o convertir fondos no vuelve a generar utilidad. Casa se presenta por separado.')]);
+    return rows;
+  }
+
+  function buildFinancieroSheet(summary) {
+    const f = summary.financiamiento;
+    if (f.version !== '3.0') return buildFinancieroSheetHistorico(summary);
+    const base = buildFinancieroSheetHistorico({ ...summary, financiamiento: { ...f, version: '2.0', aplicacionesProveedores: [] } });
+    const start = base.rows.findIndex((row) => row[0]?.value === 'Aplicaciones a proveedores registradas');
+    const end = base.rows.findIndex((row) => row[0]?.value === 'Historial de tipos de cambio registrados');
+    if (start >= 0 && end > start) base.rows.splice(start, end - start);
+    base.rows.forEach((row) => row.forEach((cell) => { if (cell.value === 'Utilizado en proveedores' || cell.value === 'Utilizado proveedores') cell.value = 'Fondos utilizados'; if (cell.value === 'Fondos para proveedores') cell.value = 'Fondos registrados'; }));
+    base.rows.push(...buildFinanceResumenRows(f));
+    base.rows.push([], [xlsxSubtitle('Otros ingresos registrados')], xlsxHeaderRow(['Fecha', 'Concepto', 'Cuenta', 'Moneda', 'Venta bruta', 'Costo pagado', 'Utilidad neta', 'Utilizado', 'Disponible', 'Estado', 'ID', 'Observaciones']));
+    for (const record of f.registrosIngresos) base.rows.push([xlsxDate(record.fecha), xlsxText(record.concepto), xlsxText(record.cuentaBancoNombre), xlsxText(record.moneda), xlsxCurrency(record.ventaBruta, record.moneda), xlsxCurrency(record.costo, record.moneda), xlsxCurrency(ingresoFinancieroNeto(record), record.moneda), xlsxCurrency(record.activo ? record.fondosExport.utilizados : 0, record.moneda), xlsxCurrency(record.activo ? record.fondosExport.disponibles : 0, record.moneda), xlsxText(record.activo ? 'Registrado' : 'Anulado'), xlsxText(record.id), xlsxText(record.observacion)]);
+    base.rows.push([], [xlsxSubtitle('Aplicaciones de fondos: compras, gastos y Casa')], [xlsxText('Un renglón por origen. El importe completo de la operación figura una sola vez; la parte en C$ conserva el total exacto del reparto.')], xlsxHeaderRow(['Fecha', 'Destino', 'Referencia', 'Origen', 'Cuenta', 'Moneda origen', 'Consumo origen', 'Parte financiada C$', 'Operación completa C$', 'Estado', 'En período', 'IDs operación / fuente', 'Compra C$/USD', 'Vigencia / versión / ID cambio']));
+    const labels = { pagosProveedores: 'Pago proveedor', gastos: 'Gasto del negocio', casaGastos: 'Casa' };
+    for (const item of f.aplicacionesFondos) base.rows.push([xlsxDate(item.fecha), xlsxText(labels[item.collection]), xlsxText(item.referencia), xlsxText(`${item.fuenteTipo === 'ingreso' ? 'Ingreso' : 'Préstamo'} · ${item.fuenteReferencia}`), xlsxText(item.cuenta), xlsxText(item.moneda), xlsxCurrency(item.consumoOrigen, item.moneda), xlsxMoney(item.importeFinanciado), xlsxMoney(item.importeOperacion), xlsxText(item.estado), xlsxText(item.enPeriodo ? 'Sí' : 'No'), xlsxText(`${item.id} / ${item.fuenteId}`), item.conversion ? xlsxNumber(item.conversion.tasa) : xlsxText(''), xlsxText(item.conversion ? `${item.conversion.bancoNombre} · ${item.conversion.fechaTipoCambio} · v${item.conversion.version} · ${item.conversion.tipoCambioId}` : '')]);
+    base.cols = [24, 28, 36, 48, 28, 20, 22, 24, 26, 20, 18, 50, 22, 60];
+    base.rowHeights = {};
+    base.rows.forEach((row, index) => { const lines = Math.max(1, ...row.map((cell, col) => cell.type === 'string' ? Math.ceil(String(cell.value || '').length / Math.max(10, Math.min(42, base.cols[col] || 20))) : 1)); base.rowHeights[index + 1] = index === 0 ? 28 : row.some((cell) => cell.style === 'header') ? 42 : Math.max(22, Math.min(120, lines * 15 + 6)); });
+    return base;
+  }
+
+  function buildExcelFinanceSummaryHistorico({ filters, range, cobros, pagos, gastos, utilidadMetrics }) {
     const fechaSaldos = appData.excelFinanceCutoffAt ? formatDateInput(new Date(appData.excelFinanceCutoffAt)) : todayInputValue();
-    const finance = buildResumenFinanciamiento({ filters, range, cobros, pagos, gastos, utilidadMetrics, fechaSaldos });
+    const finance = (appData.excelFinanceLegacy ? buildResumenFinanciamientoHistorico : buildResumenFinanciamiento)({ filters, range, cobros, pagos, gastos, utilidadMetrics, fechaSaldos });
     const registrosPrestamos = (appData.prestamosFinancieros || []).map((loan) => ({
       ...clonePlainObject(loan, {}),
       cuentaBancoNombre: loan.cuentaBancoNombre || getCatalogRecordById('cuentasBancos',loan.cuentaBancoId)?.nombre || '',
@@ -21415,7 +22445,7 @@ Notas importantes:
     return { value: roundMoney(value), type: 'number', style: currency === 'USD' ? (total ? 'totalMoneyUSD' : 'moneyUSD') : (total ? 'totalMoney' : 'money') };
   }
 
-  function buildFinanceResumenRows(finance) {
+  function buildFinanceResumenRowsHistorico(finance) {
     const nio = finance.currencies.find((item) => item.moneda === 'NIO');
     const global = finance.globalNio;
     return [
@@ -21439,7 +22469,7 @@ Notas importantes:
     ];
   }
 
-  function buildFinancieroSheet(summary) {
+  function buildFinancieroSheetHistorico(summary) {
     const f = summary.financiamiento, rows = [
       [xlsxTitle('KSA PRÁCTIKA — Financiero')],
       [xlsxLabel('Período de movimientos'), xlsxText(summary.periodLabel)],
@@ -21584,7 +22614,8 @@ Notas importantes:
     const cobrosAplicadosPorDocumento = buildCobrosAplicadosForConsulta(cobrosDocumentoPeriodo);
     const casaGastosPeriodo = getCasaGastosForExcel(range);
     const casaCategoryTotals = getCasaCategoryTotalsForExcel(casaGastosPeriodo);
-    const casaResumen = buildCasaExcelFinancialSummary(casaCategoryTotals, utilidadDelPeriodo);
+    const financiamiento = buildExcelFinanceSummary({ filters, range, cobros, pagos, gastos, utilidadMetrics });
+    const casaResumen = buildCasaExcelFinancialSummary(casaCategoryTotals, financiamiento.version === '3.0' ? financiamiento.globalNio.utilidadTotal : utilidadDelPeriodo);
 
     return {
       filters,
@@ -21635,7 +22666,7 @@ Notas importantes:
       flujoPeriodo,
       flujoCobradoClientes,
       flujoPagadoProveedores,
-      financiamiento: buildExcelFinanceSummary({ filters, range, cobros, pagos, gastos, utilidadMetrics }),
+      financiamiento,
       ...utilidadMetrics,
       clientesMora,
       proveedoresMora,
@@ -21689,6 +22720,10 @@ Notas importantes:
       gastos: gastosCorte,
       casaGastos: casaGastosCorte,
       prestamosFinancieros: getExcelFinanceLoansAtCutoff(cutoffAt),
+      ingresosFinancieros: getExcelIngresosAtCutoff(cutoffAt),
+      excelFinanceLegacy: options.includeFinanciamiento === false,
+      excelFinanceGastosAudit: (appData.gastos || []).filter((record) => isRecordRegisteredByCutoff(record, cutoffAt)),
+      excelFinanceCasaAudit: (appData.casaGastos || []).filter((record) => isRecordRegisteredByCutoff(record, cutoffAt)),
       excelFinanceCutoffAt: cutoffAt,
       excelFinancePaymentsAudit: (appData.pagosProveedores || []).filter((record) => isRecordRegisteredByCutoff(record,cutoffAt))
     };
@@ -21875,6 +22910,7 @@ Notas importantes:
     (Array.isArray(appData.pagosProveedores) ? appData.pagosProveedores : []).forEach((record) => addYear(record.fechaPago || record.fecha));
     (Array.isArray(appData.gastos) ? appData.gastos : []).forEach((record) => addYear(record.fecha));
     if (options.includeFinanciamiento === true) {
+      (appData.ingresosFinancieros || []).forEach((record) => addYear(record.fecha));
       (appData.prestamosFinancieros || []).forEach((loan) => {
         addYear(loan.fechaDesembolso);
         bancoAbonos(loan).forEach((abono) => addYear(abono.fechaPago));
@@ -28815,6 +29851,7 @@ Notas importantes:
     const bancoPagoContado = requiredBankType ? getCatalogRecordById('cuentasBancos', bancoPagoContadoId) : null;
     const base = {
       ...(existingRecord || {}),
+      _fondosLocalOnly: false,
       id: existingRecord?.id || generateId('compraProveedor'),
       proveedorId,
       proveedorNombre: proveedor?.nombre || existingRecord?.proveedorNombre || '',
@@ -30116,6 +31153,7 @@ Notas importantes:
 
     return normalizePagoProveedorRecord({
       ...(existingRecord || {}),
+      _fondosLocalOnly: false,
       id: existingRecord?.id || generateId('pagoProveedor'),
       compraProveedorId,
       facturaReferida: existingRecord ? cleanText(existingRecord.facturaReferida) : cleanText(formData.get('facturaReferida')),
@@ -30277,6 +31315,7 @@ Notas importantes:
       renderRoute();
       return;
     }
+    if (pago.fondosControlado && isWorkPeriodClosed((pago.fechaPago || pago.fecha).slice(0, 7))) { notifyAction(pagosState, 'No se pueden modificar fondos de un período cerrado.', 'error'); return; }
     if (!warnIfClosedPeriod(pago.fechaPago, 'Anular este pago a proveedor')) return;
 
     const fundingBefore = JSON.parse(JSON.stringify(appData));
@@ -30472,6 +31511,7 @@ Notas importantes:
           <textarea name="observacion" rows="3" placeholder="Notas internas del gasto" ${cannotCreate ? 'disabled' : ''}>${escapeHtml(record?.observacion || '')}</textarea>
         </label>
 
+        ${renderOrigenFondos(record?.financiamiento || null, record?.id || '', cannotCreate, 'gastos')}
         <div class="form-actions">
           <button type="submit" class="card-action" ${cannotCreate ? 'disabled' : ''}>${record ? 'Guardar cambios' : 'Guardar gasto'}</button>
           <button type="button" class="secondary-action" data-gasto-clear>${record ? 'Cancelar' : 'Limpiar'}</button>
@@ -30674,6 +31714,8 @@ Notas importantes:
 
     return normalizeGastoRecord({
       ...(existingRecord || {}),
+      _fondosLocalOnly: false,
+      financiamiento: readFinanciamientoForm(form, parseMoney(formData.get('monto')), existingRecord?.financiamiento),
       id: existingRecord?.id || generateId('gasto'),
       fecha: toDateInputValue(formData.get('fecha')),
       tipoGastoId: tipo?.id || '',
@@ -30698,9 +31740,10 @@ Notas importantes:
     if (!record.tipoGastoId || !getActiveCatalogRecords('tiposGasto').some((item) => item.id === record.tipoGastoId)) return 'Selecciona un tipo de gasto activo.';
     if (Number.isNaN(parseMoney(record.monto)) || record.monto <= 0) return 'El monto debe ser mayor que cero.';
     if (!record.metodoPagoId || !getOutgoingPaymentMethods(existingRecord?.metodoPagoId).some((item) => item.id === record.metodoPagoId)) return 'Selecciona un método de pago activo.';
+    if (record.financiamiento && !isFondosCompartidos(record.financiamiento) && ['prestamo', 'mixto'].includes(record.financiamiento.origen)) return 'En este módulo selecciona Préstamos e Ingresos para utilizar fondos de Financiero.';
     const bankError = validateBankForPaymentMethod(record, existingRecord);
     if (bankError) return bankError;
-    return '';
+    return validateFondosCompartidos(record, 'gastos');
   }
 
   function saveGastoRecord(form) {
@@ -30727,6 +31770,7 @@ Notas importantes:
 
     if (!warnIfClosedPeriod(newRecord.fecha, existingRecord ? 'Actualizar este gasto' : 'Registrar este gasto')) return;
 
+    const fundingBefore = JSON.parse(JSON.stringify(appData));
     if (existingRecord) {
       appData.gastos = records.map((record) => record.id === existingId ? newRecord : record);
       gastosState.message = `Gasto actualizado: ${formatMoney(newRecord.monto)}.`;
@@ -30739,6 +31783,7 @@ Notas importantes:
     gastosState.editingId = null;
     openAccordionGroupForRecord('gastos', newRecord);
     gastosState.messageType = 'success';
+    if (!persistFundingOperation(fundingBefore, gastosState)) return;
     saveData(appData);
     registerSessionChange({ module: 'Gastos', operation: existingRecord ? 'editar' : 'crear', recordId: newRecord.id });
     registerActivity({
@@ -30779,8 +31824,10 @@ Notas importantes:
     const records = Array.isArray(appData.gastos) ? appData.gastos : [];
     const record = records.find((item) => item.id === recordId);
     if (!record || normalizeGastoRecord(record).anulado) return;
+    if (record.fondosControlado && isWorkPeriodClosed((record.fechaPago || record.fecha).slice(0, 7))) { notifyAction(gastosState, 'No se pueden modificar fondos de un período cerrado.', 'error'); return; }
     if (!warnIfClosedPeriod(record.fecha, 'Anular este gasto')) return;
 
+    const fundingBefore = JSON.parse(JSON.stringify(appData));
     appData.gastos = records.map((item) => item.id === recordId
       ? normalizeGastoRecord({ ...item, activo: false, anulado: true, estado: 'Anulado', updatedAt: nowIso() })
       : item);
@@ -30788,6 +31835,7 @@ Notas importantes:
     gastosState.editingId = null;
     gastosState.message = `Gasto de ${formatMoney(record.monto)} anulado. Queda visible y no sumará en reportes futuros.`;
     gastosState.messageType = 'success';
+    if (!persistFundingOperation(fundingBefore, gastosState)) return;
     saveData(appData);
     registerSessionChange({ module: 'Gastos', operation: 'anular', recordId });
     renderRoute();
@@ -30988,6 +32036,7 @@ Notas importantes:
           <textarea name="observacion" rows="3" placeholder="Notas del gasto Casa" ${cannotCreate ? 'disabled' : ''}>${escapeHtml(record?.observacion || '')}</textarea>
         </label>
 
+        ${renderOrigenFondos(record?.financiamiento || null, record?.id || '', cannotCreate, 'casaGastos')}
         <div class="form-actions">
           <button type="submit" class="card-action" ${cannotCreate ? 'disabled' : ''}>${record ? 'Guardar cambios' : 'Guardar gasto Casa'}</button>
           <button type="button" class="secondary-action" data-casa-clear>${record ? 'Cancelar' : 'Limpiar'}</button>
@@ -31356,7 +32405,7 @@ Notas importantes:
         <td data-label="Acciones" class="actions-cell">
           <div class="record-actions compact-row-actions">
             <button type="button" class="secondary-action compact" data-casa-edit="${escapeHtml(record.id)}">Editar</button>
-            <button type="button" class="danger-action compact" data-casa-delete="${escapeHtml(record.id)}">Eliminar</button>
+            <button type="button" class="danger-action compact" data-casa-delete="${escapeHtml(record.id)}">${record.fondosControlado ? 'Anular' : 'Eliminar'}</button>
           </div>
         </td>
       </tr>
@@ -31421,7 +32470,7 @@ Notas importantes:
     if (!(filters.month && !filters.year)) {
       const summary = buildResumenSummaryForFilters(filters);
       return {
-        utilidadKpk: roundMoney(summary.utilidadPeriodo ?? summary.utilidadDelPeriodo ?? 0),
+        utilidadKpk: roundMoney(summary.financiamiento?.version === '3.0' ? summary.financiamiento.globalNio.utilidadTotal : summary.utilidadPeriodo ?? summary.utilidadDelPeriodo ?? 0),
         periodLabel: summary.periodLabel || getCasaFilterPeriodLabel()
       };
     }
@@ -31442,7 +32491,7 @@ Notas importantes:
     const totalGastos = sumMoney(gastosUtilidad, (gasto) => gasto.monto);
 
     return {
-      utilidadKpk: roundMoney(totalVentasAjustadas - totalComprasAjustadas - totalGastos),
+      utilidadKpk: roundMoney(totalVentasAjustadas - totalComprasAjustadas - totalGastos + sumMoney((appData.ingresosFinancieros || []).filter((record) => record.activo && !isCloudDeletedRecord(record) && record.moneda === 'NIO' && matchesMonth(record.fecha)), ingresoFinancieroNeto)),
       periodLabel: `${getMonthLabel(month)} · todos los años`
     };
   }
@@ -31561,6 +32610,8 @@ Notas importantes:
 
     return normalizeCasaGastoRecord({
       ...(existingRecord || {}),
+      _fondosLocalOnly: false,
+      financiamiento: readFinanciamientoForm(form, parseMoney(formData.get('monto')), existingRecord?.financiamiento),
       id: existingRecord?.id || generateId('casaGasto'),
       fecha: toDateInputValue(formData.get('fecha')),
       categoriaCasaId: categoria?.id || '',
@@ -31588,15 +32639,17 @@ Notas importantes:
     if (Number.isNaN(parseMoney(record.monto)) || record.monto <= 0) return 'El monto debe ser mayor que cero.';
     if (!record.metodoPagoId || !getOutgoingPaymentMethods(existingRecord?.metodoPagoId).some((item) => item.id === record.metodoPagoId)) return 'Selecciona un método de pago activo.';
     if (isCasaCreditPaymentMethod(record.metodoPagoId || record.metodoPagoNombre) && !['Pendiente', 'Pagado'].includes(record.estadoCreditoCasa)) return 'Selecciona un estado válido para el crédito Casa.';
+    if (record.financiamiento && !isFondosCompartidos(record.financiamiento) && ['prestamo', 'mixto'].includes(record.financiamiento.origen)) return 'En este módulo selecciona Préstamos e Ingresos para utilizar fondos de Financiero.';
     const bankError = validateBankForPaymentMethod(record, existingRecord);
     if (bankError) return bankError;
-    return '';
+    return validateFondosCompartidos(record, 'casaGastos');
   }
 
   function saveCasaGastoRecord(form) {
     const existingId = cleanText(new FormData(form).get('id'));
     const records = Array.isArray(appData.casaGastos) ? appData.casaGastos : [];
     const existingRecord = existingId ? records.find((record) => record.id === existingId) : null;
+    if (existingRecord?.activo === false && existingRecord.fondosControlado) { notifyAction(casaState, 'No se puede editar un gasto Casa anulado.', 'error'); return; }
     const newRecord = buildCasaGastoFromForm(form, existingRecord);
     const validationError = validateCasaGastoRecord(newRecord, existingRecord);
 
@@ -31607,6 +32660,7 @@ Notas importantes:
       return;
     }
 
+    const fundingBefore = JSON.parse(JSON.stringify(appData));
     if (existingRecord) {
       appData.casaGastos = records.map((record) => record.id === existingId ? newRecord : record);
       casaState.message = `Gasto Casa actualizado: ${formatMoney(newRecord.monto)}.`;
@@ -31619,6 +32673,7 @@ Notas importantes:
     openAccordionGroupForRecord('casa', newRecord);
     casaState.editingId = null;
     casaState.messageType = 'success';
+    if (!persistFundingOperation(fundingBefore, casaState)) return;
     saveData(appData);
     registerSessionChange({ module: 'Casa', operation: existingRecord ? 'editar' : 'crear', recordId: newRecord.id });
     registerActivity({
@@ -31646,14 +32701,18 @@ Notas importantes:
     const records = Array.isArray(appData.casaGastos) ? appData.casaGastos : [];
     const record = records.find((item) => item.id === recordId);
     if (!record) return;
-    const ok = window.confirm('¿Eliminar este gasto de Casa? Solo se borrará este registro del módulo Casa.');
+    if (record.fondosControlado && isWorkPeriodClosed((record.fechaPago || record.fecha).slice(0, 7))) { notifyAction(casaState, 'No se pueden modificar fondos de un período cerrado.', 'error'); return; }
+    if (record.fondosControlado && !requireRolePermission('annulMovements', casaState)) return;
+    const ok = window.confirm(record.fondosControlado ? '¿Anular este gasto de Casa y devolver sus fondos a los orígenes? Se conservará el registro.' : '¿Eliminar este gasto de Casa? Solo se borrará este registro del módulo Casa.');
     if (!ok) return;
-    appData.casaGastos = records.filter((item) => item.id !== recordId);
+    const fundingBefore = JSON.parse(JSON.stringify(appData));
+    appData.casaGastos = record.fondosControlado ? records.map((item) => item.id === recordId ? normalizeCasaGastoRecord({ ...item, activo: false, updatedAt: nowIso() }) : item) : records.filter((item) => item.id !== recordId);
     casaState.editingId = null;
-    casaState.message = `Gasto Casa eliminado: ${formatMoney(record.monto)}.`;
+    casaState.message = record.fondosControlado ? `Gasto Casa anulado: ${formatMoney(record.monto)}. Los fondos volvieron a sus orígenes.` : `Gasto Casa eliminado: ${formatMoney(record.monto)}.`;
     casaState.messageType = 'success';
+    if (!persistFundingOperation(fundingBefore, casaState)) return;
     saveData(appData);
-    registerSessionChange({ module: 'Casa', operation: 'eliminar', recordId });
+    registerSessionChange({ module: 'Casa', operation: record.fondosControlado ? 'anular' : 'eliminar', recordId });
     renderRoute();
   }
 
@@ -33239,6 +34298,7 @@ Notas importantes:
       comprasProveedores,
       pagosProveedores,
       prestamosFinancieros: Array.isArray(data.prestamosFinancieros) ? data.prestamosFinancieros.length : 0,
+      ingresosFinancieros: Array.isArray(data.ingresosFinancieros) ? data.ingresosFinancieros.length : 0,
       tiposCambioFinancieros: Array.isArray(data.tiposCambioFinancieros) ? data.tiposCambioFinancieros.length : 0,
       gastos: Array.isArray(data.gastos) ? data.gastos.length : 0,
       casaGastos: Array.isArray(data.casaGastos) ? data.casaGastos.length : 0,
@@ -33323,6 +34383,8 @@ Notas importantes:
     const cloudSource = cleanText(opts.source).toLowerCase() === 'firestore' || opts.cloudSource === true;
     const sourceData = isPlainObject(opts.sourceData) ? opts.sourceData : appData;
     const snapshot = normalizeData(sourceData);
+    snapshot.ingresosFinancieros = snapshot.ingresosFinancieros.map(ingresoCloudRecord);
+    ['pagosProveedores', 'comprasProveedores', 'gastos', 'casaGastos'].forEach((collection) => { snapshot[collection] = snapshot[collection].map((record) => { const copy = { ...record }; delete copy._fondosPending; delete copy._fondosSyncedSignature; delete copy._fondosLocalOnly; return copy; }); });
     snapshot.tiposCambioFinancieros = mergeTiposCambioFinancieros(appData.tiposCambioFinancieros || [], snapshot.tiposCambioFinancieros);
     const exportedAt = cleanText(opts.exportedAt) || nowIso();
     const identity = normalizeDeviceIdentity(appDeviceIdentity);
@@ -33416,6 +34478,7 @@ Notas importantes:
         comprasProveedores: snapshot.comprasProveedores || [],
         pagosProveedores: snapshot.pagosProveedores || [],
         prestamosFinancieros: snapshot.prestamosFinancieros || [],
+        ingresosFinancieros: snapshot.ingresosFinancieros || [],
         tiposCambioFinancieros: snapshot.tiposCambioFinancieros || [],
         gastos: snapshot.gastos || [],
         casaGastos: snapshot.casaGastos || [],
@@ -33819,10 +34882,15 @@ Notas importantes:
     const currentMetadata = isPlainObject(appData.metadata) ? { ...appData.metadata } : {};
     const currentTransportes = getCatalogRecords('transportes').map((record) => normalizeCatalogRecord(record, CATALOGS.find((catalog) => catalog.id === 'transportes')));
     const incoming = normalizeData(importData);
+    ['pagosProveedores', 'comprasProveedores', 'gastos', 'casaGastos'].forEach((collection) => { incoming[collection] = incoming[collection].map((record) => record.fondosControlado ? { ...record, _fondosLocalOnly: true, _fondosPending: false } : record); });
     if (importData.__financieroOmitted === true || !Object.prototype.hasOwnProperty.call(importData, 'prestamosFinancieros')) incoming.prestamosFinancieros = (appData.prestamosFinancieros || []).map(normalizePrestamoFinancieroRecord);
+    incoming.ingresosFinancieros = mergeIngresosFinancieros(appData.ingresosFinancieros || [], incoming.ingresosFinancieros.map((record) => ({ ...record, _ingresoLocalOnly: true, _ingresoPending: false })));
     if (importData.__tiposCambioOmitted === true || !Object.prototype.hasOwnProperty.call(importData, 'tiposCambioFinancieros')) incoming.tiposCambioFinancieros = (appData.tiposCambioFinancieros || []).map(normalizeTipoCambioFinanciero);
     if (importData.__transportesOmitted === true) incoming.transportes = currentTransportes;
     incoming.tiposCambioFinancieros = mergeTiposCambioFinancieros(appData.tiposCambioFinancieros || [], incoming.tiposCambioFinancieros);
+    incoming.ingresosFinancieros = incoming.ingresosFinancieros.map((record) => ({ ...record, _ingresoLocalOnly: true, _ingresoPending: false }));
+    const incomeError = validateIngresosFinancieros(incoming.ingresosFinancieros, incoming.cuentasBancos)[0];
+    if (incomeError) throw new Error(incomeError);
     const fundingError = validateFundingReplacement(incoming);
     if (fundingError) throw new Error(fundingError);
     const incomingNotas = getNotasBackupFromSource(importData) || createInitialNotasData();
@@ -34098,6 +35166,7 @@ Notas importantes:
     const missingRequiredKeys = requiredKeys.filter((key) => !Array.isArray(data[key]));
     const rawRecordsSource = isPlainObject(raw?.registros) ? raw.registros : raw;
     const rawCatalogsSource = isPlainObject(rawRecordsSource?.catalogos) ? rawRecordsSource.catalogos : {};
+    if (Object.prototype.hasOwnProperty.call(rawRecordsSource, 'ingresosFinancieros')) errors.push(...validateIngresosFinancieros(data.ingresosFinancieros, data.cuentasBancos));
     if (Object.prototype.hasOwnProperty.call(rawRecordsSource, 'tiposCambioFinancieros')) errors.push(...validateTiposCambioFinancieros(data.tiposCambioFinancieros, data.cuentasBancos));
     if (Object.prototype.hasOwnProperty.call(rawRecordsSource, 'prestamosFinancieros')) errors.push(...validatePrestamosFinancieros(data.prestamosFinancieros, data));
     errors.push(...validateFinanciamientoSnapshot({ ...data, prestamosFinancieros: Array.isArray(data.prestamosFinancieros) ? data.prestamosFinancieros : appData.prestamosFinancieros }));
@@ -34110,7 +35179,7 @@ Notas importantes:
       ...CATALOGS.map((catalog) => catalog.id),
       'ventas', 'cobros', 'comprasProveedores', 'proveedoresCompras', 'compras',
       'pagosProveedores', 'pagos', 'gastos', 'casaGastos', 'gastosCasa', 'casa', 'cierresMensuales', 'cierres',
-      'bdatos', 'Bdatos', 'exportacionesExcel', 'tiposCambioFinancieros'
+      'bdatos', 'Bdatos', 'exportacionesExcel', 'ingresosFinancieros', 'tiposCambioFinancieros'
     ];
     const hasAnyBusinessArray = businessArrayAliases.some((key) => (
       Array.isArray(rawRecordsSource?.[key]) || Array.isArray(rawCatalogsSource?.[key])
@@ -34206,6 +35275,7 @@ Notas importantes:
           comprasProveedores: registros.comprasProveedores || registros.proveedoresCompras || registros.compras || [],
           pagosProveedores: registros.pagosProveedores || registros.pagos || [],
           prestamosFinancieros: registros.prestamosFinancieros,
+          ingresosFinancieros: registros.ingresosFinancieros,
           tiposCambioFinancieros: registros.tiposCambioFinancieros,
           gastos: registros.gastos,
           casaGastos: registros.casaGastos || registros.gastosCasa || registros.casa || [],
@@ -34243,6 +35313,7 @@ Notas importantes:
         comprasProveedores: raw.comprasProveedores,
         pagosProveedores: raw.pagosProveedores,
         prestamosFinancieros: raw.prestamosFinancieros,
+        ingresosFinancieros: raw.ingresosFinancieros,
         tiposCambioFinancieros: raw.tiposCambioFinancieros,
         gastos: raw.gastos,
         casaGastos: raw.casaGastos || raw.gastosCasa || raw.casa || [],
@@ -34354,17 +35425,19 @@ Notas importantes:
     const incomingFacturas = getFacturasBackupFromSource(importData);
     const incomingSeguimiento = getSeguimientoBackupFromSource(importData);
     const incoming = normalizeData(importData);
+    ['pagosProveedores', 'comprasProveedores', 'gastos', 'casaGastos'].forEach((collection) => { incoming[collection] = incoming[collection].map((record) => record.fondosControlado ? { ...record, _fondosLocalOnly: true, _fondosPending: false } : record); });
     if (importData.__financieroOmitted === true || !Object.prototype.hasOwnProperty.call(importData, 'prestamosFinancieros')) incoming.prestamosFinancieros = (appData.prestamosFinancieros || []).map(normalizePrestamoFinancieroRecord);
+    incoming.ingresosFinancieros = mergeIngresosFinancieros(appData.ingresosFinancieros || [], incoming.ingresosFinancieros.map((record) => ({ ...record, _ingresoLocalOnly: true, _ingresoPending: false })));
     if (importData.__tiposCambioOmitted === true || !Object.prototype.hasOwnProperty.call(importData, 'tiposCambioFinancieros')) incoming.tiposCambioFinancieros = (appData.tiposCambioFinancieros || []).map(normalizeTipoCambioFinanciero);
     if (mode === 'replace') incoming.tiposCambioFinancieros = mergeTiposCambioFinancieros(appData.tiposCambioFinancieros || [], incoming.tiposCambioFinancieros);
     if (incomingNotas) incoming.notasModulo = incomingNotas;
     if (incomingFacturas) incoming.facturasModulo = incomingFacturas;
     if (incomingSeguimiento) incoming.seguimiento = incomingSeguimiento;
     const loaded = getJsonRecordCounts(incoming);
-    const hasBusinessArraysForPartial = [...CATALOGS.map((catalog) => catalog.id), 'ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'casaGastos', 'cierresMensuales', 'tiposCambioFinancieros'].some((key) => Array.isArray(importData?.[key]));
+    const hasBusinessArraysForPartial = [...CATALOGS.map((catalog) => catalog.id), 'ventas', 'cobros', 'comprasProveedores', 'pagosProveedores', 'gastos', 'casaGastos', 'cierresMensuales', 'ingresosFinancieros', 'tiposCambioFinancieros'].some((key) => Array.isArray(importData?.[key]));
     const isPartialModulesImport = Boolean(importData?.__partialImport || incoming.__partialImport || ((incomingNotas || incomingFacturas || incomingSeguimiento) && !hasBusinessArraysForPartial));
     if (isPartialModulesImport) {
-      const added = { tiposCambioFinancieros: 0, prestamosFinancieros: 0, catalogos: 0, bdatos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, casaGastos: 0, cierresMensuales: 0, exportacionesExcel: 0, notasModulo: 0, notas: 0, facturasModulo: 0, facturas: 0, seguimiento: 0, total: 0 };
+      const added = { ingresosFinancieros: 0, tiposCambioFinancieros: 0, prestamosFinancieros: 0, catalogos: 0, bdatos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, casaGastos: 0, cierresMensuales: 0, exportacionesExcel: 0, notasModulo: 0, notas: 0, facturasModulo: 0, facturas: 0, seguimiento: 0, total: 0 };
       let skipped = 0;
       if (incomingNotas) {
         if (mode === 'replace') {
@@ -34407,6 +35480,8 @@ Notas importantes:
       return { loaded, added, skipped };
     }
     if (mode === 'replace') {
+      const incomeError = validateIngresosFinancieros(incoming.ingresosFinancieros, incoming.cuentasBancos)[0];
+      if (incomeError) throw new Error(incomeError);
       const fundingError = validateFundingReplacement(incoming);
       if (fundingError) throw new Error(fundingError);
       const activeRole = getCurrentRole();
@@ -34439,7 +35514,7 @@ Notas importantes:
     const ventaIdMap = new Map();
     const compraIdMap = new Map();
     const facturaModuloIdMap = buildFacturaModuloImportIdMap(getFacturasData(), incomingFacturas || {});
-    const added = { tiposCambioFinancieros: 0, prestamosFinancieros: 0, catalogos: 0, bdatos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, casaGastos: 0, cierresMensuales: 0, exportacionesExcel: 0, notasModulo: 0, notas: 0, facturasModulo: 0, facturas: 0, seguimiento: 0, total: 0 };
+    const added = { ingresosFinancieros: 0, tiposCambioFinancieros: 0, prestamosFinancieros: 0, catalogos: 0, bdatos: 0, ventas: 0, cobros: 0, comprasProveedores: 0, pagosProveedores: 0, gastos: 0, casaGastos: 0, cierresMensuales: 0, exportacionesExcel: 0, notasModulo: 0, notas: 0, facturasModulo: 0, facturas: 0, seguimiento: 0, total: 0 };
     let skipped = 0;
 
     CATALOGS.forEach((catalog) => {
@@ -34466,6 +35541,9 @@ Notas importantes:
       added.ventas += 1;
     });
 
+    const previousIncomeCount = target.ingresosFinancieros.length;
+    target.ingresosFinancieros = mergeIngresosFinancieros(target.ingresosFinancieros, incoming.ingresosFinancieros.map((record) => ({ ...record, cuentaBancoId: idMaps.cuentasBancos.get(record.cuentaBancoId) || record.cuentaBancoId })));
+    added.ingresosFinancieros = target.ingresosFinancieros.length - previousIncomeCount;
     const previousRateCount = target.tiposCambioFinancieros.length;
     target.tiposCambioFinancieros = mergeTiposCambioFinancieros(target.tiposCambioFinancieros, incoming.tiposCambioFinancieros.map((rate) => ({ ...rate, bancoId: idMaps.cuentasBancos.get(rate.bancoId) || rate.bancoId })), target.cuentasBancos);
     added.tiposCambioFinancieros = target.tiposCambioFinancieros.length - previousRateCount;
@@ -34666,7 +35744,7 @@ Notas importantes:
 
     target.ventas = recalculateVentasWithCobros(target.ventas, target.cobros);
     target.comprasProveedores = recalculateComprasProveedoresWithPagos(target.comprasProveedores, target.pagosProveedores);
-    added.total = added.tiposCambioFinancieros + added.prestamosFinancieros + added.catalogos + added.bdatos + added.ventas + added.cobros + added.comprasProveedores + added.pagosProveedores + added.gastos + added.casaGastos + added.cierresMensuales + added.exportacionesExcel + added.notasModulo + added.facturasModulo + added.seguimiento;
+    added.total = added.ingresosFinancieros + added.tiposCambioFinancieros + added.prestamosFinancieros + added.catalogos + added.bdatos + added.ventas + added.cobros + added.comprasProveedores + added.pagosProveedores + added.gastos + added.casaGastos + added.cierresMensuales + added.exportacionesExcel + added.notasModulo + added.facturasModulo + added.seguimiento;
     const fundingErrors = validateFinanciamientoSnapshot(target);
     if (fundingErrors.length) throw new Error(fundingErrors[0]);
     appData = normalizeData({
@@ -35789,6 +36867,7 @@ Exportado: ${exportDateLabel}
 
   function buildClosingTotals(summary) {
     return {
+      ...(summary.financiamiento?.version === '3.0' ? { otrosIngresos: clonePlainObject(summary.financiamiento.otrosIngresos, []), utilidadTotalNio: summary.financiamiento.globalNio.utilidadTotal, flujoDespuesCasa: summary.financiamiento.globalNio.flujoDespuesCasa } : {}),
       ...(summary.financiamiento ? { financiamiento: { version: summary.financiamiento.version || '1.0', fechaSaldos: summary.financiamiento.fechaSaldos, globalNio: clonePlainObject(summary.financiamiento.globalNio,{}), monedas: summary.financiamiento.currencies.map((item) => ({moneda:item.moneda,periodo:clonePlainObject(item.periodo,{}),capitalPendiente:item.actual.capitalPendiente,disponibleCompras:item.actual.disponibleCompras})) } } : {}),
       totalSubtotalVentas: roundMoney(summary.totalSubtotalVentas || summary.totalVendidoOriginal || 0),
       totalDescuentosVentas: roundMoney(summary.totalDescuentosVentas || 0),
@@ -36257,7 +37336,7 @@ Exportado: ${exportDateLabel}
     return { name: 'Proveedores', rows, cols: [16, 28, 22, 14, 16, 18, 14, 18, 16, 16, 12, 14, 38, 34] };
   }
 
-  function buildPagosSheet(summary) {
+  function buildPagosSheetHistorico(summary) {
     const rows = [
       [xlsxTitle('Pagos a proveedores')],
       [xlsxLabel('Período'), xlsxText(summary.periodLabel)],
@@ -36293,7 +37372,7 @@ Exportado: ${exportDateLabel}
     return { name: 'Pagos', rows, cols: [16, 28, 22, 16, 18, 22, 14, 14, 34, ...(summary.financiamiento ? [20,24,18,18, ...(summary.financiamiento.version === '2.0' ? [18,22,18,24,18,18,24] : [])] : [])] };
   }
 
-  function buildGastosSheet(summary) {
+  function buildGastosSheetHistorico(summary) {
     const rows = [
       [xlsxTitle('Gastos')],
       [xlsxLabel('Período'), xlsxText(summary.periodLabel)],
@@ -37242,6 +38321,7 @@ ${rowsXml}
   }
 
   function applyExcelImportPayload(payload, mode) {
+    if (mode === 'replace' && appData.ingresosFinancieros.length) throw new Error('Hay otros ingresos locales. Usa fusión: Excel todavía no incluye estos ingresos ni sus cuentas receptoras.');
     if (mode === 'replace' && appData.prestamosFinancieros.length) throw new Error('No se puede reemplazar por Excel mientras existan préstamos financieros. Usa fusión.');
     const target = mode === 'replace' ? createInitialData() : normalizeData(appData);
     if (mode === 'replace') {
@@ -38894,5 +39974,7 @@ ${rowsXml}
   initPreparedAccessScreen();
 
   restoreBdatosCloudPending();
+  restoreIngresosCloudPending();
+  restoreFondosCloudPending();
   setupPwaUpdateListeners();
 })();
